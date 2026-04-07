@@ -1,0 +1,33 @@
+{
+  "name": "@jexs/server",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts" }
+  },
+  "files": ["dist"],
+  "peerDependencies": {
+    "@jexs/core": "^0.1.0"
+  },
+  "dependencies": {
+    "bcrypt": "^5.1.0",
+    "better-sqlite3": "^11.0.0",
+    "ioredis": "^5.3.0",
+    "knex": "^3.1.0",
+    "memjs": "^1.3.0",
+    "mysql2": "^3.6.0",
+    "nodemailer": "^8.0.1",
+    "uuid": "^9.0.0",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^5.0.0",
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^20.0.0",
+    "@types/nodemailer": "^7.0.10",
+    "@types/uuid": "^9.0.0",
+    "@types/ws": "^8.18.1"
+  }
+}

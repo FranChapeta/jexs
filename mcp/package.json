@@ -1,0 +1,31 @@
+{
+  "name": "@jexs/mcp",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts" }
+  },
+  "bin": {
+    "jexs-mcp": "./dist/index.js"
+  },
+  "files": ["dist"],
+  "peerDependencies": {
+    "@jexs/core": "^0.1.0",
+    "@jexs/server": "^0.1.0",
+    "@jexs/client": "^0.1.0",
+    "@jexs/physics": "^0.1.0",
+    "@jexs/gl": "^0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@jexs/core": { "optional": true },
+    "@jexs/server": { "optional": true },
+    "@jexs/client": { "optional": true },
+    "@jexs/physics": { "optional": true },
+    "@jexs/gl": { "optional": true }
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0"
+  }
+}

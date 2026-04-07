@@ -1,0 +1,22 @@
+{
+  "name": "@jexs/client",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts" }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build:browser": "esbuild src/index.ts --bundle --format=esm --splitting --outdir=dist/browser --entry-names=client --chunk-names=chunks/[hash] --minify --sourcemap --target=es2020",
+    "prepublishOnly": "npm run build:browser"
+  },
+  "peerDependencies": {
+    "@jexs/core": "^0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@jexs/physics": { "optional": true },
+    "@jexs/gl": { "optional": true }
+  }
+}

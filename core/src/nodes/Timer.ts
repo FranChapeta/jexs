@@ -1,0 +1,237 @@
+/**
+ * TimerNode — fixed-rate loops and scheduled recurring tasks.
+ *
+ * Tick: compensating setTimeout loop for drift-free high-frequency timing.
+ * - { "tick": "start", "id": "game", "rate": 60, "do": [...] }
+ * - { "tick": "stop", "id": "game" }
+ * - { "tick": "pause", "id": "game" }
+ * - { "tick": "resume", "id": "game" }
+ * Context: tick.count, tick.dt, tick.elapsed
+ *
+ * Cron: setInterval for human-readable scheduled tasks.
+ * - { "cron": "start", "id": "cleanup", "every": "5m", "do": [...] }
+ * - { "cron": "stop", "id": "cleanup" }
+ * - { "cron": "pause", "id": "cleanup" }
+ * - { "cron": "resume", "id": "cleanup" }
+ * Context: cron.runCount, cron.lastRun, cron.elapsed
+ * Interval formats: "500ms", "30s", "5m", "1h", "1d"
+ */
+
+import { Node, Context, NodeValue } from "./Node.js";
+import { resolve, onResolverDestroy } from "../Resolver.js";
+import { runSteps } from "../runSteps.js";
+
+// ─── Shared state ───────────────────────────────────────────────────────────
+
+interface TimerState {
+  id: string;
+  intervalMs: number;
+  steps: unknown[];
+  context: Context;
+  timerId: ReturnType<typeof setTimeout> | null;
+  count: number;
+  startTime: number;
+  lastTime: number;
+  paused: boolean;
+  pausedAt: number | null;
+  pausedTotal: number;
+}
+
+const ticks = new Map<string, TimerState>();
+const crons = new Map<string, TimerState>();
+
+// Auto-cleanup timers when the resolver is destroyed or replaced
+onResolverDestroy(() => TimerNode.stopAll());
+
+// ─── TimerNode ──────────────────────────────────────────────────────────────
+
+export class TimerNode extends Node {
+  async tick(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+    const op = String(await resolve(def.tick, context));
+    return dispatch(op, def, context, "tick");
+  }
+
+  async cron(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+    const op = String(await resolve(def.cron, context));
+    return dispatch(op, def, context, "cron");
+  }
+
+  static stopAll(): void {
+    for (const s of ticks.values()) { if (s.timerId != null) clearTimeout(s.timerId); }
+    for (const s of crons.values()) { if (s.timerId != null) clearInterval(s.timerId); }
+    ticks.clear();
+    crons.clear();
+  }
+}
+
+
+// ─── Dispatch ───────────────────────────────────────────────────────────────
+
+async function dispatch(
+  op: string, def: Record<string, unknown>, context: Context, kind: "tick" | "cron",
+): Promise<NodeValue> {
+  const registry = kind === "tick" ? ticks : crons;
+
+  switch (op) {
+    case "start": return kind === "tick" ? startTick(def, context) : startCron(def, context);
+    case "stop":  return stop(def, context, registry, kind);
+    case "pause": return pause(def, context, registry);
+    case "resume": return resume(def, context, registry, kind);
+    default:
+      console.error(`[${kind}] Unknown operation: ${op}`);
+      return null;
+  }
+}
+
+// ─── Shared stop / pause / resume ───────────────────────────────────────────
+
+async function stop(
+  def: Record<string, unknown>, context: Context,
+  registry: Map<string, TimerState>, kind: "tick" | "cron",
+): Promise<NodeValue> {
+  const id = String(await resolve(def.id, context));
+  const state = registry.get(id);
+  if (!state) return null;
+  if (state.timerId != null) {
+    kind === "tick" ? clearTimeout(state.timerId) : clearInterval(state.timerId);
+  }
+  registry.delete(id);
+  return null;
+}
+
+async function pause(
+  def: Record<string, unknown>, context: Context,
+  registry: Map<string, TimerState>,
+): Promise<NodeValue> {
+  const id = String(await resolve(def.id, context));
+  const state = registry.get(id);
+  if (!state || state.paused) return null;
+  state.paused = true;
+  state.pausedAt = Date.now();
+  return null;
+}
+
+async function resume(
+  def: Record<string, unknown>, context: Context,
+  registry: Map<string, TimerState>, kind: "tick" | "cron",
+): Promise<NodeValue> {
+  const id = String(await resolve(def.id, context));
+  const state = registry.get(id);
+  if (!state || !state.paused) return null;
+  if (state.pausedAt != null) {
+    state.pausedTotal += Date.now() - state.pausedAt;
+  }
+  state.paused = false;
+  state.pausedAt = null;
+  if (kind === "tick") state.lastTime = Date.now();
+  return null;
+}
+
+// ─── Tick: compensating setTimeout loop ─────────────────────────────────────
+
+async function startTick(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  const id = String(await resolve(def.id, context));
+  const rate = def.rate ? Number(await resolve(def.rate, context)) : 60;
+  const steps = Array.isArray(def.do) ? def.do as unknown[] : [];
+
+  const prev = ticks.get(id);
+  if (prev?.timerId != null) clearTimeout(prev.timerId);
+
+  const now = Date.now();
+  const state: TimerState = {
+    id, intervalMs: 1000 / rate, steps, context,
+    timerId: null, count: 0, startTime: now, lastTime: now,
+    paused: false, pausedAt: null, pausedTotal: 0,
+  };
+
+  ticks.set(id, state);
+  scheduleTick(state);
+  return id;
+}
+
+function scheduleTick(state: TimerState): void {
+  const now = Date.now();
+  const drift = now - state.lastTime - state.intervalMs;
+  const delay = Math.max(0, state.intervalMs - (drift > 0 ? drift : 0));
+
+  state.timerId = setTimeout(async () => {
+    if (!ticks.has(state.id)) return;
+
+    if (state.paused) {
+      scheduleTick(state);
+      return;
+    }
+
+    const now = Date.now();
+    const dt = (now - state.lastTime) / 1000;
+    state.lastTime = now;
+    state.count++;
+
+    state.context.tick = {
+      count: state.count,
+      dt,
+      elapsed: (now - state.startTime - state.pausedTotal) / 1000,
+    };
+
+    try {
+      await runSteps(state.steps, state.context);
+    } catch (err) {
+      console.error(`[tick] Error in "${state.id}":`, err);
+    }
+
+    if (ticks.has(state.id)) scheduleTick(state);
+  }, delay);
+}
+
+// ─── Cron: setInterval with human-readable intervals ────────────────────────
+
+const MULTIPLIERS: Record<string, number> = {
+  ms: 1, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000,
+};
+
+/** Parse a human-readable interval like "5m", "1h", "30s" to milliseconds. */
+export function parseInterval(value: string): number {
+  const match = value.match(/^(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)$/);
+  if (!match) throw new Error(`Invalid interval: "${value}"`);
+  return Math.round(parseFloat(match[1]) * MULTIPLIERS[match[2]]);
+}
+
+async function startCron(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  const id = String(await resolve(def.id, context));
+  const every = String(await resolve(def.every, context));
+  const intervalMs = parseInterval(every);
+  const steps = Array.isArray(def.do) ? def.do as unknown[] : [];
+
+  const prev = crons.get(id);
+  if (prev?.timerId != null) clearInterval(prev.timerId);
+
+  const now = Date.now();
+  const state: TimerState = {
+    id, intervalMs, steps, context,
+    timerId: null, count: 0, startTime: now, lastTime: now,
+    paused: false, pausedAt: null, pausedTotal: 0,
+  };
+
+  state.timerId = setInterval(async () => {
+    if (!crons.has(id) || state.paused) return;
+
+    const now = Date.now();
+    state.count++;
+    state.lastTime = now;
+
+    state.context.cron = {
+      runCount: state.count,
+      lastRun: new Date(now).toISOString(),
+      elapsed: (now - state.startTime - state.pausedTotal) / 1000,
+    };
+
+    try {
+      await runSteps(state.steps, state.context);
+    } catch (err) {
+      console.error(`[cron] Error in "${id}":`, err);
+    }
+  }, intervalMs);
+
+  crons.set(id, state);
+  return id;
+}
