@@ -18,6 +18,7 @@ export class Server {
   private port: number = 3000;
   private maxBodySize: number = 1_048_576; // 1 MB default
   private staticDirs: Map<string, string> = new Map();
+  private swConfig: { path: string; content: string } | null = null;
 
   constructor(resolve: ResolverFn) {
     this.resolve = resolve;
@@ -78,6 +79,14 @@ export class Server {
       return `${url.protocol}//${headers.host}`;
     }
     return `http://localhost:${port}`;
+  }
+
+  /**
+   * Register the SW config JSON endpoint (e.g. /jexs/sw-config.json).
+   * The SW bundle fetches this at install time to load event handler config.
+   */
+  setSwConfig(urlPath: string, content: string): void {
+    this.swConfig = { path: urlPath, content };
   }
 
   /**
@@ -195,6 +204,13 @@ export class Server {
       const query = Object.fromEntries(url.searchParams);
       const headers = req.headers;
       const cookies = this.parseCookies(req);
+
+      // Serve SW config JSON (registered at startup by ListenNode)
+      if (method === "GET" && this.swConfig !== null && requestPath === this.swConfig.path) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(this.swConfig.content);
+        return;
+      }
 
       // Try to serve static files from public directory
       if (await this.tryServeStatic(requestPath, method, res)) {
@@ -415,7 +431,9 @@ export class Server {
           if (!stat.isFile()) continue;
 
           const content = await fs.promises.readFile(filePath);
-          res.writeHead(200, { "Content-Type": this.getMimeType(ext) });
+          const headers: Record<string, string> = { "Content-Type": this.getMimeType(ext) };
+          if (path.basename(filePath) === "sw.js") headers["Service-Worker-Allowed"] = "/";
+          res.writeHead(200, headers);
           res.end(content);
           return true;
         } catch {
@@ -437,8 +455,9 @@ export class Server {
 
       const content = await fs.promises.readFile(filePath);
       const mimeType = this.getMimeType(ext);
-
-      res.writeHead(200, { "Content-Type": mimeType });
+      const headers: Record<string, string> = { "Content-Type": mimeType };
+      if (path.basename(filePath) === "sw.js") headers["Service-Worker-Allowed"] = "/";
+      res.writeHead(200, headers);
       res.end(content);
       return true;
     } catch {

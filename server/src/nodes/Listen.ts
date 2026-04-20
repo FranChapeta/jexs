@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Node, Context, NodeValue, resolve } from "@jexs/core";
 import { Server } from "../Server.js";
+import { defaultSwConfig } from "../sw.js";
 
 /**
  * ListenNode - Starts the HTTP server from JSON.
@@ -46,6 +47,16 @@ export class ListenNode extends Node {
       } else {
         console.warn("[ListenNode] @jexs/client not found — client bundle will not be served");
       }
+    }
+
+    // Service worker
+    if (def.sw && typeof def.sw === "object" && !Array.isArray(def.sw)) {
+      const servePath = typeof def.client === "string" ? def.client : "/jexs";
+      const swConfig = Object.keys(def.sw as object).length > 0
+        ? (def.sw as Record<string, unknown>)
+        : defaultSwConfig(typeof context._clientScript === "string" ? context._clientScript : undefined);
+      server.setSwConfig(`${servePath}/sw-config.json`, JSON.stringify(swConfig));
+      context._swRegistration = `if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('${servePath}/sw.js',{scope:'/',type:'module'}))}`;
     }
 
     server.bind(port, steps, context);

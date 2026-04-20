@@ -33,6 +33,13 @@ if (typeof window !== "undefined") {
   );
 
   registerLazy(
+    ["push-subscribe", "push-unsubscribe"],
+    () => import("./PushNode.js").then(({ PushNode }) => {
+      registerNode(new PushNode());
+    }),
+  );
+
+  registerLazy(
     ["rtc"],
     () => import("./WebRTCNode.js").then(({ WebRTCNode }) => {
       registerNode(new WebRTCNode());

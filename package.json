@@ -8,6 +8,6 @@
   },
   "scripts": {
     "build": "tsc -b core physics client gl server mcp",
-    "build:browser": "esbuild client/src/index.ts --bundle --format=esm --splitting --outdir=client/dist/browser --entry-names=client --chunk-names=chunks/[hash] --minify --sourcemap --target=es2020"
+    "build:browser": "esbuild client=client/src/index.ts sw=client/src/sw.ts --bundle --format=esm --splitting --outdir=client/dist/browser --entry-names=[name] --chunk-names=chunks/[hash] --minify --sourcemap --target=es2022"
   }
 }

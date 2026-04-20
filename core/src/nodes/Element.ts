@@ -96,6 +96,12 @@ export class ElementNode extends Node {
       clientScript = `<script type="module" src="${this.escapeAttr(String(context._clientScript))}"></script>`;
     }
 
+    // Auto-inject SW registration script into <head>
+    let swScript = "";
+    if (tag === "head" && context._swRegistration) {
+      swScript = `<script>${String(context._swRegistration)}</script>`;
+    }
+
     // Auto-inject CSRF hidden input into forms with state-changing methods
     let csrfInput = "";
     if (tag === "form") {
@@ -109,7 +115,7 @@ export class ElementNode extends Node {
       }
     }
 
-    return `<${tag}${attrs}${eventsAttr}>${clientScript}${csrfInput}${content}</${tag}>`;
+    return `<${tag}${attrs}${eventsAttr}>${clientScript}${swScript}${csrfInput}${content}</${tag}>`;
   }
 
   private async renderContent(content: unknown, context: Context): Promise<string> {
