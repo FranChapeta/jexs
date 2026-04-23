@@ -201,10 +201,20 @@ function isObject(value: unknown): value is Record<string, unknown> {
  * { "query": { "type": "drop", "table": "users" } }
  */
 export class QueryNode extends Node {
-  async query(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Executes a SQL query defined as a JSON object. Types: `"select"`, `"insert"`, `"upsert"`,
+   * `"update"`, `"delete"`, `"count"`, `"create"`, `"drop"`, `"alter"`.
+   * Column names in `where`/`data` are protected from resolver key collisions.
+   * Add `"first": true` to return a single row instead of an array.
+   *
+   * @example
+   * { "query": { "type": "select", "table": "users", "where": { "id": { "var": "$id" } } }, "first": true }
+   */
+  query(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.connection ?? null, context, async connectionRaw => {
     // Get connection name
-    const connectionName = def.connection
-      ? String(await resolve(def.connection, context))
+    const connectionName = connectionRaw
+      ? String(connectionRaw)
       : (DatabaseNode.getDefaultConnection() ?? "default");
 
     // Get Knex instance
@@ -256,6 +266,7 @@ export class QueryNode extends Node {
           `Unknown query type: ${(resolvedQuery as QueryDefinition).type}`,
         );
     }
+    });
   }
 }
 

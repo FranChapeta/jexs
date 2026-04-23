@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue } from "@jexs/core";
-import { resolve } from "@jexs/core";
+import { resolve, runSteps } from "@jexs/core";
 import {
   resolvePath, adjustPathAfterRemoval, getChildArrayKey,
   getChildGroups, describeNode, getEditMode, getTextContent, getPotentialChildKeys,
@@ -61,386 +61,422 @@ export class TreeNode extends Node {
   //  Data operations
   // ══════════════════════════════════════════════
 
-  async ["tree-init"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Initializes a JSON tree editor. Pass `id`, `target` (CSS selector), `data` (array), and `row` (JSON template).
+   * The `row` template is resolved per node with context vars: `path`, `type`, `summary`, `depth`, `selected`, `expanded`.
+   * Hook `on-change` steps receive `$delta` and `$editorData`; `on-select` receives `$selectedPath` and `$selectedNode`.
+   * @example
+   * { "tree-init": { "id": "t", "target": "#editor", "data": [], "row": { "tag": "div", "content": [{ "var": "path" }] } }, "on-change": [] }
+   */
+  ["tree-init"](def: Record<string, unknown>, context: Context): NodeValue {
     const rawInit = def["tree-init"];
 
     // Extract row before resolution to prevent ElementNode from rendering it to HTML.
     let rawRow: unknown = undefined;
     let configToResolve: unknown = rawInit;
 
-    if (rawInit && typeof rawInit === "object" && !Array.isArray(rawInit)) {
-      const obj = rawInit as Record<string, unknown>;
-      if ("row" in obj) {
-        rawRow = obj.row;
-        const copy: Record<string, unknown> = {};
-        for (const [k, v] of Object.entries(obj)) {
-          if (k !== "row") copy[k] = v;
+    if (this.isObject(rawInit) && "row" in rawInit) {
+      rawRow = rawInit.row;
+      const copy: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(rawInit)) {
+        if (k !== "row") copy[k] = v;
+      }
+      configToResolve = copy;
+    }
+
+    return resolve(configToResolve, context, async r => {
+      if (!this.isObject(r)) return null;
+
+      const id = String(r.id ?? "default");
+      const target = document.querySelector(String(r.target)) as HTMLElement;
+      if (!target) return null;
+
+      let data: unknown[] = [];
+      if (r.data) {
+        if (typeof r.data === "string") {
+          try { data = JSON.parse(r.data); } catch { data = []; }
+        } else if (Array.isArray(r.data)) {
+          data = r.data;
+        } else {
+          data = [r.data];
         }
-        configToResolve = copy;
       }
-    }
 
-    const config = await resolve(configToResolve, context) as Record<string, unknown>;
-    if (!config) return null;
+      const inst: TreeInstance = {
+        data,
+        target,
+        row: rawRow !== undefined ? rawRow : r.row,
+        selectedPath: null,
+        collapsed: new Set(),
+        onChangeSteps: Array.isArray(def["on-change"]) ? def["on-change"] : null,
+        onSelectSteps: Array.isArray(def["on-select"]) ? def["on-select"] : null,
+        baseContext: { ...context },
+      };
 
-    const id = String(config.id ?? "default");
-    const target = document.querySelector(String(config.target)) as HTMLElement;
-    if (!target) return null;
-
-    let data: unknown[] = [];
-    if (config.data) {
-      if (typeof config.data === "string") {
-        try { data = JSON.parse(config.data); } catch { data = []; }
-      } else if (Array.isArray(config.data)) {
-        data = config.data;
-      } else {
-        data = [config.data];
-      }
-    }
-
-    const inst: TreeInstance = {
-      data,
-      target,
-      row: rawRow !== undefined ? rawRow : config.row,
-      selectedPath: null,
-      collapsed: new Set(),
-      onChangeSteps: Array.isArray(def["on-change"]) ? def["on-change"] as unknown[] : null,
-      onSelectSteps: Array.isArray(def["on-select"]) ? def["on-select"] as unknown[] : null,
-      baseContext: { ...context },
-    };
-
-    TreeNode.instances.set(id, inst);
-    await renderTree(inst);
-    setupDrag(inst);
-    return null;
+      TreeNode.instances.set(id, inst);
+      await renderTree(inst);
+      setupDrag(inst);
+      return null;
+    });
   }
 
-  async ["tree-insert"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Inserts a node into the tree. Pass `tree` (id) and `value`. If `path` is omitted, inserts as a
+   * child of the selected node (if it is a container) or appends to the root array.
+   * @example
+   * { "tree-insert": { "tree": "t", "value": { "tag": "p", "content": [""] } } }
+   */
+  ["tree-insert"](def: Record<string, unknown>, context: Context): NodeValue {
     const rawInsert = def["tree-insert"];
 
     // Extract value before resolution to prevent ElementNode from rendering
     let rawValue: unknown = undefined;
     let configToResolve: unknown = rawInsert;
 
-    if (rawInsert && typeof rawInsert === "object" && !Array.isArray(rawInsert)) {
-      const obj = rawInsert as Record<string, unknown>;
-      if ("value" in obj) {
-        rawValue = obj.value;
-        const copy: Record<string, unknown> = {};
-        for (const [k, v] of Object.entries(obj)) {
-          if (k !== "value") copy[k] = v;
+    if (this.isObject(rawInsert) && "value" in rawInsert) {
+      rawValue = rawInsert.value;
+      const copy: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(rawInsert)) {
+        if (k !== "value") copy[k] = v;
+      }
+      configToResolve = copy;
+    }
+
+    const isVarRef = this.isObject(rawValue) && "var" in rawValue;
+
+    return resolve(configToResolve, context, r => {
+      if (!this.isObject(r)) return null;
+      const inst = TreeNode.instances.get(String(r.tree));
+      if (!inst) return null;
+
+      const doInsert = async (valueResolved: unknown) => {
+        let value = valueResolved;
+        if (typeof value === "string") {
+          try { value = JSON.parse(value); } catch { /* keep as string */ }
         }
-        configToResolve = copy;
-      }
-    }
+        value = JSON.parse(JSON.stringify(value));
+        const targetPath = r.path ? String(r.path) : null;
+        const insertPath = targetPath ?? inst.selectedPath;
+        let parentArrayPath: string;
 
-    const config = await resolve(configToResolve, context) as Record<string, unknown>;
-    if (!config) return null;
-
-    const inst = TreeNode.instances.get(String(config.tree));
-    if (!inst) return null;
-
-    // Resolve value: if it's a var reference, resolve it; otherwise keep raw
-    let value: unknown = rawValue;
-    if (rawValue && typeof rawValue === "object" && !Array.isArray(rawValue)) {
-      const rvObj = rawValue as Record<string, unknown>;
-      if ("var" in rvObj) {
-        value = await resolve(rawValue, context);
-      }
-    }
-
-    // Handle stringified JSON values (e.g. from button value attributes)
-    if (typeof value === "string") {
-      try { value = JSON.parse(value); } catch { /* keep as string */ }
-    }
-
-    value = JSON.parse(JSON.stringify(value)); // deep clone
-    const targetPath = config.path ? String(config.path) : null;
-    const insertPath = targetPath ?? inst.selectedPath;
-
-    let parentArrayPath: string;
-
-    if (insertPath) {
-      const parent = resolvePath(inst.data, insertPath);
-      if (parent && typeof parent === "object" && !Array.isArray(parent)) {
-        const childKey = getChildArrayKey(parent as Record<string, unknown>);
-        if (childKey) {
-          const obj = parent as Record<string, unknown>;
-          if (!Array.isArray(obj[childKey])) obj[childKey] = obj[childKey] ? [obj[childKey]] : [];
-          (obj[childKey] as unknown[]).push(value);
-          parentArrayPath = insertPath + "." + childKey;
+        if (insertPath) {
+          const parent = resolvePath(inst.data, insertPath);
+          if (this.isObject(parent)) {
+            const childKey = getChildArrayKey(parent);
+            if (childKey) {
+              if (!Array.isArray(parent[childKey])) parent[childKey] = parent[childKey] != null ? [parent[childKey]] : [];
+              (parent[childKey] as unknown[]).push(value);
+              parentArrayPath = insertPath + "." + childKey;
+            } else {
+              inst.data.push(value);
+              parentArrayPath = "";
+            }
+          } else {
+            inst.data.push(value);
+            parentArrayPath = "";
+          }
         } else {
           inst.data.push(value);
           parentArrayPath = "";
         }
+
+        await renderSubtree(inst, parentArrayPath);
+        const delta: TreeDelta = { path: parentArrayPath, action: "insert", value };
+        fireChange(inst, delta);
+        return delta;
+      };
+
+      return isVarRef ? resolve(rawValue, context, doInsert) : doInsert(rawValue);
+    });
+  }
+
+  /** Removes the currently selected node from the tree. Returns the removed node's `TreeDelta`. */
+  ["tree-remove"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["tree-remove"], context, async id => {
+      const inst = TreeNode.instances.get(String(id));
+      if (!inst || !inst.selectedPath) return null;
+
+      const parts = inst.selectedPath.split(".");
+      const index = parseInt(parts[parts.length - 1]);
+      if (isNaN(index)) return null;
+
+      const parentPath = parts.slice(0, -1).join(".");
+      const parent = parentPath ? resolvePath(inst.data, parentPath) : inst.data;
+      if (!Array.isArray(parent) || index < 0 || index >= parent.length) return null;
+
+      parent.splice(index, 1);
+      const removedPath = inst.selectedPath;
+      inst.selectedPath = null;
+
+      await renderSubtree(inst, parentPath);
+      await fireSelect(inst);
+
+      const delta: TreeDelta = { path: removedPath, action: "remove" };
+      fireChange(inst, delta);
+      return delta;
+    });
+  }
+
+  /**
+   * Updates a single key on the currently selected node. Pass `{ tree, key, value }`.
+   * Setting `value` to `null`, `undefined`, or `""` deletes the key.
+   * @example
+   * { "tree-update": { "tree": "t", "key": "class", "value": { "var": "$class" } } }
+   */
+  ["tree-update"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["tree-update"], context, async r => {
+      if (!this.isObject(r)) return null;
+      const inst = TreeNode.instances.get(String(r.tree));
+      if (!inst || !inst.selectedPath) return null;
+
+      const node = resolvePath(inst.data, inst.selectedPath);
+      if (!this.isObject(node)) return null;
+
+      const key = String(r.key);
+      const value = r.value;
+
+      if (value === null || value === undefined || value === "") {
+        delete node[key];
       } else {
-        inst.data.push(value);
-        parentArrayPath = "";
+        node[key] = value;
       }
-    } else {
-      inst.data.push(value);
-      parentArrayPath = "";
-    }
 
-    await renderSubtree(inst, parentArrayPath);
+      await renderNodeEl(inst, inst.selectedPath);
 
-    const delta: TreeDelta = { path: parentArrayPath, action: "insert", value };
-    fireChange(inst, delta);
-    return delta as unknown as NodeValue;
+      const delta: TreeDelta = { path: inst.selectedPath + "." + key, action: "set", value };
+      fireChange(inst, delta);
+      return delta;
+    });
   }
 
-  async ["tree-remove"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const id = String(await resolve(def["tree-remove"], context));
-    const inst = TreeNode.instances.get(id);
-    if (!inst || !inst.selectedPath) return null;
+  /**
+   * Moves the currently selected node up or down within its sibling array.
+   * Pass `{ tree, direction: "up" | "down" }`.
+   * @example
+   * { "tree-move": { "tree": "t", "direction": "up" } }
+   */
+  ["tree-move"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["tree-move"], context, async r => {
+      if (!this.isObject(r)) return null;
+      const inst = TreeNode.instances.get(String(r.tree));
+      if (!inst || !inst.selectedPath) return null;
 
-    const parts = inst.selectedPath.split(".");
-    const index = parseInt(parts[parts.length - 1]);
-    if (isNaN(index)) return null;
+      const direction = String(r.direction);
+      const parts = inst.selectedPath.split(".");
+      const index = parseInt(parts[parts.length - 1]);
+      if (isNaN(index)) return null;
 
-    const parentPath = parts.slice(0, -1).join(".");
-    const parent = parentPath ? resolvePath(inst.data, parentPath) : inst.data;
-    if (!Array.isArray(parent) || index < 0 || index >= parent.length) return null;
+      const parentPath = parts.slice(0, -1).join(".");
+      const parent = parentPath ? resolvePath(inst.data, parentPath) : inst.data;
+      if (!Array.isArray(parent)) return null;
 
-    parent.splice(index, 1);
-    const removedPath = inst.selectedPath;
-    inst.selectedPath = null;
+      const newIndex = direction === "up" ? index - 1 : index + 1;
+      if (newIndex < 0 || newIndex >= parent.length) return null;
 
-    await renderSubtree(inst, parentPath);
-    await fireSelect(inst);
+      const item = parent.splice(index, 1)[0];
+      parent.splice(newIndex, 0, item);
 
-    const delta: TreeDelta = { path: removedPath, action: "remove" };
-    fireChange(inst, delta);
-    return delta as unknown as NodeValue;
+      parts[parts.length - 1] = String(newIndex);
+      inst.selectedPath = parts.join(".");
+
+      await renderSubtree(inst, parentPath);
+
+      const delta: TreeDelta = { path: parentPath, action: "move", from: index, to: newIndex };
+      fireChange(inst, delta);
+      return delta;
+    });
   }
 
-  async ["tree-update"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const config = await resolve(def["tree-update"], context) as Record<string, unknown>;
-    if (!config) return null;
+  /**
+   * Selects a node by path, firing `on-select` steps with `$selectedPath` and `$selectedNode`.
+   * Pass `path: null` to deselect. Returns the selected node data.
+   * @example
+   * { "tree-select": { "tree": "t", "path": "0.content.1" } }
+   */
+  ["tree-select"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["tree-select"], context, async r => {
+      if (!this.isObject(r)) return null;
+      const inst = TreeNode.instances.get(String(r.tree));
+      if (!inst) return null;
 
-    const inst = TreeNode.instances.get(String(config.tree));
-    if (!inst || !inst.selectedPath) return null;
+      const oldPath = inst.selectedPath;
+      inst.selectedPath = r.path != null ? String(r.path) : null;
 
-    const node = resolvePath(inst.data, inst.selectedPath);
-    if (!node || typeof node !== "object" || Array.isArray(node)) return null;
-
-    const obj = node as Record<string, unknown>;
-    const key = String(config.key);
-    const value = config.value;
-
-    if (value === null || value === undefined || value === "") {
-      delete obj[key];
-    } else {
-      obj[key] = value;
-    }
-
-    await renderNodeEl(inst, inst.selectedPath);
-
-    const delta: TreeDelta = { path: inst.selectedPath + "." + key, action: "set", value };
-    fireChange(inst, delta);
-    return delta as unknown as NodeValue;
-  }
-
-  async ["tree-move"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const config = await resolve(def["tree-move"], context) as Record<string, unknown>;
-    if (!config) return null;
-
-    const inst = TreeNode.instances.get(String(config.tree));
-    if (!inst || !inst.selectedPath) return null;
-
-    const direction = String(config.direction);
-    const parts = inst.selectedPath.split(".");
-    const index = parseInt(parts[parts.length - 1]);
-    if (isNaN(index)) return null;
-
-    const parentPath = parts.slice(0, -1).join(".");
-    const parent = parentPath ? resolvePath(inst.data, parentPath) : inst.data;
-    if (!Array.isArray(parent)) return null;
-
-    const newIndex = direction === "up" ? index - 1 : index + 1;
-    if (newIndex < 0 || newIndex >= parent.length) return null;
-
-    const item = parent.splice(index, 1)[0];
-    parent.splice(newIndex, 0, item);
-
-    parts[parts.length - 1] = String(newIndex);
-    inst.selectedPath = parts.join(".");
-
-    await renderSubtree(inst, parentPath);
-
-    const delta: TreeDelta = { path: parentPath, action: "move", from: index, to: newIndex };
-    fireChange(inst, delta);
-    return delta as unknown as NodeValue;
-  }
-
-  async ["tree-select"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const config = await resolve(def["tree-select"], context) as Record<string, unknown>;
-    if (!config) return null;
-
-    const inst = TreeNode.instances.get(String(config.tree));
-    if (!inst) return null;
-
-    const oldPath = inst.selectedPath;
-    inst.selectedPath = config.path != null ? String(config.path) : null;
-
-    // Toggle CSS class without re-rendering
-    if (oldPath) {
-      const oldEl = findNode(inst, oldPath);
-      if (oldEl) oldEl.classList.remove("selected");
-    }
-    if (inst.selectedPath) {
-      const newEl = findNode(inst, inst.selectedPath);
-      if (newEl) newEl.classList.add("selected");
-    }
-
-    await fireSelect(inst);
-    return inst.selectedPath ? resolvePath(inst.data, inst.selectedPath) as NodeValue : null;
-  }
-
-  async ["tree-toggle"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const config = await resolve(def["tree-toggle"], context) as Record<string, unknown>;
-    if (!config) return null;
-
-    const inst = TreeNode.instances.get(String(config.tree));
-    if (!inst) return null;
-
-    const path = String(config.path);
-    if (inst.collapsed.has(path)) {
-      inst.collapsed.delete(path);
-    } else {
-      inst.collapsed.add(path);
-    }
-
-    await renderNodeEl(inst, path);
-
-    return !inst.collapsed.has(path);
-  }
-
-  async ["tree-data"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const id = String(await resolve(def["tree-data"], context));
-    const inst = TreeNode.instances.get(id);
-    if (!inst) return null;
-    return JSON.stringify(inst.data, null, 2);
-  }
-
-  async ["tree-node"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const config = await resolve(def["tree-node"], context) as Record<string, unknown>;
-    if (!config) return null;
-
-    const inst = TreeNode.instances.get(String(config.tree));
-    if (!inst) return null;
-
-    const path = config.path != null ? String(config.path) : inst.selectedPath;
-    if (!path) return null;
-
-    return resolvePath(inst.data, path) as NodeValue;
-  }
-
-  async ["tree-apply"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const config = await resolve(def["tree-apply"], context) as Record<string, unknown>;
-    if (!config) return null;
-
-    const inst = TreeNode.instances.get(String(config.tree));
-    if (!inst) return null;
-
-    const delta = config.delta as TreeDelta;
-    if (!delta || !delta.action) return null;
-
-    switch (delta.action) {
-      case "insert": {
-        const arr = delta.path ? resolvePath(inst.data, delta.path) : inst.data;
-        if (Array.isArray(arr)) {
-          arr.push(JSON.parse(JSON.stringify(delta.value)));
-          await renderSubtree(inst, delta.path);
-        }
-        break;
+      // Toggle CSS class without re-rendering
+      if (oldPath) {
+        const oldEl = findNode(inst, oldPath);
+        if (oldEl) oldEl.classList.remove("selected");
       }
-      case "remove": {
-        const parts = delta.path.split(".");
-        const index = parseInt(parts[parts.length - 1]);
-        const parentPath = parts.slice(0, -1).join(".");
-        const parent = parentPath ? resolvePath(inst.data, parentPath) : inst.data;
-        if (Array.isArray(parent) && !isNaN(index)) {
-          parent.splice(index, 1);
-          if (inst.selectedPath?.startsWith(delta.path)) {
-            inst.selectedPath = null;
+      if (inst.selectedPath) {
+        const newEl = findNode(inst, inst.selectedPath);
+        if (newEl) newEl.classList.add("selected");
+      }
+
+      await fireSelect(inst);
+      return inst.selectedPath ? resolvePath(inst.data, inst.selectedPath) : null;
+    });
+  }
+
+  /** Toggles the collapsed/expanded state of a node at the given `path`. Returns `true` if now expanded. */
+  ["tree-toggle"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["tree-toggle"], context, async r => {
+      if (!this.isObject(r)) return null;
+      const inst = TreeNode.instances.get(String(r.tree));
+      if (!inst) return null;
+
+      const path = String(r.path);
+      if (inst.collapsed.has(path)) {
+        inst.collapsed.delete(path);
+      } else {
+        inst.collapsed.add(path);
+      }
+
+      await renderNodeEl(inst, path);
+      return !inst.collapsed.has(path);
+    });
+  }
+
+  /** Returns the current tree data as a pretty-printed JSON string. */
+  ["tree-data"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["tree-data"], context, id => {
+      const inst = TreeNode.instances.get(String(id));
+      if (!inst) return null;
+      return JSON.stringify(inst.data, null, 2);
+    });
+  }
+
+  /** Returns the data object at the given `path`, or the currently selected node if `path` is omitted. */
+  ["tree-node"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["tree-node"], context, r => {
+      if (!this.isObject(r)) return null;
+      const inst = TreeNode.instances.get(String(r.tree));
+      if (!inst) return null;
+      const path = r.path != null ? String(r.path) : inst.selectedPath;
+      if (!path) return null;
+      return resolvePath(inst.data, path);
+    });
+  }
+
+  /**
+   * Applies a `TreeDelta` mutation (`insert` / `remove` / `set` / `move`) to the tree.
+   * Useful for replaying remote changes in collaborative editing scenarios.
+   * @example
+   * { "tree-apply": { "tree": "t", "delta": { "var": "$delta" } } }
+   */
+  ["tree-apply"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["tree-apply"], context, async r => {
+      if (!this.isObject(r)) return null;
+      const inst = TreeNode.instances.get(String(r.tree));
+      if (!inst) return null;
+
+      const delta = r.delta as TreeDelta;
+      if (!delta || !delta.action) return null;
+
+      switch (delta.action) {
+        case "insert": {
+          const arr = delta.path ? resolvePath(inst.data, delta.path) : inst.data;
+          if (Array.isArray(arr)) {
+            arr.push(JSON.parse(JSON.stringify(delta.value)));
+            await renderSubtree(inst, delta.path);
           }
-          await renderSubtree(inst, parentPath);
+          break;
         }
-        break;
-      }
-      case "set": {
-        const parts = delta.path.split(".");
-        const key = parts.pop()!;
-        const nodePath = parts.join(".");
-        const node = nodePath ? resolvePath(inst.data, nodePath) : null;
-        if (node && typeof node === "object" && !Array.isArray(node)) {
-          (node as Record<string, unknown>)[key] = delta.value;
-          await renderNodeEl(inst, nodePath);
+        case "remove": {
+          const parts = delta.path.split(".");
+          const index = parseInt(parts[parts.length - 1]);
+          const parentPath = parts.slice(0, -1).join(".");
+          const parent = parentPath ? resolvePath(inst.data, parentPath) : inst.data;
+          if (Array.isArray(parent) && !isNaN(index)) {
+            parent.splice(index, 1);
+            if (inst.selectedPath?.startsWith(delta.path)) inst.selectedPath = null;
+            await renderSubtree(inst, parentPath);
+          }
+          break;
         }
-        break;
-      }
-      case "move": {
-        const arr = delta.path ? resolvePath(inst.data, delta.path) : inst.data;
-        if (Array.isArray(arr) && delta.from !== undefined && delta.to !== undefined) {
-          const item = arr.splice(delta.from, 1)[0];
-          arr.splice(delta.to, 0, item);
-          await renderSubtree(inst, delta.path);
+        case "set": {
+          const parts = delta.path.split(".");
+          const key = parts.pop()!;
+          const nodePath = parts.join(".");
+          const node = nodePath ? resolvePath(inst.data, nodePath) : null;
+          if (this.isObject(node)) {
+            node[key] = delta.value;
+            await renderNodeEl(inst, nodePath);
+          }
+          break;
         }
-        break;
+        case "move": {
+          const arr = delta.path ? resolvePath(inst.data, delta.path) : inst.data;
+          if (Array.isArray(arr) && delta.from !== undefined && delta.to !== undefined) {
+            const item = arr.splice(delta.from, 1)[0];
+            arr.splice(delta.to, 0, item);
+            await renderSubtree(inst, delta.path);
+          }
+          break;
+        }
       }
-    }
 
-    return null;
-  }
-
-  async ["tree-set-data"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const config = await resolve(def["tree-set-data"], context) as Record<string, unknown>;
-    if (!config) return null;
-
-    const inst = TreeNode.instances.get(String(config.tree));
-    if (!inst) return null;
-
-    if (typeof config.data === "string") {
-      try { inst.data = JSON.parse(config.data); } catch { return null; }
-    } else if (Array.isArray(config.data)) {
-      inst.data = config.data;
-    } else {
       return null;
-    }
-
-    inst.selectedPath = null;
-    await renderTree(inst);
-    return null;
+    });
   }
 
-  async ["tree-set-value"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const config = await resolve(def["tree-set-value"], context) as Record<string, unknown>;
-    if (!config) return null;
+  /**
+   * Replaces the entire tree data and re-renders. Pass `data` as a JSON string or array. Clears the selection.
+   * @example
+   * { "tree-set-data": { "tree": "t", "data": { "var": "$json" } } }
+   */
+  ["tree-set-data"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["tree-set-data"], context, async r => {
+      if (!this.isObject(r)) return null;
+      const inst = TreeNode.instances.get(String(r.tree));
+      if (!inst) return null;
 
-    const inst = TreeNode.instances.get(String(config.tree));
-    if (!inst) return null;
+      if (typeof r.data === "string") {
+        try { inst.data = JSON.parse(r.data); } catch { return null; }
+      } else if (Array.isArray(r.data)) {
+        inst.data = r.data;
+      } else {
+        return null;
+      }
 
-    const path = config.path ? String(config.path) : inst.selectedPath;
-    if (!path) return null;
+      inst.selectedPath = null;
+      await renderTree(inst);
+      return null;
+    });
+  }
 
-    const parts = path.split(".");
-    const lastKey = parts.pop()!;
-    const parentPath = parts.join(".");
+  /**
+   * Sets a value at a specific path in the tree. Defaults to the currently selected node's path.
+   * Fires `on-change` with the resulting delta.
+   * @example
+   * { "tree-set-value": { "tree": "t", "path": "0.tag", "value": "section" } }
+   */
+  ["tree-set-value"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["tree-set-value"], context, async r => {
+      if (!this.isObject(r)) return null;
+      const inst = TreeNode.instances.get(String(r.tree));
+      if (!inst) return null;
 
-    const parent = parentPath ? resolvePath(inst.data, parentPath) : inst.data;
-    if (Array.isArray(parent)) {
-      const idx = parseInt(lastKey);
-      if (!isNaN(idx)) parent[idx] = config.value;
-    } else if (parent && typeof parent === "object") {
-      (parent as Record<string, unknown>)[lastKey] = config.value;
-    }
+      const path = r.path ? String(r.path) : inst.selectedPath;
+      if (!path) return null;
 
-    await renderNodeEl(inst, path);
+      const parts = path.split(".");
+      const lastKey = parts.pop()!;
+      const parentPath = parts.join(".");
 
-    const delta: TreeDelta = { path, action: "set", value: config.value };
-    fireChange(inst, delta);
-    return delta as unknown as NodeValue;
+      const parent = parentPath ? resolvePath(inst.data, parentPath) : inst.data;
+      if (Array.isArray(parent)) {
+        const idx = parseInt(lastKey);
+        if (!isNaN(idx)) parent[idx] = r.value;
+      } else if (this.isObject(parent)) {
+        parent[lastKey] = r.value;
+      }
+
+      await renderNodeEl(inst, path);
+
+      const delta: TreeDelta = { path, action: "set", value: r.value };
+      fireChange(inst, delta);
+      return delta;
+    });
   }
 }
 
@@ -641,45 +677,24 @@ function findNode(inst: TreeInstance, path: string): HTMLElement | null {
 //  Callbacks
 // ══════════════════════════════════════════════
 
-async function fireChange(inst: TreeInstance, delta: TreeDelta): Promise<void> {
+function fireChange(inst: TreeInstance, delta: TreeDelta): void {
   if (!inst.onChangeSteps) return;
-  try {
-    const ctx: Context = {
-      ...inst.baseContext,
-      delta,
-      editorData: JSON.stringify(inst.data, null, 2),
-    };
-    for (const step of inst.onChangeSteps) {
-      const result = await resolve(step, ctx);
-      if (step && typeof step === "object" && !Array.isArray(step) && "as" in step) {
-        ctx[String((step as Record<string, unknown>).as).replace(/^\$/, "")] = result;
-      }
-    }
-  } catch (err) {
-    console.error("[TreeNode] onChange error:", err);
-  }
+  Promise.resolve(runSteps(inst.onChangeSteps, {
+    ...inst.baseContext,
+    delta,
+    editorData: JSON.stringify(inst.data, null, 2),
+  })).catch(err => console.error("[TreeNode] onChange error:", err));
 }
 
-async function fireSelect(inst: TreeInstance): Promise<void> {
+function fireSelect(inst: TreeInstance): unknown {
   if (!inst.onSelectSteps) return;
-  try {
-    const node = inst.selectedPath ? resolvePath(inst.data, inst.selectedPath) : null;
-    const editMode = node ? getEditMode(node) : null;
-    const ctx: Context = {
-      ...inst.baseContext,
-      selectedPath: inst.selectedPath,
-      selectedNode: node,
-      selectedEditMode: editMode,
-    };
-    for (const step of inst.onSelectSteps) {
-      const result = await resolve(step, ctx);
-      if (step && typeof step === "object" && !Array.isArray(step) && "as" in step) {
-        ctx[String((step as Record<string, unknown>).as).replace(/^\$/, "")] = result;
-      }
-    }
-  } catch (err) {
-    console.error("[TreeNode] onSelect error:", err);
-  }
+  const node = inst.selectedPath ? resolvePath(inst.data, inst.selectedPath) : null;
+  return runSteps(inst.onSelectSteps, {
+    ...inst.baseContext,
+    selectedPath: inst.selectedPath,
+    selectedNode: node,
+    selectedEditMode: node ? getEditMode(node) : null,
+  });
 }
 
 // ══════════════════════════════════════════════

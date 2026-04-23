@@ -13,38 +13,37 @@ let deferIdCounter = 0;
  *   { "defer": { "file": "table.json", "params": { ... } }, "loader": "Loading..." }
  */
 export class DeferNode extends Node {
-  async defer(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Renders a placeholder immediately, then streams the resolved content to replace it via a `<script>` tag.
+   * Use `"loader"` for the placeholder expression shown while the content resolves.
+   * Pass `"delay"` (ms) to add an artificial delay before resolving.
+   *
+   * @example
+   * { "defer": { "file": "components/chart.json" }, "loader": { "tag": "div", "class": "skeleton" } }
+   */
+  defer(def: Record<string, unknown>, context: Context): NodeValue {
     const id = `__jexs_defer_${++deferIdCounter}`;
+    const loaderExpr = def.loader !== undefined ? def.loader : null;
 
-    // Resolve loader content to HTML (lightweight, ok to do eagerly)
-    let loaderHtml = "";
-    if (def.loader !== undefined) {
-      const loaderResult = await resolve(def.loader, context);
-      loaderHtml = loaderResult != null ? String(loaderResult) : "";
-    }
+    return resolve(loaderExpr, context, loaderResult => {
+      const loaderHtml = loaderResult != null ? String(loaderResult) : "";
+      const deferredContext = { ...context };
+      const delayMs = typeof def.delay === "number" ? def.delay : 0;
 
-    // Clone context for deferred work to avoid mutation issues
-    const deferredContext = { ...context };
+      const expr = def.defer;
+      const promise = delayMs > 0
+        ? new Promise<unknown>((r) => setTimeout(r, delayMs)).then(() => resolve(expr, deferredContext))
+        : Promise.resolve(resolve(expr, deferredContext));
 
-    // Optional delay for testing/throttling
-    const delayMs = typeof def.delay === "number" ? def.delay : 0;
+      if (!Array.isArray(context._deferred)) {
+        context._deferred = [];
+      }
+      (context._deferred as { id: string; promise: Promise<unknown> }[]).push({
+        id,
+        promise: promise as Promise<unknown>,
+      });
 
-    // Start deferred resolution of the expression (don't await)
-    const expr = def.defer;
-    const promise = delayMs > 0
-      ? new Promise<unknown>((r) => setTimeout(r, delayMs)).then(() => resolve(expr, deferredContext))
-      : resolve(expr, deferredContext);
-
-    // Store in context for Server to pick up
-    if (!Array.isArray(context._deferred)) {
-      context._deferred = [];
-    }
-    (context._deferred as { id: string; promise: Promise<unknown> }[]).push({
-      id,
-      promise: promise as Promise<unknown>,
+      return `<div id="${id}">${loaderHtml}</div>`;
     });
-
-    // Return placeholder with loader
-    return `<div id="${id}">${loaderHtml}</div>`;
   }
 }

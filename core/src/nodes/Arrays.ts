@@ -2,340 +2,338 @@ import { Node, Context } from "./Node.js";
 import { resolve } from "../Resolver.js";
 import { getNestedValue } from "../helpers.js";
 
-/**
- * Handles array/collection operations.
- *
- * Supported operations:
- * - { "first": array }                          -> first element
- * - { "last": array }                           -> last element
- * - { "count": array }                          -> length
- * - { "keys": object }                          -> array of keys
- * - { "values": object }                        -> array of values
- * - { "reverse": array }                        -> reversed array
- * - { "unique": array }                         -> deduplicated array
- * - { "flatten": array }                        -> flattened array
- * - { "sort": array }                           -> sorted array (ascending)
- * - { "sortDesc": array }                       -> sorted array (descending)
- * - { "sortBy": [array, "key"] }                -> sort by object key
- * - { "pluck": [array, "key"] }                 -> extract key from each object
- * - { "slice": [array, start, end] }            -> slice array
- * - { "push": [array, item] }                   -> add to end
- * - { "unshift": [array, item] }                -> add to start
- * - { "merge": [array1, array2] }               -> combine arrays
- * - { "filter": [array, condition] }            -> filter with condition
- * - { "find": [array, condition] }              -> find first match
- * - { "map": [array, transform] }               -> transform each item
- * - { "reduce": [array, reducer, initial] }     -> reduce to single value
- * - { "groupBy": [array, "key"] }               -> group by key
- * - { "includes": [array, value] }              -> array.includes(value)
- * - { "includes": [array, "key", value] }       -> array.some(item => item[key] === value)
- * - { "index": [array, index] }                 -> get item at index
- * - { "range": [start, end, step?] }            -> generate number range
- * - { "entries": object }                        -> array of { key, value } pairs
- */
 export class ArrayNode extends Node {
-  async first(def: Record<string, unknown>, context: Context): Promise<unknown> {
-    const arr = this.toArray(await resolve(def.first, context));
-    return arr[0];
+  /** Returns the first element of an array. @example { "first": { "var": "$items" } } */
+  first(def: Record<string, unknown>, c: Context) {
+    return resolve(def.first, c, v => this.toArray(v)[0]);
   }
 
-  async last(def: Record<string, unknown>, context: Context): Promise<unknown> {
-    const arr = this.toArray(await resolve(def.last, context));
-    return arr[arr.length - 1];
+  /** Returns the last element of an array. @example { "last": { "var": "$items" } } */
+  last(def: Record<string, unknown>, c: Context) {
+    return resolve(def.last, c, v => { const a = this.toArray(v); return a[a.length - 1]; });
   }
 
-  async count(def: Record<string, unknown>, context: Context): Promise<number> {
-    const value = await resolve(def.count, context);
-    if (Array.isArray(value)) return value.length;
-    if (this.isObject(value)) return Object.keys(value).length;
-    if (typeof value === "string") return value.length;
-    return 0;
+  /** Returns the length of an array, object (key count), or string. @example { "count": { "var": "$items" } } */
+  count(def: Record<string, unknown>, c: Context) {
+    return resolve(def.count, c, value => {
+      if (Array.isArray(value)) return value.length;
+      if (this.isObject(value)) return Object.keys(value).length;
+      if (typeof value === "string") return value.length;
+      return 0;
+    });
   }
 
-  async keys(def: Record<string, unknown>, context: Context): Promise<string[]> {
-    const value = await resolve(def.keys, context);
-    if (this.isObject(value)) return Object.keys(value);
-    if (Array.isArray(value)) return value.map((_, i) => String(i));
-    return [];
+  /** Returns the keys of an object, or string indices of an array. @example { "keys": { "var": "$obj" } } */
+  keys(def: Record<string, unknown>, c: Context) {
+    return resolve(def.keys, c, value => {
+      if (this.isObject(value)) return Object.keys(value);
+      if (Array.isArray(value)) return value.map((_, i) => String(i));
+      return [];
+    });
   }
 
-  async values(def: Record<string, unknown>, context: Context): Promise<unknown[]> {
-    const value = await resolve(def.values, context);
-    if (this.isObject(value)) return Object.values(value);
-    if (Array.isArray(value)) return value;
-    return [];
+  /** Returns the values of an object as an array. @example { "values": { "var": "$obj" } } */
+  values(def: Record<string, unknown>, c: Context) {
+    return resolve(def.values, c, value => {
+      if (this.isObject(value)) return Object.values(value);
+      if (Array.isArray(value)) return value;
+      return [];
+    });
   }
 
-  async reverse(def: Record<string, unknown>, context: Context): Promise<unknown[]> {
-    const arr = this.toArray(await resolve(def.reverse, context));
-    return [...arr].reverse();
+  /** Returns a new array with elements in reverse order. @example { "reverse": { "var": "$items" } } */
+  reverse(def: Record<string, unknown>, c: Context) {
+    return resolve(def.reverse, c, v => [...this.toArray(v)].reverse());
   }
 
-  async unique(def: Record<string, unknown>, context: Context): Promise<unknown[]> {
-    const arr = this.toArray(await resolve(def.unique, context));
-    return [...new Set(arr)];
+  /** Removes duplicate values using strict equality. @example { "unique": [1, 2, 2, 3] } */
+  unique(def: Record<string, unknown>, c: Context) {
+    return resolve(def.unique, c, v => [...new Set(this.toArray(v))]);
   }
 
-  async flatten(def: Record<string, unknown>, context: Context): Promise<unknown[]> {
-    const arr = this.toArray(await resolve(def.flatten, context));
-    return arr.flat(Infinity);
+  /** Recursively flattens a nested array. @example { "flatten": [[1, [2, [3]]]] } */
+  flatten(def: Record<string, unknown>, c: Context) {
+    return resolve(def.flatten, c, v => this.toArray(v).flat(Infinity));
   }
 
-  async sort(def: Record<string, unknown>, context: Context): Promise<unknown[]> {
-    return doSort(await resolve(def.sort, context), false);
+  /** Sorts an array ascending (numbers numerically, strings lexicographically). @example { "sort": [3, 1, 2] } */
+  sort(def: Record<string, unknown>, c: Context) {
+    return resolve(def.sort, c, v => doSort(v, false));
   }
 
-  async sortDesc(def: Record<string, unknown>, context: Context): Promise<unknown[]> {
-    return doSort(await resolve(def.sortDesc, context), true);
+  /** Sorts an array descending. @example { "sortDesc": [3, 1, 2] } */
+  sortDesc(def: Record<string, unknown>, c: Context) {
+    return resolve(def.sortDesc, c, v => doSort(v, true));
   }
 
-  async sortBy(def: Record<string, unknown>, context: Context): Promise<unknown[]> {
-    const args = this.toArray(def.sortBy);
-    const arr = this.toArray(await resolve(args[0], context));
-    const key = this.toString(await resolve(args[1], context));
-    const direction =
-      args.length > 2 && (await resolve(args[2], context)) === "desc" ? -1 : 1;
+  /**
+   * Sorts an array of objects by a key: `[arr, key, direction?]`. Direction is `"asc"` (default) or `"desc"`.
+   *
+   * @example
+   * { "sortBy": [{ "var": "$users" }, "name", "desc"] }
+   */
+  sortBy(def: Record<string, unknown>, c: Context) {
+    return resolve(def.sortBy, c, args => {
+      const a = this.toArray(args);
+      const arr = this.toArray(a[0]);
+      const key = this.toString(a[1]);
+      const direction = a.length > 2 && a[2] === "desc" ? -1 : 1;
+      return [...arr].sort((x, y) => {
+        const xVal = this.isObject(x) ? (x as Record<string, unknown>)[key] : undefined;
+        const yVal = this.isObject(y) ? (y as Record<string, unknown>)[key] : undefined;
+        if (typeof xVal === "number" && typeof yVal === "number") return (xVal - yVal) * direction;
+        return this.toString(xVal).localeCompare(this.toString(yVal)) * direction;
+      });
+    });
+  }
 
-    return [...arr].sort((a, b) => {
-      const aVal = this.isObject(a) ? a[key] : undefined;
-      const bVal = this.isObject(b) ? b[key] : undefined;
+  /** Extracts the value of a key from each object in an array: `[arr, key]`. @example { "pluck": [{ "var": "$users" }, "name"] } */
+  pluck(def: Record<string, unknown>, c: Context) {
+    return resolve(def.pluck, c, args => {
+      const a = this.toArray(args);
+      const arr = this.toArray(a[0]);
+      const key = this.toString(a[1]);
+      return arr.map(item => this.isObject(item) ? getNestedValue(item, key) : undefined);
+    });
+  }
 
-      if (typeof aVal === "number" && typeof bVal === "number") {
-        return (aVal - bVal) * direction;
+  /** Returns a portion of an array: `[arr, start, end?]`. @example { "slice": [{ "var": "$items" }, 0, 5] } */
+  slice(def: Record<string, unknown>, c: Context) {
+    return resolve(def.slice, c, args => {
+      const a = this.toArray(args);
+      const arr = this.toArray(a[0]);
+      const start = this.toNumber(a[1]);
+      const end = a.length > 2 ? this.toNumber(a[2]) : undefined;
+      return arr.slice(start, end);
+    });
+  }
+
+  /** Returns a new array with an item appended: `[arr, item]`. @example { "push": [{ "var": "$items" }, "new"] } */
+  push(def: Record<string, unknown>, c: Context) {
+    return resolve(def.push, c, args => {
+      const a = this.toArray(args);
+      return [...this.toArray(a[0]), a.length > 1 ? a[1] : undefined];
+    });
+  }
+
+  /** Returns a new array with an item prepended: `[arr, item]`. @example { "unshift": [{ "var": "$items" }, "first"] } */
+  unshift(def: Record<string, unknown>, c: Context) {
+    return resolve(def.unshift, c, args => {
+      const a = this.toArray(args);
+      return [a.length > 1 ? a[1] : undefined, ...this.toArray(a[0])];
+    });
+  }
+
+  /**
+   * Merges multiple arrays (concatenation) or multiple objects (shallow merge).
+   *
+   * @example
+   * { "merge": [{ "a": 1 }, { "b": 2 }] }
+   */
+  merge(def: Record<string, unknown>, c: Context) {
+    return resolve(def.merge, c, args => {
+      const resolved = this.toArray(args);
+      if (resolved.length > 0 && resolved.every(r => this.isObject(r) && !Array.isArray(r))) {
+        const result: Record<string, unknown> = {};
+        for (const obj of resolved) Object.assign(result, obj as Record<string, unknown>);
+        return result;
       }
-      return this.toString(aVal).localeCompare(this.toString(bVal)) * direction;
+      return resolved.reduce((acc: unknown[], r) => [...acc, ...this.toArray(r)], []);
     });
   }
 
-  async pluck(def: Record<string, unknown>, context: Context): Promise<unknown[]> {
-    const args = this.toArray(def.pluck);
-    const arr = this.toArray(await resolve(args[0], context));
-    const key = this.toString(await resolve(args[1], context));
-
-    return arr.map((item) => {
-      if (this.isObject(item)) return getNestedValue(item, key);
-      return undefined;
-    });
-  }
-
-  async slice(def: Record<string, unknown>, context: Context): Promise<unknown[]> {
-    const args = this.toArray(def.slice);
-    const arr = this.toArray(await resolve(args[0], context));
-    const start = this.toNumber(await resolve(args[1], context));
-    const end =
-      args.length > 2
-        ? this.toNumber(await resolve(args[2], context))
-        : undefined;
-    return arr.slice(start, end);
-  }
-
-  async push(def: Record<string, unknown>, context: Context): Promise<unknown[]> {
-    const args = this.toArray(def.push);
-    const arr = this.toArray(await resolve(args[0], context));
-    const item = args.length > 1 ? await resolve(args[1], context) : undefined;
-    return [...arr, item];
-  }
-
-  async unshift(def: Record<string, unknown>, context: Context): Promise<unknown[]> {
-    const args = this.toArray(def.unshift);
-    const arr = this.toArray(await resolve(args[0], context));
-    const item = args.length > 1 ? await resolve(args[1], context) : undefined;
-    return [item, ...arr];
-  }
-
-  async merge(def: Record<string, unknown>, context: Context): Promise<unknown> {
-    const args = this.toArray(def.merge);
-    const resolved: unknown[] = [];
-    for (const arg of args) resolved.push(await resolve(arg, context));
-    // Object merge: if all args are plain objects, spread-merge them
-    if (resolved.length > 0 && resolved.every(r => this.isObject(r) && !Array.isArray(r))) {
-      let result: Record<string, unknown> = {};
-      for (const obj of resolved) result = { ...result, ...(obj as Record<string, unknown>) };
-      return result;
-    }
-    // Array merge: concatenate arrays
-    const result: unknown[] = [];
-    for (const r of resolved) {
-      const arr = this.toArray(r);
-      result.push(...arr);
-    }
-    return result;
-  }
-
-  async filter(def: Record<string, unknown>, context: Context): Promise<unknown[]> {
+  /**
+   * Returns items for which the condition expression is truthy: `[arr, condition]`.
+   * Each iteration exposes `item`, `index`, and `loop` in context.
+   *
+   * @example
+   * { "filter": [{ "var": "$nums" }, { "gt": [{ "var": "item" }, 2] }] }
+   */
+  filter(def: Record<string, unknown>, context: Context) {
     const args = this.toArray(def.filter);
-    const arr = this.toArray(await resolve(args[0], context));
-    const condition = args[1];
-
-    const results: unknown[] = [];
-    for (let i = 0; i < arr.length; i++) {
-      const item = arr[i];
-      const itemContext: Context = {
-        ...context,
-        item,
-        index: i,
-        loop: {
-          item,
-          index: i,
-          key: i,
-          first: i === 0,
-          last: i === arr.length - 1,
-          length: arr.length,
-        },
-      };
-      if (this.toBoolean(await resolve(condition, itemContext))) {
-        results.push(item);
+    return resolve(args[0], context, arr => {
+      const items = this.toArray(arr);
+      const condition = args[1];
+      const results: unknown[] = [];
+      let i = 0;
+      const self = this;
+      function next(): unknown {
+        if (i >= items.length) return results;
+        const idx = i++;
+        const item = items[idx];
+        const itemCtx: Context = {
+          ...context, item, index: idx,
+          loop: { item, index: idx, key: idx, first: idx === 0, last: idx === items.length - 1, length: items.length },
+        };
+        return resolve(condition, itemCtx, v => {
+          if (self.toBoolean(v)) results.push(item);
+          return next();
+        });
       }
-    }
-    return results;
+      return next();
+    });
   }
 
-  async find(def: Record<string, unknown>, context: Context): Promise<unknown> {
+  /**
+   * Returns the first item for which the condition is truthy: `[arr, condition]`.
+   * Each iteration exposes `item`, `index`, and `loop` in context.
+   *
+   * @example
+   * { "find": [{ "var": "$users" }, { "eq": [{ "var": "item.role" }, "admin"] }] }
+   */
+  find(def: Record<string, unknown>, context: Context) {
     const args = this.toArray(def.find);
-    const arr = this.toArray(await resolve(args[0], context));
-    const condition = args[1];
-
-    for (let i = 0; i < arr.length; i++) {
-      const item = arr[i];
-      const itemContext: Context = {
-        ...context,
-        item,
-        index: i,
-        loop: {
-          item,
-          index: i,
-          key: i,
-          first: i === 0,
-          last: i === arr.length - 1,
-          length: arr.length,
-        },
-      };
-      if (this.toBoolean(await resolve(condition, itemContext))) {
-        return item;
+    return resolve(args[0], context, arr => {
+      const items = this.toArray(arr);
+      const condition = args[1];
+      let i = 0;
+      const self = this;
+      function next(): unknown {
+        if (i >= items.length) return undefined;
+        const idx = i++;
+        const item = items[idx];
+        const itemCtx: Context = {
+          ...context, item, index: idx,
+          loop: { item, index: idx, key: idx, first: idx === 0, last: idx === items.length - 1, length: items.length },
+        };
+        return resolve(condition, itemCtx, v => {
+          if (self.toBoolean(v)) return item;
+          return next();
+        });
       }
-    }
-    return undefined;
+      return next();
+    });
   }
 
-  async map(def: Record<string, unknown>, context: Context): Promise<unknown[]> {
+  /**
+   * Transforms each item by resolving a template: `[arr, template]`.
+   * Each iteration exposes `item`, `index`, and `loop` in context.
+   *
+   * @example
+   * { "map": [{ "var": "$nums" }, { "multiply": [{ "var": "item" }, 2] }] }
+   */
+  map(def: Record<string, unknown>, context: Context) {
     const args = this.toArray(def.map);
-    const arr = this.toArray(await resolve(args[0], context));
-    const transform = args[1];
-
-    const results: unknown[] = [];
-    for (let i = 0; i < arr.length; i++) {
-      const item = arr[i];
-      const itemContext: Context = {
-        ...context,
-        item,
-        index: i,
-        loop: {
-          item,
-          index: i,
-          key: i,
-          first: i === 0,
-          last: i === arr.length - 1,
-          length: arr.length,
-        },
-      };
-      results.push(await resolve(transform, itemContext));
-    }
-    return results;
+    return resolve(args[0], context, arr => {
+      const items = this.toArray(arr);
+      const transform = args[1];
+      const results: unknown[] = [];
+      let i = 0;
+      function next(): unknown {
+        if (i >= items.length) return results;
+        const idx = i++;
+        const item = items[idx];
+        const itemCtx: Context = {
+          ...context, item, index: idx,
+          loop: { item, index: idx, key: idx, first: idx === 0, last: idx === items.length - 1, length: items.length },
+        };
+        return resolve(transform, itemCtx, v => { results.push(v); return next(); });
+      }
+      return next();
+    });
   }
 
-  async reduce(def: Record<string, unknown>, context: Context): Promise<unknown> {
+  /**
+   * Reduces an array to a single value: `[arr, reducer, initial]`.
+   * Each iteration exposes `item`, `index`, `accumulator`, and `loop` in context.
+   *
+   * @example
+   * { "reduce": [{ "var": "$nums" }, { "add": [{ "var": "accumulator" }, { "var": "item" }] }, 0] }
+   */
+  reduce(def: Record<string, unknown>, context: Context) {
     const args = this.toArray(def.reduce);
-    const arr = this.toArray(await resolve(args[0], context));
-    const reducer = args[1];
-    let accumulator =
-      args.length > 2 ? await resolve(args[2], context) : undefined;
-
-    for (let i = 0; i < arr.length; i++) {
-      const item = arr[i];
-      const itemContext: Context = {
-        ...context,
-        item,
-        index: i,
-        accumulator,
-        loop: {
-          item,
-          index: i,
-          key: i,
-          first: i === 0,
-          last: i === arr.length - 1,
-          length: arr.length,
-        },
-      };
-      accumulator = await resolve(reducer, itemContext);
-    }
-
-    return accumulator;
+    return resolve(args[0], context, arr => {
+      const items = this.toArray(arr);
+      const reducer = args[1];
+      return resolve(args.length > 2 ? args[2] : undefined, context, initial => {
+        let accumulator: unknown = initial;
+        let i = 0;
+        function next(): unknown {
+          if (i >= items.length) return accumulator;
+          const idx = i++;
+          const item = items[idx];
+          const itemCtx: Context = {
+            ...context, item, index: idx, accumulator,
+            loop: { item, index: idx, key: idx, first: idx === 0, last: idx === items.length - 1, length: items.length },
+          };
+          return resolve(reducer, itemCtx, v => { accumulator = v; return next(); });
+        }
+        return next();
+      });
+    });
   }
 
-  async groupBy(def: Record<string, unknown>, context: Context): Promise<Record<string, unknown[]>> {
-    const args = this.toArray(def.groupBy);
-    const arr = this.toArray(await resolve(args[0], context));
-    const key = this.toString(await resolve(args[1], context));
-
-    const result: Record<string, unknown[]> = {};
-    for (const item of arr) {
-      const groupKey = this.isObject(item)
-        ? this.toString(getNestedValue(item, key))
-        : "";
-      if (!result[groupKey]) result[groupKey] = [];
-      result[groupKey].push(item);
-    }
-    return result;
+  /** Groups an array of objects by a key: `[arr, key]`. Returns an object keyed by group values. @example { "groupBy": [{ "var": "$users" }, "role"] } */
+  groupBy(def: Record<string, unknown>, c: Context) {
+    return resolve(def.groupBy, c, args => {
+      const a = this.toArray(args);
+      const arr = this.toArray(a[0]);
+      const key = this.toString(a[1]);
+      const result: Record<string, unknown[]> = {};
+      for (const item of arr) {
+        const groupKey = this.isObject(item) ? this.toString(getNestedValue(item, key)) : "";
+        if (!result[groupKey]) result[groupKey] = [];
+        result[groupKey].push(item);
+      }
+      return result;
+    });
   }
 
-  async includes(def: Record<string, unknown>, context: Context): Promise<boolean> {
-    const args = this.toArray(def.includes);
-    const arr = this.toArray(await resolve(args[0], context));
-    if (args.length >= 3) {
-      const key = this.toString(await resolve(args[1], context));
-      const value = await resolve(args[2], context);
-      return arr.some(
-        (item) => this.isObject(item) && (item as Record<string, unknown>)[key] === value,
-      );
-    }
-    const value = await resolve(args[1], context);
-    return arr.includes(value);
+  /**
+   * Checks if an array contains a value: `[arr, value]`.
+   * With three arguments `[arr, key, value]`, checks if any object in the array has that key-value pair.
+   *
+   * @example
+   * { "includes": [{ "var": "$roles" }, "admin"] }
+   */
+  includes(def: Record<string, unknown>, c: Context) {
+    return resolve(def.includes, c, args => {
+      const a = this.toArray(args);
+      const arr = this.toArray(a[0]);
+      if (a.length >= 3) {
+        const key = this.toString(a[1]);
+        const value = a[2];
+        return arr.some(item => this.isObject(item) && (item as Record<string, unknown>)[key] === value);
+      }
+      return arr.includes(a[1]);
+    });
   }
 
-  async index(def: Record<string, unknown>, context: Context): Promise<unknown> {
-    const args = this.toArray(def.index);
-    const arr = this.toArray(await resolve(args[0], context));
-    const index = this.toNumber(await resolve(args[1], context));
-    return arr[index];
+  /** Returns the element at a given index: `[arr, index]`. @example { "index": [{ "var": "$items" }, 2] } */
+  index(def: Record<string, unknown>, c: Context) {
+    return resolve(def.index, c, args => {
+      const a = this.toArray(args);
+      return this.toArray(a[0])[this.toNumber(a[1])];
+    });
   }
 
-  async range(def: Record<string, unknown>, context: Context): Promise<number[]> {
-    const args = this.toArray(def.range);
-    const start = this.toNumber(await resolve(args[0], context));
-    const end = this.toNumber(await resolve(args[1], context));
-    const step =
-      args.length > 2 ? this.toNumber(await resolve(args[2], context)) : 1;
-
-    if (step === 0) return [];
-
-    const result: number[] = [];
-    if (step > 0) {
-      for (let i = start; i <= end; i += step) result.push(i);
-    } else {
-      for (let i = start; i >= end; i += step) result.push(i);
-    }
-    return result;
+  /**
+   * Generates a numeric sequence: `[start, end, step?]`. Inclusive on both ends.
+   *
+   * @example
+   * { "range": [1, 5] }
+   */
+  range(def: Record<string, unknown>, c: Context) {
+    return resolve(def.range, c, args => {
+      const a = this.toArray(args);
+      const start = this.toNumber(a[0]);
+      const end = this.toNumber(a[1]);
+      const step = a.length > 2 ? this.toNumber(a[2]) : 1;
+      if (step === 0) return [];
+      const result: number[] = [];
+      if (step > 0) { for (let i = start; i <= end; i += step) result.push(i); }
+      else { for (let i = start; i >= end; i += step) result.push(i); }
+      return result;
+    });
   }
 
-  async entries(def: Record<string, unknown>, context: Context): Promise<Array<{ key: string; value: unknown }>> {
-    const value = await resolve(def.entries, context);
-    if (this.isObject(value)) {
-      return Object.entries(value).map(([key, val]) => ({ key, value: val }));
-    }
-    if (Array.isArray(value)) {
-      return value.map((val, i) => ({ key: String(i), value: val }));
-    }
-    return [];
+  /** Returns `[{ key, value }]` pairs from an object or array. @example { "entries": { "var": "$obj" } } */
+  entries(def: Record<string, unknown>, c: Context) {
+    return resolve(def.entries, c, value => {
+      if (this.isObject(value)) return Object.entries(value).map(([key, val]) => ({ key, value: val }));
+      if (Array.isArray(value)) return value.map((val, i) => ({ key: String(i), value: val }));
+      return [];
+    });
   }
 }
 

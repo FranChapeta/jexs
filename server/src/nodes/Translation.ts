@@ -11,18 +11,23 @@ import { sha256 } from "./Crypto.js";
  * Sets context._translate so the resolver auto-translates strings.
  */
 export class TranslationNode extends Node {
-  async translate(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const config = await resolve(def.translate, context);
-
-    if (config && typeof config === "object") {
-      const c = config as Record<string, unknown>;
-      (context as Record<string, unknown>)._translate = {
-        to: c.to ? String(c.to) : undefined,
-        table: c.table ? String(c.table) : "translations",
-      };
-    }
-
-    return null;
+  /**
+   * Configures automatic string translation for the current request.
+   * Sets `context._translate` so the resolver auto-translates strings via a DB lookup table.
+   *
+   * @example
+   * { "translate": { "to": { "var": "$session.lang" }, "table": "translations" } }
+   */
+  translate(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.translate, context, config => {
+      if (this.isObject(config)) {
+        (context as Record<string, unknown>)._translate = {
+          to: config.to ? String(config.to) : undefined,
+          table: config.table ? String(config.table) : "translations",
+        };
+      }
+      return null;
+    });
   }
 
   static async translateText(text: string, context: Context): Promise<string> {

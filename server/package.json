@@ -1,6 +1,6 @@
 {
   "name": "@jexs/server",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -9,7 +9,7 @@
   },
   "files": ["dist"],
   "peerDependencies": {
-    "@jexs/core": "^0.5.0"
+    "@jexs/core": "^0.6.0"
   },
   "dependencies": {
     "bcrypt": "^5.1.0",

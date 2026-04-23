@@ -3,7 +3,7 @@ export { Node, type Context, type NodeValue } from "./nodes/Node.js";
 
 // ── Resolver ──
 export {
-  createResolver, resolve, registerNode, registerLazy,
+  createResolver, resolve, resolveAll, resolveObj, registerNode, registerLazy,
   type ResolverFn,
 } from "./Resolver.js";
 

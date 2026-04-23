@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, resolve, runSteps } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll, runSteps } from "@jexs/core";
 import crypto from "node:crypto";
 import WebSocket from "ws";
 
@@ -30,30 +30,38 @@ const meta: WeakMap<WebSocket, Record<string, unknown>> = new WeakMap();
  * - { "ws": "count", "room": "name" }
  */
 export class WebSocketNode extends Node {
-  async ws(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const operation = await resolve(def.ws, context);
-
-    switch (operation) {
-      case "send":
-        return doSend(def, context);
-      case "send-to":
-        return doSendTo(def, context);
-      case "broadcast":
-        return doBroadcast(def, context);
-      case "join":
-        return doJoin(def, context);
-      case "leave":
-        return doLeave(def, context);
-      case "close":
-        return doClose(def, context);
-      case "count":
-        return doCount(def, context);
-      case "list":
-        return doList(def, context);
-      default:
-        console.error(`[WebSocket] Unknown operation: ${operation}`);
-        return null;
-    }
+  /**
+   * Server-side WebSocket operations. Operations: `"send"`, `"send-to"`, `"broadcast"`,
+   * `"join"`, `"leave"`, `"close"`, `"count"`, `"list"`.
+   * `"broadcast"` without `"room"` sends to all connections on the same route path.
+   *
+   * @example
+   * { "ws": "broadcast", "data": { "type": "update", "payload": { "var": "$data" } }, "room": "general" }
+   */
+  ws(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.ws, context, operation => {
+      switch (String(operation)) {
+        case "send":
+          return doSend(def, context);
+        case "send-to":
+          return doSendTo(def, context);
+        case "broadcast":
+          return doBroadcast(def, context);
+        case "join":
+          return doJoin(def, context);
+        case "leave":
+          return doLeave(def, context);
+        case "close":
+          return doClose(def, context);
+        case "count":
+          return doCount(def, context);
+        case "list":
+          return doList(def, context);
+        default:
+          console.error(`[WebSocket] Unknown operation: ${operation}`);
+          return null;
+      }
+    });
   }
 
   /**
@@ -172,105 +180,107 @@ export class WebSocketNode extends Node {
   }
 }
 
-async function doSend(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  const data = await resolve(def.data, context);
-  const ws = context._ws as WebSocket;
-  if (!ws || ws.readyState !== WebSocket.OPEN) return null;
-  ws.send(typeof data === "string" ? data : JSON.stringify(data));
-  return null;
+function doSend(def: Record<string, unknown>, context: Context): NodeValue {
+  return resolve(def.data, context, data => {
+    const ws = context._ws as WebSocket;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return null;
+    ws.send(typeof data === "string" ? data : JSON.stringify(data));
+    return null;
+  });
 }
 
-async function doSendTo(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  const id = String(await resolve(def.id, context));
-  const data = await resolve(def.data, context);
-  const target = ids.get(id);
-  if (!target || target.readyState !== WebSocket.OPEN) return null;
-  target.send(typeof data === "string" ? data : JSON.stringify(data));
-  return null;
+function doSendTo(def: Record<string, unknown>, context: Context): NodeValue {
+  return resolveAll([def.id, def.data], context, ([idRaw, data]) => {
+    const target = ids.get(String(idRaw));
+    if (!target || target.readyState !== WebSocket.OPEN) return null;
+    target.send(typeof data === "string" ? data : JSON.stringify(data));
+    return null;
+  });
 }
 
-async function doBroadcast(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  const data = await resolve(def.data, context);
-  const payload = typeof data === "string" ? data : JSON.stringify(data);
-  const currentWs = context._ws as WebSocket;
+function doBroadcast(def: Record<string, unknown>, context: Context): NodeValue {
+  return resolveAll([def.data, def.room ?? null], context, ([data, roomRaw]) => {
+    const payload = typeof data === "string" ? data : JSON.stringify(data);
+    const currentWs = context._ws as WebSocket;
 
-  if (def.room) {
-    const room = String(await resolve(def.room, context));
+    if (def.room && roomRaw != null) {
+      const room = String(roomRaw);
+      const roomClients = rooms.get(room);
+      if (roomClients) {
+        for (const client of roomClients) {
+          if (client !== currentWs && client.readyState === WebSocket.OPEN) {
+            client.send(payload);
+          }
+        }
+      }
+    } else {
+      const wsPath = context._wsPath as string;
+      const pathClients = paths.get(wsPath);
+      if (pathClients) {
+        for (const client of pathClients) {
+          if (client !== currentWs && client.readyState === WebSocket.OPEN) {
+            client.send(payload);
+          }
+        }
+      }
+    }
+    return null;
+  });
+}
+
+function doJoin(def: Record<string, unknown>, context: Context): NodeValue {
+  return resolve(def.room, context, roomRaw => {
+    const room = String(roomRaw);
+    const ws = context._ws as WebSocket;
+    if (!ws) return null;
+    if (!rooms.has(room)) rooms.set(room, new Set());
+    rooms.get(room)!.add(ws);
+    clients.get(ws)?.add(room);
+    return null;
+  });
+}
+
+function doLeave(def: Record<string, unknown>, context: Context): NodeValue {
+  return resolve(def.room, context, roomRaw => {
+    const room = String(roomRaw);
+    const ws = context._ws as WebSocket;
+    if (!ws) return null;
+    rooms.get(room)?.delete(ws);
+    if (rooms.get(room)?.size === 0) rooms.delete(room);
+    clients.get(ws)?.delete(room);
+    return null;
+  });
+}
+
+function doClose(def: Record<string, unknown>, context: Context): NodeValue {
+  return resolveAll([def.code ?? null, def.reason ?? null], context, ([codeRaw, reasonRaw]) => {
+    const ws = context._ws as WebSocket;
+    if (!ws) return null;
+    const code = def.code ? Number(codeRaw) : 1000;
+    const reason = def.reason ? String(reasonRaw) : "";
+    ws.close(code, reason);
+    return null;
+  });
+}
+
+function doCount(def: Record<string, unknown>, context: Context): NodeValue {
+  if (!def.room) {
+    const wsPath = context._wsPath as string;
+    return paths.get(wsPath)?.size ?? 0;
+  }
+  return resolve(def.room, context, roomRaw => rooms.get(String(roomRaw))?.size ?? 0);
+}
+
+function doList(def: Record<string, unknown>, context: Context): NodeValue {
+  return resolve(def.room, context, roomRaw => {
+    const room = String(roomRaw);
     const roomClients = rooms.get(room);
-    if (roomClients) {
-      for (const client of roomClients) {
-        if (client !== currentWs && client.readyState === WebSocket.OPEN) {
-          client.send(payload);
-        }
-      }
+    if (!roomClients) return [];
+    const result: Record<string, unknown>[] = [];
+    for (const ws of roomClients) {
+      const id = wsToId.get(ws);
+      if (id) result.push({ id, ...meta.get(ws) });
     }
-  } else {
-    const path = context._wsPath as string;
-    const pathClients = paths.get(path);
-    if (pathClients) {
-      for (const client of pathClients) {
-        if (client !== currentWs && client.readyState === WebSocket.OPEN) {
-          client.send(payload);
-        }
-      }
-    }
-  }
-  return null;
+    return result;
+  });
 }
-
-async function doJoin(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  const room = String(await resolve(def.room, context));
-  const ws = context._ws as WebSocket;
-  if (!ws) return null;
-
-  if (!rooms.has(room)) {
-    rooms.set(room, new Set());
-  }
-  rooms.get(room)!.add(ws);
-  clients.get(ws)?.add(room);
-  return null;
-}
-
-async function doLeave(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  const room = String(await resolve(def.room, context));
-  const ws = context._ws as WebSocket;
-  if (!ws) return null;
-
-  rooms.get(room)?.delete(ws);
-  if (rooms.get(room)?.size === 0) {
-    rooms.delete(room);
-  }
-  clients.get(ws)?.delete(room);
-  return null;
-}
-
-async function doClose(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  const ws = context._ws as WebSocket;
-  if (!ws) return null;
-  const code = def.code ? Number(await resolve(def.code, context)) : 1000;
-  const reason = def.reason ? String(await resolve(def.reason, context)) : "";
-  ws.close(code, reason);
-  return null;
-}
-
-async function doCount(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  if (def.room) {
-    const room = String(await resolve(def.room, context));
-    return rooms.get(room)?.size ?? 0;
-  }
-  const path = context._wsPath as string;
-  return paths.get(path)?.size ?? 0;
-}
-
-async function doList(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  const room = String(await resolve(def.room, context));
-  const roomClients = rooms.get(room);
-  if (!roomClients) return [];
-  const result: Record<string, unknown>[] = [];
-  for (const ws of roomClients) {
-    const id = wsToId.get(ws);
-    if (id) result.push({ id, ...meta.get(ws) });
-  }
-  return result;
-}
-

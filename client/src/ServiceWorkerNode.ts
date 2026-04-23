@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, resolve } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveObj } from "@jexs/core";
 
 const CACHE = "jexs-v1";
 
@@ -13,6 +13,11 @@ const CACHE = "jexs-v1";
  *   { "open": url }         → notificationclick: focus or open a window
  */
 export class ServiceWorkerNode extends Node {
+  /**
+   * Precaches a list of URLs during the service worker install phase.
+   * @example
+   * { "cache": ["/", "/app.js", "/style.css"] }
+   */
   async cache(def: Record<string, unknown>, _context: Context): Promise<NodeValue> {
     const urls = Array.isArray(def.cache) ? (def.cache as string[]) : [];
     if (urls.length === 0) return null;
@@ -20,11 +25,19 @@ export class ServiceWorkerNode extends Node {
     return null;
   }
 
+  /** Claims all open clients during the service worker activate phase. */
   async claim(_def: Record<string, unknown>, _context: Context): Promise<NodeValue> {
     await (self as unknown as ServiceWorkerGlobalScope).clients.claim();
     return null;
   }
 
+  /**
+   * Intercepts fetch events. Strategies: `"cache-first"` (serve from cache, fall back to network),
+   * `"network-first"` (serve from network, fall back to cache with 503 offline fallback).
+   * Pass `match` to restrict to a URL prefix pattern (e.g. `"/static/*"`).
+   * @example
+   * { "strategy": "cache-first", "match": "/assets/*" }
+   */
   async strategy(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
     if (!(context.request instanceof Request)) return null;
     const request = context.request;
@@ -54,33 +67,46 @@ export class ServiceWorkerNode extends Node {
     return fetch(request);
   }
 
-  async notify(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Shows a browser notification from a push event. Pass `title` and optionally `body`, `icon`, `tag`, `data`.
+   * @example
+   * { "notify": { "title": "New message", "body": { "var": "$data.body" }, "icon": "/icon.png" } }
+   */
+  notify(def: Record<string, unknown>, context: Context): NodeValue {
     if (!def.notify || typeof def.notify !== "object" || Array.isArray(def.notify)) return null;
-    const n = def.notify as Record<string, unknown>;
-    const title = String((await resolve(n.title, context)) ?? "");
-    const opts: NotificationOptions = {};
-    if (n.body) opts.body = String((await resolve(n.body, context)) ?? "");
-    if (n.icon) opts.icon = String((await resolve(n.icon, context)) ?? "");
-    if (n.tag)  opts.tag  = String((await resolve(n.tag,  context)) ?? "");
-    if (n.data) opts.data = await resolve(n.data, context);
-    const sw = self as unknown as ServiceWorkerGlobalScope;
-    await sw.registration.showNotification(title, opts);
-    return null;
+    return resolveObj(def.notify as Record<string, unknown>, context, async r => {
+      const title = String(r.title ?? "");
+      const opts: NotificationOptions = {};
+      if (r.body) opts.body = String(r.body ?? "");
+      if (r.icon) opts.icon = String(r.icon ?? "");
+      if (r.tag)  opts.tag  = String(r.tag  ?? "");
+      if (r.data) opts.data = r.data;
+      const sw = self as unknown as ServiceWorkerGlobalScope;
+      await sw.registration.showNotification(title, opts);
+      return null;
+    });
   }
 
-  async open(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const url = String((await resolve(def.open, context)) ?? "/");
-    if (context.notification instanceof Notification) context.notification.close();
-    const sw = self as unknown as ServiceWorkerGlobalScope;
-    const windowClients = await sw.clients.matchAll({ type: "window", includeUncontrolled: true });
-    for (const client of windowClients) {
-      if ("focus" in client) {
-        await (client as WindowClient).focus();
-        if (client.url !== url) await (client as WindowClient).navigate(url);
-        return null;
+  /**
+   * Handles a `notificationclick` event: focuses an existing window or opens a new one at the given URL.
+   * @example
+   * { "open": "/" }
+   */
+  open(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.open, context, async urlRaw => {
+      const url = String(urlRaw ?? "/");
+      if (context.notification instanceof Notification) context.notification.close();
+      const sw = self as unknown as ServiceWorkerGlobalScope;
+      const windowClients = await sw.clients.matchAll({ type: "window", includeUncontrolled: true });
+      for (const client of windowClients) {
+        if ("focus" in client) {
+          await (client as WindowClient).focus();
+          if (client.url !== url) await (client as WindowClient).navigate(url);
+          return null;
+        }
       }
-    }
-    await sw.clients.openWindow(url);
-    return null;
+      await sw.clients.openWindow(url);
+      return null;
+    });
   }
 }

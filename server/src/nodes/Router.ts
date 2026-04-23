@@ -59,33 +59,40 @@ function getCachedRegex(pattern: string): RegExp {
  * then executes the handler's run steps.
  */
 export class RouterNode extends Node {
-  async routes(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    // Resolve routes value (supports file references, variables, etc.)
-    let rootNode: unknown = await resolve(def.routes, context);
+  /**
+   * Matches the incoming request path and method against a route tree, then executes the handler.
+   * Supports exact segments, `*` (single param with optional `paramName`/`paramRegex`),
+   * `**` (catch-all), conditional `"if"` guards per node, param/body validation, and WebSocket upgrade.
+   *
+   * @example
+   * { "routes": { "children": { "users": { "methods": { "GET": { "file": "pages/users.json" } } } } } }
+   */
+  routes(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.routes, context, async rootNode => {
+      if (!isObject(rootNode)) {
+        console.error("[RouterNode] Invalid routes definition");
+        return null;
+      }
 
-    if (!rootNode || typeof rootNode !== "object") {
-      console.error("[RouterNode] Invalid routes definition");
-      return null;
-    }
+      // Get request info from context
+      const method = context.request?.method?.toUpperCase() ?? "GET";
+      const path = context.request?.path ?? "/";
 
-    // Get request info from context
-    const method = context.request?.method?.toUpperCase() ?? "GET";
-    const path = context.request?.path ?? "/";
+      // Match route (conditions evaluated during traversal, params set on context)
+      const handler = await matchRoute(
+        rootNode as RouteNode,
+        path,
+        method,
+        context,
+      );
 
-    // Match route (conditions evaluated during traversal, params set on context)
-    const handler = await matchRoute(
-      rootNode as RouteNode,
-      path,
-      method,
-      context,
-    );
+      if (!handler) {
+        return { type: "notFound" };
+      }
 
-    if (!handler) {
-      return { type: "notFound" };
-    }
-
-    // Execute handler
-    return executeHandler(handler, context);
+      // Execute handler
+      return executeHandler(handler, context);
+    });
   }
 }
 
@@ -220,13 +227,9 @@ async function matchNode(
 /**
  * Returns true if the node has an "if" condition that evaluates to false.
  */
-async function checkConditionFails(
-  node: RouteNode,
-  context: Context,
-): Promise<boolean> {
+function checkConditionFails(node: RouteNode, context: Context): unknown {
   if (!node.if) return false;
-  const result = await resolve(node.if, context);
-  return !toBoolean(result);
+  return resolve(node.if, context, result => !toBoolean(result));
 }
 
 /**

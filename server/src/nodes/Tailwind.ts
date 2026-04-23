@@ -2,7 +2,7 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
-import { Node, Context, NodeValue, resolve } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll } from "@jexs/core";
 
 const execAsync = promisify(exec);
 
@@ -50,27 +50,34 @@ const STANDALONE_CLASSES = [
  * { "tailwind": "classes" }
  */
 export class TailwindNode extends Node {
-  async tailwind(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const operation = await resolve(def.tailwind, context);
-
-    switch (operation) {
-      case "extract":
-        return doExtract(def, context);
-      case "add":
-        return doAdd(def, context);
-      case "compile":
-        return doCompile();
-      case "build":
-        return doBuild(def, context);
-      case "clear":
-        classRegistry.clear();
-        return { cleared: true };
-      case "classes":
-        return [...classRegistry];
-      default:
-        console.error(`[Tailwind] Unknown operation: ${operation}`);
-        return null;
-    }
+  /**
+   * Extracts Tailwind class names from JSON templates and compiles CSS.
+   * Operations: `"extract"`, `"add"`, `"compile"`, `"build"`, `"clear"`, `"classes"`.
+   *
+   * @example
+   * { "tailwind": "build", "data": { "var": "$template" } }
+   */
+  tailwind(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.tailwind, context, operation => {
+      switch (String(operation)) {
+        case "extract":
+          return doExtract(def, context);
+        case "add":
+          return doAdd(def, context);
+        case "compile":
+          return doCompile();
+        case "build":
+          return doBuild(def, context);
+        case "clear":
+          classRegistry.clear();
+          return { cleared: true };
+        case "classes":
+          return [...classRegistry];
+        default:
+          console.error(`[Tailwind] Unknown operation: ${operation}`);
+          return null;
+      }
+    });
   }
 
   // Public static API
@@ -118,30 +125,31 @@ export class TailwindNode extends Node {
   }
 }
 
-async function doExtract(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  const data = await resolve(def.data, context);
-  if (!data) return { classes: [] };
-  return { classes: TailwindNode.extractClasses(data) };
+function doExtract(def: Record<string, unknown>, context: Context): unknown {
+  return resolve(def.data, context, data => {
+    if (!data) return { classes: [] };
+    return { classes: TailwindNode.extractClasses(data) };
+  });
 }
 
-async function doAdd(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  let classes: string[] = [];
+function doAdd(def: Record<string, unknown>, context: Context): unknown {
+  return resolveAll([def.classes ?? null, def.data ?? null], context, ([classesRaw, dataRaw]) => {
+    let classes: string[] = [];
 
-  if (def.classes) {
-    const resolved = await resolve(def.classes, context);
-    if (Array.isArray(resolved)) classes = resolved.map(String);
-  }
+    if (def.classes && Array.isArray(classesRaw)) {
+      classes = classesRaw.map(String);
+    }
 
-  if (def.data) {
-    const data = await resolve(def.data, context);
-    if (data) classes.push(...TailwindNode.extractClasses(data));
-  }
+    if (def.data && dataRaw) {
+      classes.push(...TailwindNode.extractClasses(dataRaw));
+    }
 
-  const before = classRegistry.size;
-  for (const cls of classes) classRegistry.add(cls);
-  const after = classRegistry.size;
+    const before = classRegistry.size;
+    for (const cls of classes) classRegistry.add(cls);
+    const after = classRegistry.size;
 
-  return { added: after - before, total: after };
+    return { added: after - before, total: after };
+  });
 }
 
 async function doCompile(): Promise<unknown> {
@@ -150,22 +158,19 @@ async function doCompile(): Promise<unknown> {
   return { css, classes: classes.length };
 }
 
-async function doBuild(def: Record<string, unknown>, context: Context): Promise<unknown> {
-  if (def.data) {
-    const data = await resolve(def.data, context);
-    if (data) {
-      for (const cls of TailwindNode.extractClasses(data)) {
+function doBuild(def: Record<string, unknown>, context: Context): unknown {
+  return resolveAll([def.data ?? null, def.content ?? null], context, async ([dataRaw, contentRaw]) => {
+    if (def.data && dataRaw) {
+      for (const cls of TailwindNode.extractClasses(dataRaw)) {
         classRegistry.add(cls);
       }
     }
-  }
 
-  const contentGlob = def.content
-    ? String(await resolve(def.content, context))
-    : undefined;
+    const contentGlob = def.content && contentRaw != null ? String(contentRaw) : undefined;
 
-  await TailwindNode.build([...classRegistry], contentGlob);
-  return { built: true, classes: classRegistry.size };
+    await TailwindNode.build([...classRegistry], contentGlob);
+    return { built: true, classes: classRegistry.size };
+  });
 }
 
 async function compile(classes: string[]): Promise<string> {

@@ -1,6 +1,6 @@
 {
   "name": "@jexs/mcp",
-  "version": "0.1.0",
+  "version": "0.6.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -12,11 +12,11 @@
   },
   "files": ["dist"],
   "peerDependencies": {
-    "@jexs/core": "^0.1.0",
-    "@jexs/server": "^0.1.0",
-    "@jexs/client": "^0.1.0",
-    "@jexs/physics": "^0.1.0",
-    "@jexs/gl": "^0.1.0"
+    "@jexs/core": "^0.6.0",
+    "@jexs/server": "^0.6.0",
+    "@jexs/client": "^0.6.0",
+    "@jexs/physics": "^0.6.0",
+    "@jexs/gl": "^0.6.0"
   },
   "peerDependenciesMeta": {
     "@jexs/core": { "optional": true },

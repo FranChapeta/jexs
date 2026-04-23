@@ -96,12 +96,6 @@ export function dot(a: Vec, b: Vec): number {
 /** @deprecated Use dot */
 export const dot3 = dot;
 
-// ── Resolve helper ──────────────────────────────────────────────────────
-
-async function resolveVec(value: unknown, context: Context): Promise<Vec> {
-  return toVec(await resolve(value, context));
-}
-
 // ── JSON handlers ──────────────────────────────────────────────────────
 
 /**
@@ -123,77 +117,110 @@ async function resolveVec(value: unknown, context: Context): Promise<Vec> {
  * - { "v-dot": [a, b] }               -> dot product (scalar)
  */
 export class VectorNode extends Node {
-  async ["v-distance"](def: Record<string, unknown>, context: Context): Promise<number> {
-    const args = this.toArray(def["v-distance"]);
-    if (args.length < 2) return 0;
-    return distance(await resolveVec(args[0], context), await resolveVec(args[1], context));
+  /**
+   * Returns the Euclidean distance between two vectors. Pass `[a, b]`.
+   * @example
+   * { "v-distance": [{ "var": "$a" }, { "var": "$b" }] }
+   */
+  ["v-distance"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["v-distance"], context, args => {
+      const a = this.toArray(args);
+      if (a.length < 2) return 0;
+      return distance(toVec(a[0]), toVec(a[1]));
+    });
   }
 
-  async ["v-lerp"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const args = this.toArray(def["v-lerp"]);
-    if (args.length < 3) return { x: 0, y: 0 };
-    const a = await resolveVec(args[0], context);
-    const b = await resolveVec(args[1], context);
-    return lerp(a, b, this.toNumber(await resolve(args[2], context))) as unknown as NodeValue;
+  /**
+   * Linearly interpolates between two vectors. Pass `[a, b, t]` where `t` is 0–1.
+   * @example
+   * { "v-lerp": [{ "var": "$from" }, { "var": "$to" }, 0.1] }
+   */
+  ["v-lerp"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["v-lerp"], context, args => {
+      const a = this.toArray(args);
+      if (a.length < 3) return { x: 0, y: 0 };
+      return lerp(toVec(a[0]), toVec(a[1]), this.toNumber(a[2])) as unknown as NodeValue;
+    });
   }
 
-  async ["v-toward"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const args = this.toArray(def["v-toward"]);
-    if (args.length < 3) return { x: 0, y: 0 };
-    const a = await resolveVec(args[0], context);
-    const b = await resolveVec(args[1], context);
-    return toward(a, b, this.toNumber(await resolve(args[2], context))) as unknown as NodeValue;
+  /**
+   * Moves vector `a` toward `b` by at most `maxDist`. Returns `b` if already within range. Pass `[a, b, maxDist]`.
+   * @example
+   * { "v-toward": [{ "var": "$pos" }, { "var": "$target" }, 5] }
+   */
+  ["v-toward"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["v-toward"], context, args => {
+      const a = this.toArray(args);
+      if (a.length < 3) return { x: 0, y: 0 };
+      return toward(toVec(a[0]), toVec(a[1]), this.toNumber(a[2])) as unknown as NodeValue;
+    });
   }
 
-  async ["v-normalize"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    return normalize(await resolveVec(def["v-normalize"], context)) as unknown as NodeValue;
+  /** Returns the unit vector (length 1) in the same direction. Works in 2D and 3D. */
+  ["v-normalize"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["v-normalize"], context, v => normalize(toVec(v)) as unknown as NodeValue);
   }
 
-  async ["v-scale"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const args = this.toArray(def["v-scale"]);
-    if (args.length < 2) return { x: 0, y: 0 };
-    const a = await resolveVec(args[0], context);
-    const s = this.toNumber(await resolve(args[1], context));
-    const r: Vec = { x: a.x * s, y: a.y * s };
-    if (a.z !== undefined) r.z = a.z * s;
-    return r as unknown as NodeValue;
+  /** Multiplies a vector by a scalar. Pass `[vector, scalar]`. Works in 2D and 3D. */
+  ["v-scale"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["v-scale"], context, args => {
+      const a = this.toArray(args);
+      if (a.length < 2) return { x: 0, y: 0 };
+      const v = toVec(a[0]), s = this.toNumber(a[1]);
+      const r: Vec = { x: v.x * s, y: v.y * s };
+      if (v.z !== undefined) r.z = v.z * s;
+      return r as unknown as NodeValue;
+    });
   }
 
-  async ["v-add"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const args = this.toArray(def["v-add"]);
-    if (args.length < 2) return { x: 0, y: 0 };
-    const a = await resolveVec(args[0], context);
-    const b = await resolveVec(args[1], context);
-    const r: Vec = { x: a.x + b.x, y: a.y + b.y };
-    if (has3d(a, b)) r.z = Z(a) + Z(b);
-    return r as unknown as NodeValue;
+  /** Adds two vectors component-wise. Pass `[a, b]`. Works in 2D and 3D. */
+  ["v-add"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["v-add"], context, args => {
+      const a = this.toArray(args);
+      if (a.length < 2) return { x: 0, y: 0 };
+      const va = toVec(a[0]), vb = toVec(a[1]);
+      const r: Vec = { x: va.x + vb.x, y: va.y + vb.y };
+      if (has3d(va, vb)) r.z = Z(va) + Z(vb);
+      return r as unknown as NodeValue;
+    });
   }
 
-  async ["v-sub"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const args = this.toArray(def["v-sub"]);
-    if (args.length < 2) return { x: 0, y: 0 };
-    const a = await resolveVec(args[0], context);
-    const b = await resolveVec(args[1], context);
-    const r: Vec = { x: a.x - b.x, y: a.y - b.y };
-    if (has3d(a, b)) r.z = Z(a) - Z(b);
-    return r as unknown as NodeValue;
+  /** Subtracts vector `b` from `a`. Pass `[a, b]`. Works in 2D and 3D. */
+  ["v-sub"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["v-sub"], context, args => {
+      const a = this.toArray(args);
+      if (a.length < 2) return { x: 0, y: 0 };
+      const va = toVec(a[0]), vb = toVec(a[1]);
+      const r: Vec = { x: va.x - vb.x, y: va.y - vb.y };
+      if (has3d(va, vb)) r.z = Z(va) - Z(vb);
+      return r as unknown as NodeValue;
+    });
   }
 
-  async ["v-direction"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const args = this.toArray(def["v-direction"]);
-    if (args.length < 2) return { x: 0, y: 0 };
-    return direction(await resolveVec(args[0], context), await resolveVec(args[1], context)) as unknown as NodeValue;
+  /** Returns the unit vector from `a` pointing toward `b`. Pass `[from, to]`. */
+  ["v-direction"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["v-direction"], context, args => {
+      const a = this.toArray(args);
+      if (a.length < 2) return { x: 0, y: 0 };
+      return direction(toVec(a[0]), toVec(a[1])) as unknown as NodeValue;
+    });
   }
 
-  async ["v-cross"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const args = this.toArray(def["v-cross"]);
-    if (args.length < 2) return { x: 0, y: 0, z: 0 };
-    return cross(toVec3(await resolve(args[0], context)), toVec3(await resolve(args[1], context))) as unknown as NodeValue;
+  /** Returns the cross product of two vectors as a 3D vector. Pass `[a, b]`. */
+  ["v-cross"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["v-cross"], context, args => {
+      const a = this.toArray(args);
+      if (a.length < 2) return { x: 0, y: 0, z: 0 };
+      return cross(toVec3(a[0]), toVec3(a[1])) as unknown as NodeValue;
+    });
   }
 
-  async ["v-dot"](def: Record<string, unknown>, context: Context): Promise<number> {
-    const args = this.toArray(def["v-dot"]);
-    if (args.length < 2) return 0;
-    return dot(await resolveVec(args[0], context), await resolveVec(args[1], context));
+  /** Returns the scalar dot product of two vectors. Pass `[a, b]`. Works in 2D and 3D. */
+  ["v-dot"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["v-dot"], context, args => {
+      const a = this.toArray(args);
+      if (a.length < 2) return 0;
+      return dot(toVec(a[0]), toVec(a[1]));
+    });
   }
 }

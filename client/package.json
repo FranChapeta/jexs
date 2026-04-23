@@ -1,6 +1,6 @@
 {
   "name": "@jexs/client",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -13,7 +13,7 @@
     "prepublishOnly": "npm run build:browser"
   },
   "peerDependencies": {
-    "@jexs/core": "^0.5.0"
+    "@jexs/core": "^0.6.0"
   },
   "peerDependenciesMeta": {
     "@jexs/physics": { "optional": true },

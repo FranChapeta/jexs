@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue } from "@jexs/core";
-import { resolve } from "@jexs/core";
+import { resolve, resolveAll, resolveObj, runSteps } from "@jexs/core";
 import {
   EntityStore,
   STRIDE,
@@ -103,8 +103,21 @@ export class GlNode extends Node {
 
   // ── gl-init ─────────────────────────────────────────────────────────────
 
-  async ["gl-init"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const selector = String(await resolve(def["gl-init"], context));
+  /**
+   * Initializes a WebGL canvas (WebGL2 with WebGL1 fallback). Pass the canvas CSS selector as `gl-init`.
+   * Use `width`/`height` to set logical size, `clear` for background color, `depth: true` for 3D depth test.
+   * Pass `on-frame` steps to run every animation frame — receives `$dt` (delta seconds) and `$time` in context.
+   * @example
+   * { "gl-init": "#canvas", "width": 800, "height": 600, "clear": [0, 0, 0, 1], "on-frame": [] }
+   */
+  ["gl-init"](def: Record<string, unknown>, context: Context): NodeValue {
+    // "on-frame" is a lazy step template — exclude from resolution
+    const onFrame = Array.isArray(def["on-frame"]) ? def["on-frame"] as unknown[] : null;
+    const resolvable: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(def)) { if (k !== "on-frame") resolvable[k] = v; }
+
+    return resolveObj(resolvable, context, r => {
+    const selector = String(r["gl-init"]);
 
     const prev = GlNode.instances.get(selector);
     if (prev) GlNode.destroyInstance(prev, selector);
@@ -113,11 +126,8 @@ export class GlNode extends Node {
     if (!canvas) { console.error("[GL] No element found for selector:", selector); return null; }
 
     const dpr = window.devicePixelRatio || 1;
-    if (def["width"] !== undefined) canvas.width = Number(await resolve(def["width"], context)) * dpr;
-    else canvas.width = (canvas.clientWidth || 300) * dpr;
-
-    if (def["height"] !== undefined) canvas.height = Number(await resolve(def["height"], context)) * dpr;
-    else canvas.height = (canvas.clientHeight || 150) * dpr;
+    canvas.width  = r["width"]  !== undefined ? Number(r["width"])  * dpr : (canvas.clientWidth  || 300) * dpr;
+    canvas.height = r["height"] !== undefined ? Number(r["height"]) * dpr : (canvas.clientHeight || 150) * dpr;
 
     // Try WebGL2 first, fall back to WebGL1
     const gl2 = canvas.getContext("webgl2", { antialias: true }) as WebGL2RenderingContext | null;
@@ -126,10 +136,7 @@ export class GlNode extends Node {
     if (!gl) { console.error("[GL] WebGL not supported"); return null; }
     if (isWebGL2) console.log("[GL] Using WebGL2");
 
-    const clearColor = (def["clear"]
-      ? await resolve(def["clear"], context)
-      : [0, 0, 0, 1]) as [number, number, number, number];
-
+    const clearColor = (r["clear"] ?? [0, 0, 0, 1]) as [number, number, number, number];
     const enableDepth = !!def["depth"];
 
     const setupGL = (): {
@@ -175,14 +182,14 @@ export class GlNode extends Node {
     if (!initial) return null;
 
     const store = new EntityStore();
-    const vw = def["virtualWidth"]  ? Number(await resolve(def["virtualWidth"],  context)) : 0;
-    const vh = def["virtualHeight"] ? Number(await resolve(def["virtualHeight"], context)) : 0;
+    const vw = r["virtualWidth"]  ? Number(r["virtualWidth"])  : 0;
+    const vh = r["virtualHeight"] ? Number(r["virtualHeight"]) : 0;
     store.width  = vw || canvas.width;
     store.height = vh || canvas.height;
     store.virtualWidth  = vw;
     store.virtualHeight = vh;
 
-    const fit = def["fit"] ? String(await resolve(def["fit"], context)) : "contain";
+    const fit = r["fit"] ? String(r["fit"]) : "contain";
 
     const inst: GlInstance = {
       canvas,
@@ -194,7 +201,7 @@ export class GlNode extends Node {
       rafId: null,
       dirty: true,
       resizeObserver: null,
-      onFrame: Array.isArray(def["on-frame"]) ? def["on-frame"] as unknown[] : null,
+      onFrame,
       frameContext: context,
       frameLoopContext: null,
       lastTime: 0,
@@ -279,39 +286,32 @@ export class GlNode extends Node {
     if (inst.mode3d) {
       gl.enable(gl.DEPTH_TEST);
       init3dProgram(inst, GlNode.createProgram);
-      // Default 3D camera: pull back on z
-      inst.camera.z = def["cameraZ"] !== undefined ? Number(await resolve(def["cameraZ"], context)) : 5;
-      if (def["fov"] !== undefined) inst.camera.fov = Number(await resolve(def["fov"], context));
+      inst.camera.z = r["cameraZ"] !== undefined ? Number(r["cameraZ"]) : 5;
+      if (r["fov"] !== undefined) inst.camera.fov = Number(r["fov"]);
     }
 
-    if (def["lightDir"] !== undefined) inst.lightDir = (await resolve(def["lightDir"], context)) as [number, number, number];
-    if (def["ambient"] !== undefined) inst.ambient = Number(await resolve(def["ambient"], context));
-    if (def["shininess"] !== undefined) inst.shininess = Number(await resolve(def["shininess"], context));
-    if (def["lightColor"] !== undefined) inst.lightColor = (await resolve(def["lightColor"], context)) as [number, number, number];
-    if (def["ambientColor"] !== undefined) inst.ambientColor = (await resolve(def["ambientColor"], context)) as [number, number, number];
-    if (def["skyTop"] !== undefined) inst.skyTop = (await resolve(def["skyTop"], context)) as [number, number, number];
-    if (def["skyBottom"] !== undefined) inst.skyBottom = (await resolve(def["skyBottom"], context)) as [number, number, number];
-    if (def["fogColor"] !== undefined) inst.fogColor = (await resolve(def["fogColor"], context)) as [number, number, number];
-    if (def["fogNear"] !== undefined) inst.fogNear = Number(await resolve(def["fogNear"], context));
-    if (def["fogFar"] !== undefined) inst.fogFar = Number(await resolve(def["fogFar"], context));
-    if (def["ortho"] !== undefined) inst.ortho = !!(await resolve(def["ortho"], context));
-    if (def["fxaa"] !== undefined) inst.fxaa = !!(await resolve(def["fxaa"], context));
-    if (def["bloom"] !== undefined) {
-      const bloom = parseBloom(await resolve(def["bloom"], context));
-      if (bloom) inst.bloom = bloom;
-    }
-    if (def["shadow"] !== undefined) {
-      const raw = await resolve(def["shadow"], context);
-      if (raw && typeof raw === "object") {
-        const s = raw as Record<string, unknown>;
-        inst.shadow = {
-          resolution: Number(s.resolution ?? 1024),
-          bias:        Number(s.bias ?? 0.005),
-          softness:    Number(s.softness ?? 2),
-          far:         Number(s.far ?? 100),
-        };
-        initShadow(inst, GlNode.createProgram);
-      }
+    if (r["lightDir"]     !== undefined) inst.lightDir     = r["lightDir"]     as [number, number, number];
+    if (r["ambient"]      !== undefined) inst.ambient      = Number(r["ambient"]);
+    if (r["shininess"]    !== undefined) inst.shininess    = Number(r["shininess"]);
+    if (r["lightColor"]   !== undefined) inst.lightColor   = r["lightColor"]   as [number, number, number];
+    if (r["ambientColor"] !== undefined) inst.ambientColor = r["ambientColor"] as [number, number, number];
+    if (r["skyTop"]       !== undefined) inst.skyTop       = r["skyTop"]       as [number, number, number];
+    if (r["skyBottom"]    !== undefined) inst.skyBottom    = r["skyBottom"]    as [number, number, number];
+    if (r["fogColor"]     !== undefined) inst.fogColor     = r["fogColor"]     as [number, number, number];
+    if (r["fogNear"]      !== undefined) inst.fogNear      = Number(r["fogNear"]);
+    if (r["fogFar"]       !== undefined) inst.fogFar       = Number(r["fogFar"]);
+    if (r["ortho"]        !== undefined) inst.ortho        = !!r["ortho"];
+    if (r["fxaa"]         !== undefined) inst.fxaa         = !!r["fxaa"];
+    if (r["bloom"]        !== undefined) { const bloom = parseBloom(r["bloom"]); if (bloom) inst.bloom = bloom; }
+    if (r["shadow"]       !== undefined && r["shadow"] && typeof r["shadow"] === "object") {
+      const s = r["shadow"] as Record<string, unknown>;
+      inst.shadow = {
+        resolution: Number(s.resolution ?? 1024),
+        bias:       Number(s.bias       ?? 0.005),
+        softness:   Number(s.softness   ?? 2),
+        far:        Number(s.far        ?? 100),
+      };
+      initShadow(inst, GlNode.createProgram);
     }
 
     if (def["resize"] !== false) {
@@ -367,11 +367,13 @@ export class GlNode extends Node {
 
     GlNode.scheduleRender(inst);
     return null;
+    }); // resolveObj
   }
 
   // ── gl-destroy ──────────────────────────────────────────────────────────
 
-  async ["gl-destroy"](_def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /** Destroys the active WebGL instance and releases GPU resources, textures, and the entity store. */
+  ["gl-destroy"](_def: Record<string, unknown>, context: Context): NodeValue {
     const selector = context._glSelector as string;
     if (!selector) return null;
     const inst = GlNode.instances.get(selector);
@@ -385,12 +387,19 @@ export class GlNode extends Node {
 
   // ── gl-hit ──────────────────────────────────────────────────────────────
 
-  async ["gl-hit"](def: Record<string, unknown>, context: Context): Promise<string | null> {
+  /**
+   * Hit-tests a point against all visible entities (front-to-back). Returns the topmost entity id or `null`.
+   * Supports 2D (AABB/circle) and 3D (ray-AABB) automatically based on the current render mode.
+   * @example
+   * { "gl-hit": true, "x": { "var": "$event.clientX" }, "y": { "var": "$event.clientY" } }
+   */
+  ["gl-hit"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
 
-    let px = Number(await resolve(def["x"], context));
-    let py = Number(await resolve(def["y"], context));
+    return resolveObj(def, context, r => {
+    let px = Number(r["x"]);
+    let py = Number(r["y"]);
     if (inst.store.virtualWidth) {
       px = (px - inst.vpOffsetX) / inst.vpScale;
       py = (py - inst.vpOffsetY) / inst.vpScale;
@@ -461,300 +470,306 @@ export class GlNode extends Node {
       }
     }
     return null;
+    }); // resolveObj
   }
 
   // ── gl-camera ───────────────────────────────────────────────────────────
 
-  async ["gl-camera"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Controls the camera. In 2D: `x`, `y`, `zoom`, `rotation`, `follow` (entity id).
+   * Shake: `shake` (intensity), `shakeDuration`, `shakeDecay`. Trauma: `trauma` (0–1 accumulated).
+   * In 3D: `z`, `fov`, `near`, `far`, `lookAt` ([x,y,z]), `up` ([x,y,z]).
+   * @example
+   * { "gl-camera": true, "follow": "player", "zoom": 1.5 }
+   */
+  ["gl-camera"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
 
-    const cam = inst.camera;
-    if (def["x"]        !== undefined) cam.x        = Number(await resolve(def["x"],        context));
-    if (def["y"]        !== undefined) cam.y        = Number(await resolve(def["y"],        context));
-    if (def["zoom"]     !== undefined) cam.zoom     = Number(await resolve(def["zoom"],     context));
-    if (def["rotation"] !== undefined) cam.rotation = Number(await resolve(def["rotation"], context));
-    if (def["follow"]   !== undefined) {
-      const f = await resolve(def["follow"], context);
-      cam.follow = f ? String(f) : null;
-    }
-    if (def["shake"] !== undefined) {
-      cam.shake = Number(await resolve(def["shake"], context));
-      cam.shakeElapsed = 0;
-      if (def["shakeDuration"] !== undefined) cam.shakeDuration = Number(await resolve(def["shakeDuration"], context));
-      if (def["shakeDecay"]    !== undefined) cam.shakeDecay    = Number(await resolve(def["shakeDecay"],    context));
-    }
-    // Trauma-based shake (additive): { "trauma": 0.5 } adds to current trauma
-    if (def["trauma"] !== undefined) {
-      cam.trauma = Math.min(1, cam.trauma + Number(await resolve(def["trauma"], context)));
-      if (def["traumaDecay"]    !== undefined) cam.traumaDecay    = Number(await resolve(def["traumaDecay"],    context));
-      if (def["maxShake"]       !== undefined) cam.maxShake       = Number(await resolve(def["maxShake"],       context));
-      if (def["maxShakeAngle"]  !== undefined) cam.maxShakeAngle  = Number(await resolve(def["maxShakeAngle"],  context));
-    }
-    // 3D camera fields
-    if (def["z"]      !== undefined) cam.z      = Number(await resolve(def["z"],      context));
-    if (def["fov"]    !== undefined) cam.fov    = Number(await resolve(def["fov"],    context));
-    if (def["near"]   !== undefined) cam.near   = Number(await resolve(def["near"],   context));
-    if (def["far"]    !== undefined) cam.far    = Number(await resolve(def["far"],    context));
-    if (def["lookAt"] !== undefined) cam.lookAt = (await resolve(def["lookAt"], context)) as [number, number, number];
-    if (def["up"]     !== undefined) cam.up     = (await resolve(def["up"],     context)) as [number, number, number];
-    // FPS/TPS orbit camera fields
-    if (def["pitch"]         !== undefined) cam.pitch         = Number(await resolve(def["pitch"],         context));
-    if (def["yaw"]           !== undefined) cam.yaw           = Number(await resolve(def["yaw"],           context));
-    if (def["followMode"]    !== undefined) cam.followMode    = (await resolve(def["followMode"],    context)) as "fps" | "tps" | null;
-    if (def["followOffsetZ"] !== undefined) cam.followOffsetZ = Number(await resolve(def["followOffsetZ"], context));
-    if (def["tpsDistance"]   !== undefined) cam.tpsDistance   = Number(await resolve(def["tpsDistance"],   context));
-    if (def["tpsHeight"]     !== undefined) cam.tpsHeight     = Number(await resolve(def["tpsHeight"],     context));
-    // Lighting
-    if (def["lightDir"]     !== undefined) inst.lightDir     = (await resolve(def["lightDir"], context)) as [number, number, number];
-    if (def["ambient"]      !== undefined) inst.ambient      = Number(await resolve(def["ambient"],   context));
-    if (def["shininess"]    !== undefined) inst.shininess    = Number(await resolve(def["shininess"], context));
-    if (def["lightColor"]   !== undefined) inst.lightColor   = (await resolve(def["lightColor"], context)) as [number, number, number];
-    if (def["ambientColor"] !== undefined) inst.ambientColor = (await resolve(def["ambientColor"], context)) as [number, number, number];
-    if (def["skyTop"]       !== undefined) inst.skyTop       = (await resolve(def["skyTop"], context)) as [number, number, number];
-    if (def["skyBottom"]    !== undefined) inst.skyBottom     = (await resolve(def["skyBottom"], context)) as [number, number, number];
-    if (def["fogColor"]     !== undefined) inst.fogColor     = (await resolve(def["fogColor"], context)) as [number, number, number];
-    if (def["fogNear"]      !== undefined) inst.fogNear      = Number(await resolve(def["fogNear"], context));
-    if (def["fogFar"]       !== undefined) inst.fogFar       = Number(await resolve(def["fogFar"], context));
-    if (def["ortho"]        !== undefined) inst.ortho        = !!(await resolve(def["ortho"], context));
-    if (def["fxaa"]         !== undefined) inst.fxaa         = !!(await resolve(def["fxaa"], context));
-    if (def["bloom"]        !== undefined) {
-      inst.bloom = parseBloom(await resolve(def["bloom"], context));
-    }
-    if (def["shadow"]       !== undefined) {
-      const raw = await resolve(def["shadow"], context);
-      if (raw && typeof raw === "object") {
-        const s = raw as Record<string, unknown>;
-        inst.shadow = {
-          resolution: Number(s.resolution ?? 1024),
-          bias:        Number(s.bias ?? 0.005),
-          softness:    Number(s.softness ?? 2),
-          far:         Number(s.far ?? 100),
-        };
-        if (!inst.shadowFbo) initShadow(inst, GlNode.createProgram);
-      } else {
-        inst.shadow = null;
-      }
-    }
+    return resolveObj(def, context, r => {
+      const cam = inst.camera;
+      if (r["x"]        !== undefined) cam.x        = Number(r["x"]);
+      if (r["y"]        !== undefined) cam.y        = Number(r["y"]);
+      if (r["zoom"]     !== undefined) cam.zoom     = Number(r["zoom"]);
+      if (r["rotation"] !== undefined) cam.rotation = Number(r["rotation"]);
+      if (r["follow"]   !== undefined) cam.follow   = r["follow"] ? String(r["follow"]) : null;
 
-    inst.dirty = true;
-    GlNode.scheduleRender(inst);
-    return null;
+      if (r["shake"] !== undefined) {
+        cam.shake = Number(r["shake"]);
+        cam.shakeElapsed = 0;
+        if (r["shakeDuration"] !== undefined) cam.shakeDuration = Number(r["shakeDuration"]);
+        if (r["shakeDecay"]    !== undefined) cam.shakeDecay    = Number(r["shakeDecay"]);
+      }
+      if (r["trauma"] !== undefined) {
+        cam.trauma = Math.min(1, cam.trauma + Number(r["trauma"]));
+        if (r["traumaDecay"]   !== undefined) cam.traumaDecay   = Number(r["traumaDecay"]);
+        if (r["maxShake"]      !== undefined) cam.maxShake      = Number(r["maxShake"]);
+        if (r["maxShakeAngle"] !== undefined) cam.maxShakeAngle = Number(r["maxShakeAngle"]);
+      }
+
+      if (r["z"]      !== undefined) cam.z      = Number(r["z"]);
+      if (r["fov"]    !== undefined) cam.fov    = Number(r["fov"]);
+      if (r["near"]   !== undefined) cam.near   = Number(r["near"]);
+      if (r["far"]    !== undefined) cam.far    = Number(r["far"]);
+      if (r["lookAt"] !== undefined) cam.lookAt = r["lookAt"] as [number, number, number];
+      if (r["up"]     !== undefined) cam.up     = r["up"]     as [number, number, number];
+
+      if (r["pitch"]         !== undefined) cam.pitch         = Number(r["pitch"]);
+      if (r["yaw"]           !== undefined) cam.yaw           = Number(r["yaw"]);
+      if (r["followMode"]    !== undefined) cam.followMode    = r["followMode"] as "fps" | "tps" | null;
+      if (r["followOffsetZ"] !== undefined) cam.followOffsetZ = Number(r["followOffsetZ"]);
+      if (r["tpsDistance"]   !== undefined) cam.tpsDistance   = Number(r["tpsDistance"]);
+      if (r["tpsHeight"]     !== undefined) cam.tpsHeight     = Number(r["tpsHeight"]);
+
+      if (r["lightDir"]     !== undefined) inst.lightDir     = r["lightDir"]     as [number, number, number];
+      if (r["ambient"]      !== undefined) inst.ambient      = Number(r["ambient"]);
+      if (r["shininess"]    !== undefined) inst.shininess    = Number(r["shininess"]);
+      if (r["lightColor"]   !== undefined) inst.lightColor   = r["lightColor"]   as [number, number, number];
+      if (r["ambientColor"] !== undefined) inst.ambientColor = r["ambientColor"] as [number, number, number];
+      if (r["skyTop"]       !== undefined) inst.skyTop       = r["skyTop"]       as [number, number, number];
+      if (r["skyBottom"]    !== undefined) inst.skyBottom    = r["skyBottom"]    as [number, number, number];
+      if (r["fogColor"]     !== undefined) inst.fogColor     = r["fogColor"]     as [number, number, number];
+      if (r["fogNear"]      !== undefined) inst.fogNear      = Number(r["fogNear"]);
+      if (r["fogFar"]       !== undefined) inst.fogFar       = Number(r["fogFar"]);
+      if (r["ortho"]        !== undefined) inst.ortho        = !!r["ortho"];
+      if (r["fxaa"]         !== undefined) inst.fxaa         = !!r["fxaa"];
+      if (r["bloom"]        !== undefined) inst.bloom        = parseBloom(r["bloom"]);
+      if (r["shadow"]       !== undefined) {
+        if (r["shadow"] && typeof r["shadow"] === "object") {
+          const s = r["shadow"] as Record<string, unknown>;
+          inst.shadow = {
+            resolution: Number(s.resolution ?? 1024),
+            bias:       Number(s.bias       ?? 0.005),
+            softness:   Number(s.softness   ?? 2),
+            far:        Number(s.far        ?? 100),
+          };
+          if (!inst.shadowFbo) initShadow(inst, GlNode.createProgram);
+        } else {
+          inst.shadow = null;
+        }
+      }
+
+      inst.dirty = true;
+      GlNode.scheduleRender(inst);
+      return null;
+    });
   }
 
   // ── gl-texture ──────────────────────────────────────────────────────────
 
-  async ["gl-texture"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Loads an image from `src` and registers it as a named texture. Assign to entities via `texture: "name"`.
+   * @example
+   * { "gl-texture": "ship", "src": "/assets/ship.png" }
+   */
+  ["gl-texture"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-
-    const name = String(await resolve(def["gl-texture"], context));
-    const src  = String(await resolve(def["src"],        context));
-
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-
-    return new Promise<NodeValue>((res) => {
-      img.onload = () => {
-        const tex = GlNode.createTexture(inst.gl, img);
-        if (tex) inst.textures.set(name, { tex, w: img.width, h: img.height });
-        inst.dirty = true;
-        GlNode.scheduleRender(inst);
-        res(null);
-      };
-      img.onerror = () => {
-        console.error("[GL] Failed to load texture:", src);
-        res(null);
-      };
-      img.src = src;
+    return resolveAll([def["gl-texture"], def["src"]], context, ([nameV, srcV]) => {
+      const name = String(nameV);
+      const src  = String(srcV);
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      return new Promise<NodeValue>((res) => {
+        img.onload = () => {
+          const tex = GlNode.createTexture(inst.gl, img);
+          if (tex) inst.textures.set(name, { tex, w: img.width, h: img.height });
+          inst.dirty = true;
+          GlNode.scheduleRender(inst);
+          res(null);
+        };
+        img.onerror = () => {
+          console.error("[GL] Failed to load texture:", src);
+          res(null);
+        };
+        img.src = src;
+      });
     });
   }
 
   // ── gl-atlas ───────────────────────────────────────────────────────────
   // Pre-compute UV rects for a spritesheet: { "gl-atlas": "name", "src": "sheet.png", "cols": 8, "rows": 4 }
 
-  async ["gl-atlas"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Loads a spritesheet and pre-computes UV rects for each frame. Pass `cols` and `rows` to define the grid.
+   * Returns the total frame count. Use frame indices with `gl-animate` or `gl-frame`.
+   * @example
+   * { "gl-atlas": "tiles", "src": "/assets/tiles.png", "cols": 8, "rows": 4 }
+   */
+  ["gl-atlas"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-
-    const name = String(await resolve(def["gl-atlas"], context));
-    const src  = String(await resolve(def["src"],      context));
-    const cols = Number(await resolve(def["cols"], context)) || 1;
-    const rows = Number(await resolve(def["rows"], context)) || 1;
-
-    // Load the texture (reuse gl-texture path)
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-
-    return new Promise<NodeValue>((res) => {
-      img.onload = () => {
-        const tex = GlNode.createTexture(inst.gl, img);
-        if (tex) inst.textures.set(name, { tex, w: img.width, h: img.height });
-
-        // Pre-compute UV rects for each frame (left-to-right, top-to-bottom)
-        const frames: [number, number, number, number][] = [];
-        const uW = 1 / cols, vH = 1 / rows;
-        for (let r = 0; r < rows; r++) {
-          for (let c = 0; c < cols; c++) {
-            frames.push([c * uW, r * vH, uW, vH]);
+    return resolveObj(def, context, r => {
+      const name = String(r["gl-atlas"]);
+      const src  = String(r["src"]);
+      const cols = Number(r["cols"]) || 1;
+      const rows = Number(r["rows"]) || 1;
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      return new Promise<NodeValue>((res) => {
+        img.onload = () => {
+          const tex = GlNode.createTexture(inst.gl, img);
+          if (tex) inst.textures.set(name, { tex, w: img.width, h: img.height });
+          const frames: [number, number, number, number][] = [];
+          const uW = 1 / cols, vH = 1 / rows;
+          for (let ri = 0; ri < rows; ri++) {
+            for (let ci = 0; ci < cols; ci++) {
+              frames.push([ci * uW, ri * vH, uW, vH]);
+            }
           }
-        }
-        inst.atlases.set(name, { texture: name, frames });
-
-        inst.dirty = true;
-        GlNode.scheduleRender(inst);
-        res(frames.length);
-      };
-      img.onerror = () => {
-        console.error("[GL] Failed to load atlas texture:", src);
-        res(null);
-      };
-      img.src = src;
+          inst.atlases.set(name, { texture: name, frames });
+          inst.dirty = true;
+          GlNode.scheduleRender(inst);
+          res(frames.length);
+        };
+        img.onerror = () => {
+          console.error("[GL] Failed to load atlas texture:", src);
+          res(null);
+        };
+        img.src = src;
+      });
     });
   }
 
   // ── gl-animate ──────────────────────────────────────────────────────────
 
-  async ["gl-animate"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Starts a frame animation on an entity from an atlas. Pass `atlas`, `frames` (array of frame indices),
+   * `fps`, and `loop`. Set `stop: true` to cancel the current animation.
+   * @example
+   * { "gl-animate": "player", "atlas": "sprites", "frames": [0, 1, 2, 3], "fps": 12, "loop": true }
+   */
+  ["gl-animate"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-
-    const id = await GlNode.resolveId(def["gl-animate"], context);
-    const slot = inst.store.slot(id);
-    if (slot === -1) return null;
-
-    const meta = inst.store.meta[slot]!;
-
-    if (def["stop"]) {
-      meta.anim = undefined;
+    return resolveObj(def, context, r => {
+      const id = String(r["gl-animate"]);
+      const slot = inst.store.slot(id);
+      if (slot === -1) return null;
+      const meta = inst.store.meta[slot]!;
+      if (r["stop"]) { meta.anim = undefined; return null; }
+      let frames: [number, number, number, number][];
+      if (r["atlas"] !== undefined) {
+        const atlasName = String(r["atlas"]);
+        const atlas = inst.atlases.get(atlasName);
+        if (!atlas) { console.error("[GL] Atlas not found:", atlasName); return null; }
+        const indices = r["frames"] as number[];
+        frames = indices.map(i => atlas.frames[i] ?? atlas.frames[0]);
+        meta.textureName = atlas.texture;
+      } else {
+        frames = r["frames"] as [number, number, number, number][];
+      }
+      const fps  = r["fps"]  !== undefined ? Number(r["fps"])  : 12;
+      const loop = r["loop"] !== undefined ? this.toBoolean(r["loop"]) : true;
+      meta.anim = { frames, fps, loop, current: 0, elapsed: 0 };
+      if (frames.length > 0) {
+        const d = inst.store.data;
+        const b = slot * STRIDE;
+        d[b + F_U] = frames[0][0]; d[b + F_V] = frames[0][1];
+        d[b + F_UW] = frames[0][2]; d[b + F_UH] = frames[0][3];
+      }
+      inst.dirty = true;
+      GlNode.scheduleRender(inst);
       return null;
-    }
-
-    // Support atlas-based frames: { "atlas": "name", "frames": [0,1,2,3] }
-    let frames: [number, number, number, number][];
-    if (def["atlas"] !== undefined) {
-      const atlasName = String(await resolve(def["atlas"], context));
-      const atlas = inst.atlases.get(atlasName);
-      if (!atlas) { console.error("[GL] Atlas not found:", atlasName); return null; }
-      const indices = (await resolve(def["frames"], context)) as number[];
-      frames = indices.map(i => atlas.frames[i] ?? atlas.frames[0]);
-      // Also set the entity's texture to the atlas texture
-      meta.textureName = atlas.texture;
-    } else {
-      frames = (await resolve(def["frames"], context)) as [number, number, number, number][];
-    }
-    const fps  = def["fps"]  !== undefined ? Number(await resolve(def["fps"],  context)) : 12;
-    const loop = def["loop"] !== undefined ? this.toBoolean(await resolve(def["loop"], context)) : true;
-
-    meta.anim = { frames, fps, loop, current: 0, elapsed: 0 };
-
-    // Set initial UV frame
-    if (frames.length > 0) {
-      const d = inst.store.data;
-      const b = slot * STRIDE;
-      d[b + F_U] = frames[0][0]; d[b + F_V] = frames[0][1];
-      d[b + F_UW] = frames[0][2]; d[b + F_UH] = frames[0][3];
-    }
-
-    inst.dirty = true;
-    GlNode.scheduleRender(inst);
-    return null;
+    });
   }
 
   // ── gl-frame — set entity UV from atlas frame index ─────────────────────
   // { "gl-frame": "entityId", "atlas": "name", "frame": 5 }
 
-  async ["gl-frame"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Sets a static atlas frame on an entity (no animation). Pass entity id, `atlas`, and `frame` index.
+   * @example
+   * { "gl-frame": "player", "atlas": "sprites", "frame": 5 }
+   */
+  ["gl-frame"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-
-    const id = await GlNode.resolveId(def["gl-frame"], context);
-    const slot = inst.store.slot(id);
-    if (slot === -1) return null;
-
-    const atlasName = String(await resolve(def["atlas"], context));
-    const atlas = inst.atlases.get(atlasName);
-    if (!atlas) { console.error("[GL] Atlas not found:", atlasName); return null; }
-
-    const frame = Number(await resolve(def["frame"], context)) | 0;
-    const uv = atlas.frames[frame];
-    if (!uv) return null;
-
-    const d = inst.store.data;
-    const b = slot * STRIDE;
-    d[b + F_U] = uv[0]; d[b + F_V] = uv[1];
-    d[b + F_UW] = uv[2]; d[b + F_UH] = uv[3];
-
-    const meta = inst.store.meta[slot]!;
-    meta.textureName = atlas.texture;
-    meta.dirty |= DIRTY_VISUAL;
-    inst.dirty = true;
-    GlNode.scheduleRender(inst);
-    return null;
+    return resolveObj(def, context, r => {
+      const id = String(r["gl-frame"]);
+      const slot = inst.store.slot(id);
+      if (slot === -1) return null;
+      const atlasName = String(r["atlas"]);
+      const atlas = inst.atlases.get(atlasName);
+      if (!atlas) { console.error("[GL] Atlas not found:", atlasName); return null; }
+      const frame = Number(r["frame"]) | 0;
+      const uv = atlas.frames[frame];
+      if (!uv) return null;
+      const d = inst.store.data;
+      const b = slot * STRIDE;
+      d[b + F_U] = uv[0]; d[b + F_V] = uv[1];
+      d[b + F_UW] = uv[2]; d[b + F_UH] = uv[3];
+      const meta = inst.store.meta[slot]!;
+      meta.textureName = atlas.texture;
+      meta.dirty |= DIRTY_VISUAL;
+      inst.dirty = true;
+      GlNode.scheduleRender(inst);
+      return null;
+    });
   }
 
   // ── gl-tilemap — efficient grid rendering using atlas ──────────────────
   // { "gl-tilemap": "level1", "atlas": "tiles", "data": [[1,0,2],[3,1,0]], "tileWidth": 32, "tileHeight": 32 }
 
-  async ["gl-tilemap"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Builds an efficient GPU tilemap VBO from a 2D array of atlas frame indices.
+   * Pass `atlas`, `data` (rows of frame indices), `tileWidth`, `tileHeight`, and optional `z`.
+   * Returns the rendered tile count.
+   * @example
+   * { "gl-tilemap": "level1", "atlas": "tiles", "data": [[1,0,2],[3,1,0]], "tileWidth": 32, "tileHeight": 32 }
+   */
+  ["gl-tilemap"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-
-    const name = String(await resolve(def["gl-tilemap"], context));
-    const atlasName = String(await resolve(def["atlas"], context));
-    const atlas = inst.atlases.get(atlasName);
-    if (!atlas) { console.error("[GL] Atlas not found for tilemap:", atlasName); return null; }
-
-    const data = (await resolve(def["data"], context)) as number[][];
-    const tileW = Number(await resolve(def["tileWidth"], context)) || 32;
-    const tileH = Number(await resolve(def["tileHeight"], context)) || 32;
-    const z = def["z"] !== undefined ? Number(await resolve(def["z"], context)) : -1;
-
-    // Build VBO: 6 verts per non-empty tile (2 triangles)
-    const existing = inst.tilemaps.get(name);
-    const vbo = existing?.vbo ?? inst.gl.createBuffer();
-    if (!vbo) return null;
-
-    const { vertData, vertCount } = GlNode.buildTilemapVBO(data, tileW, tileH, atlas.frames);
-
-    const gl = inst.gl;
-    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-    gl.bufferData(gl.ARRAY_BUFFER, vertData, gl.STATIC_DRAW);
-
-    inst.tilemaps.set(name, { vbo, vertCount, textureName: atlas.texture, z, dirty: false, data, atlas: atlasName, tileW, tileH });
-    inst.dirty = true;
-    GlNode.scheduleRender(inst);
-    return vertCount / 6; // tile count
+    return resolveObj(def, context, r => {
+      const name = String(r["gl-tilemap"]);
+      const atlasName = String(r["atlas"]);
+      const atlas = inst.atlases.get(atlasName);
+      if (!atlas) { console.error("[GL] Atlas not found for tilemap:", atlasName); return null; }
+      const data = r["data"] as number[][];
+      const tileW = Number(r["tileWidth"]) || 32;
+      const tileH = Number(r["tileHeight"]) || 32;
+      const z = r["z"] !== undefined ? Number(r["z"]) : -1;
+      const existing = inst.tilemaps.get(name);
+      const vbo = existing?.vbo ?? inst.gl.createBuffer();
+      if (!vbo) return null;
+      const { vertData, vertCount } = GlNode.buildTilemapVBO(data, tileW, tileH, atlas.frames);
+      const gl = inst.gl;
+      gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+      gl.bufferData(gl.ARRAY_BUFFER, vertData, gl.STATIC_DRAW);
+      inst.tilemaps.set(name, { vbo, vertCount, textureName: atlas.texture, z, dirty: false, data, atlas: atlasName, tileW, tileH });
+      inst.dirty = true;
+      GlNode.scheduleRender(inst);
+      return vertCount / 6;
+    });
   }
 
   // { "gl-tilemap-set": "level1", "x": 3, "y": 2, "tile": 5 }
-  async ["gl-tilemap-set"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  ["gl-tilemap-set"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-
-    const name = String(await resolve(def["gl-tilemap-set"], context));
-    const tm = inst.tilemaps.get(name);
-    if (!tm) return null;
-
-    const tx = Number(await resolve(def["x"], context)) | 0;
-    const ty = Number(await resolve(def["y"], context)) | 0;
-    const tile = Number(await resolve(def["tile"], context)) | 0;
-
-    if (ty >= 0 && ty < tm.data.length && tx >= 0 && tx < (tm.data[0]?.length ?? 0)) {
-      tm.data[ty][tx] = tile;
-      // Rebuild VBO
-      const atlas = inst.atlases.get(tm.atlas);
-      if (atlas) {
-        const { vertData, vertCount } = GlNode.buildTilemapVBO(tm.data, tm.tileW, tm.tileH, atlas.frames);
-        const gl = inst.gl;
-        gl.bindBuffer(gl.ARRAY_BUFFER, tm.vbo);
-        gl.bufferData(gl.ARRAY_BUFFER, vertData, gl.STATIC_DRAW);
-        tm.vertCount = vertCount;
+    return resolveObj(def, context, r => {
+      const name = String(r["gl-tilemap-set"]);
+      const tm = inst.tilemaps.get(name);
+      if (!tm) return null;
+      const tx = Number(r["x"]) | 0;
+      const ty = Number(r["y"]) | 0;
+      const tile = Number(r["tile"]) | 0;
+      if (ty >= 0 && ty < tm.data.length && tx >= 0 && tx < (tm.data[0]?.length ?? 0)) {
+        tm.data[ty][tx] = tile;
+        const atlas = inst.atlases.get(tm.atlas);
+        if (atlas) {
+          const { vertData, vertCount } = GlNode.buildTilemapVBO(tm.data, tm.tileW, tm.tileH, atlas.frames);
+          const gl = inst.gl;
+          gl.bindBuffer(gl.ARRAY_BUFFER, tm.vbo);
+          gl.bufferData(gl.ARRAY_BUFFER, vertData, gl.STATIC_DRAW);
+          tm.vertCount = vertCount;
+        }
+        inst.dirty = true;
+        GlNode.scheduleRender(inst);
       }
-      inst.dirty = true;
-      GlNode.scheduleRender(inst);
-    }
-    return null;
+      return null;
+    });
   }
 
   /** Build tilemap vertex data in batch format: (x,y, r,g,b,a, u,v, useTex) per vertex, 6 verts per tile. */
@@ -808,246 +823,252 @@ export class GlNode extends Node {
   // ── gl-trail — attach a trail to an entity ─────────────────────────────
   // { "gl-trail": "player", "length": 20, "width": 2, "color": [1,0,0,1] }
 
-  async ["gl-trail"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Attaches a motion trail to an entity. The trail follows the entity's position each frame.
+   * Pass entity id, `length` (max trail points), `width`, and `color`.
+   * @example
+   * { "gl-trail": "player", "length": 20, "width": 3, "color": [1, 0.5, 0, 0.8] }
+   */
+  ["gl-trail"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-
-    const entityId = String(await resolve(def["gl-trail"], context));
-    const length = def["length"] !== undefined ? Number(await resolve(def["length"], context)) : 20;
-    const width = def["width"] !== undefined ? Number(await resolve(def["width"], context)) : 2;
-    const rawColor = (def["color"] !== undefined ? await resolve(def["color"], context) : [1, 1, 1, 1]) as number[];
-    const color: [number, number, number, number] = [rawColor[0] ?? 1, rawColor[1] ?? 1, rawColor[2] ?? 1, rawColor[3] ?? 1];
-
-    inst.trails.set(entityId, {
-      entityId,
-      length,
-      width,
-      color,
-      points: new Float32Array(length * 2),
-      head: 0,
-      count: 0,
+    return resolveObj(def, context, r => {
+      const entityId = String(r["gl-trail"]);
+      const length = r["length"] !== undefined ? Number(r["length"]) : 20;
+      const width = r["width"] !== undefined ? Number(r["width"]) : 2;
+      const rawColor = (r["color"] ?? [1, 1, 1, 1]) as number[];
+      const color: [number, number, number, number] = [rawColor[0] ?? 1, rawColor[1] ?? 1, rawColor[2] ?? 1, rawColor[3] ?? 1];
+      inst.trails.set(entityId, { entityId, length, width, color, points: new Float32Array(length * 2), head: 0, count: 0 });
+      return null;
     });
-    return null;
   }
 
   // { "gl-trail-remove": "player" }
-  async ["gl-trail-remove"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /** Removes the motion trail from an entity. */
+  ["gl-trail-remove"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-    const entityId = String(await resolve(def["gl-trail-remove"], context));
-    inst.trails.delete(entityId);
-    return null;
+    return resolve(def["gl-trail-remove"], context, v => { inst.trails.delete(String(v)); return null; });
   }
 
   // ── gl-raycast — cast a ray and return sorted hits ─────────────────────
   // { "gl-raycast": true, "from": {"x":0,"y":0,"z":0}, "dir": {"x":1,"y":0,"z":0}, "mask": ["enemy"] }
 
-  async ["gl-raycast"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Casts a ray from `from` in direction `dir` and returns all hit entities sorted by distance.
+   * Pass `mask` (array of group names) to restrict which entities are tested.
+   * @example
+   * { "gl-raycast": true, "from": { "x": 0, "y": 0, "z": 0 }, "dir": { "x": 1, "y": 0, "z": 0 }, "mask": ["enemies"] }
+   */
+  ["gl-raycast"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-
-    const from = (await resolve(def["from"], context)) as { x: number; y: number; z?: number } | null;
-    const dir = (await resolve(def["dir"], context)) as { x: number; y: number; z?: number } | null;
-    if (!from || !dir) return [];
-
-    const maskArr = def["mask"] !== undefined
-      ? (await resolve(def["mask"], context)) as string[]
-      : null;
-    const maskSet = maskArr ? new Set(maskArr) : null;
-
-    return raycastStore(
-      inst.store,
-      from.x, from.y, from.z ?? 0,
-      dir.x, dir.y, dir.z ?? 0,
-      maskSet,
-    );
+    return resolveObj(def, context, r => {
+      const from = r["from"] as { x: number; y: number; z?: number } | null;
+      const dir = r["dir"] as { x: number; y: number; z?: number } | null;
+      if (!from || !dir) return [];
+      const maskArr = r["mask"] !== undefined ? r["mask"] as string[] : null;
+      const maskSet = maskArr ? new Set(maskArr) : null;
+      return raycastStore(inst.store, from.x, from.y, from.z ?? 0, dir.x, dir.y, dir.z ?? 0, maskSet);
+    });
   }
 
   // ── gl-text ─────────────────────────────────────────────────────────────
 
-  async ["gl-text"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Renders text onto a canvas texture and assigns it to an entity. Creates the entity if it doesn't exist.
+   * Pass entity id, `text`, `font` (CSS font string), `fill` (color), and position `x`, `y`, `z`.
+   * @example
+   * { "gl-text": "score-label", "text": { "var": "$score" }, "font": "24px Arial", "fill": "#fff", "x": 10, "y": 10 }
+   */
+  ["gl-text"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-
-    const id   = await GlNode.resolveId(def["gl-text"], context);
-    const text = String(await resolve(def["text"], context));
-    const font = def["font"] ? String(await resolve(def["font"], context)) : "16px sans-serif";
-    const fill = def["fill"] ? String(await resolve(def["fill"], context)) : "#ffffff";
-
-    // Check if entity already exists
-    let slot = inst.store.slot(id);
-    if (slot === -1) {
-      // Create entity
-      const x = def["x"] !== undefined ? Number(await resolve(def["x"], context)) : 0;
-      const y = def["y"] !== undefined ? Number(await resolve(def["y"], context)) : 0;
-      const z = def["z"] !== undefined ? Number(await resolve(def["z"], context)) : 0;
-
-      const fixed = def["fixed"] !== undefined ? this.toBoolean(await resolve(def["fixed"], context)) : true;
-      slot = inst.store.add(id, "quad", "default", ["default"], undefined, {
-        x, y, w: 1, h: 1, z,
-        color: [1, 1, 1, 1],
-        visible: true,
-        fixed,
-      });
-      if (z !== 0) { inst.store.zDirty = true; inst.store.zDirtyCount++; }
-    }
-
-    const meta = inst.store.meta[slot]!;
-    meta.text = { content: text, font, fill };
-    meta.textureName = `__text_${id}`;
-
-    renderTextTexture(inst, id, meta, GlNode.createTexture);
-
-    // Auto-size entity if w/h not explicitly set
-    const texInfo = inst.textures.get(meta.textureName);
-    if (texInfo) {
-      const d = inst.store.data;
-      const b = slot * STRIDE;
-      if (def["w"] !== undefined) d[b + F_W] = Number(await resolve(def["w"], context));
-      else d[b + F_W] = texInfo.w;
-      if (def["h"] !== undefined) d[b + F_H] = Number(await resolve(def["h"], context));
-      else d[b + F_H] = texInfo.h;
-    }
-
-    inst.dirty = true;
-    GlNode.scheduleRender(inst);
-    return null;
+    return resolveObj(def, context, r => {
+      const id   = String(r["gl-text"]);
+      const text = String(r["text"]);
+      const font = r["font"] ? String(r["font"]) : "16px sans-serif";
+      const fill = r["fill"] ? String(r["fill"]) : "#ffffff";
+      let slot = inst.store.slot(id);
+      if (slot === -1) {
+        const x = r["x"] !== undefined ? Number(r["x"]) : 0;
+        const y = r["y"] !== undefined ? Number(r["y"]) : 0;
+        const z = r["z"] !== undefined ? Number(r["z"]) : 0;
+        const fixed = r["fixed"] !== undefined ? this.toBoolean(r["fixed"]) : true;
+        slot = inst.store.add(id, "quad", "default", ["default"], undefined, {
+          x, y, w: 1, h: 1, z, color: [1, 1, 1, 1], visible: true, fixed,
+        });
+        if (z !== 0) { inst.store.zDirty = true; inst.store.zDirtyCount++; }
+      }
+      const meta = inst.store.meta[slot]!;
+      meta.text = { content: text, font, fill };
+      meta.textureName = `__text_${id}`;
+      renderTextTexture(inst, id, meta, GlNode.createTexture);
+      const texInfo = inst.textures.get(meta.textureName);
+      if (texInfo) {
+        const d = inst.store.data;
+        const b = slot * STRIDE;
+        d[b + F_W] = r["w"] !== undefined ? Number(r["w"]) : texInfo.w;
+        d[b + F_H] = r["h"] !== undefined ? Number(r["h"]) : texInfo.h;
+      }
+      inst.dirty = true;
+      GlNode.scheduleRender(inst);
+      return null;
+    });
   }
 
   // ── gl-shader ───────────────────────────────────────────────────────────
 
-  async ["gl-shader"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Compiles and registers a custom GLSL shader program. Pass `name`, `vert` (vertex source), and `frag` (fragment source).
+   * Assign to entities with `shader: "name"`. Standard uniforms (`u_transform`, `u_texture`, `u_time`, etc.) are auto-bound.
+   * @example
+   * { "gl-shader": "glow", "vert": "...", "frag": "..." }
+   */
+  ["gl-shader"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-
-    const name = String(await resolve(def["gl-shader"], context));
-    const vert = def["vert"] ? String(await resolve(def["vert"], context)) : VERT_SRC;
-    const frag = def["frag"] ? String(await resolve(def["frag"], context)) : FRAG_SRC;
-
-    const program = GlNode.createProgram(inst.gl, vert, frag, inst.isWebGL2);
-    if (!program) { console.error("[GL] Failed to compile shader:", name); return null; }
-
-    const gl = inst.gl;
-    const uniforms: Record<string, WebGLUniformLocation | null> = {
-      u_transform:  gl.getUniformLocation(program, "u_transform"),
-      u_projection: gl.getUniformLocation(program, "u_projection"),
-      u_color:      gl.getUniformLocation(program, "u_color"),
-      u_uvRect:     gl.getUniformLocation(program, "u_uvRect"),
-      u_useTexture: gl.getUniformLocation(program, "u_useTexture"),
-      u_texture:    gl.getUniformLocation(program, "u_texture"),
-      u_time:       gl.getUniformLocation(program, "u_time"),
-      u_resolution: gl.getUniformLocation(program, "u_resolution"),
-      // 3D uniforms (may be null if shader doesn't use them)
-      u_view:       gl.getUniformLocation(program, "u_view"),
-      u_model:      gl.getUniformLocation(program, "u_model"),
-      u_lightDir:   gl.getUniformLocation(program, "u_lightDir"),
-      u_ambient:    gl.getUniformLocation(program, "u_ambient"),
-    };
-
-    inst.shaders.set(name, { program, uniforms });
-    return null;
+    return resolveObj(def, context, r => {
+      const name = String(r["gl-shader"]);
+      const vert = r["vert"] ? String(r["vert"]) : VERT_SRC;
+      const frag = r["frag"] ? String(r["frag"]) : FRAG_SRC;
+      const program = GlNode.createProgram(inst.gl, vert, frag, inst.isWebGL2);
+      if (!program) { console.error("[GL] Failed to compile shader:", name); return null; }
+      const gl = inst.gl;
+      const uniforms: Record<string, WebGLUniformLocation | null> = {
+        u_transform:  gl.getUniformLocation(program, "u_transform"),
+        u_projection: gl.getUniformLocation(program, "u_projection"),
+        u_color:      gl.getUniformLocation(program, "u_color"),
+        u_uvRect:     gl.getUniformLocation(program, "u_uvRect"),
+        u_useTexture: gl.getUniformLocation(program, "u_useTexture"),
+        u_texture:    gl.getUniformLocation(program, "u_texture"),
+        u_time:       gl.getUniformLocation(program, "u_time"),
+        u_resolution: gl.getUniformLocation(program, "u_resolution"),
+        u_view:       gl.getUniformLocation(program, "u_view"),
+        u_model:      gl.getUniformLocation(program, "u_model"),
+        u_lightDir:   gl.getUniformLocation(program, "u_lightDir"),
+        u_ambient:    gl.getUniformLocation(program, "u_ambient"),
+      };
+      inst.shaders.set(name, { program, uniforms });
+      return null;
+    });
   }
 
   // ── gl-blur ─────────────────────────────────────────────────────────────
 
-  async ["gl-blur"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Applies a full-screen Gaussian blur post-process effect. Pass the blur radius in pixels; `0` disables it.
+   * @example
+   * { "gl-blur": 4 }
+   */
+  ["gl-blur"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-    const radius = Number(await resolve(def["gl-blur"], context));
-    inst.blur = radius > 0 ? { radius } : null;
-    inst.dirty = true;
-    GlNode.scheduleRender(inst);
-    return null;
+    return resolve(def["gl-blur"], context, v => {
+      const radius = Number(v);
+      inst.blur = radius > 0 ? { radius } : null;
+      inst.dirty = true;
+      GlNode.scheduleRender(inst);
+      return null;
+    });
   }
 
   // ── gl-transition ──────────────────────────────────────────────────────
 
-  async ["gl-transition"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Plays a fade transition overlay. Pass `duration` in seconds (default 0.5).
+   * @example
+   * { "gl-transition": true, "duration": 0.8 }
+   */
+  ["gl-transition"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-    const duration = def["duration"] !== undefined ? Number(await resolve(def["duration"], context)) : 0.5;
-    inst.transition = { type: "fade", duration, elapsed: 0 };
-    inst.dirty = true;
-    GlNode.scheduleRender(inst);
-    return null;
+    return resolveObj(def, context, r => {
+      const duration = r["duration"] !== undefined ? Number(r["duration"]) : 0.5;
+      inst.transition = { type: "fade", duration, elapsed: 0 };
+      inst.dirty = true;
+      GlNode.scheduleRender(inst);
+      return null;
+    });
   }
 
   // ── gl-tween ────────────────────────────────────────────────────────────
 
-  async ["gl-tween"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Animates numeric entity properties over time. Pass entity id, target values (`x`, `y`, `w`, `h`, `angle`, `opacity`, `color`, etc.),
+   * `duration` (seconds), and `easing` (e.g. `"easeOutQuad"`, `"linear"`). Pass `then` steps to run on completion.
+   * @example
+   * { "gl-tween": "player", "x": 400, "y": 300, "duration": 0.5, "easing": "easeInOutCubic" }
+   */
+  ["gl-tween"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-
-    const id = await GlNode.resolveId(def["gl-tween"], context);
-    const slot = inst.store.slot(id);
-    if (slot === -1) return null;
-
-    const duration = def["duration"] !== undefined ? Number(await resolve(def["duration"], context)) : 0.3;
-    const easingName = def["easing"] ? String(await resolve(def["easing"], context)) : "easeOutQuad";
-    const easing = EASINGS[easingName] ?? EASINGS.linear;
-    const then = Array.isArray(def["then"]) ? def["then"] as unknown[] : null;
-
-    const d = inst.store.data;
-    const b = slot * STRIDE;
-    const fields: number[] = [];
-    const starts: number[] = [];
-    const ends: number[] = [];
-
-    // Collect all tweenable numeric properties
-    for (const [key, offset] of Object.entries(TWEENABLE_KEYS)) {
-      if (def[key] !== undefined) {
-        fields.push(offset);
-        starts.push(d[b + offset]);
-        ends.push(Number(await resolve(def[key], context)));
+    const thenBranch = Array.isArray(def["then"]) ? def["then"] as unknown[] : null;
+    const resolvable: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(def)) { if (k !== "then") resolvable[k] = v; }
+    return resolveObj(resolvable, context, r => {
+      const id = String(r["gl-tween"]);
+      const slot = inst.store.slot(id);
+      if (slot === -1) return null;
+      const duration = r["duration"] !== undefined ? Number(r["duration"]) : 0.3;
+      const easingName = r["easing"] ? String(r["easing"]) : "easeOutQuad";
+      const easing = EASINGS[easingName] ?? EASINGS.linear;
+      const d = inst.store.data;
+      const b = slot * STRIDE;
+      const fields: number[] = [];
+      const starts: number[] = [];
+      const ends: number[] = [];
+      for (const [key, offset] of Object.entries(TWEENABLE_KEYS)) {
+        if (r[key] !== undefined) {
+          fields.push(offset);
+          starts.push(d[b + offset]);
+          ends.push(Number(r[key]));
+        }
       }
-    }
-
-    // Color as [r, g, b, a]
-    if (def["color"] !== undefined) {
-      const c = (await resolve(def["color"], context)) as number[];
-      const colorFields = [F_CR, F_CG, F_CB, F_CA];
-      for (let i = 0; i < 4; i++) {
-        fields.push(colorFields[i]);
-        starts.push(d[b + colorFields[i]]);
-        ends.push(c[i]);
+      if (r["color"] !== undefined) {
+        const c = r["color"] as number[];
+        const colorFields = [F_CR, F_CG, F_CB, F_CA];
+        for (let i = 0; i < 4; i++) {
+          fields.push(colorFields[i]);
+          starts.push(d[b + colorFields[i]]);
+          ends.push(c[i]);
+        }
       }
-    }
-
-    if (fields.length === 0) return null;
-
-    cancelConflictingTweens(inst.tweens, slot, fields);
-
-    inst.tweens.push({ slot, fields, starts, ends, duration, elapsed: 0, easing, then, context: then ? { ...context } : null });
-    inst.dirty = true;
-    GlNode.scheduleRender(inst);
-    return null;
+      if (fields.length === 0) return null;
+      cancelConflictingTweens(inst.tweens, slot, fields);
+      inst.tweens.push({ slot, fields, starts, ends, duration, elapsed: 0, easing, then: thenBranch, context: thenBranch ? { ...context } : null });
+      inst.dirty = true;
+      GlNode.scheduleRender(inst);
+      return null;
+    });
   }
 
   // ── gl-ssao (screen-space ambient occlusion) ────────────────────────────
   // Usage: { "gl-ssao": true, "radius": 0.5, "bias": 0.025, "intensity": 1.5 }
   //        { "gl-ssao": false } to disable
-  async ["gl-ssao"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Enables screen-space ambient occlusion (SSAO) for 3D scenes. Pass `radius`, `bias`, and `intensity`.
+   * Set `gl-ssao: false` to disable.
+   * @example
+   * { "gl-ssao": true, "radius": 0.5, "bias": 0.025, "intensity": 1.5 }
+   */
+  ["gl-ssao"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-
-    const enabled = await resolve(def["gl-ssao"], context);
-    if (!enabled || enabled === "false") {
-      inst.ssao = null;
-      return null;
-    }
-
-    inst.ssao = {
-      radius: Number(await resolve(def["radius"] ?? 0.5, context)),
-      bias:   Number(await resolve(def["bias"]   ?? 0.025, context)),
-      intensity: Number(await resolve(def["intensity"] ?? 1.5, context)),
-    };
-
-    // Lazily initialize SSAO resources
-    if (!inst.ssaoProg) initSsao(inst, GlNode.createProgram);
-
-    inst.dirty = true;
-    GlNode.scheduleRender(inst);
-    return null;
+    return resolve(def["gl-ssao"], context, enabled => {
+      if (!enabled || enabled === "false") { inst.ssao = null; return null; }
+      return resolveObj(def, context, r => {
+        inst.ssao = {
+          radius:    Number(r["radius"]    ?? 0.5),
+          bias:      Number(r["bias"]      ?? 0.025),
+          intensity: Number(r["intensity"] ?? 1.5),
+        };
+        if (!inst.ssaoProg) initSsao(inst, GlNode.createProgram);
+        inst.dirty = true;
+        GlNode.scheduleRender(inst);
+        return null;
+      });
+    });
   }
 
   // ── gl-particle (GPU-accelerated stateless particle emitter) ─────────────
@@ -1058,95 +1079,96 @@ export class GlNode extends Node {
   //                         "life": 1.5, "speed": 3, "continuous": true, "rate": 500 }
   // Emit burst: { "gl-particle": "emit", "id": "fire", "x": 0, "y": 0, "z": 0, "count": 100 }
   // Destroy: { "gl-particle": "destroy", "id": "fire" }
-  async ["gl-particle"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * GPU-accelerated particle system. Pass `true` for a one-shot burst, or use operations:
+   * - `"create"` — register a named emitter (`id`, `max`, `life`, `speed`, `continuous`, `rate`)
+   * - `"emit"` — burst from a named emitter (`id`, `x`, `y`, `z`, `count`)
+   * - `"destroy"` — remove a named emitter
+   * All modes support `color`, `colorEnd`, `size`, `sizeEnd`, `life`, `speed`.
+   * @example
+   * { "gl-particle": true, "x": 100, "y": 200, "count": 30, "speed": 5, "life": 1, "color": [1,0.5,0,1] }
+   */
+  ["gl-particle"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-    const gl = inst.gl;
-
-    // Lazily compile GPU particle program
     if (!inst.gpuParticleProg) initGpuParticleProgram(inst, GlNode.createProgram);
+    return resolveObj(def, context, r => {
+      const gl = inst.gl;
+      const actionStr = String(r["gl-particle"]);
 
-    const action = await resolve(def["gl-particle"], context);
-    const actionStr = String(action);
+      if (actionStr === "destroy") {
+        const id = String(r["id"] ?? "default");
+        const em = inst.gpuParticles.get(id);
+        if (em) { gl.deleteBuffer(em.vbo); inst.gpuParticles.delete(id); }
+        return null;
+      }
 
-    // Destroy named emitter
-    if (actionStr === "destroy") {
-      const id = String(await resolve(def["id"] ?? "default", context));
-      const em = inst.gpuParticles.get(id);
-      if (em) { gl.deleteBuffer(em.vbo); inst.gpuParticles.delete(id); }
-      return null;
-    }
+      if (actionStr === "emit") {
+        const id = String(r["id"] ?? "default");
+        const emitter = inst.gpuParticles.get(id);
+        if (!emitter) return null;
+        const count = Number(r["count"] ?? 10);
+        const x = r["x"] !== undefined ? Number(r["x"]) : emitter.x;
+        const y = r["y"] !== undefined ? Number(r["y"]) : emitter.y;
+        const z = r["z"] !== undefined ? Number(r["z"]) : emitter.z;
+        emitGpuParticles(inst, emitter, x, y, z, count);
+        inst.dirty = true;
+        GlNode.scheduleRender(inst);
+        return null;
+      }
 
-    // Emit burst into existing named emitter
-    if (actionStr === "emit") {
-      const id = String(await resolve(def["id"] ?? "default", context));
-      const emitter = inst.gpuParticles.get(id);
-      if (!emitter) return null;
-      const count = Number(await resolve(def["count"] ?? 10, context));
-      const x = Number(await resolve(def["x"] ?? emitter.x, context));
-      const y = Number(await resolve(def["y"] ?? emitter.y, context));
-      const z = Number(await resolve(def["z"] ?? emitter.z, context));
-      emitGpuParticles(inst, emitter, x, y, z, count);
+      const isCreate = actionStr === "create";
+      const id = isCreate ? String(r["id"] ?? "default") : "__burst_" + (++GlNode._burstId);
+      const count = Number(r["count"] ?? (isCreate ? 5000 : 10));
+      const maxP = Number(r["max"] ?? (isCreate ? Math.max(count, 5000) : Math.max(count * 4, 200)));
+      const life = Number(r["life"] ?? 1.0);
+      const grav = (r["gravity"] ?? [0, 0, 0]) as number[];
+      const color = (r["color"] ?? [1, 1, 1, 1]) as number[];
+      const colorEnd = (r["colorEnd"] ?? [color[0], color[1], color[2], 0]) as number[];
+
+      const old = inst.gpuParticles.get(id);
+      if (old) gl.deleteBuffer(old.vbo);
+
+      const vbo = gl.createBuffer()!;
+      const data = new Float32Array(maxP * GPU_PARTICLE_INST_STRIDE);
+      for (let i = 0; i < maxP; i++) data[i * GPU_PARTICLE_INST_STRIDE + 3] = -1e6;
+      gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+      gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+
+      const emitter: GpuParticleEmitter = {
+        id, maxParticles: maxP, lifetime: life,
+        gravity: [grav[0] ?? 0, grav[1] ?? 0, grav[2] ?? 0],
+        head: 0, data, vbo,
+        x: 0, y: 0, z: 0,
+        speed:  Number(r["speed"]  ?? 3),
+        spread: Number(r["spread"] ?? Math.PI * 2),
+        dirX:   Number(r["dirX"]   ?? 0),
+        dirY:   Number(r["dirY"]   ?? -1),
+        dirZ:   Number(r["dirZ"]   ?? 0),
+        size:   Number(r["size"]   ?? 0.3),
+        sizeEnd: r["sizeEnd"] !== undefined ? Number(r["sizeEnd"]) : 0,
+        color:    [color[0],    color[1],    color[2],    color[3]    ?? 1],
+        colorEnd: [colorEnd[0], colorEnd[1], colorEnd[2], colorEnd[3] ?? 0],
+        continuous: !!r["continuous"],
+        rate: Number(r["rate"] ?? 100),
+        accumulator: 0,
+        texture: r["texture"] ? String(r["texture"]) : null,
+        blend: (r["blend"] ?? "additive") as "additive" | "normal",
+      };
+
+      inst.gpuParticles.set(id, emitter);
+
+      if (!emitter.continuous || !isCreate) {
+        const x = r["x"] !== undefined ? Number(r["x"]) : 0;
+        const y = r["y"] !== undefined ? Number(r["y"]) : 0;
+        const z = r["z"] !== undefined ? Number(r["z"]) : 0;
+        emitGpuParticles(inst, emitter, x, y, z, count);
+      }
+
       inst.dirty = true;
       GlNode.scheduleRender(inst);
       return null;
-    }
-
-    // Create named emitter or simple burst
-    const isCreate = actionStr === "create";
-    const id = isCreate ? String(await resolve(def["id"] ?? "default", context)) : "__burst_" + (++GlNode._burstId);
-
-    const count = Number(await resolve(def["count"] ?? (isCreate ? 5000 : 10), context));
-    const maxP = Number(await resolve(def["max"] ?? (isCreate ? Math.max(count, 5000) : Math.max(count * 4, 200)), context));
-    const life = Number(await resolve(def["life"] ?? 1.0, context));
-    const grav = (def["gravity"] !== undefined ? await resolve(def["gravity"], context) : [0, 0, 0]) as number[];
-    const color = (def["color"] !== undefined ? await resolve(def["color"], context) : [1, 1, 1, 1]) as number[];
-    const colorEnd = (def["colorEnd"] !== undefined ? await resolve(def["colorEnd"], context) : [color[0], color[1], color[2], 0]) as number[];
-
-    // Remove old emitter if exists
-    const old = inst.gpuParticles.get(id);
-    if (old) gl.deleteBuffer(old.vbo);
-
-    const vbo = gl.createBuffer()!;
-    const data = new Float32Array(maxP * GPU_PARTICLE_INST_STRIDE);
-    for (let i = 0; i < maxP; i++) data[i * GPU_PARTICLE_INST_STRIDE + 3] = -1e6;
-    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-    gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
-
-    const emitter: GpuParticleEmitter = {
-      id, maxParticles: maxP, lifetime: life,
-      gravity: [grav[0] ?? 0, grav[1] ?? 0, grav[2] ?? 0],
-      head: 0, data, vbo,
-      x: 0, y: 0, z: 0,
-      speed: Number(await resolve(def["speed"] ?? 3, context)),
-      spread: Number(await resolve(def["spread"] ?? Math.PI * 2, context)),
-      dirX: Number(await resolve(def["dirX"] ?? 0, context)),
-      dirY: Number(await resolve(def["dirY"] ?? -1, context)),
-      dirZ: Number(await resolve(def["dirZ"] ?? 0, context)),
-      size: Number(await resolve(def["size"] ?? 0.3, context)),
-      sizeEnd: def["sizeEnd"] !== undefined ? Number(await resolve(def["sizeEnd"], context)) : 0,
-      color: [color[0], color[1], color[2], color[3] ?? 1],
-      colorEnd: [colorEnd[0], colorEnd[1], colorEnd[2], colorEnd[3] ?? 0],
-      continuous: !!(await resolve(def["continuous"] ?? false, context)),
-      rate: Number(await resolve(def["rate"] ?? 100, context)),
-      accumulator: 0,
-      texture: def["texture"] ? String(await resolve(def["texture"], context)) : null,
-      blend: (await resolve(def["blend"] ?? "additive", context)) as "additive" | "normal",
-    };
-
-    inst.gpuParticles.set(id, emitter);
-
-    // Emit initial burst
-    if (!emitter.continuous || !isCreate) {
-      const x = Number(await resolve(def["x"] ?? 0, context));
-      const y = Number(await resolve(def["y"] ?? 0, context));
-      const z = Number(await resolve(def["z"] ?? 0, context));
-      emitGpuParticles(inst, emitter, x, y, z, count);
-    }
-
-    inst.dirty = true;
-    GlNode.scheduleRender(inst);
-    return null;
+    });
   }
 
   private static _burstId = 0;
@@ -1158,10 +1180,6 @@ export class GlNode extends Node {
   private static getInst(context: Context): GlInstance | null {
     const selector = context._glSelector as string | undefined;
     return selector ? GlNode.instances.get(selector) ?? null : null;
-  }
-
-  private static async resolveId(opValue: unknown, context: Context): Promise<string> {
-    return String(await resolve(opValue, context));
   }
 
   private static resolveCanvas(selector: string): HTMLCanvasElement | null {
@@ -1287,7 +1305,8 @@ export class GlNode extends Node {
       if (hasInterp) store.restoreFromInterpolation();
 
       if (inst.onFrame && inst.frameContext) {
-        GlNode.runSteps(inst.onFrame, { ...inst.frameContext, glTime: time, glDelta: delta });
+        Promise.resolve(runSteps(inst.onFrame, { ...inst.frameContext, glTime: time, glDelta: delta }))
+          .catch(err => console.error("[GL] Error in on-frame steps:", err));
         GlNode.scheduleRender(inst);
       }
 
@@ -1327,7 +1346,10 @@ export class GlNode extends Node {
   private static tickTweensAndDispatch(inst: GlInstance, dt: number): void {
     const callbacks = tickTweens(inst, dt);
     if (callbacks) {
-      for (const cb of callbacks) GlNode.runSteps(cb.then, cb.context);
+      for (const cb of callbacks) {
+        Promise.resolve(runSteps(cb.then, cb.context))
+          .catch(err => console.error("[GL] Error in tween steps:", err));
+      }
     }
     if (inst.tweens.length > 0 || callbacks) GlNode.scheduleRender(inst);
   }
@@ -2414,17 +2436,4 @@ export class GlNode extends Node {
     return shader;
   }
 
-  private static async runSteps(steps: unknown[], context: Context): Promise<void> {
-    try {
-      for (const step of steps) {
-        const result = await resolve(step, context);
-        if (step && typeof step === "object" && !Array.isArray(step) && "as" in step) {
-          const key = String((step as Record<string, unknown>).as).replace(/^\$/, "");
-          context[key] = result;
-        }
-      }
-    } catch (err) {
-      console.error("[GL] Error in on-frame steps:", err);
-    }
-  }
 }

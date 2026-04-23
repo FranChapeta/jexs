@@ -1,6 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
-import { Node, Context, NodeValue } from "@jexs/core";
+import { Node, Context, NodeValue, resolve } from "@jexs/core";
 import { TableSchema, ColumnDef } from "./Query.js";
 import { sha256 } from "./Crypto.js";
 
@@ -40,21 +40,29 @@ export class SchemaNode extends Node {
     }
   }
 
-  schema(def: Record<string, unknown>, _context: Context): NodeValue {
-    if (def.schema === "get") {
-      const tableName = this.toString(def.table);
-      return SchemaNode.get(tableName) ?? null;
-    }
-    if (def.schema === "list") {
-      return Array.from(SchemaNode.schemas.values());
-    }
-    if (def.schema === "validator") {
-      if (Array.isArray(def.run)) {
-        SchemaNode.globalValidator = def.run;
+  /**
+   * Registers table schemas for use by QueryNode. Operations: `"register"`, `"get"`, `"list"`, `"validator"`.
+   * Pass `"path"` to load all JSON schema files from a directory, or `"table"` for an inline schema object.
+   *
+   * @example
+   * { "schema": "register", "path": "db/tables" }
+   */
+  schema(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.schema, context, op => {
+      if (op === "get") {
+        return SchemaNode.get(this.toString(def.table)) ?? null;
       }
-      return null;
-    }
-    return doRegister(def);
+      if (op === "list") {
+        return Array.from(SchemaNode.schemas.values());
+      }
+      if (op === "validator") {
+        if (Array.isArray(def.run)) {
+          SchemaNode.globalValidator = def.run;
+        }
+        return null;
+      }
+      return doRegister(def);
+    });
   }
 
   // ============================================

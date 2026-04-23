@@ -24,184 +24,235 @@ import { resolve } from "@jexs/core";
 
 let pointerLockListenerAdded = false;
 export class DomNode extends Node {
-  async show(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const el = getElement(await resolve(def.show, context));
-    if (el) el.style.display = "";
-    return el;
-  }
-  async hide(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const el = getElement(await resolve(def.hide, context));
-    if (el) el.style.display = "none";
-    return el;
-  }
-  async toggle(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const el = getElement(await resolve(def.toggle, context));
-    if (el) el.style.display = el.style.display === "none" ? "" : "none";
-    return el;
-  }
-  async showAll(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const sel = String(await resolve(def.showAll, context));
-    const els = document.querySelectorAll<HTMLElement>(sel);
-    els.forEach(el => el.style.display = "");
-    return els.length;
-  }
-  async hideAll(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const sel = String(await resolve(def.hideAll, context));
-    const els = document.querySelectorAll<HTMLElement>(sel);
-    els.forEach(el => el.style.display = "none");
-    return els.length;
-  }
-  async enable(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const el = getElement(await resolve(def.enable, context));
-    if (el) (el as HTMLInputElement).disabled = false;
-    return el;
-  }
-  async disable(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const el = getElement(await resolve(def.disable, context));
-    if (el) (el as HTMLInputElement).disabled = true;
-    return el;
-  }
-  async addClass(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const args = await resolve(def.addClass, context) as unknown[];
-    if (Array.isArray(args) && args.length >= 2) {
-      const el = getElement(args[0]);
-      if (el) el.classList.add(String(args[1]));
+  /** Shows an element by clearing its inline `display` style. Accepts a CSS selector or HTMLElement. */
+  show(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.show, context, v => {
+      const el = getElement(v);
+      if (el) el.style.display = "";
       return el;
-    }
-    return null;
+    });
   }
-  async removeClass(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const args = await resolve(def.removeClass, context) as unknown[];
-    if (Array.isArray(args) && args.length >= 2) {
-      const el = getElement(args[0]);
-      if (el) el.classList.remove(String(args[1]));
+  /** Hides an element by setting `display: none`. Accepts a CSS selector or HTMLElement. */
+  hide(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.hide, context, v => {
+      const el = getElement(v);
+      if (el) el.style.display = "none";
       return el;
-    }
-    return null;
+    });
   }
-  async toggleClass(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const args = await resolve(def.toggleClass, context) as unknown[];
-    if (Array.isArray(args) && args.length >= 2) {
-      const el = getElement(args[0]);
-      if (el) el.classList.toggle(String(args[1]));
+  /** Toggles `display: none` on an element. */
+  toggle(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.toggle, context, v => {
+      const el = getElement(v);
+      if (el) el.style.display = el.style.display === "none" ? "" : "none";
       return el;
-    }
-    return null;
+    });
   }
-  async setAttr(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const args = await resolve(def.setAttr, context) as unknown[];
-    if (Array.isArray(args) && args.length >= 3) {
-      const el = getElement(args[0]);
-      if (el) el.setAttribute(String(args[1]), String(args[2]));
+  /** Shows all elements matching a CSS selector. Returns the count of matched elements. */
+  showAll(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.showAll, context, v => {
+      const els = document.querySelectorAll<HTMLElement>(String(v));
+      els.forEach(el => el.style.display = "");
+      return els.length;
+    });
+  }
+  /** Hides all elements matching a CSS selector. Returns the count of matched elements. */
+  hideAll(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.hideAll, context, v => {
+      const els = document.querySelectorAll<HTMLElement>(String(v));
+      els.forEach(el => el.style.display = "none");
+      return els.length;
+    });
+  }
+  /** Enables a form input by setting `disabled = false`. */
+  enable(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.enable, context, v => {
+      const el = getElement(v);
+      if (el) (el as HTMLInputElement).disabled = false;
       return el;
-    }
-    return null;
+    });
   }
-  async getAttr(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const args = await resolve(def.getAttr, context) as unknown[];
-    if (Array.isArray(args) && args.length >= 2) {
-      const el = getElement(args[0]);
-      if (el) return el.getAttribute(String(args[1]));
-    }
-    return null;
+  /** Disables a form input by setting `disabled = true`. */
+  disable(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.disable, context, v => {
+      const el = getElement(v);
+      if (el) (el as HTMLInputElement).disabled = true;
+      return el;
+    });
   }
-  async submit(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const val = await resolve(def.submit, context);
-    const target = context.target as HTMLElement | undefined;
-    if (val === "form" && target) {
-      const form = target.closest("form") as HTMLFormElement | null;
-      if (form) form.submit();
-    } else {
-      const form = getElement(val);
-      if (form && form instanceof HTMLFormElement) form.submit();
-    }
-    return null;
-  }
-  async getElementById(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const id = String(await resolve(def.getElementById, context));
-    return document.getElementById(id);
-  }
-  async querySelector(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const sel = String(await resolve(def.querySelector, context));
-    return document.querySelector(sel);
-  }
-  async querySelectorAll(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const sel = String(await resolve(def.querySelectorAll, context));
-    return Array.from(document.querySelectorAll(sel));
-  }
-  async closest(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const args = await resolve(def.closest, context) as unknown[];
-    if (Array.isArray(args) && args.length >= 2) {
-      const el = args[0] as HTMLElement;
-      if (el && typeof el.closest === "function") {
-        return el.closest(String(args[1]));
+  /**
+   * Adds a CSS class to an element. Pass `[selectorOrElement, className]`.
+   * @example
+   * { "addClass": ["#btn", "active"] }
+   */
+  addClass(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.addClass, context, args => {
+      if (Array.isArray(args) && args.length >= 2) {
+        const el = getElement(args[0]);
+        if (el) el.classList.add(String(args[1]));
+        return el;
       }
-    }
-    return null;
+      return null;
+    });
   }
-  async getValue(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const el = getElement(await resolve(def.getValue, context));
-    if (el) return (el as HTMLInputElement).value ?? "";
-    return null;
-  }
-  async setValue(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const args = await resolve(def.setValue, context) as unknown[];
-    if (Array.isArray(args) && args.length >= 2) {
-      const el = getElement(args[0]);
-      if (el) (el as HTMLInputElement).value = String(args[1] ?? "");
-      return el;
-    }
-    return null;
-  }
-  async setHtml(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const args = await resolve(def.setHtml, context) as unknown[];
-    if (Array.isArray(args) && args.length >= 2) {
-      const el = getElement(args[0]);
-      if (el) el.innerHTML = String(args[1] ?? "");
-      return el;
-    }
-    return null;
-  }
-  async setText(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const args = await resolve(def.setText, context) as unknown[];
-    if (Array.isArray(args) && args.length >= 2) {
-      const el = getElement(args[0]);
-      if (el) el.textContent = String(args[1] ?? "");
-      return el;
-    }
-    return null;
-  }
-  async append(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const args = await resolve(def.append, context) as unknown[];
-    if (Array.isArray(args) && args.length >= 2) {
-      const el = getElement(args[0]);
-      if (el) {
-        el.insertAdjacentHTML("beforeend", String(args[1] ?? ""));
-        el.scrollTop = el.scrollHeight;
+  /** Removes a CSS class from an element. Pass `[selectorOrElement, className]`. */
+  removeClass(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.removeClass, context, args => {
+      if (Array.isArray(args) && args.length >= 2) {
+        const el = getElement(args[0]);
+        if (el) el.classList.remove(String(args[1]));
+        return el;
       }
+      return null;
+    });
+  }
+  /** Toggles a CSS class on an element. Pass `[selectorOrElement, className]`. */
+  toggleClass(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.toggleClass, context, args => {
+      if (Array.isArray(args) && args.length >= 2) {
+        const el = getElement(args[0]);
+        if (el) el.classList.toggle(String(args[1]));
+        return el;
+      }
+      return null;
+    });
+  }
+  /** Sets an attribute on an element. Pass `[selectorOrElement, attrName, value]`. */
+  setAttr(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.setAttr, context, args => {
+      if (Array.isArray(args) && args.length >= 3) {
+        const el = getElement(args[0]);
+        if (el) el.setAttribute(String(args[1]), String(args[2]));
+        return el;
+      }
+      return null;
+    });
+  }
+  /** Gets an attribute value from an element. Pass `[selectorOrElement, attrName]`. */
+  getAttr(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.getAttr, context, args => {
+      if (Array.isArray(args) && args.length >= 2) {
+        const el = getElement(args[0]);
+        if (el) return el.getAttribute(String(args[1]));
+      }
+      return null;
+    });
+  }
+  /** Submits a form. Pass `"form"` to submit the closest ancestor form of the event target, or a CSS selector. */
+  submit(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.submit, context, val => {
+      const target = context.target as HTMLElement | undefined;
+      if (val === "form" && target) {
+        const form = target.closest("form") as HTMLFormElement | null;
+        if (form) form.submit();
+      } else {
+        const form = getElement(val);
+        if (form && form instanceof HTMLFormElement) form.submit();
+      }
+      return null;
+    });
+  }
+  /** Returns the element with the given id via `document.getElementById`. */
+  getElementById(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.getElementById, context, v => document.getElementById(String(v)));
+  }
+  /** Returns the first element matching a CSS selector. */
+  querySelector(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.querySelector, context, v => document.querySelector(String(v)));
+  }
+  /** Returns all elements matching a CSS selector as an array. */
+  querySelectorAll(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.querySelectorAll, context, v => Array.from(document.querySelectorAll(String(v))));
+  }
+  /** Walks up from an element to the nearest ancestor matching a selector. Pass `[element, selector]`. */
+  closest(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.closest, context, args => {
+      if (Array.isArray(args) && args.length >= 2) {
+        const el = args[0] as HTMLElement;
+        if (el && typeof el.closest === "function") return el.closest(String(args[1]));
+      }
+      return null;
+    });
+  }
+  /** Gets the current `.value` of an input element. */
+  getValue(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.getValue, context, v => {
+      const el = getElement(v);
+      return el ? (el as HTMLInputElement).value ?? "" : null;
+    });
+  }
+  /** Sets the `.value` of an input element. Pass `[selectorOrElement, value]`. */
+  setValue(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.setValue, context, args => {
+      if (Array.isArray(args) && args.length >= 2) {
+        const el = getElement(args[0]);
+        if (el) (el as HTMLInputElement).value = String(args[1] ?? "");
+        return el;
+      }
+      return null;
+    });
+  }
+  /** Sets the `innerHTML` of an element. Pass `[selectorOrElement, html]`. */
+  setHtml(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.setHtml, context, args => {
+      if (Array.isArray(args) && args.length >= 2) {
+        const el = getElement(args[0]);
+        if (el) el.innerHTML = String(args[1] ?? "");
+        return el;
+      }
+      return null;
+    });
+  }
+  /** Sets the `textContent` of an element. Pass `[selectorOrElement, text]`. */
+  setText(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.setText, context, args => {
+      if (Array.isArray(args) && args.length >= 2) {
+        const el = getElement(args[0]);
+        if (el) el.textContent = String(args[1] ?? "");
+        return el;
+      }
+      return null;
+    });
+  }
+  /** Appends HTML to an element (`insertAdjacentHTML("beforeend")`) and scrolls to the bottom. Pass `[selectorOrElement, html]`. */
+  append(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.append, context, args => {
+      if (Array.isArray(args) && args.length >= 2) {
+        const el = getElement(args[0]);
+        if (el) {
+          el.insertAdjacentHTML("beforeend", String(args[1] ?? ""));
+          el.scrollTop = el.scrollHeight;
+        }
+        return el;
+      }
+      return null;
+    });
+  }
+  /** Scrolls an element to its bottom by setting `scrollTop = scrollHeight`. Useful for chat containers. */
+  scrollTo(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.scrollTo, context, v => {
+      const el = getElement(v);
+      if (el) el.scrollTop = el.scrollHeight;
       return el;
-    }
-    return null;
+    });
   }
-  async scrollTo(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const el = getElement(await resolve(def.scrollTo, context));
-    if (el) el.scrollTop = el.scrollHeight;
-    return el;
+  /** Requests pointer lock on an element. Updates `context.pointerLocked` on lock state changes. */
+  pointerLock(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.pointerLock, context, v => {
+      const el = getElement(v);
+      if (!el) return null;
+      if (!pointerLockListenerAdded) {
+        pointerLockListenerAdded = true;
+        document.addEventListener("pointerlockchange", () => {
+          context.pointerLocked = !!document.pointerLockElement;
+        });
+      }
+      el.requestPointerLock();
+      return null;
+    });
   }
-  async pointerLock(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const el = getElement(await resolve(def.pointerLock, context));
-    if (!el) return null;
-    if (!pointerLockListenerAdded) {
-      pointerLockListenerAdded = true;
-      const ctx = context;
-      document.addEventListener("pointerlockchange", () => {
-        ctx.pointerLocked = !!document.pointerLockElement;
-      });
-    }
-    el.requestPointerLock();
-    return null;
-  }
-  async pointerUnlock(_def: Record<string, unknown>, _context: Context): Promise<NodeValue> {
+  /** Exits pointer lock via `document.exitPointerLock()`. */
+  pointerUnlock(_def: Record<string, unknown>, _context: Context): NodeValue {
     document.exitPointerLock();
     return null;
   }

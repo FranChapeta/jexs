@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue } from "@jexs/core";
-import { resolve } from "@jexs/core";
+import { resolve, resolveAll } from "@jexs/core";
 
 // ─── Audio state per instance ────────────────────────────────────────────────
 
@@ -31,99 +31,120 @@ function getInst(context: Context): AudioInstance | null {
 
 export class AudioNode extends Node {
 
-  // { "audio-load": "shoot", "url": "/audio/shoot.wav" }
-  async ["audio-load"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Fetches and decodes an audio file, storing it under `name` for later playback with `audio-play`.
+   * @example
+   * { "audio-load": "shoot", "url": "/audio/shoot.wav" }
+   */
+  ["audio-load"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = getInst(context);
     if (!inst) return null;
-
-    const name = String(await resolve(def["audio-load"], context));
-    const url = String(await resolve(def["url"], context));
-
-    try {
-      const resp = await fetch(url);
-      const arrayBuf = await resp.arrayBuffer();
-      const audioBuf = await inst.ctx.decodeAudioData(arrayBuf);
-      inst.buffers.set(name, audioBuf);
-    } catch (e) {
-      console.error("[Audio] Failed to load:", name, e);
-    }
-    return null;
+    return resolveAll([def["audio-load"], def["url"]], context, async ([nameRaw, urlRaw]) => {
+      const name = String(nameRaw);
+      const url = String(urlRaw);
+      try {
+        const resp = await fetch(url);
+        const arrayBuf = await resp.arrayBuffer();
+        const audioBuf = await inst.ctx.decodeAudioData(arrayBuf);
+        inst.buffers.set(name, audioBuf);
+      } catch (e) {
+        console.error("[Audio] Failed to load:", name, e);
+      }
+      return null;
+    });
   }
 
-  // { "audio-play": "shoot", "volume": 0.5, "loop": false }
-  async ["audio-play"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Plays a previously loaded audio buffer. Set `volume` (0–1) and `loop: true` for looping.
+   * Stops any currently playing instance of the same name before starting.
+   * @example
+   * { "audio-play": "shoot", "volume": 0.5, "loop": false }
+   */
+  ["audio-play"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = getInst(context);
     if (!inst) return null;
+    return resolveAll(
+      [def["audio-play"], def["volume"] ?? 1, def["loop"] ?? false],
+      context,
+      ([nameRaw, volumeRaw, loopRaw]: unknown[]) => {
+        const name = String(nameRaw);
+        const buffer = inst.buffers.get(name);
+        if (!buffer) { console.warn("[Audio] Buffer not loaded:", name); return null; }
 
-    const name = String(await resolve(def["audio-play"], context));
-    const buffer = inst.buffers.get(name);
-    if (!buffer) { console.warn("[Audio] Buffer not loaded:", name); return null; }
+        const volume = Number(volumeRaw);
+        const loop = this.toBoolean(loopRaw);
 
-    const volume = def["volume"] !== undefined ? Number(await resolve(def["volume"], context)) : 1;
-    const loop = def["loop"] !== undefined ? this.toBoolean(await resolve(def["loop"], context)) : false;
+        const existing = inst.sources.get(name);
+        if (existing) {
+          try { existing.source.stop(); } catch { /* already stopped */ }
+        }
 
-    // Stop existing source with same name if playing
-    const existing = inst.sources.get(name);
-    if (existing) {
-      try { existing.source.stop(); } catch { /* already stopped */ }
-    }
+        const source = inst.ctx.createBufferSource();
+        source.buffer = buffer;
+        source.loop = loop;
 
-    const source = inst.ctx.createBufferSource();
-    source.buffer = buffer;
-    source.loop = loop;
+        const gain = inst.ctx.createGain();
+        gain.gain.value = volume;
+        source.connect(gain);
+        gain.connect(inst.masterGain);
 
-    const gain = inst.ctx.createGain();
-    gain.gain.value = volume;
-    source.connect(gain);
-    gain.connect(inst.masterGain);
+        source.start(0);
+        inst.sources.set(name, { source, gain, loop });
 
-    source.start(0);
-    inst.sources.set(name, { source, gain, loop });
+        source.onended = () => {
+          const cur = inst.sources.get(name);
+          if (cur?.source === source) inst.sources.delete(name);
+        };
 
-    // Clean up when done (non-looping)
-    source.onended = () => {
-      const cur = inst.sources.get(name);
-      if (cur?.source === source) inst.sources.delete(name);
-    };
-
-    return null;
+        return null;
+      },
+    );
   }
 
-  // { "audio-stop": "shoot" }
-  async ["audio-stop"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Stops a playing audio buffer by name.
+   * @example
+   * { "audio-stop": "shoot" }
+   */
+  ["audio-stop"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = getInst(context);
     if (!inst) return null;
-
-    const name = String(await resolve(def["audio-stop"], context));
-    const existing = inst.sources.get(name);
-    if (existing) {
-      try { existing.source.stop(); } catch { /* already stopped */ }
-      inst.sources.delete(name);
-    }
-    return null;
+    return resolve(def["audio-stop"], context, name => {
+      const existing = inst.sources.get(String(name));
+      if (existing) {
+        try { existing.source.stop(); } catch { /* already stopped */ }
+        inst.sources.delete(String(name));
+      }
+      return null;
+    });
   }
 
-  // { "audio-volume": "shoot", "volume": 0.3 }
-  async ["audio-volume"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Adjusts the volume of a currently playing audio source without restarting it.
+   * @example
+   * { "audio-volume": "shoot", "volume": 0.3 }
+   */
+  ["audio-volume"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = getInst(context);
     if (!inst) return null;
-
-    const name = String(await resolve(def["audio-volume"], context));
-    const volume = Number(await resolve(def["volume"], context));
-    const existing = inst.sources.get(name);
-    if (existing) {
-      existing.gain.gain.value = volume;
-    }
-    return null;
+    return resolveAll([def["audio-volume"], def["volume"]], context, ([name, vol]: unknown[]) => {
+      const existing = inst.sources.get(String(name));
+      if (existing) existing.gain.gain.value = Number(vol);
+      return null;
+    });
   }
 
-  // { "audio-master": 0.5 } — set master volume
-  async ["audio-master"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Sets the master gain for all audio output in this context (0–1).
+   * @example
+   * { "audio-master": 0.5 }
+   */
+  ["audio-master"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = getInst(context);
     if (!inst) return null;
-
-    const volume = Number(await resolve(def["audio-master"], context));
-    inst.masterGain.gain.value = volume;
-    return null;
+    return resolve(def["audio-master"], context, volume => {
+      inst.masterGain.gain.value = Number(volume);
+      return null;
+    });
   }
 }

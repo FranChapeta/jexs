@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue } from "@jexs/core";
-import { resolve } from "@jexs/core";
+import { resolve, resolveObj } from "@jexs/core";
 
 let initEventsFn: ((root: HTMLElement) => void) | null = null;
 
@@ -18,181 +18,212 @@ export function setInitEvents(fn: (root: HTMLElement) => void): void {
  * - { "list-serialize": { "list": "#listId", "to": "#hiddenId", "fields": ["value", "label"] } }
  */
 export class ListNode extends Node {
-  async ["list-add"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const listSel = String(await resolve(def["list-add"], context));
-    const tmplSel = String(await resolve(def.template, context));
-    const list = document.querySelector(listSel);
-    const tmpl = document.querySelector(tmplSel) as HTMLTemplateElement;
-    if (list && tmpl && tmpl.content) {
-      const clone = tmpl.content.cloneNode(true) as DocumentFragment;
-      const firstEl = clone.firstElementChild as HTMLElement;
-      list.appendChild(clone);
-      if (firstEl && initEventsFn) initEventsFn(firstEl);
-      return firstEl;
-    }
-    return null;
+  /**
+   * Clones a `<template>` element and appends the clone to a list container.
+   * Wires up event handlers on the new element via `initEventsFn`. Returns the cloned element.
+   * @example
+   * { "list-add": "#items", "template": "#item-template" }
+   */
+  ["list-add"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveObj(def, context, r => {
+      const list = document.querySelector(String(r["list-add"]));
+      const tmpl = document.querySelector(String(r.template)) as HTMLTemplateElement;
+      if (list && tmpl && tmpl.content) {
+        const clone = tmpl.content.cloneNode(true) as DocumentFragment;
+        const firstEl = clone.firstElementChild as HTMLElement;
+        list.appendChild(clone);
+        if (firstEl && initEventsFn) initEventsFn(firstEl);
+        return firstEl;
+      }
+      return null;
+    });
   }
-  async ["list-remove"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const ref = await resolve(def["list-remove"], context);
-    const el = getElement(ref);
-    if (el) {
-      const item = el.closest("[data-list-item]");
-      if (item) item.remove();
-      return true;
-    }
-    return false;
-  }
-  async ["list-move-up"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const ref = await resolve(def["list-move-up"], context);
-    const el = getElement(ref);
-    if (el) {
-      const item = el.closest("[data-list-item]") as HTMLElement;
-      if (item && item.previousElementSibling) {
-        item.parentElement!.insertBefore(item, item.previousElementSibling);
+  /** Removes the closest `[data-list-item]` ancestor of the target element or selector. */
+  ["list-remove"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["list-remove"], context, ref => {
+      const el = getElement(ref);
+      if (el) {
+        const item = el.closest("[data-list-item]");
+        if (item) item.remove();
         return true;
       }
-    }
-    return false;
+      return false;
+    });
   }
-  async ["list-move-down"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const ref = await resolve(def["list-move-down"], context);
-    const el = getElement(ref);
-    if (el) {
-      const item = el.closest("[data-list-item]") as HTMLElement;
-      if (item && item.nextElementSibling) {
-        item.parentElement!.insertBefore(item.nextElementSibling, item);
-        return true;
+  /** Moves the closest `[data-list-item]` ancestor one position up by swapping with its previous sibling. */
+  ["list-move-up"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["list-move-up"], context, ref => {
+      const el = getElement(ref);
+      if (el) {
+        const item = el.closest("[data-list-item]") as HTMLElement;
+        if (item && item.previousElementSibling) {
+          item.parentElement!.insertBefore(item, item.previousElementSibling);
+          return true;
+        }
       }
-    }
-    return false;
+      return false;
+    });
   }
-  async ["list-init"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const config = await resolve(def["list-init"], context) as Record<string, unknown>;
+  /** Moves the closest `[data-list-item]` ancestor one position down by swapping with its next sibling. */
+  ["list-move-down"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["list-move-down"], context, ref => {
+      const el = getElement(ref);
+      if (el) {
+        const item = el.closest("[data-list-item]") as HTMLElement;
+        if (item && item.nextElementSibling) {
+          item.parentElement!.insertBefore(item.nextElementSibling, item);
+          return true;
+        }
+      }
+      return false;
+    });
+  }
+  /**
+   * Pre-populates a list from JSON stored in a hidden input. Reads `list` (selector), `template`,
+   * `from` (hidden input selector), and `fields` (array of `data-field` names to fill per row).
+   * @example
+   * { "list-init": { "list": "#items", "template": "#item-tpl", "from": "#hidden-input", "fields": ["value", "label"] } }
+   */
+  ["list-init"](def: Record<string, unknown>, context: Context): NodeValue {
+    const config = def["list-init"];
     if (!this.isObject(config)) return null;
+    return resolveObj(config as Record<string, unknown>, context, r => {
+      const listSel = String(r.list);
+      const tmplSel = String(r.template);
+      const fromSel = String(r.from);
+      const fields = (r.fields as string[]) || [];
 
-    const listSel = String(config.list);
-    const tmplSel = String(config.template);
-    const fromSel = String(config.from);
-    const fields = (config.fields as string[]) || [];
+      const list = document.querySelector(listSel);
+      const tmpl = document.querySelector(tmplSel) as HTMLTemplateElement;
+      const source = document.querySelector(fromSel) as HTMLInputElement;
+      if (!list || !tmpl || !source) return null;
 
-    const list = document.querySelector(listSel);
-    const tmpl = document.querySelector(tmplSel) as HTMLTemplateElement;
-    const source = document.querySelector(fromSel) as HTMLInputElement;
-    if (!list || !tmpl || !source) return null;
+      const raw = source.value.trim();
+      if (!raw) return [];
 
-    const raw = source.value.trim();
-    if (!raw) return [];
-
-    let items: Record<string, string>[] = [];
-    try {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        items = parsed.map((item: unknown) => {
-          if (typeof item === "object" && item !== null) return item as Record<string, string>;
+      let items: Record<string, string>[] = [];
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          items = parsed.map((item: unknown) => {
+            if (typeof item === "object" && item !== null) return item as Record<string, string>;
+            const obj: Record<string, string> = {};
+            for (const f of fields) obj[f] = String(item);
+            return obj;
+          });
+        }
+      } catch {
+        items = raw.split(",").map(s => s.trim()).filter(Boolean).map(s => {
           const obj: Record<string, string> = {};
-          for (const f of fields) obj[f] = String(item);
+          for (const f of fields) obj[f] = s;
           return obj;
         });
       }
-    } catch {
-      items = raw.split(",").map(s => s.trim()).filter(Boolean).map(s => {
-        const obj: Record<string, string> = {};
-        for (const f of fields) obj[f] = s;
-        return obj;
-      });
-    }
 
-    for (const item of items) {
-      const clone = tmpl.content.cloneNode(true) as DocumentFragment;
-      const firstEl = clone.firstElementChild as HTMLElement;
-      for (const field of fields) {
-        const input = clone.querySelector(`[data-field="${field}"]`) as HTMLInputElement;
-        if (input && item[field] !== undefined) {
-          input.value = String(item[field]);
+      for (const item of items) {
+        const clone = tmpl.content.cloneNode(true) as DocumentFragment;
+        const firstEl = clone.firstElementChild as HTMLElement;
+        for (const field of fields) {
+          const input = clone.querySelector(`[data-field="${field}"]`) as HTMLInputElement;
+          if (input && item[field] !== undefined) input.value = String(item[field]);
         }
+        list.appendChild(clone);
+        if (firstEl && initEventsFn) initEventsFn(firstEl);
       }
-      list.appendChild(clone);
-      if (firstEl && initEventsFn) initEventsFn(firstEl);
-    }
 
-    return items;
+      return items;
+    });
   }
-  async ["list-sortable"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const listSel = String(await resolve(def["list-sortable"], context));
-    const list = document.querySelector(listSel) as HTMLElement;
-    if (!list) return null;
+  /**
+   * Enables drag-and-drop reordering on a list container. Items must have `[data-list-item]`;
+   * add `[data-drag-handle]` on the drag handle element within each item.
+   * @example
+   * { "list-sortable": "#items" }
+   */
+  ["list-sortable"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["list-sortable"], context, listSelRaw => {
+      const list = document.querySelector(String(listSelRaw)) as HTMLElement;
+      if (!list) return null;
 
-    let dragItem: HTMLElement | null = null;
+      let dragItem: HTMLElement | null = null;
 
-    list.addEventListener("pointerdown", (e) => {
-      const handle = (e.target as HTMLElement).closest("[data-drag-handle]");
-      if (!handle) return;
-      const item = handle.closest("[data-list-item]") as HTMLElement;
-      if (item) item.draggable = true;
+      list.addEventListener("pointerdown", (e) => {
+        const handle = (e.target as HTMLElement).closest("[data-drag-handle]");
+        if (!handle) return;
+        const item = handle.closest("[data-list-item]") as HTMLElement;
+        if (item) item.draggable = true;
+      });
+
+      list.addEventListener("dragstart", (e) => {
+        const item = (e.target as HTMLElement).closest("[data-list-item]") as HTMLElement;
+        if (!item) return;
+        dragItem = item;
+        item.classList.add("dragging");
+        e.dataTransfer!.effectAllowed = "move";
+      });
+
+      list.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        if (!dragItem) return;
+        const item = (e.target as HTMLElement).closest("[data-list-item]") as HTMLElement;
+        if (!item || item === dragItem) return;
+        const rect = item.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        if (e.clientY < midY) {
+          list.insertBefore(dragItem, item);
+        } else if (item.nextSibling) {
+          list.insertBefore(dragItem, item.nextSibling);
+        } else {
+          list.appendChild(dragItem);
+        }
+      });
+
+      list.addEventListener("dragend", () => {
+        if (dragItem) {
+          dragItem.draggable = false;
+          dragItem.classList.remove("dragging");
+          dragItem = null;
+        }
+        const input = list.querySelector("[data-field]") as HTMLElement;
+        if (input) input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+
+      return null;
     });
-
-    list.addEventListener("dragstart", (e) => {
-      const item = (e.target as HTMLElement).closest("[data-list-item]") as HTMLElement;
-      if (!item) return;
-      dragItem = item;
-      item.classList.add("dragging");
-      e.dataTransfer!.effectAllowed = "move";
-    });
-
-    list.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      if (!dragItem) return;
-      const item = (e.target as HTMLElement).closest("[data-list-item]") as HTMLElement;
-      if (!item || item === dragItem) return;
-      const rect = item.getBoundingClientRect();
-      const midY = rect.top + rect.height / 2;
-      if (e.clientY < midY) {
-        list.insertBefore(dragItem, item);
-      } else if (item.nextSibling) {
-        list.insertBefore(dragItem, item.nextSibling);
-      } else {
-        list.appendChild(dragItem);
-      }
-    });
-
-    list.addEventListener("dragend", () => {
-      if (dragItem) {
-        dragItem.draggable = false;
-        dragItem.classList.remove("dragging");
-        dragItem = null;
-      }
-      const input = list.querySelector("[data-field]") as HTMLElement;
-      if (input) input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-
-    return null;
   }
-  async ["list-serialize"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const config = await resolve(def["list-serialize"], context) as Record<string, unknown>;
+  /**
+   * Serializes all `[data-list-item]` rows into a JSON array and writes it to a hidden input.
+   * Pass `list` (selector), `to` (hidden input selector), and `fields` (data-field names to collect).
+   * @example
+   * { "list-serialize": { "list": "#items", "to": "#hidden-input", "fields": ["value", "label"] } }
+   */
+  ["list-serialize"](def: Record<string, unknown>, context: Context): NodeValue {
+    const config = def["list-serialize"];
     if (!this.isObject(config)) return null;
+    return resolveObj(config as Record<string, unknown>, context, r => {
+      const listSel = String(r.list);
+      const hiddenSel = String(r.to);
+      const fields = (r.fields as string[]) || [];
 
-    const listSel = String(config.list);
-    const hiddenSel = String(config.to);
-    const fields = (config.fields as string[]) || [];
+      const list = document.querySelector(listSel);
+      const hidden = document.querySelector(hiddenSel) as HTMLInputElement;
+      if (!list || !hidden) return null;
 
-    const list = document.querySelector(listSel);
-    const hidden = document.querySelector(hiddenSel) as HTMLInputElement;
-    if (!list || !hidden) return null;
+      const items: Record<string, string>[] = [];
+      list.querySelectorAll("[data-list-item]").forEach((row) => {
+        const item: Record<string, string> = {};
+        let hasValue = false;
+        for (const field of fields) {
+          const input = row.querySelector(`[data-field="${field}"]`) as HTMLInputElement;
+          item[field] = input ? input.value.trim() : "";
+          if (item[field]) hasValue = true;
+        }
+        if (hasValue) items.push(item);
+      });
 
-    const items: Record<string, string>[] = [];
-    list.querySelectorAll("[data-list-item]").forEach((row) => {
-      const item: Record<string, string> = {};
-      let hasValue = false;
-      for (const field of fields) {
-        const input = row.querySelector(`[data-field="${field}"]`) as HTMLInputElement;
-        item[field] = input ? input.value.trim() : "";
-        if (item[field]) hasValue = true;
-      }
-      if (hasValue) items.push(item);
+      hidden.value = JSON.stringify(items);
+      return items;
     });
-
-    hidden.value = JSON.stringify(items);
-    return items;
   }
 }
 

@@ -2,32 +2,42 @@ import { Node, Context, NodeValue } from "./Node.js";
 import { resolve } from "../Resolver.js";
 import { getNestedValue } from "../helpers.js";
 
-/**
- * Resolves variable references from context.
- *
- * Formats supported:
- * - { "var": "$name" }                              -> read variable
- * - { "setVars": { "$hp": 100, "$round": 0 } }     -> set multiple (values resolved)
- * - { "setVars": { "$fn": {...} }, "raw": true }    -> set multiple (values stored raw)
- */
 export class VariablesNode extends Node {
-  async var(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    let varPath = def.var;
-    if (typeof varPath !== "string") {
-      varPath = await resolve(varPath, context);
-      if (typeof varPath !== "string") return undefined;
-    }
-    return resolveVariable(varPath, context);
+  /**
+   * Reads a value from the current context by dot-path. Prefix the path with `$`.
+   *
+   * @example
+   * { "var": "$user.name" }
+   */
+  var(def: Record<string, unknown>, context: Context): NodeValue {
+    const varPath = def.var;
+    if (typeof varPath === "string") return resolveVariable(varPath, context);
+    return resolve(varPath, context, resolved => {
+      if (typeof resolved !== "string") return undefined;
+      return resolveVariable(resolved, context);
+    });
   }
 
-  async setVars(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Resolves each value in the map and writes the result back into the context.
+   * Pass `"raw": true` to skip resolving values.
+   *
+   * @example
+   * { "setVars": { "count": 0, "name": { "var": "$user.name" } } }
+   */
+  setVars(def: Record<string, unknown>, context: Context): NodeValue {
     const vars = def.setVars;
     if (!vars || typeof vars !== "object" || Array.isArray(vars)) return null;
     const raw = !!def.raw;
-    for (const [key, value] of Object.entries(vars as Record<string, unknown>)) {
-      Node.setContextValue(context, key, raw ? value : await resolve(value, context));
+    const entries = Object.entries(vars as Record<string, unknown>);
+    let i = 0;
+    function next(): unknown {
+      if (i >= entries.length) return null;
+      const [key, value] = entries[i++];
+      if (raw) { Node.setContextValue(context, key, value); return next(); }
+      return resolve(value, context, v => { Node.setContextValue(context, key, v); return next(); });
     }
-    return null;
+    return next();
   }
 }
 
@@ -54,4 +64,3 @@ function valueToString(value: unknown): string {
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return JSON.stringify(value);
 }
-

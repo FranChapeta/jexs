@@ -1,5 +1,5 @@
-import { Node, Context, NodeValue } from "@jexs/core";
-import { resolve } from "@jexs/core";
+import { Node, Context, NodeValue, runSteps } from "@jexs/core";
+import { resolve, resolveAll } from "@jexs/core";
 import { WsNode } from "./WsNode.js";
 
 // Module-level state
@@ -26,34 +26,31 @@ let onMessageContext: Context | null = null;
  * - { "rtc": "on-message", "do": [...] }                 — register handler for incoming data channel messages
  */
 export class WebRTCNode extends Node {
-  async rtc(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const operation = await resolve(def.rtc, context);
-
-    switch (operation) {
-      case "connect":
-        return doConnect(def, context);
-      case "answer":
-        return doAnswer(def, context);
-      case "accept":
-        return doAccept(def, context);
-      case "ice":
-        return doIce(def, context);
-      case "send":
-        return doSend(def, context);
-      case "broadcast":
-        return doBroadcast(def, context);
-      case "close":
-        return doClose(def, context);
-      case "close-all":
-        return closeAll();
-      case "set-ws":
-        return doSetWs(def, context);
-      case "on-message":
-        return doOnMessage(def, context);
-      default:
-        console.error(`[WebRTC] Unknown operation: ${operation}`);
-        return null;
-    }
+  /**
+   * Manages WebRTC peer connections. Signaling is done over the active `WsNode` WebSocket connection.
+   * Operations: `"connect"`, `"answer"`, `"accept"`, `"ice"`, `"send"`, `"broadcast"`, `"close"`, `"close-all"`, `"on-message"`.
+   * Use `"channel": "fast"` for unreliable (low-latency) delivery; default channel is reliable.
+   * @example
+   * { "rtc": "connect", "id": { "var": "$peerId" } }
+   */
+  rtc(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.rtc, context, operation => {
+      switch (operation) {
+        case "connect":   return doConnect(def, context);
+        case "answer":    return doAnswer(def, context);
+        case "accept":    return doAccept(def, context);
+        case "ice":       return doIce(def, context);
+        case "send":      return doSend(def, context);
+        case "broadcast": return doBroadcast(def, context);
+        case "close":     return doClose(def, context);
+        case "close-all": return closeAll();
+        case "set-ws":    return doSetWs(def, context);
+        case "on-message": return doOnMessage(def, context);
+        default:
+          console.error(`[WebRTC] Unknown operation: ${operation}`);
+          return null;
+      }
+    });
   }
 
   static closeAll = closeAll;
@@ -65,94 +62,101 @@ export class WebRTCNode extends Node {
 // Callback set via static setOnMessage (programmatic)
 let onMessageFn: ((peerId: string, data: unknown) => void) | null = null;
 
-async function doSetWs(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  ws = await resolve(def.ws, context) as WebSocket;
-  localId = await resolve(def.id, context) as string;
-  return null;
+function doSetWs(def: Record<string, unknown>, context: Context): unknown {
+  return resolveAll([def.ws, def.id], context, ([wsRaw, idRaw]: unknown[]) => {
+    ws = wsRaw as WebSocket;
+    localId = String(idRaw);
+    return null;
+  });
 }
 
-async function doOnMessage(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+function doOnMessage(def: Record<string, unknown>, _context: Context): unknown {
   if (Array.isArray(def.do)) {
     onMessageSteps = def.do as unknown[];
-    onMessageContext = { ...context };
+    onMessageContext = { ..._context };
   }
   return null;
 }
 
-async function doConnect(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  const peerId = String(await resolve(def.id, context));
-  const pc = createPeer(peerId);
+function doConnect(def: Record<string, unknown>, context: Context): unknown {
+  return resolve(def.id, context, async id => {
+    const peerId = String(id);
+    const pc = createPeer(peerId);
 
-  const channel = pc.createDataChannel("data");
-  setupChannel(channel, peerId, "data");
-  channels.set(peerId, channel);
+    const channel = pc.createDataChannel("data");
+    setupChannel(channel, peerId, "data");
+    channels.set(peerId, channel);
 
-  const fast = pc.createDataChannel("fast", { ordered: false, maxRetransmits: 0 });
-  setupChannel(fast, peerId, "fast");
-  fastChannels.set(peerId, fast);
+    const fast = pc.createDataChannel("fast", { ordered: false, maxRetransmits: 0 });
+    setupChannel(fast, peerId, "fast");
+    fastChannels.set(peerId, fast);
 
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
 
-  signal({
-    type: "rtc:offer",
-    to: peerId,
-    from: getLocalId(),
-    offer: { sdpType: offer.type, sdp: offer.sdp },
+    signal({
+      type: "rtc:offer",
+      to: peerId,
+      from: getLocalId(),
+      offer: { sdpType: offer.type, sdp: offer.sdp },
+    });
+
+    return { peerId, status: "connecting" };
   });
-
-  return { peerId, status: "connecting" };
 }
 
-async function doAnswer(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  const offer = await resolve(def.offer, context) as RTCSessionDescriptionInit;
-  const from = String(await resolve(def.from, context));
-  const pc = createPeer(from);
+function doAnswer(def: Record<string, unknown>, context: Context): unknown {
+  return resolveAll([def.offer, def.from], context, async ([offerRaw, fromRaw]: unknown[]) => {
+    const from = String(fromRaw);
+    const pc = createPeer(from);
 
-  pc.ondatachannel = (event) => {
-    const label = event.channel.label;
-    setupChannel(event.channel, from, label);
-    if (label === "fast") {
-      fastChannels.set(from, event.channel);
-    } else {
-      channels.set(from, event.channel);
-    }
-  };
+    pc.ondatachannel = (event) => {
+      const label = event.channel.label;
+      setupChannel(event.channel, from, label);
+      if (label === "fast") {
+        fastChannels.set(from, event.channel);
+      } else {
+        channels.set(from, event.channel);
+      }
+    };
 
-  const offerObj = offer as unknown as Record<string, unknown>;
-  const offerDesc: RTCSessionDescriptionInit = {
-    type: (offerObj.sdpType ?? offerObj.type ?? "offer") as RTCSdpType,
-    sdp: (offerObj.sdp ?? "") as string,
-  };
-  await pc.setRemoteDescription(offerDesc);
-  flushIceCandidates(from);
-  const answer = await pc.createAnswer();
-  await pc.setLocalDescription(answer);
+    const offerObj = offerRaw as Record<string, unknown>;
+    const offerDesc: RTCSessionDescriptionInit = {
+      type: (offerObj.sdpType ?? offerObj.type ?? "offer") as RTCSdpType,
+      sdp: (offerObj.sdp ?? "") as string,
+    };
+    await pc.setRemoteDescription(offerDesc);
+    flushIceCandidates(from);
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
 
-  signal({
-    type: "rtc:answer",
-    to: from,
-    from: getLocalId(),
-    answer: { sdpType: answer.type, sdp: answer.sdp },
+    signal({
+      type: "rtc:answer",
+      to: from,
+      from: getLocalId(),
+      answer: { sdpType: answer.type, sdp: answer.sdp },
+    });
+
+    return null;
   });
-
-  return null;
 }
 
-async function doAccept(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  const answer = await resolve(def.answer, context) as unknown as Record<string, unknown>;
-  const from = String(await resolve(def.from, context));
+function doAccept(def: Record<string, unknown>, context: Context): unknown {
+  return resolveAll([def.answer, def.from], context, async ([answerRaw, fromRaw]: unknown[]) => {
+    const answer = answerRaw as Record<string, unknown>;
+    const from = String(fromRaw);
 
-  const pc = peers.get(from);
-  if (!pc) return null;
+    const pc = peers.get(from);
+    if (!pc) return null;
 
-  const answerDesc: RTCSessionDescriptionInit = {
-    type: (answer.sdpType ?? answer.type ?? "answer") as RTCSdpType,
-    sdp: (answer.sdp ?? "") as string,
-  };
-  await pc.setRemoteDescription(answerDesc);
-  flushIceCandidates(from);
-  return null;
+    const answerDesc: RTCSessionDescriptionInit = {
+      type: (answer.sdpType ?? answer.type ?? "answer") as RTCSdpType,
+      sdp: (answer.sdp ?? "") as string,
+    };
+    await pc.setRemoteDescription(answerDesc);
+    flushIceCandidates(from);
+    return null;
+  });
 }
 
 // Queue ICE candidates that arrive before remote description is set
@@ -168,50 +172,50 @@ function flushIceCandidates(peerId: string): void {
   }
 }
 
-async function doIce(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  const candidate = await resolve(def.candidate, context) as RTCIceCandidateInit;
-  const from = String(await resolve(def.from, context));
+function doIce(def: Record<string, unknown>, context: Context): unknown {
+  return resolveAll([def.candidate, def.from], context, async ([candidateRaw, fromRaw]: unknown[]) => {
+    const candidate = candidateRaw as RTCIceCandidateInit;
+    const from = String(fromRaw);
 
-  const pc = peers.get(from);
-  if (!pc) return null;
+    const pc = peers.get(from);
+    if (!pc) return null;
 
-  if (!pc.remoteDescription) {
-    if (!pendingIce.has(from)) pendingIce.set(from, []);
-    pendingIce.get(from)!.push(candidate);
-    return null;
-  }
-
-  await pc.addIceCandidate(new RTCIceCandidate(candidate));
-  return null;
-}
-
-async function doSend(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  const peerId = String(await resolve(def.id, context));
-  const data = await resolve(def.data, context);
-  const chName = def.channel ? String(await resolve(def.channel, context)) : "data";
-  const channel = (chName === "fast" ? fastChannels : channels).get(peerId);
-  if (!channel || channel.readyState !== "open") return null;
-  channel.send(typeof data === "string" ? data : JSON.stringify(data));
-  return null;
-}
-
-async function doBroadcast(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  const data = await resolve(def.data, context);
-  const chName = def.channel ? String(await resolve(def.channel, context)) : "data";
-  const map = chName === "fast" ? fastChannels : channels;
-  const payload = typeof data === "string" ? data : JSON.stringify(data);
-  for (const [, channel] of map) {
-    if (channel.readyState === "open") {
-      channel.send(payload);
+    if (!pc.remoteDescription) {
+      if (!pendingIce.has(from)) pendingIce.set(from, []);
+      pendingIce.get(from)!.push(candidate);
+      return null;
     }
-  }
-  return null;
+
+    await pc.addIceCandidate(new RTCIceCandidate(candidate));
+    return null;
+  });
 }
 
-async function doClose(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  const peerId = String(await resolve(def.id, context));
-  closePeer(peerId);
-  return null;
+function doSend(def: Record<string, unknown>, context: Context): unknown {
+  return resolveAll([def.id, def.data, def.channel ?? "data"], context, ([idRaw, data, chRaw]: unknown[]) => {
+    const channel = (String(chRaw) === "fast" ? fastChannels : channels).get(String(idRaw));
+    if (!channel || channel.readyState !== "open") return null;
+    channel.send(typeof data === "string" ? data : JSON.stringify(data));
+    return null;
+  });
+}
+
+function doBroadcast(def: Record<string, unknown>, context: Context): unknown {
+  return resolveAll([def.data, def.channel ?? "data"], context, ([data, chRaw]: unknown[]) => {
+    const map = String(chRaw) === "fast" ? fastChannels : channels;
+    const payload = typeof data === "string" ? data : JSON.stringify(data);
+    for (const [, channel] of map) {
+      if (channel.readyState === "open") channel.send(payload);
+    }
+    return null;
+  });
+}
+
+function doClose(def: Record<string, unknown>, context: Context): unknown {
+  return resolve(def.id, context, id => {
+    closePeer(String(id));
+    return null;
+  });
 }
 
 function getLocalId(): string | null {
@@ -223,9 +227,7 @@ function getWs(): WebSocket | null {
 }
 
 function createPeer(peerId: string): RTCPeerConnection {
-  if (peers.has(peerId)) {
-    closePeer(peerId);
-  }
+  if (peers.has(peerId)) closePeer(peerId);
 
   const pc = new RTCPeerConnection({
     iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
@@ -243,9 +245,7 @@ function createPeer(peerId: string): RTCPeerConnection {
   };
 
   pc.onconnectionstatechange = () => {
-    if (pc.connectionState === "failed" || pc.connectionState === "closed") {
-      closePeer(peerId);
-    }
+    if (pc.connectionState === "failed" || pc.connectionState === "closed") closePeer(peerId);
   };
 
   peers.set(peerId, pc);
@@ -263,20 +263,15 @@ function setupChannel(channel: RTCDataChannel, peerId: string, _label: string): 
       data = event.data;
     }
 
-    // Programmatic callback
-    if (onMessageFn) {
-      onMessageFn(peerId, data);
-    }
+    if (onMessageFn) onMessageFn(peerId, data);
 
-    // JSON template callback via { "rtc": "on-message", "do": [...] }
     if (onMessageSteps && onMessageContext) {
-      runSteps(onMessageSteps, { ...onMessageContext, rtcMessage: data, rtcPeerId: peerId });
+      Promise.resolve(runSteps(onMessageSteps, { ...onMessageContext, rtcMessage: data, rtcPeerId: peerId }))
+        .catch(e => console.error("[WebRTC] on-message error:", e));
     }
   };
 
-  channel.onclose = () => {
-    channels.delete(peerId);
-  };
+  channel.onclose = () => { channels.delete(peerId); };
 }
 
 function signal(message: Record<string, unknown>): void {
@@ -290,39 +285,14 @@ function signal(message: Record<string, unknown>): void {
 
 function closePeer(peerId: string): void {
   const channel = channels.get(peerId);
-  if (channel) {
-    channel.close();
-    channels.delete(peerId);
-  }
+  if (channel) { channel.close(); channels.delete(peerId); }
   const fast = fastChannels.get(peerId);
-  if (fast) {
-    fast.close();
-    fastChannels.delete(peerId);
-  }
+  if (fast) { fast.close(); fastChannels.delete(peerId); }
   const pc = peers.get(peerId);
-  if (pc) {
-    pc.close();
-    peers.delete(peerId);
-  }
+  if (pc) { pc.close(); peers.delete(peerId); }
 }
 
 function closeAll(): null {
-  for (const peerId of peers.keys()) {
-    closePeer(peerId);
-  }
+  for (const peerId of peers.keys()) closePeer(peerId);
   return null;
-}
-
-async function runSteps(steps: unknown[], context: Context): Promise<void> {
-  try {
-    for (const step of steps) {
-      const result = await resolve(step, context);
-      if (step && typeof step === "object" && !Array.isArray(step) && "as" in step) {
-        const varName = String((step as Record<string, unknown>).as).replace(/^\$/, "");
-        context[varName] = result;
-      }
-    }
-  } catch (error) {
-    console.error("[WebRTC] Error in step execution:", error);
-  }
 }

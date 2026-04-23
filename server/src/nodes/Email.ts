@@ -1,6 +1,6 @@
 import nodemailer from "nodemailer";
 import type { Transporter } from "nodemailer";
-import { Node, Context, NodeValue, resolve } from "@jexs/core";
+import { Node, Context, NodeValue, resolveAll } from "@jexs/core";
 
 // Module-level state
 let transporter: Transporter | null = null;
@@ -15,47 +15,57 @@ let ethereal = false;
  * SMTP config from env: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
  */
 export class EmailNode extends Node {
-  async email(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  /**
+   * Sends an email via SMTP. Requires `"subject"`. Use `"body"` for plain text or `"html"` for HTML body.
+   * SMTP config from env: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`.
+   * Falls back to Ethereal (fake SMTP with preview URL) in development when `SMTP_HOST` is not set.
+   *
+   * @example
+   * { "email": { "var": "$user.email" }, "subject": "Welcome!", "html": "<p>Hi there</p>" }
+   */
+  email(def: Record<string, unknown>, context: Context): NodeValue {
     if (!("subject" in def)) return undefined;
 
-    const t = await getTransporter();
-    if (!t) {
-      console.error("[EmailNode] Failed to create email transporter.");
-      return { success: false, error: "Email not configured" };
-    }
+    return resolveAll(
+      [def.email, def.subject, def.body ?? null, def.html ?? null, def.from ?? null],
+      context,
+      async ([toRaw, subjectRaw, bodyRaw, htmlRaw, fromRaw]) => {
+        const t = await getTransporter();
+        if (!t) {
+          console.error("[EmailNode] Failed to create email transporter.");
+          return { success: false, error: "Email not configured" };
+        }
 
-    const to = this.toString(await resolve(def.email, context));
-    const subject = this.toString(await resolve(def.subject, context));
-    const text = def.body
-      ? this.toString(await resolve(def.body, context))
-      : undefined;
-    const html = def.html
-      ? this.toString(await resolve(def.html, context))
-      : undefined;
-    const from = def.from
-      ? this.toString(await resolve(def.from, context))
-      : process.env.SMTP_FROM || process.env.SMTP_USER || "noreply@jms.local";
+        const to = this.toString(toRaw);
+        const subject = this.toString(subjectRaw);
+        const text = def.body ? this.toString(bodyRaw) : undefined;
+        const html = def.html ? this.toString(htmlRaw) : undefined;
+        const from = def.from
+          ? this.toString(fromRaw)
+          : process.env.SMTP_FROM || process.env.SMTP_USER || "noreply@jms.local";
 
-    try {
-      const info = await t.sendMail({ from, to, subject, text, html });
+        try {
+          const info = await t.sendMail({ from, to, subject, text, html });
 
-      const result: Record<string, unknown> = {
-        success: true,
-        messageId: info.messageId,
-      };
+          const result: Record<string, unknown> = {
+            success: true,
+            messageId: info.messageId,
+          };
 
-      if (ethereal) {
-        const previewUrl = nodemailer.getTestMessageUrl(info);
-        console.log(`[EmailNode] Preview: ${previewUrl}`);
-        result.previewUrl = previewUrl;
-      }
+          if (ethereal) {
+            const previewUrl = nodemailer.getTestMessageUrl(info);
+            console.log(`[EmailNode] Preview: ${previewUrl}`);
+            result.previewUrl = previewUrl;
+          }
 
-      return result;
-    } catch (error) {
-      const e = error as Error;
-      console.error("[EmailNode] Send failed:", e.message);
-      return { success: false, error: e.message };
-    }
+          return result;
+        } catch (error) {
+          const e = error as Error;
+          console.error("[EmailNode] Send failed:", e.message);
+          return { success: false, error: e.message };
+        }
+      },
+    );
   }
 }
 

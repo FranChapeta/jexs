@@ -1,5 +1,5 @@
 import { randomUUID, randomBytes } from "crypto";
-import { Node, Context, NodeValue, resolve } from "@jexs/core";
+import { Node, Context, NodeValue, resolveObj } from "@jexs/core";
 import { Cache } from "../cache/Cache.js";
 
 /**
@@ -30,6 +30,14 @@ const COOKIE_NAME = "sid";
  * Sessions are stored in cache with prefix "session:"
  */
 export class SessionNode extends Node {
+  /**
+   * Manages request sessions stored in cache. Operations: `"load"`, `"create"`, `"destroy"`, `"regenerate"`.
+   * Pass an object to set session values. Read values with `{ "var": "$session.key" }`.
+   * Session ID is stored in a `sid` HTTP-only cookie with a 24-hour TTL.
+   *
+   * @example
+   * { "session": { "user_id": { "var": "$user.id" }, "role": { "var": "$user.role" } } }
+   */
   session(def: Record<string, unknown>, context: Context): NodeValue {
     const sessionOp = def.session;
 
@@ -154,10 +162,9 @@ async function setSessionValues(
     isNew = true;
   }
 
-  for (const [key, value] of Object.entries(values)) {
-    const resolved = await resolve(value, context);
-    sessionData.data[key] = resolved;
-  }
+  const pResolved = resolveObj(values, context, r => r);
+  const resolvedValues = (pResolved instanceof Promise ? await pResolved : pResolved) as Record<string, unknown>;
+  Object.assign(sessionData.data, resolvedValues);
 
   await cache.set(PREFIX + sessionId, sessionData, TTL);
 

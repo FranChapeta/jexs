@@ -1,6 +1,6 @@
 import { Context, Node } from "./nodes/Node.js";
 
-export type ResolverFn = (value: unknown, context: Context) => Promise<unknown>;
+export type ResolverFn = (value: unknown, context: Context) => unknown;
 export type TranslateFn = (text: string, context: Context) => Promise<string>;
 
 let translateFn: TranslateFn | null = null;
@@ -55,8 +55,61 @@ export async function translate(text: string, context: Context): Promise<string>
   return text;
 }
 
-export function resolve(value: unknown, context: Context): Promise<unknown> {
-  return _resolve ? _resolve(value, context) : Promise.resolve(value);
+/**
+ * Resolve a value in the given context.
+ * Returns the resolved value synchronously, or a Promise if any part of the
+ * expression tree is async (e.g. an I/O node).
+ *
+ * Optional continuation `then`: if provided, called with the resolved value.
+ * On the sync path `then` is called immediately — no Promise created.
+ * On the async path `then` is chained via .then() on the Promise.
+ */
+export function resolve(value: unknown, context: Context, then?: (v: unknown) => unknown): unknown {
+  const r = _resolve ? _resolve(value, context) : value;
+  if (!then) return r;
+  return r instanceof Promise ? r.then(then) : then(r);
+}
+
+/**
+ * Resolve all values of a plain object in parallel, sync-first.
+ * Builds and passes a new Record with resolved values to `then`.
+ * On the sync path: no Promises created, callback fires immediately.
+ */
+export function resolveObj(obj: Record<string, unknown>, context: Context, then: (r: Record<string, unknown>) => unknown): unknown {
+  const result: Record<string, unknown> = {};
+  const pending: Promise<unknown>[] = [];
+  const pendingKeys: string[] = [];
+  for (const key of Object.keys(obj)) {
+    const r = _resolve ? _resolve(obj[key], context) : obj[key];
+    if (r instanceof Promise) { pending.push(r); pendingKeys.push(key); }
+    else result[key] = r;
+  }
+  if (!pending.length) return then(result);
+  return Promise.all(pending).then(resolved => {
+    pendingKeys.forEach((k, i) => { result[k] = resolved[i]; });
+    return then(result);
+  });
+}
+
+/**
+ * Resolve multiple values in parallel, sync-first.
+ * Mutates the input array in-place (callers must pass a fresh array literal).
+ * On the sync path: no allocations — writes resolved values in-place, calls then(values) directly.
+ * On the async path: waits for all async values via Promise.all, then calls then(values).
+ */
+export function resolveAll(values: unknown[], context: Context, then: (args: unknown[]) => unknown): unknown {
+  const pendingPromises: Promise<unknown>[] = [];
+  const pendingIndices: number[] = [];
+  for (let i = 0; i < values.length; i++) {
+    const r = _resolve ? _resolve(values[i], context) : values[i];
+    if (r instanceof Promise) { pendingPromises.push(r); pendingIndices.push(i); }
+    else values[i] = r;
+  }
+  if (!pendingPromises.length) return then(values);
+  return Promise.all(pendingPromises).then(resolved => {
+    pendingIndices.forEach((idx, j) => { values[idx] = resolved[j]; });
+    return then(values);
+  });
 }
 
 /**
@@ -85,24 +138,38 @@ export function createResolver(nodes: Node[], options?: ResolverOptions): Resolv
     }
   }
 
-  _resolve = async function resolveImpl(value: unknown, context: Context): Promise<unknown> {
+  _resolve = function resolveImpl(value: unknown, context: Context): unknown {
     if (value === null || value === undefined) return value;
-    if (value instanceof Promise) return resolveImpl(await value, context);
-    if (typeof value === "boolean" || typeof value === "number") return value;
-    if (typeof value === "string") return value;
+    if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") return value;
 
     if (Array.isArray(value)) {
-      const items: unknown[] = [];
-      for (const item of value) {
-        items.push(await resolveImpl(item, context));
+      const arr = value as unknown[];
+      let results: unknown[] = arr; // reuse original if nothing changes (copy-on-write)
+      const pendingPromises: Promise<unknown>[] = [];
+      const pendingIndices: number[] = [];
+      for (let i = 0; i < arr.length; i++) {
+        const r = resolveImpl(arr[i], context);
+        if (r instanceof Promise) {
+          if (results === arr) results = arr.slice();
+          pendingPromises.push(r as Promise<unknown>);
+          pendingIndices.push(i);
+        } else if (r !== arr[i]) {
+          if (results === arr) results = arr.slice();
+          results[i] = r;
+        }
       }
-      return items;
+      if (!pendingPromises.length) return results;
+      return Promise.all(pendingPromises).then(resolved => {
+        pendingIndices.forEach((idx, j) => { results[idx] = resolved[j]; });
+        return results;
+      });
     }
 
     if (typeof value === "object") {
-      // Key-based dispatch: iterate the object's own keys, first map hit wins
       const obj = value as Record<string, unknown>;
       const objKeys = Object.keys(obj);
+
+      // Key-based dispatch — pure routing, no pre-resolution
       for (let i = 0; i < objKeys.length; i++) {
         const node = keyMap.get(objKeys[i]);
         if (node) return node.resolve(obj, context, objKeys[i]);
@@ -120,26 +187,36 @@ export function createResolver(nodes: Node[], options?: ResolverOptions): Resolv
             });
             _pendingLoads.set(loader, pending);
           }
-          await pending;
-          // Remove lazy entries now that the module is loaded
-          for (const [key, fn] of _lazyMap) {
-            if (fn === loader) _lazyMap.delete(key);
-          }
-          // Retry key dispatch after module loaded
-          for (let j = 0; j < objKeys.length; j++) {
-            const node = keyMap.get(objKeys[j]);
-            if (node) return node.resolve(obj, context, objKeys[j]);
-          }
-          break;
+          return pending.then(() => {
+            for (const [key, fn] of _lazyMap) { if (fn === loader) _lazyMap.delete(key); }
+            for (let j = 0; j < objKeys.length; j++) {
+              const node = keyMap.get(objKeys[j]);
+              if (node) return node.resolve(obj, context, objKeys[j]);
+            }
+          });
         }
       }
 
-      // Plain object: resolve values recursively
-      const result: Record<string, unknown> = {};
-      for (let i = 0; i < objKeys.length; i++) {
-        result[objKeys[i]] = await resolveImpl(obj[objKeys[i]], context);
+      // Plain object: resolve values in parallel, copy-on-write
+      let result: Record<string, unknown> = obj;
+      const pendingPromises: Promise<unknown>[] = [];
+      const pendingKeys: string[] = [];
+      for (const key of objKeys) {
+        const r = resolveImpl(obj[key], context);
+        if (r instanceof Promise) {
+          if (result === obj) result = { ...obj };
+          pendingPromises.push(r as Promise<unknown>);
+          pendingKeys.push(key);
+        } else if (r !== obj[key]) {
+          if (result === obj) result = { ...obj };
+          result[key] = r;
+        }
       }
-      return result;
+      if (!pendingPromises.length) return result;
+      return Promise.all(pendingPromises).then(resolved => {
+        pendingKeys.forEach((k, i) => { result[k] = resolved[i]; });
+        return result;
+      });
     }
 
     return value;

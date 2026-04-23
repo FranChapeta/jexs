@@ -1,7 +1,7 @@
 import Knex, { Knex as KnexType } from "knex";
 import fs from "node:fs";
 import path from "node:path";
-import { Node, Context, NodeValue, resolve } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll, resolveObj } from "@jexs/core";
 
 // Database configuration interface
 export interface DatabaseConfig {
@@ -43,26 +43,33 @@ let defaultConnectionName: string | null = null;
  * { "database": "dropTable", "table": "users" }
  */
 export class DatabaseNode extends Node {
-  async database(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const operation = await resolve(def.database, context);
-
-    switch (operation) {
-      case "connect":
-        return doConnect(def, context);
-      case "close":
-        return doClose(def, context);
-      case "raw":
-        return doRaw(def, context);
-      case "tableExists":
-        return doTableExists(def, context);
-      case "dropTable":
-        return doDropTable(def, context);
-      case "info":
-        return doInfo(def, context);
-      default:
-        console.error(`[DatabaseNode] Unknown operation: ${operation}`);
-        return null;
-    }
+  /**
+   * Manages database connections. Operations: `"connect"`, `"close"`, `"raw"`, `"tableExists"`, `"dropTable"`, `"info"`.
+   * Supports SQLite (`better-sqlite3`), MySQL (`mysql2`), and PostgreSQL (`pg`) via Knex.
+   *
+   * @example
+   * { "database": "connect", "name": "main", "type": "sqlite", "filename": "app/data.db" }
+   */
+  database(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.database, context, operation => {
+      switch (String(operation)) {
+        case "connect":
+          return doConnect(def, context);
+        case "close":
+          return doClose(def, context);
+        case "raw":
+          return doRaw(def, context);
+        case "tableExists":
+          return doTableExists(def, context);
+        case "dropTable":
+          return doDropTable(def, context);
+        case "info":
+          return doInfo(def, context);
+        default:
+          console.error(`[DatabaseNode] Unknown operation: ${operation}`);
+          return null;
+      }
+    });
   }
 
   // ============================================
@@ -208,147 +215,133 @@ function createConnection(config: DatabaseConfig): KnexType {
   }
 }
 
-async function doConnect(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  const name = String(await resolve(def.name, context) ?? "default");
-  const type = String(
-    await resolve(def.type, context),
-  ) as DatabaseConfig["type"];
+function doConnect(def: Record<string, unknown>, context: Context): unknown {
+  return resolveObj(def, context, r => {
+    const name = String(r.name ?? "default");
+    const type = String(r.type) as DatabaseConfig["type"];
+    const config: DatabaseConfig = { type };
 
-  const config: DatabaseConfig = { type };
-
-  if (type === "sqlite") {
-    const filename = await resolve(def.filename, context);
-    if (filename) config.filename = String(filename);
-  }
-
-  if (type === "mysql" || type === "pg") {
-    const host = await resolve(def.host, context);
-    const port = await resolve(def.port, context);
-    const user = await resolve(def.user, context);
-    const password = await resolve(def.password, context);
-    const database = await resolve(def.db, context);
-
-    if (host) config.host = String(host);
-    if (port) config.port = Number(port);
-    if (user) config.user = String(user);
-    if (password) config.password = String(password);
-    if (database) config.database = String(database);
-  }
-
-  DatabaseNode.getInstance(name, config);
-
-  if (!defaultConnectionName) {
-    defaultConnectionName = name;
-  }
-
-  return {
-    type: "database",
-    action: "connect",
-    name,
-    info: DatabaseNode.getInfo(name),
-  };
-}
-
-async function doClose(def: Record<string, unknown>, context: Context): Promise<unknown> {
-  const name = String(await resolve(def.name, context) ?? "default");
-
-  try {
-    await DatabaseNode.closeConnection(name);
-
-    if (defaultConnectionName === name) {
-      defaultConnectionName = null;
+    if (type === "sqlite") {
+      if (r.filename) config.filename = String(r.filename);
     }
 
-    console.log(`[DatabaseNode] Closed connection: ${name}`);
+    if (type === "mysql" || type === "pg") {
+      if (r.host) config.host = String(r.host);
+      if (r.port) config.port = Number(r.port);
+      if (r.user) config.user = String(r.user);
+      if (r.password) config.password = String(r.password);
+      if (r.db) config.database = String(r.db);
+    }
 
-    return { type: "database", action: "close", name };
-  } catch (error) {
-    console.error(`[DatabaseNode] Error closing ${name}:`, error);
-    return null;
-  }
+    DatabaseNode.getInstance(name, config);
+
+    if (!defaultConnectionName) {
+      defaultConnectionName = name;
+    }
+
+    return {
+      type: "database",
+      action: "connect",
+      name,
+      info: DatabaseNode.getInfo(name),
+    };
+  });
 }
 
-async function doRaw(def: Record<string, unknown>, context: Context): Promise<unknown> {
-  const name = String(
-    await resolve(def.connection, context) ??
-      defaultConnectionName ??
-      "default",
-  );
-  const sql = String(await resolve(def.sql, context));
-  const bindings = await resolve(def.bindings, context) as unknown[] | undefined;
+function doClose(def: Record<string, unknown>, context: Context): unknown {
+  return resolve(def.name ?? null, context, async nameRaw => {
+    const name = String(nameRaw ?? "default");
 
-  const conn = connections.get(name);
-  if (!conn) throw new Error(`Database "${name}" not connected`);
-
-  const result = await conn.knex.raw(
-    sql,
-    bindings as readonly KnexType.RawBinding[],
-  );
-  return conn.config.type === "sqlite" ? result : result[0];
-}
-
-async function doTableExists(def: Record<string, unknown>, context: Context): Promise<boolean> {
-  const name = String(
-    await resolve(def.connection, context) ??
-      defaultConnectionName ??
-      "default",
-  );
-  const table = String(await resolve(def.table, context));
-
-  const conn = connections.get(name);
-  if (!conn) throw new Error(`Database "${name}" not connected`);
-
-  return conn.knex.schema.hasTable(table);
-}
-
-async function doDropTable(def: Record<string, unknown>, context: Context): Promise<unknown> {
-  const name = String(
-    await resolve(def.connection, context) ??
-      defaultConnectionName ??
-      "default",
-  );
-  const table = String(await resolve(def.table, context));
-
-  const conn = connections.get(name);
-  if (!conn) throw new Error(`Database "${name}" not connected`);
-
-  await conn.knex.schema.dropTableIfExists(table);
-  return { type: "database", action: "dropTable", table };
-}
-
-async function doInfo(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  const name = String(
-    await resolve(def.name, context) ??
-      defaultConnectionName ??
-      "default",
-  );
-  const basic = DatabaseNode.getInfo(name);
-  if (!basic) return null;
-
-  const conn = connections.get(name);
-  if (!conn) return basic;
-
-  const result: Record<string, unknown> = { ...basic };
-
-  if (conn.config.type === "sqlite") {
     try {
-      const stat = fs.statSync(conn.config.filename || "data.db");
-      result.size = stat.size;
-    } catch { /* ignore */ }
-  }
+      await DatabaseNode.closeConnection(name);
 
-  try {
-    if (conn.config.type === "sqlite") {
-      const tables = await conn.knex.raw("SELECT count(*) as count FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'");
-      result.tables = tables[0]?.count ?? 0;
-    } else if (conn.config.type === "mysql") {
-      const tables = await conn.knex.raw("SELECT count(*) as count FROM information_schema.tables WHERE table_schema = database()");
-      result.tables = tables[0]?.[0]?.count ?? 0;
-    } else if (conn.config.type === "pg") {
-      const tables = await conn.knex.raw("SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'");
-      result.tables = parseInt(tables.rows?.[0]?.count ?? "0", 10);
+      if (defaultConnectionName === name) {
+        defaultConnectionName = null;
+      }
+
+      console.log(`[DatabaseNode] Closed connection: ${name}`);
+
+      return { type: "database", action: "close", name };
+    } catch (error) {
+      console.error(`[DatabaseNode] Error closing ${name}:`, error);
+      return null;
     }
-  } catch { /* ignore */ }
+  });
+}
 
-  return result;
+function doRaw(def: Record<string, unknown>, context: Context): unknown {
+  return resolveAll([def.connection ?? null, def.sql, def.bindings ?? null], context, async ([connectionRaw, sqlRaw, bindingsRaw]) => {
+    const name = String(connectionRaw ?? defaultConnectionName ?? "default");
+    const sql = String(sqlRaw);
+    const bindings = bindingsRaw as unknown[] | undefined;
+
+    const conn = connections.get(name);
+    if (!conn) throw new Error(`Database "${name}" not connected`);
+
+    const result = await conn.knex.raw(
+      sql,
+      bindings as readonly KnexType.RawBinding[],
+    );
+    return conn.config.type === "sqlite" ? result : result[0];
+  });
+}
+
+function doTableExists(def: Record<string, unknown>, context: Context): unknown {
+  return resolveAll([def.connection ?? null, def.table], context, async ([connectionRaw, tableRaw]) => {
+    const name = String(connectionRaw ?? defaultConnectionName ?? "default");
+    const table = String(tableRaw);
+
+    const conn = connections.get(name);
+    if (!conn) throw new Error(`Database "${name}" not connected`);
+
+    return conn.knex.schema.hasTable(table);
+  });
+}
+
+function doDropTable(def: Record<string, unknown>, context: Context): unknown {
+  return resolveAll([def.connection ?? null, def.table], context, async ([connectionRaw, tableRaw]) => {
+    const name = String(connectionRaw ?? defaultConnectionName ?? "default");
+    const table = String(tableRaw);
+
+    const conn = connections.get(name);
+    if (!conn) throw new Error(`Database "${name}" not connected`);
+
+    await conn.knex.schema.dropTableIfExists(table);
+    return { type: "database", action: "dropTable", table };
+  });
+}
+
+function doInfo(def: Record<string, unknown>, context: Context): unknown {
+  return resolve(def.name ?? null, context, async nameRaw => {
+    const name = String(nameRaw ?? defaultConnectionName ?? "default");
+    const basic = DatabaseNode.getInfo(name);
+    if (!basic) return null;
+
+    const conn = connections.get(name);
+    if (!conn) return basic;
+
+    const result: Record<string, unknown> = { ...basic };
+
+    if (conn.config.type === "sqlite") {
+      try {
+        const stat = fs.statSync(conn.config.filename || "data.db");
+        result.size = stat.size;
+      } catch { /* ignore */ }
+    }
+
+    try {
+      if (conn.config.type === "sqlite") {
+        const tables = await conn.knex.raw("SELECT count(*) as count FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'");
+        result.tables = tables[0]?.count ?? 0;
+      } else if (conn.config.type === "mysql") {
+        const tables = await conn.knex.raw("SELECT count(*) as count FROM information_schema.tables WHERE table_schema = database()");
+        result.tables = tables[0]?.[0]?.count ?? 0;
+      } else if (conn.config.type === "pg") {
+        const tables = await conn.knex.raw("SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'");
+        result.tables = parseInt(tables.rows?.[0]?.count ?? "0", 10);
+      }
+    } catch { /* ignore */ }
+
+    return result;
+  });
 }

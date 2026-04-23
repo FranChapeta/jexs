@@ -13,6 +13,14 @@ import { Node, Context, NodeValue, runSteps } from "@jexs/core";
  * to keep stdout clean for protocol data.
  */
 export class StdioNode extends Node {
+  /**
+   * Starts a newline-delimited JSON (NDJSON) listener on stdin. Each line is parsed as JSON,
+   * set as `$message` in context, and `on-message` steps are run. Non-null results are written to stdout.
+   * `console.log` is redirected to stderr to keep stdout clean for protocol data.
+   *
+   * @example
+   * { "stdio": { "on-message": [{ "var": "$message" }], "on-close": [] } }
+   */
   async stdio(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
     const config = def.stdio;
     if (!config || typeof config !== "object" || Array.isArray(config)) {
@@ -57,12 +65,12 @@ export class StdioNode extends Node {
         }
 
         const childContext: Context = { ...context, message };
-        runSteps(steps, childContext).then((result) => {
+        Promise.resolve(runSteps(steps, childContext)).then((result) => {
           if (result !== null && result !== undefined) {
             const output = typeof result === "string" ? result : JSON.stringify(result);
             process.stdout.write(output + "\n");
           }
-        }).catch((err) => {
+        }).catch((err: unknown) => {
           process.stderr.write(`[StdioNode] Error: ${err}\n`);
         });
       }
@@ -70,7 +78,7 @@ export class StdioNode extends Node {
 
     process.stdin.on("close", () => {
       if (closeSteps) {
-        runSteps(closeSteps, { ...context }).catch((err) => {
+        Promise.resolve(runSteps(closeSteps, { ...context })).catch((err: unknown) => {
           process.stderr.write(`[StdioNode] on-close error: ${err}\n`);
         });
       }

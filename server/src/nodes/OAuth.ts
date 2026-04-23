@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, resolve, randomString } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll, resolveObj, randomString } from "@jexs/core";
 
 // Types
 interface OAuthProvider {
@@ -90,286 +90,287 @@ const providers: Map<string, OAuthProvider> = new Map();
  * { "oauth": "providers" }
  */
 export class OAuthNode extends Node {
-  async oauth(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const operation = await resolve(def.oauth, context);
-
-    switch (operation) {
-      case "configure":
-        return doConfigure(def, context);
-      case "authUrl":
-        return doAuthUrl(def, context);
-      case "exchange":
-        return doExchange(def, context);
-      case "refresh":
-        return doRefresh(def, context);
-      case "userInfo":
-        return doUserInfo(def, context);
-      case "state":
-        return doGenerateState(def, context);
-      case "providers":
-        return doListProviders(def, context);
-      default:
-        console.error(`[OAuth] Unknown operation: ${operation}`);
-        return null;
-    }
+  /**
+   * OAuth 2.0 flow helpers. Operations: `"configure"`, `"authUrl"`, `"exchange"`, `"refresh"`, `"userInfo"`, `"state"`, `"providers"`.
+   * Built-in providers: `google`, `github`, `facebook`, `discord`, `twitter`, `microsoft`.
+   *
+   * @example
+   * { "oauth": "authUrl", "provider": "google", "redirectUri": { "var": "$redirectUri" } }
+   */
+  oauth(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.oauth, context, operation => {
+      switch (String(operation)) {
+        case "configure":
+          return doConfigure(def, context);
+        case "authUrl":
+          return doAuthUrl(def, context);
+        case "exchange":
+          return doExchange(def, context);
+        case "refresh":
+          return doRefresh(def, context);
+        case "userInfo":
+          return doUserInfo(def, context);
+        case "state":
+          return doGenerateState(def, context);
+        case "providers":
+          return doListProviders(def, context);
+        default:
+          console.error(`[OAuth] Unknown operation: ${operation}`);
+          return null;
+      }
+    });
   }
 }
 
-async function doConfigure(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  const name = String(await resolve(def.provider, context));
-  const clientId = String(await resolve(def.clientId, context));
-  const clientSecret = String(await resolve(def.clientSecret, context));
+function doConfigure(def: Record<string, unknown>, context: Context): unknown {
+  return resolveObj(def, context, r => {
+    const name = String(r.provider);
+    const clientId = String(r.clientId);
+    const clientSecret = String(r.clientSecret);
 
-  const builtin = PROVIDERS[name.toLowerCase()];
+    const builtin = PROVIDERS[name.toLowerCase()];
 
-  if (builtin) {
-    const scopes = def.scopes ? await resolve(def.scopes, context) : null;
-    providers.set(name, {
-      ...builtin,
-      clientId,
-      clientSecret,
-      scopes: scopes
-        ? Array.isArray(scopes)
-          ? scopes.map(String)
-          : [String(scopes)]
-        : builtin.scopes,
-      authorizeUrl: def.authorizeUrl
-        ? String(await resolve(def.authorizeUrl, context))
-        : builtin.authorizeUrl,
-      tokenUrl: def.tokenUrl
-        ? String(await resolve(def.tokenUrl, context))
-        : builtin.tokenUrl,
-      userInfoUrl: def.userInfoUrl
-        ? String(await resolve(def.userInfoUrl, context))
-        : builtin.userInfoUrl,
-    });
-  } else {
-    const authorizeUrl = def.authorizeUrl
-      ? String(await resolve(def.authorizeUrl, context))
-      : "";
-    const tokenUrl = def.tokenUrl
-      ? String(await resolve(def.tokenUrl, context))
-      : "";
-    if (!authorizeUrl || !tokenUrl) {
-      throw new Error(
-        `Custom provider "${name}" requires authorizeUrl and tokenUrl`,
-      );
+    if (builtin) {
+      providers.set(name, {
+        ...builtin,
+        clientId,
+        clientSecret,
+        scopes: r.scopes
+          ? Array.isArray(r.scopes)
+            ? r.scopes.map(String)
+            : [String(r.scopes)]
+          : builtin.scopes,
+        authorizeUrl: r.authorizeUrl ? String(r.authorizeUrl) : builtin.authorizeUrl,
+        tokenUrl: r.tokenUrl ? String(r.tokenUrl) : builtin.tokenUrl,
+        userInfoUrl: r.userInfoUrl ? String(r.userInfoUrl) : builtin.userInfoUrl,
+      });
+    } else {
+      const authorizeUrl = r.authorizeUrl ? String(r.authorizeUrl) : "";
+      const tokenUrl = r.tokenUrl ? String(r.tokenUrl) : "";
+      if (!authorizeUrl || !tokenUrl) {
+        throw new Error(
+          `Custom provider "${name}" requires authorizeUrl and tokenUrl`,
+        );
+      }
+      const scopes = r.scopes ?? [];
+      providers.set(name, {
+        clientId,
+        clientSecret,
+        authorizeUrl,
+        tokenUrl,
+        userInfoUrl: r.userInfoUrl ? String(r.userInfoUrl) : undefined,
+        scopes: Array.isArray(scopes) ? scopes.map(String) : [String(scopes)],
+      });
     }
-    const scopes = def.scopes ? await resolve(def.scopes, context) : [];
-    providers.set(name, {
-      clientId,
-      clientSecret,
-      authorizeUrl,
-      tokenUrl,
-      userInfoUrl: def.userInfoUrl
-        ? String(await resolve(def.userInfoUrl, context))
-        : undefined,
-      scopes: Array.isArray(scopes) ? scopes.map(String) : [String(scopes)],
-    });
-  }
 
-  console.log(`[OAuth] Configured provider: ${name}`);
-  return { type: "oauth", action: "configure", provider: name };
-}
-
-async function doAuthUrl(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  const provider = String(await resolve(def.provider, context));
-  const redirectUri = String(await resolve(def.redirectUri, context));
-  const config = providers.get(provider);
-
-  if (!config) throw new Error(`Provider "${provider}" not configured`);
-
-  const scopes = def.scopes ? await resolve(def.scopes, context) : null;
-  const params = new URLSearchParams({
-    client_id: config.clientId,
-    redirect_uri: redirectUri,
-    response_type: "code",
-    scope: (scopes
-      ? (Array.isArray(scopes) ? scopes : [scopes]).map(String)
-      : config.scopes
-    ).join(" "),
+    console.log(`[OAuth] Configured provider: ${name}`);
+    return { type: "oauth", action: "configure", provider: name };
   });
-
-  // State parameter prevents CSRF — auto-generate if not provided
-  const state = def.state
-    ? String(await resolve(def.state, context))
-    : randomString(32);
-  params.set("state", state);
-  if (def.prompt)
-    params.set("prompt", String(await resolve(def.prompt, context)));
-  if (def.accessType)
-    params.set(
-      "access_type",
-      String(await resolve(def.accessType, context)),
-    );
-
-  return `${config.authorizeUrl}?${params.toString()}`;
 }
 
-async function doExchange(def: Record<string, unknown>, context: Context): Promise<unknown> {
-  const provider = String(await resolve(def.provider, context));
-  const code = String(await resolve(def.code, context));
-  const redirectUri = String(await resolve(def.redirectUri, context));
-  const config = providers.get(provider);
+function doAuthUrl(def: Record<string, unknown>, context: Context): unknown {
+  return resolveAll(
+    [def.provider, def.redirectUri, def.scopes ?? null, def.state ?? null, def.prompt ?? null, def.accessType ?? null],
+    context,
+    ([providerRaw, redirectUriRaw, scopesRaw, stateRaw, promptRaw, accessTypeRaw]) => {
+      const provider = String(providerRaw);
+      const redirectUri = String(redirectUriRaw);
+      const config = providers.get(provider);
 
-  if (!config) throw new Error(`Provider "${provider}" not configured`);
+      if (!config) throw new Error(`Provider "${provider}" not configured`);
 
-  try {
-    const body = new URLSearchParams({
-      client_id: config.clientId,
-      client_secret: config.clientSecret,
-      code,
-      redirect_uri: redirectUri,
-      grant_type: "authorization_code",
-    });
+      const params = new URLSearchParams({
+        client_id: config.clientId,
+        redirect_uri: redirectUri,
+        response_type: "code",
+        scope: (scopesRaw
+          ? (Array.isArray(scopesRaw) ? scopesRaw : [scopesRaw]).map(String)
+          : config.scopes
+        ).join(" "),
+      });
 
-    const response = await fetch(config.tokenUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Accept: "application/json",
-      },
-      body: body.toString(),
-    });
+      const state = def.state ? String(stateRaw) : randomString(32);
+      params.set("state", state);
+      if (def.prompt) params.set("prompt", String(promptRaw));
+      if (def.accessType) params.set("access_type", String(accessTypeRaw));
 
-    if (!response.ok)
-      throw new Error(`Token exchange failed: ${await response.text()}`);
-
-    const data = (await response.json()) as Record<string, unknown>;
-    return {
-      success: true,
-      accessToken: String(data.access_token),
-      refreshToken: data.refresh_token
-        ? String(data.refresh_token)
-        : undefined,
-      tokenType: String(data.token_type ?? "Bearer"),
-      expiresIn: data.expires_in ? Number(data.expires_in) : undefined,
-      expiresAt: data.expires_in
-        ? Date.now() + Number(data.expires_in) * 1000
-        : undefined,
-    };
-  } catch (error) {
-    const e = error as Error;
-    console.error(`[OAuth] Exchange failed:`, e.message);
-    return { success: false, error: e.message };
-  }
+      return `${config.authorizeUrl}?${params.toString()}`;
+    },
+  );
 }
 
-async function doRefresh(def: Record<string, unknown>, context: Context): Promise<unknown> {
-  const provider = String(await resolve(def.provider, context));
-  const refreshToken = String(await resolve(def.refreshToken, context));
-  const config = providers.get(provider);
+function doExchange(def: Record<string, unknown>, context: Context): unknown {
+  return resolveAll([def.provider, def.code, def.redirectUri], context, async ([providerRaw, codeRaw, redirectUriRaw]) => {
+    const provider = String(providerRaw);
+    const code = String(codeRaw);
+    const redirectUri = String(redirectUriRaw);
+    const config = providers.get(provider);
 
-  if (!config) throw new Error(`Provider "${provider}" not configured`);
+    if (!config) throw new Error(`Provider "${provider}" not configured`);
 
-  try {
-    const body = new URLSearchParams({
-      client_id: config.clientId,
-      client_secret: config.clientSecret,
-      refresh_token: refreshToken,
-      grant_type: "refresh_token",
-    });
+    try {
+      const body = new URLSearchParams({
+        client_id: config.clientId,
+        client_secret: config.clientSecret,
+        code,
+        redirect_uri: redirectUri,
+        grant_type: "authorization_code",
+      });
 
-    const response = await fetch(config.tokenUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Accept: "application/json",
-      },
-      body: body.toString(),
-    });
+      const response = await fetch(config.tokenUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body: body.toString(),
+      });
 
-    if (!response.ok)
-      throw new Error(`Token refresh failed: ${await response.text()}`);
+      if (!response.ok)
+        throw new Error(`Token exchange failed: ${await response.text()}`);
 
-    const data = (await response.json()) as Record<string, unknown>;
-    return {
-      success: true,
-      accessToken: String(data.access_token),
-      refreshToken: data.refresh_token
-        ? String(data.refresh_token)
-        : refreshToken,
-      tokenType: String(data.token_type ?? "Bearer"),
-      expiresIn: data.expires_in ? Number(data.expires_in) : undefined,
-    };
-  } catch (error) {
-    const e = error as Error;
-    console.error(`[OAuth] Refresh failed:`, e.message);
-    return { success: false, error: e.message };
-  }
+      const data = (await response.json()) as Record<string, unknown>;
+      return {
+        success: true,
+        accessToken: String(data.access_token),
+        refreshToken: data.refresh_token
+          ? String(data.refresh_token)
+          : undefined,
+        tokenType: String(data.token_type ?? "Bearer"),
+        expiresIn: data.expires_in ? Number(data.expires_in) : undefined,
+        expiresAt: data.expires_in
+          ? Date.now() + Number(data.expires_in) * 1000
+          : undefined,
+      };
+    } catch (error) {
+      const e = error as Error;
+      console.error(`[OAuth] Exchange failed:`, e.message);
+      return { success: false, error: e.message };
+    }
+  });
 }
 
-async function doUserInfo(def: Record<string, unknown>, context: Context): Promise<unknown> {
-  const provider = String(await resolve(def.provider, context));
-  const accessToken = String(await resolve(def.accessToken, context));
-  const config = providers.get(provider);
+function doRefresh(def: Record<string, unknown>, context: Context): unknown {
+  return resolveAll([def.provider, def.refreshToken], context, async ([providerRaw, refreshTokenRaw]) => {
+    const provider = String(providerRaw);
+    const refreshToken = String(refreshTokenRaw);
+    const config = providers.get(provider);
 
-  if (!config) throw new Error(`Provider "${provider}" not configured`);
-  if (!config.userInfoUrl)
-    throw new Error(`Provider "${provider}" has no userInfoUrl`);
+    if (!config) throw new Error(`Provider "${provider}" not configured`);
 
-  try {
-    const response = await fetch(config.userInfoUrl, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: "application/json",
-      },
-    });
+    try {
+      const body = new URLSearchParams({
+        client_id: config.clientId,
+        client_secret: config.clientSecret,
+        refresh_token: refreshToken,
+        grant_type: "refresh_token",
+      });
 
-    if (!response.ok)
-      throw new Error(`Failed to get user info: ${await response.text()}`);
+      const response = await fetch(config.tokenUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body: body.toString(),
+      });
 
-    const data = (await response.json()) as Record<string, unknown>;
-    const getNested = (
-      obj: Record<string, unknown>,
-      dotPath: string,
-    ): unknown => {
-      return dotPath.split(".").reduce((curr: unknown, key) => {
-        if (curr && typeof curr === "object")
-          return (curr as Record<string, unknown>)[key];
-        return undefined;
-      }, obj);
-    };
+      if (!response.ok)
+        throw new Error(`Token refresh failed: ${await response.text()}`);
 
-    return {
-      success: true,
-      id: String(getNested(data, config.userIdField ?? "id") ?? ""),
-      email: getNested(data, config.userEmailField ?? "email") as
-        | string
-        | undefined,
-      name: getNested(data, config.userNameField ?? "name") as
-        | string
-        | undefined,
-      picture: (data.picture ?? data.avatar_url ?? data.avatar) as
-        | string
-        | undefined,
-      raw: data,
-    };
-  } catch (error) {
-    const e = error as Error;
-    console.error(`[OAuth] getUserInfo failed:`, e.message);
-    return { success: false, error: e.message };
-  }
+      const data = (await response.json()) as Record<string, unknown>;
+      return {
+        success: true,
+        accessToken: String(data.access_token),
+        refreshToken: data.refresh_token
+          ? String(data.refresh_token)
+          : refreshToken,
+        tokenType: String(data.token_type ?? "Bearer"),
+        expiresIn: data.expires_in ? Number(data.expires_in) : undefined,
+      };
+    } catch (error) {
+      const e = error as Error;
+      console.error(`[OAuth] Refresh failed:`, e.message);
+      return { success: false, error: e.message };
+    }
+  });
 }
 
-async function doGenerateState(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  const length = def.length
-    ? Number(await resolve(def.length, context))
-    : 32;
-  const chars =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let result = "";
-  const bytes = new Uint8Array(length);
-  crypto.getRandomValues(bytes);
-  for (let i = 0; i < length; i++) {
-    result += chars[bytes[i] % chars.length];
-  }
-  return result;
+function doUserInfo(def: Record<string, unknown>, context: Context): unknown {
+  return resolveAll([def.provider, def.accessToken], context, async ([providerRaw, accessTokenRaw]) => {
+    const provider = String(providerRaw);
+    const accessToken = String(accessTokenRaw);
+    const config = providers.get(provider);
+
+    if (!config) throw new Error(`Provider "${provider}" not configured`);
+    if (!config.userInfoUrl)
+      throw new Error(`Provider "${provider}" has no userInfoUrl`);
+
+    try {
+      const response = await fetch(config.userInfoUrl, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/json",
+        },
+      });
+
+      if (!response.ok)
+        throw new Error(`Failed to get user info: ${await response.text()}`);
+
+      const data = (await response.json()) as Record<string, unknown>;
+      const getNested = (
+        obj: Record<string, unknown>,
+        dotPath: string,
+      ): unknown => {
+        return dotPath.split(".").reduce((curr: unknown, key) => {
+          if (curr && typeof curr === "object")
+            return (curr as Record<string, unknown>)[key];
+          return undefined;
+        }, obj);
+      };
+
+      return {
+        success: true,
+        id: String(getNested(data, config.userIdField ?? "id") ?? ""),
+        email: getNested(data, config.userEmailField ?? "email") as
+          | string
+          | undefined,
+        name: getNested(data, config.userNameField ?? "name") as
+          | string
+          | undefined,
+        picture: (data.picture ?? data.avatar_url ?? data.avatar) as
+          | string
+          | undefined,
+        raw: data,
+      };
+    } catch (error) {
+      const e = error as Error;
+      console.error(`[OAuth] getUserInfo failed:`, e.message);
+      return { success: false, error: e.message };
+    }
+  });
 }
 
-async function doListProviders(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  if (await resolve(def.builtin, context)) {
-    return Object.keys(PROVIDERS);
-  }
-  return [...providers.keys()];
+function doGenerateState(def: Record<string, unknown>, context: Context): unknown {
+  const doGenerate = (length: number) => {
+    const chars =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let result = "";
+    const bytes = new Uint8Array(length);
+    crypto.getRandomValues(bytes);
+    for (let i = 0; i < length; i++) {
+      result += chars[bytes[i] % chars.length];
+    }
+    return result;
+  };
+
+  if (!def.length) return doGenerate(32);
+  return resolve(def.length, context, lengthRaw => doGenerate(Number(lengthRaw)));
+}
+
+function doListProviders(def: Record<string, unknown>, context: Context): unknown {
+  return resolve(def.builtin ?? null, context, builtinRaw => {
+    if (builtinRaw) return Object.keys(PROVIDERS);
+    return [...providers.keys()];
+  });
 }

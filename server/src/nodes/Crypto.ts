@@ -2,7 +2,7 @@ import bcrypt from "bcrypt";
 import { randomBytes, createHash, createCipheriv, createDecipheriv } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
-import { Node, Context, resolve } from "@jexs/core";
+import { Node, Context, resolve, resolveAll } from "@jexs/core";
 
 /** Reusable SHA-256 helper (used by SchemaNode and QueryNode) */
 export function sha256(input: string): string {
@@ -68,36 +68,54 @@ export function decrypt(ciphertext: string): string {
  * - { "decrypt": "ciphertext" }         -> decrypted plaintext
  */
 export class CryptoNode extends Node {
-  async sha256(def: Record<string, unknown>, context: Context) {
-    return sha256(this.toString(await resolve(def.sha256, context)));
+  /** Returns the SHA-256 hex digest of a string. @example { "sha256": { "var": "$token" } } */
+  sha256(def: Record<string, unknown>, context: Context) {
+    return resolve(def.sha256, context, v => sha256(this.toString(v)));
   }
 
-  async encrypt(def: Record<string, unknown>, context: Context) {
-    return encrypt(this.toString(await resolve(def.encrypt, context)));
+  /** Encrypts a string with AES-256-GCM using the app secret key. @example { "encrypt": { "var": "$token" } } */
+  encrypt(def: Record<string, unknown>, context: Context) {
+    return resolve(def.encrypt, context, v => encrypt(this.toString(v)));
   }
 
-  async decrypt(def: Record<string, unknown>, context: Context) {
-    return decrypt(this.toString(await resolve(def.decrypt, context)));
+  /** Decrypts a string previously encrypted by `encrypt`. @example { "decrypt": { "var": "$stored" } } */
+  decrypt(def: Record<string, unknown>, context: Context) {
+    return resolve(def.decrypt, context, v => decrypt(this.toString(v)));
   }
 
-  async hash(def: Record<string, unknown>, context: Context): Promise<string> {
-    const str = this.toString(await resolve(def.hash, context));
-    const rounds = def.rounds
-      ? this.toNumber(await resolve(def.rounds, context))
-      : 10;
-    return bcrypt.hash(str, rounds);
+  /**
+   * Hashes a password with bcrypt. Pass `"rounds"` for cost factor (default 10).
+   *
+   * @example
+   * { "hash": { "var": "$body.password" }, "rounds": 12 }
+   */
+  hash(def: Record<string, unknown>, context: Context) {
+    return resolve(def.hash, context, v => {
+      const str = this.toString(v);
+      if (!def.rounds) return bcrypt.hash(str, 10);
+      return resolve(def.rounds, context, r => bcrypt.hash(str, this.toNumber(r)));
+    });
   }
 
-  async verify(def: Record<string, unknown>, context: Context): Promise<boolean> {
+  /**
+   * Compares a plaintext password against a bcrypt hash: `[plaintext, hash]`. Returns `true` or `false`.
+   *
+   * @example
+   * { "verify": [{ "var": "$body.password" }, { "var": "$user.password_hash" }] }
+   */
+  verify(def: Record<string, unknown>, context: Context) {
     const args = this.toArray(def.verify);
     if (args.length < 2) return false;
-    const plain = this.toString(await resolve(args[0], context));
-    const hashed = this.toString(await resolve(args[1], context));
-    return bcrypt.compare(plain, hashed);
+    return resolveAll([args[0], args[1]], context, ([plainVal, hashedVal]) =>
+      bcrypt.compare(this.toString(plainVal), this.toString(hashedVal))
+    );
   }
 
-  async randomHex(def: Record<string, unknown>, context: Context): Promise<string> {
-    const bytes = this.toNumber(await resolve(def.randomHex, context)) || 32;
-    return randomBytes(bytes).toString("hex");
+  /** Returns a cryptographically random hex string of N bytes (default 32). @example { "randomHex": 16 } */
+  randomHex(def: Record<string, unknown>, context: Context) {
+    return resolve(def.randomHex, context, v => {
+      const bytes = this.toNumber(v) || 32;
+      return randomBytes(bytes).toString("hex");
+    });
   }
 }

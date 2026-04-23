@@ -48,6 +48,6 @@ async function handleSwEvent(
     swEvent.respondWith(result as Promise<Response>);
   } else {
     if (event === "install") sw.skipWaiting();
-    swEvent.waitUntil(result.then(() => undefined));
+    swEvent.waitUntil(Promise.resolve(result).then(() => undefined));
   }
 }

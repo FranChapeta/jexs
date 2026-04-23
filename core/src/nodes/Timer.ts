@@ -18,7 +18,7 @@
  */
 
 import { Node, Context, NodeValue } from "./Node.js";
-import { resolve, onResolverDestroy } from "../Resolver.js";
+import { resolve, resolveAll, onResolverDestroy } from "../Resolver.js";
 import { runSteps } from "../runSteps.js";
 
 // ─── Shared state ───────────────────────────────────────────────────────────
@@ -46,14 +46,26 @@ onResolverDestroy(() => TimerNode.stopAll());
 // ─── TimerNode ──────────────────────────────────────────────────────────────
 
 export class TimerNode extends Node {
-  async tick(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const op = String(await resolve(def.tick, context));
-    return dispatch(op, def, context, "tick");
+  /**
+   * Drift-compensating fixed-rate loop. Operations: `"start"`, `"stop"`, `"pause"`, `"resume"`.
+   * On start: requires `id` and `rate` (Hz, default 60). Steps receive `tick.count`, `tick.dt`, `tick.elapsed` in context.
+   *
+   * @example
+   * { "tick": "start", "id": "game", "rate": 60, "do": [{ "var": "tick.dt" }] }
+   */
+  tick(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.tick, context, op => dispatch(String(op), def, context, "tick"));
   }
 
-  async cron(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const op = String(await resolve(def.cron, context));
-    return dispatch(op, def, context, "cron");
+  /**
+   * Interval-based scheduled task. Operations: `"start"`, `"stop"`, `"pause"`, `"resume"`.
+   * On start: requires `id` and `every` (e.g. `"5m"`, `"30s"`). Steps receive `cron.runCount`, `cron.lastRun`, `cron.elapsed` in context.
+   *
+   * @example
+   * { "cron": "start", "id": "poll", "every": "30s", "do": [{ "fetch": "/api/status" }] }
+   */
+  cron(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.cron, context, op => dispatch(String(op), def, context, "cron"));
   }
 
   static stopAll(): void {
@@ -67,9 +79,9 @@ export class TimerNode extends Node {
 
 // ─── Dispatch ───────────────────────────────────────────────────────────────
 
-async function dispatch(
+function dispatch(
   op: string, def: Record<string, unknown>, context: Context, kind: "tick" | "cron",
-): Promise<NodeValue> {
+): unknown {
   const registry = kind === "tick" ? ticks : crons;
 
   switch (op) {
@@ -85,68 +97,71 @@ async function dispatch(
 
 // ─── Shared stop / pause / resume ───────────────────────────────────────────
 
-async function stop(
+function stop(
   def: Record<string, unknown>, context: Context,
   registry: Map<string, TimerState>, kind: "tick" | "cron",
-): Promise<NodeValue> {
-  const id = String(await resolve(def.id, context));
-  const state = registry.get(id);
-  if (!state) return null;
-  if (state.timerId != null) {
-    kind === "tick" ? clearTimeout(state.timerId) : clearInterval(state.timerId);
-  }
-  registry.delete(id);
-  return null;
+): unknown {
+  return resolve(def.id, context, id => {
+    const state = registry.get(String(id));
+    if (!state) return null;
+    if (state.timerId != null) {
+      kind === "tick" ? clearTimeout(state.timerId) : clearInterval(state.timerId);
+    }
+    registry.delete(String(id));
+    return null;
+  });
 }
 
-async function pause(
+function pause(
   def: Record<string, unknown>, context: Context,
   registry: Map<string, TimerState>,
-): Promise<NodeValue> {
-  const id = String(await resolve(def.id, context));
-  const state = registry.get(id);
-  if (!state || state.paused) return null;
-  state.paused = true;
-  state.pausedAt = Date.now();
-  return null;
+): unknown {
+  return resolve(def.id, context, id => {
+    const state = registry.get(String(id));
+    if (!state || state.paused) return null;
+    state.paused = true;
+    state.pausedAt = Date.now();
+    return null;
+  });
 }
 
-async function resume(
+function resume(
   def: Record<string, unknown>, context: Context,
   registry: Map<string, TimerState>, kind: "tick" | "cron",
-): Promise<NodeValue> {
-  const id = String(await resolve(def.id, context));
-  const state = registry.get(id);
-  if (!state || !state.paused) return null;
-  if (state.pausedAt != null) {
-    state.pausedTotal += Date.now() - state.pausedAt;
-  }
-  state.paused = false;
-  state.pausedAt = null;
-  if (kind === "tick") state.lastTime = Date.now();
-  return null;
+): unknown {
+  return resolve(def.id, context, id => {
+    const state = registry.get(String(id));
+    if (!state || !state.paused) return null;
+    if (state.pausedAt != null) state.pausedTotal += Date.now() - state.pausedAt;
+    state.paused = false;
+    state.pausedAt = null;
+    if (kind === "tick") state.lastTime = Date.now();
+    return null;
+  });
 }
 
 // ─── Tick: compensating setTimeout loop ─────────────────────────────────────
 
-async function startTick(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  const id = String(await resolve(def.id, context));
-  const rate = def.rate ? Number(await resolve(def.rate, context)) : 60;
-  const steps = Array.isArray(def.do) ? def.do as unknown[] : [];
+function startTick(def: Record<string, unknown>, context: Context): unknown {
+  return resolveAll([def.id, def.rate ?? 60], context, ([idRaw, rateRaw]: unknown[]) => {
+    const id = String(idRaw);
+    const rate = Number(rateRaw);
+    const steps = Array.isArray(def.do) ? def.do as unknown[] : [];
 
-  const prev = ticks.get(id);
-  if (prev?.timerId != null) clearTimeout(prev.timerId);
+    const prev = ticks.get(id);
+    if (prev?.timerId != null) clearTimeout(prev.timerId);
 
-  const now = Date.now();
-  const state: TimerState = {
-    id, intervalMs: 1000 / rate, steps, context,
-    timerId: null, count: 0, startTime: now, lastTime: now,
-    paused: false, pausedAt: null, pausedTotal: 0,
-  };
+    const now = Date.now();
+    const state: TimerState = {
+      id, intervalMs: 1000 / rate, steps, context,
+      timerId: null, count: 0, startTime: now, lastTime: now,
+      paused: false, pausedAt: null, pausedTotal: 0,
+    };
 
-  ticks.set(id, state);
-  scheduleTick(state);
-  return id;
+    ticks.set(id, state);
+    scheduleTick(state);
+    return id;
+  });
 }
 
 function scheduleTick(state: TimerState): void {
@@ -196,42 +211,42 @@ export function parseInterval(value: string): number {
   return Math.round(parseFloat(match[1]) * MULTIPLIERS[match[2]]);
 }
 
-async function startCron(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  const id = String(await resolve(def.id, context));
-  const every = String(await resolve(def.every, context));
-  const intervalMs = parseInterval(every);
-  const steps = Array.isArray(def.do) ? def.do as unknown[] : [];
+function startCron(def: Record<string, unknown>, context: Context): unknown {
+  return resolveAll([def.id, def.every], context, ([id, every]: unknown[]) => {
+    const intervalMs = parseInterval(String(every));
+    const steps = Array.isArray(def.do) ? def.do as unknown[] : [];
 
-  const prev = crons.get(id);
-  if (prev?.timerId != null) clearInterval(prev.timerId);
-
-  const now = Date.now();
-  const state: TimerState = {
-    id, intervalMs, steps, context,
-    timerId: null, count: 0, startTime: now, lastTime: now,
-    paused: false, pausedAt: null, pausedTotal: 0,
-  };
-
-  state.timerId = setInterval(async () => {
-    if (!crons.has(id) || state.paused) return;
+    const prev = crons.get(String(id));
+    if (prev?.timerId != null) clearInterval(prev.timerId);
 
     const now = Date.now();
-    state.count++;
-    state.lastTime = now;
-
-    state.context.cron = {
-      runCount: state.count,
-      lastRun: new Date(now).toISOString(),
-      elapsed: (now - state.startTime - state.pausedTotal) / 1000,
+    const state: TimerState = {
+      id: String(id), intervalMs, steps, context,
+      timerId: null, count: 0, startTime: now, lastTime: now,
+      paused: false, pausedAt: null, pausedTotal: 0,
     };
 
-    try {
-      await runSteps(state.steps, state.context);
-    } catch (err) {
-      console.error(`[cron] Error in "${id}":`, err);
-    }
-  }, intervalMs);
+    state.timerId = setInterval(async () => {
+      if (!crons.has(state.id) || state.paused) return;
 
-  crons.set(id, state);
-  return id;
+      const now = Date.now();
+      state.count++;
+      state.lastTime = now;
+
+      state.context.cron = {
+        runCount: state.count,
+        lastRun: new Date(now).toISOString(),
+        elapsed: (now - state.startTime - state.pausedTotal) / 1000,
+      };
+
+      try {
+        await runSteps(state.steps, state.context);
+      } catch (err) {
+        console.error(`[cron] Error in "${state.id}":`, err);
+      }
+    }, intervalMs);
+
+    crons.set(state.id, state);
+    return state.id;
+  });
 }
