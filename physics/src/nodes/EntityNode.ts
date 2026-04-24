@@ -31,7 +31,7 @@ import {
   F_D, F_RX, F_RY, F_VZ, F_AZ,
   FLAG_VISIBLE, FLAG_PHYSICS, FLAG_FIXED, FLAG_POOLED, FLAG_TRIGGER, FLAG_CCD,
   DIRTY_TRANSFORM, DIRTY_VISUAL, DIRTY_TEXT, DIRTY_Z,
-} from "./EntityStore.js";
+} from "../EntityStore.js";
 
 const KNOWN_KEYS = new Set([
   "entity-add", "entity-update", "gl-update", "as", "type",

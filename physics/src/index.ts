@@ -14,7 +14,7 @@ export {
 } from "./EntityStore.js";
 
 // ── Entity Node ──
-export { EntityNode } from "./EntityNode.js";
+export { EntityNode } from "./nodes/EntityNode.js";
 
 // ── Physics ──
 export {
@@ -22,7 +22,7 @@ export {
   physicsStep, applyImpulse, wakeBody,
   type Contact, type PhysicsConfig, type Constraint, type ConstraintType,
   FIXED_DT,
-} from "./Physics.js";
+} from "./nodes/Physics.js";
 
 // ── Raycast ──
 export { rayAABB, raycastStore, type RayHit } from "./Raycast.js";
@@ -33,4 +33,4 @@ export {
   type Vec, type Vec2, type Vec3,
   toVec, toVec2, toVec3,
   distance, lerp, toward, normalize, direction, cross, dot, dot3,
-} from "./Vector.js";
+} from "./nodes/Vector.js";

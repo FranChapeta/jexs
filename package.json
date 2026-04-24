@@ -1,13 +1,15 @@
 {
   "private": true,
-  "workspaces": ["core", "physics", "client", "gl", "server", "mcp"],
+  "workspaces": ["core", "physics", "client", "gl", "server", "mcp", "create"],
   "devDependencies": {
     "typescript": "^5.3.0",
     "esbuild": "^0.24.0",
-    "prettier": "^3.8.1"
+    "prettier": "^3.8.1",
+    "tsx": "^4.0.0"
   },
   "scripts": {
-    "build": "tsc -b core physics client gl server mcp",
+    "build": "tsc -b core physics client gl server mcp create && npm run build:schema",
+    "build:schema": "tsx scripts/gen-schema.ts",
     "build:browser": "esbuild client=client/src/index.ts sw=client/src/sw.ts --bundle --format=esm --splitting --outdir=client/dist/browser --entry-names=[name] --chunk-names=chunks/[hash] --minify --sourcemap --target=es2022"
   }
 }

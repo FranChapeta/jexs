@@ -1,5 +1,5 @@
 import { createResolver, coreNodes } from "@jexs/core";
-import { ServiceWorkerNode } from "./ServiceWorkerNode.js";
+import { ServiceWorkerNode } from "./nodes/ServiceWorkerNode.js";
 
 // Single typed reference to the SW global scope (unavoidable — DOM lib types self as Window)
 const sw = self as unknown as ServiceWorkerGlobalScope;

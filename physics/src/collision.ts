@@ -15,7 +15,7 @@ import {
   F_FLAGS, F_RX, F_RY, F_ANGLE,
   FLAG_TRIGGER, FLAG_SLEEPING,
 } from "./EntityStore.js";
-import type { Contact, PhysicsConfig } from "./Physics.js";
+import type { Contact, PhysicsConfig } from "./nodes/Physics.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 

@@ -3,7 +3,7 @@ import { resolve, runSteps } from "@jexs/core";
 import {
   resolvePath, adjustPathAfterRemoval, getChildArrayKey,
   getChildGroups, describeNode, getEditMode, getTextContent, getPotentialChildKeys,
-} from "./treeUtils.js";
+} from "../treeUtils.js";
 
 let initEventsFn: ((root: HTMLElement) => void) | null = null;
 

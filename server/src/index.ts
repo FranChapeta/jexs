@@ -1,4 +1,4 @@
-import { Node, coreNodes } from "@jexs/core";
+import { Node } from "@jexs/core";
 import { CryptoNode } from "./nodes/Crypto.js";
 import { FileNode } from "./nodes/File.js";
 import { RouterNode } from "./nodes/Router.js";
@@ -17,9 +17,8 @@ import { WebSocketNode } from "./nodes/WebSocket.js";
 import { DeferNode } from "./nodes/Defer.js";
 import { StdioNode } from "./nodes/Stdio.js";
 
-/** Server nodes — core nodes plus I/O, DB, crypto, etc. */
+/** Server-specific nodes. Combine with coreNodes for a full resolver: [...coreNodes, ...serverNodes] */
 export const serverNodes: Node[] = [
-  ...coreNodes,
   new CryptoNode(),
   new FileNode(),
   new DeferNode(),

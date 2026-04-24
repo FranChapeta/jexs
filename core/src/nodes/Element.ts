@@ -34,6 +34,8 @@ export class ElementNode extends Node {
    * `class` accepts a string, array, or `{ className: bool }` map. `style` accepts a camelCase object.
    * Add an `"if"` key to conditionally render. Wire DOM events via an `"events"` object.
    *
+   * @param content Children of the element — strings, expressions, or mixed arrays.
+   * @param events DOM event handlers: `{ "click": { "do": [...] } }`
    * @example
    * { "tag": "button", "class": "btn", "events": { "click": { "do": [...] } }, "content": ["Submit"] }
    */

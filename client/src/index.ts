@@ -11,7 +11,7 @@ if (typeof window !== "undefined") {
 
   registerLazy(
     ["tree-init", "tree-insert", "tree-remove", "tree-update", "tree-move"],
-    () => import("./TreeNode.js").then(({ TreeNode, setInitEvents }) => {
+    () => import("./nodes/TreeNode.js").then(({ TreeNode, setInitEvents }) => {
       setInitEvents((root) => client.initEvents(root));
       registerNode(new TreeNode());
     }),
@@ -19,7 +19,7 @@ if (typeof window !== "undefined") {
 
   registerLazy(
     ["list-add", "list-remove", "list-move-up", "list-move-down", "list-init", "list-sortable", "list-serialize"],
-    () => import("./ListNode.js").then(({ ListNode, setInitEvents }) => {
+    () => import("./nodes/ListNode.js").then(({ ListNode, setInitEvents }) => {
       setInitEvents((root) => client.initEvents(root));
       registerNode(new ListNode());
     }),
@@ -27,21 +27,21 @@ if (typeof window !== "undefined") {
 
   registerLazy(
     ["ws-connect", "ws-send", "ws-close"],
-    () => import("./WsNode.js").then(({ WsNode }) => {
+    () => import("./nodes/WsNode.js").then(({ WsNode }) => {
       registerNode(new WsNode());
     }),
   );
 
   registerLazy(
     ["push-subscribe", "push-unsubscribe"],
-    () => import("./PushNode.js").then(({ PushNode }) => {
+    () => import("./nodes/PushNode.js").then(({ PushNode }) => {
       registerNode(new PushNode());
     }),
   );
 
   registerLazy(
     ["rtc"],
-    () => import("./WebRTCNode.js").then(({ WebRTCNode }) => {
+    () => import("./nodes/WebRTCNode.js").then(({ WebRTCNode }) => {
       registerNode(new WebRTCNode());
     }),
   );

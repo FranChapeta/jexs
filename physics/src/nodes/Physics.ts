@@ -17,15 +17,15 @@ import {
   F_MOVE_X, F_MOVE_Y, F_FLAGS,
   F_RX, F_RY, F_ANGLE,
   FLAG_PHYSICS, FLAG_SLEEPING, FLAG_TRIGGER, FLAG_CCD,
-} from "./EntityStore.js";
-import { raycastStore } from "./Raycast.js";
-import { detectCollision, resolveCollision, wakeBody, isRotated } from "./collision.js";
-import { solveConstraints, type Constraint, type ConstraintType } from "./constraints.js";
-import { SpatialGrid } from "./SpatialGrid.js";
+} from "../EntityStore.js";
+import { raycastStore } from "../Raycast.js";
+import { detectCollision, resolveCollision, wakeBody, isRotated } from "../collision.js";
+import { solveConstraints, type Constraint, type ConstraintType } from "../constraints.js";
+import { SpatialGrid } from "../SpatialGrid.js";
 
 // Re-export types and functions that the barrel (index.ts) needs from submodules
-export { wakeBody } from "./collision.js";
-export { type Constraint, type ConstraintType } from "./constraints.js";
+export { wakeBody } from "../collision.js";
+export { type Constraint, type ConstraintType } from "../constraints.js";
 
 // ─── Contact ─────────────────────────────────────────────────────────────────
 

@@ -13,19 +13,19 @@ import {
 } from "@jexs/physics";
 
 // ─── Extracted GL modules ────────────────────────────────────────────────────
-import type { GlInstance, GpuParticleEmitter } from "./gl/types.js";
-export type { GlCamera, GlInstance } from "./gl/types.js";
-import { EASINGS, TWEENABLE_KEYS } from "./gl/easing.js";
-import { tickTweens, cancelConflictingTweens } from "./gl/tweening.js";
-import { updateCameraFollow, updateCameraShake } from "./gl/camera.js";
-import { collectPointLights, uploadPointLights, setSceneUniforms } from "./gl/lighting.js";
-import { parseBloom, ensureFBOs, applyPostProcessing } from "./gl/postProcess.js";
-import { emitGpuParticles, initGpuParticleProgram, renderGpuParticles, hasActiveParticles } from "./gl/particleSystem.js";
-import { updateTrails, renderTrails } from "./gl/trails.js";
-import { initShadow, renderShadowPass } from "./gl/shadows.js";
-import { initSsao, renderSsaoPass } from "./gl/ssao.js";
-import { renderTextTexture } from "./gl/textRendering.js";
-import { init3dProgram } from "./gl/setup3d.js";
+import type { GlInstance, GpuParticleEmitter } from "../gl/types.js";
+export type { GlCamera, GlInstance } from "../gl/types.js";
+import { EASINGS, TWEENABLE_KEYS } from "../gl/easing.js";
+import { tickTweens, cancelConflictingTweens } from "../gl/tweening.js";
+import { updateCameraFollow, updateCameraShake } from "../gl/camera.js";
+import { collectPointLights, uploadPointLights, setSceneUniforms } from "../gl/lighting.js";
+import { parseBloom, ensureFBOs, applyPostProcessing } from "../gl/postProcess.js";
+import { emitGpuParticles, initGpuParticleProgram, renderGpuParticles, hasActiveParticles } from "../gl/particleSystem.js";
+import { updateTrails, renderTrails } from "../gl/trails.js";
+import { initShadow, renderShadowPass } from "../gl/shadows.js";
+import { initSsao, renderSsaoPass } from "../gl/ssao.js";
+import { renderTextTexture } from "../gl/textRendering.js";
+import { init3dProgram } from "../gl/setup3d.js";
 import {
   upgradeVert, upgradeFrag,
   VERT_SRC, FRAG_SRC,
@@ -34,14 +34,14 @@ import {
   STRIDE_3D, STRIDE_3D_BYTES,
   INST_STRIDE, INST_STRIDE_BYTES, GEO_STRIDE_BYTES,
   GPU_PARTICLE_INST_STRIDE,
-} from "./gl/shaders.js";
+} from "../gl/shaders.js";
 import {
   QUAD_VERTS, TRI_VERTS, CIRCLE_VERTS, CIRCLE_TRI_VERTS,
   FLAT_QUAD_VERTS,
   CUBE_VERTS,
   getRoundedCubeVerts,
   SHAPE_3D, SHAPE_FLAT,
-} from "./gl/geometry.js";
+} from "../gl/geometry.js";
 import {
   mat4Perspective, mat4Ortho, mat4LookAt,
   normalMat3, mat4Model, mat4Billboard,
@@ -49,7 +49,7 @@ import {
   MAT4_IDENTITY, bindTex,
   _projM, _viewM,
   _frustum,
-} from "./gl/math.js";
+} from "../gl/math.js";
 import { raycastStore } from "@jexs/physics";
 
 // ─── Module-level scratch buffers ────────────────────────────────────────────

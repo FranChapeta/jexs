@@ -1,12 +1,11 @@
 import { createResolver, ResolverFn, coreNodes } from "@jexs/core";
 import { Context, Node } from "@jexs/core";
-import { DomNode } from "./DomNode.js";
-import { FetchNode } from "./FetchNode.js";
-import { AudioNode } from "./AudioNode.js";
+import { DomNode } from "./nodes/DomNode.js";
+import { FetchNode } from "./nodes/FetchNode.js";
+import { AudioNode } from "./nodes/AudioNode.js";
 
-/** Client-side nodes: core + DOM nodes. Physics/GL are lazy-loaded. */
+/** Client-specific nodes. The Client class combines these with coreNodes internally. */
 export const clientNodes: Node[] = [
-  ...coreNodes,
   new DomNode(),
   new FetchNode(),
   new AudioNode(),
@@ -21,7 +20,7 @@ export class Client {
   readonly context: Context = {};
 
   constructor() {
-    this.resolver = createResolver(clientNodes);
+    this.resolver = createResolver([...coreNodes, ...clientNodes]);
   }
 
   /**
