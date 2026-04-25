@@ -13,6 +13,9 @@ export class FetchNode extends Node {
   /**
    * Makes an HTTP request to the URL in `fetch`. Defaults to GET; pass `method` and `body` for writes.
    * Returns parsed JSON if the response content-type is `application/json`, otherwise the response text.
+   * @param {string} fetch URL to request.
+   * @param {"GET"|"POST"|"PUT"|"PATCH"|"DELETE"} method HTTP method (default `"GET"`).
+   * @param {expr} body Request body (JSON-serialized for non-GET requests).
    * @example
    * { "fetch": "/api/users", "method": "POST", "body": { "name": { "var": "$name" } } }
    */

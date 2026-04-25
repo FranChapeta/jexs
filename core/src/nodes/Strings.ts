@@ -5,6 +5,7 @@ export class StringNode extends Node {
   /**
    * Joins an array of values into a single string.
    *
+   * @param {(string|expr)[]} concat Values to concatenate.
    * @example
    * { "concat": ["Hello, ", { "var": "$name" }, "!"] }
    */
@@ -14,12 +15,12 @@ export class StringNode extends Node {
     );
   }
 
-  /** @example { "upper": { "var": "$name" } } */
+  /** Converts a string to uppercase. @example { "upper": { "var": "$name" } } */
   upper(d: Record<string, unknown>, c: Context) {
     return resolve(d.upper, c, v => this.toString(v).toUpperCase());
   }
 
-  /** @example { "lower": { "var": "$name" } } */
+  /** Converts a string to lowercase. @example { "lower": { "var": "$name" } } */
   lower(d: Record<string, unknown>, c: Context) {
     return resolve(d.lower, c, v => this.toString(v).toLowerCase());
   }
@@ -39,17 +40,17 @@ export class StringNode extends Node {
     );
   }
 
-  /** @example { "trim": "  hello  " } */
+  /** Removes leading and trailing whitespace. @example { "trim": "  hello  " } */
   trim(d: Record<string, unknown>, c: Context) {
     return resolve(d.trim, c, v => this.toString(v).trim());
   }
 
-  /** @example { "trimStart": "  hello" } */
+  /** Removes leading whitespace. @example { "trimStart": "  hello" } */
   trimStart(d: Record<string, unknown>, c: Context) {
     return resolve(d.trimStart, c, v => this.toString(v).trimStart());
   }
 
-  /** @example { "trimEnd": "hello  " } */
+  /** Removes trailing whitespace. @example { "trimEnd": "hello  " } */
   trimEnd(d: Record<string, unknown>, c: Context) {
     return resolve(d.trimEnd, c, v => this.toString(v).trimEnd());
   }
@@ -88,6 +89,7 @@ export class StringNode extends Node {
   /**
    * Serializes a value to a JSON string. Pass `[value, indent]` to pretty-print.
    *
+   * @param {[1,2]} stringify `[value, indent?]` — value to serialize and optional indent spaces.
    * @example
    * { "stringify": [{ "var": "$obj" }, 2] }
    */
@@ -102,7 +104,13 @@ export class StringNode extends Node {
     });
   }
 
-  /** Extracts a substring: `[str, start, end?]`. @example { "substring": ["hello world", 6] } */
+  /**
+   * Extracts a substring.
+   *
+   * @param {[2,3]} substring `[string, start, end?]`.
+   * @example
+   * { "substring": ["hello world", 6] }
+   */
   substring(def: Record<string, unknown>, c: Context) {
     return resolve(def.substring, c, args => {
       const a = this.toArray(args);
@@ -113,17 +121,35 @@ export class StringNode extends Node {
     });
   }
 
-  /** Replaces all occurrences: `[str, search, replacement]`. @example { "replace": ["foo foo", "foo", "bar"] } */
+  /**
+   * Replaces all occurrences of a substring.
+   *
+   * @param {[3]} replace `[string, search, replacement]`.
+   * @example
+   * { "replace": ["foo foo", "foo", "bar"] }
+   */
   replace(def: Record<string, unknown>, c: Context) {
     return resolve(def.replace, c, args => doReplace(args, true));
   }
 
-  /** Replaces only the first occurrence: `[str, search, replacement]`. @example { "replaceFirst": ["foo foo", "foo", "bar"] } */
+  /**
+   * Replaces only the first occurrence of a substring.
+   *
+   * @param {[3]} replaceFirst `[string, search, replacement]`.
+   * @example
+   * { "replaceFirst": ["foo foo", "foo", "bar"] }
+   */
   replaceFirst(def: Record<string, unknown>, c: Context) {
     return resolve(def.replaceFirst, c, args => doReplace(args, false));
   }
 
-  /** Splits a string into an array: `[str, separator]`. @example { "split": ["a,b,c", ","] } */
+  /**
+   * Splits a string into an array.
+   *
+   * @param {[2]} split `[string, separator]`.
+   * @example
+   * { "split": ["a,b,c", ","] }
+   */
   split(def: Record<string, unknown>, c: Context) {
     return resolve(def.split, c, args => {
       const a = this.toArray(args);
@@ -131,7 +157,13 @@ export class StringNode extends Node {
     });
   }
 
-  /** Joins an array into a string: `[arr, separator?]` (default separator `","`). @example { "join": [["a", "b", "c"], " - "] } */
+  /**
+   * Joins an array into a string with a separator (default `","`).
+   *
+   * @param {[1,2]} join `[array, separator?]`.
+   * @example
+   * { "join": [["a", "b", "c"], " - "] }
+   */
   join(def: Record<string, unknown>, c: Context) {
     return resolve(def.join, c, args => {
       const a = this.toArray(args);
@@ -139,17 +171,35 @@ export class StringNode extends Node {
     });
   }
 
-  /** Pads the start of a string: `[str, length, padChar?]`. @example { "padStart": ["5", 3, "0"] } */
+  /**
+   * Pads the start of a string to a target length.
+   *
+   * @param {[2,3]} padStart `[string, length, padChar?]`.
+   * @example
+   * { "padStart": ["5", 3, "0"] }
+   */
   padStart(def: Record<string, unknown>, c: Context) {
     return resolve(def.padStart, c, args => doPad(args, "start"));
   }
 
-  /** Pads the end of a string: `[str, length, padChar?]`. @example { "padEnd": ["hi", 5, "."] } */
+  /**
+   * Pads the end of a string to a target length.
+   *
+   * @param {[2,3]} padEnd `[string, length, padChar?]`.
+   * @example
+   * { "padEnd": ["hi", 5, "."] }
+   */
   padEnd(def: Record<string, unknown>, c: Context) {
     return resolve(def.padEnd, c, args => doPad(args, "end"));
   }
 
-  /** Repeats a string N times: `[str, count]`. @example { "repeat": ["ab", 3] } */
+  /**
+   * Repeats a string N times.
+   *
+   * @param {[2]} repeat `[string, count]`.
+   * @example
+   * { "repeat": ["ab", 3] }
+   */
   repeat(def: Record<string, unknown>, c: Context) {
     return resolve(def.repeat, c, args => {
       const a = this.toArray(args);
@@ -157,7 +207,13 @@ export class StringNode extends Node {
     });
   }
 
-  /** @example { "startsWith": ["hello world", "hello"] } */
+  /**
+   * Returns `true` if a string starts with the given prefix.
+   *
+   * @param {[2]} startsWith `[string, prefix]`.
+   * @example
+   * { "startsWith": ["hello world", "hello"] }
+   */
   startsWith(def: Record<string, unknown>, c: Context) {
     return resolve(def.startsWith, c, args => {
       const a = this.toArray(args);
@@ -165,7 +221,13 @@ export class StringNode extends Node {
     });
   }
 
-  /** @example { "endsWith": ["hello world", "world"] } */
+  /**
+   * Returns `true` if a string ends with the given suffix.
+   *
+   * @param {[2]} endsWith `[string, suffix]`.
+   * @example
+   * { "endsWith": ["hello world", "world"] }
+   */
   endsWith(def: Record<string, unknown>, c: Context) {
     return resolve(def.endsWith, c, args => {
       const a = this.toArray(args);
@@ -173,7 +235,13 @@ export class StringNode extends Node {
     });
   }
 
-  /** @example { "contains": ["hello world", "world"] } */
+  /**
+   * Returns `true` if a string contains the given substring.
+   *
+   * @param {[2]} contains `[string, substring]`.
+   * @example
+   * { "contains": ["hello world", "world"] }
+   */
   contains(def: Record<string, unknown>, c: Context) {
     return resolve(def.contains, c, args => {
       const a = this.toArray(args);

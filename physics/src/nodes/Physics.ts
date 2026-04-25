@@ -520,6 +520,16 @@ export class PhysicsNode extends Node {
     return (context._glSelector as string) || "";
   }
 
+  /**
+   * Initializes the physics simulation loop for the active entity store.
+   * Must be called after `entity-init`. Restarts any existing loop.
+   * @param {boolean} physics-init Pass `true` to initialize.
+   * @param {number[]} gravity Gravity vector `[gx, gy]` or `[gx, gy, gz]` (default `[0, 980]`).
+   * @param {number} damping Linear velocity damping factor 0–1 (default `0.01`).
+   * @param {expr} bounds World boundary object `{x, y, w, h}` or `"canvas"`, or `null` for unbounded.
+   * @example
+   * { "physics-init": true, "gravity": [0, 980], "damping": 0.01 }
+   */
   async ["physics-init"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
     const selector = PhysicsNode.sel(context);
     if (!selector) { console.error("[Physics] No _glSelector on context"); return null; }
@@ -603,7 +613,8 @@ export class PhysicsNode extends Node {
   /**
    * Run a single physics step without managing a loop.
    * For use inside a tick loop for server-side authoritative simulation.
-   * { "physics-step": true } or { "physics-step": true, "dt": 0.016 }
+   * @param {boolean} physics-step Pass `true` to step.
+   * @param {number} dt Delta time in seconds (default `1/60`).
    */
   async ["physics-step"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
     const selector = PhysicsNode.sel(context);
@@ -653,15 +664,25 @@ export class PhysicsNode extends Node {
 
 export class CollisionNode extends Node {
 
+  /**
+   * Registers a collision handler that runs `do` steps when entities from two groups collide.
+   * `$collisionA`, `$collisionB`, `$collisionNx/Ny/Nz` are set in context during the steps.
+   * @param {boolean} collision-on Pass `true` to register the handler.
+   * @param {[2]} groups Two-element array of group names: `[groupA, groupB]`.
+   * @param {string} id Optional handler ID (auto-generated if omitted).
+   * @param {expr[]} do Steps to run on collision.
+   * @example
+   * { "collision-on": true, "groups": ["player", "enemy"], "do": [{ "var": "$collisionA" }] }
+   */
   async ["collision-on"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
     const w = worlds.get(PhysicsNode.sel(context));
     if (!w) return null;
 
-    const between = (await resolve(def.between, context)) as [string, string];
+    const groups = (await resolve(def.groups, context)) as [string, string];
     const id = def.id ? String(await resolve(def.id, context)) : `h${w.handlers.length}`;
     const steps = Array.isArray(def.do) ? def.do as unknown[] : [];
 
-    w.handlers.push({ id, groups: between, do: steps });
+    w.handlers.push({ id, groups, do: steps });
     return id;
   }
 
@@ -680,11 +701,15 @@ export class JointNode extends Node {
 
   /**
    * Create a constraint between two entities.
-   * { "joint-add": "myJoint", "type": "distance"|"spring"|"hinge",
-   *   "a": "entityA", "b": "entityB",
-   *   "restLength": 100, "stiffness": 0.5, "damping": 0.1,
-   *   "anchorA": [0,0], "anchorB": [0,0],
-   *   "minAngle": -45, "maxAngle": 45 }
+   * @param {string} joint-add Constraint ID.
+   * @param {"distance"|"spring"|"hinge"} type Constraint type (default `"distance"`).
+   * @param {string} a ID of first entity.
+   * @param {string} b ID of second entity.
+   * @param {number} restLength Rest length (default: current distance between entities).
+   * @param {number} stiffness Constraint stiffness 0–1 (default `0.5`).
+   * @param {number} damping Constraint damping 0–1 (default `0.1`).
+   * @example
+   * { "joint-add": "rope", "type": "spring", "a": "anchor", "b": "ball", "restLength": 100 }
    */
   async ["joint-add"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
     const w = worlds.get(PhysicsNode.sel(context));

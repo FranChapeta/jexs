@@ -4,7 +4,7 @@ import { Node, Context, NodeValue, runSteps } from "@jexs/core";
  * StdioNode - Reads newline-delimited JSON from stdin, runs steps, writes results to stdout.
  *
  * Usage:
- * { "stdio": { "on-message": [ ...steps... ], "on-close": [ ...steps... ] } }
+ * { "stdio": true, "on-message": [ ...steps... ], "on-close": [ ...steps... ] }
  *
  * Each line from stdin is parsed as JSON and set as $message on a child context.
  * The result of the last step (if not null/undefined) is written as JSON + newline to stdout.
@@ -18,30 +18,25 @@ export class StdioNode extends Node {
    * set as `$message` in context, and `on-message` steps are run. Non-null results are written to stdout.
    * `console.log` is redirected to stderr to keep stdout clean for protocol data.
    *
+   * @param {boolean} stdio Set to `true` to start the listener.
+   * @param {steps} on-message Steps run per NDJSON line with `$message` in context.
+   * @param {steps} on-close Optional steps run when stdin closes.
    * @example
-   * { "stdio": { "on-message": [{ "var": "$message" }], "on-close": [] } }
+   * { "stdio": true, "on-message": [{ "var": "$message" }], "on-close": [] }
    */
   async stdio(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const config = def.stdio;
-    if (!config || typeof config !== "object" || Array.isArray(config)) {
-      console.error('[StdioNode] "stdio" must be a config object with "on-message" steps');
-      return null;
-    }
-
-    const handler = config as Record<string, unknown>;
-    if (!Array.isArray(handler["on-message"])) {
+    if (!Array.isArray(def["on-message"])) {
       console.error('[StdioNode] "on-message" must be an array of steps');
       return null;
     }
 
+    const steps = def["on-message"] as unknown[];
+    const closeSteps = Array.isArray(def["on-close"]) ? def["on-close"] as unknown[] : null;
+
     // Redirect console.log to stderr so stdout stays clean for protocol data
-    const originalLog = console.log;
     console.log = (...args: unknown[]) => {
       process.stderr.write(args.map(String).join(" ") + "\n");
     };
-
-    const steps = handler["on-message"] as unknown[];
-    const closeSteps = Array.isArray(handler["on-close"]) ? handler["on-close"] as unknown[] : null;
 
     let buffer = "";
 

@@ -23,6 +23,10 @@ export class WsNode extends Node {
    * Opens a WebSocket connection. Relative URLs are auto-prefixed with `ws://` or `wss://`.
    * Pass `on-open`, `on-message`, and `on-close` step arrays. Reconnects automatically with exponential backoff.
    * Each message sets `$wsMessage` (parsed data) and `$wsId` (server-assigned client ID) in context.
+   * @param {string} ws-connect WebSocket URL (relative or absolute).
+   * @param {steps} on-open Steps to run when the connection opens.
+   * @param {steps} on-message Steps to run on each incoming message (`$wsMessage`, `$wsId` available).
+   * @param {steps} on-close Steps to run when the connection closes.
    * @example
    * { "ws-connect": "/ws", "on-message": [{ "var": "$wsMessage" }] }
    */
@@ -53,7 +57,9 @@ export class WsNode extends Node {
     });
   }
 
-  /** Sends data over the active WebSocket. Objects are JSON-serialized automatically. */
+  /** Sends data over the active WebSocket. Objects are JSON-serialized automatically.
+   * @param {expr} ws-send Data to send (strings sent as-is, objects JSON-serialized).
+   */
   ["ws-send"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["ws-send"], context, data => {
       if (!WsNode.connection || WsNode.connection.readyState !== WebSocket.OPEN) return null;

@@ -24,7 +24,9 @@ import { resolve } from "@jexs/core";
 
 let pointerLockListenerAdded = false;
 export class DomNode extends Node {
-  /** Shows an element by clearing its inline `display` style. Accepts a CSS selector or HTMLElement. */
+  /** Shows an element by clearing its inline `display` style. Accepts a CSS selector or HTMLElement.
+   * @param {string} show CSS selector or element reference.
+   */
   show(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.show, context, v => {
       const el = getElement(v);
@@ -32,7 +34,9 @@ export class DomNode extends Node {
       return el;
     });
   }
-  /** Hides an element by setting `display: none`. Accepts a CSS selector or HTMLElement. */
+  /** Hides an element by setting `display: none`. Accepts a CSS selector or HTMLElement.
+   * @param {string} hide CSS selector or element reference.
+   */
   hide(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.hide, context, v => {
       const el = getElement(v);
@@ -40,7 +44,9 @@ export class DomNode extends Node {
       return el;
     });
   }
-  /** Toggles `display: none` on an element. */
+  /** Toggles `display: none` on an element.
+   * @param {string} toggle CSS selector or element reference.
+   */
   toggle(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.toggle, context, v => {
       const el = getElement(v);
@@ -82,6 +88,7 @@ export class DomNode extends Node {
   }
   /**
    * Adds a CSS class to an element. Pass `[selectorOrElement, className]`.
+   * @param {[2]} addClass Two-element array: `[selectorOrElement, className]`.
    * @example
    * { "addClass": ["#btn", "active"] }
    */
@@ -95,7 +102,9 @@ export class DomNode extends Node {
       return null;
     });
   }
-  /** Removes a CSS class from an element. Pass `[selectorOrElement, className]`. */
+  /** Removes a CSS class from an element. Pass `[selectorOrElement, className]`.
+   * @param {[2]} removeClass Two-element array: `[selectorOrElement, className]`.
+   */
   removeClass(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.removeClass, context, args => {
       if (Array.isArray(args) && args.length >= 2) {
@@ -106,7 +115,9 @@ export class DomNode extends Node {
       return null;
     });
   }
-  /** Toggles a CSS class on an element. Pass `[selectorOrElement, className]`. */
+  /** Toggles a CSS class on an element. Pass `[selectorOrElement, className]`.
+   * @param {[2]} toggleClass Two-element array: `[selectorOrElement, className]`.
+   */
   toggleClass(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.toggleClass, context, args => {
       if (Array.isArray(args) && args.length >= 2) {
@@ -117,7 +128,9 @@ export class DomNode extends Node {
       return null;
     });
   }
-  /** Sets an attribute on an element. Pass `[selectorOrElement, attrName, value]`. */
+  /** Sets an attribute on an element. Pass `[selectorOrElement, attrName, value]`.
+   * @param {[3]} setAttr Three-element array: `[selectorOrElement, attrName, value]`.
+   */
   setAttr(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.setAttr, context, args => {
       if (Array.isArray(args) && args.length >= 3) {
@@ -128,7 +141,9 @@ export class DomNode extends Node {
       return null;
     });
   }
-  /** Gets an attribute value from an element. Pass `[selectorOrElement, attrName]`. */
+  /** Gets an attribute value from an element. Pass `[selectorOrElement, attrName]`.
+   * @param {[2]} getAttr Two-element array: `[selectorOrElement, attrName]`.
+   */
   getAttr(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.getAttr, context, args => {
       if (Array.isArray(args) && args.length >= 2) {
@@ -152,19 +167,27 @@ export class DomNode extends Node {
       return null;
     });
   }
-  /** Returns the element with the given id via `document.getElementById`. */
+  /** Returns the element with the given id via `document.getElementById`.
+   * @param {string} getElementById Element ID (without `#`).
+   */
   getElementById(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.getElementById, context, v => document.getElementById(String(v)));
   }
-  /** Returns the first element matching a CSS selector. */
+  /** Returns the first element matching a CSS selector.
+   * @param {string} querySelector CSS selector string.
+   */
   querySelector(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.querySelector, context, v => document.querySelector(String(v)));
   }
-  /** Returns all elements matching a CSS selector as an array. */
+  /** Returns all elements matching a CSS selector as an array.
+   * @param {string} querySelectorAll CSS selector string.
+   */
   querySelectorAll(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.querySelectorAll, context, v => Array.from(document.querySelectorAll(String(v))));
   }
-  /** Walks up from an element to the nearest ancestor matching a selector. Pass `[element, selector]`. */
+  /** Walks up from an element to the nearest ancestor matching a selector. Pass `[element, selector]`.
+   * @param {[2]} closest Two-element array: `[element, selector]`.
+   */
   closest(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.closest, context, args => {
       if (Array.isArray(args) && args.length >= 2) {
@@ -181,7 +204,9 @@ export class DomNode extends Node {
       return el ? (el as HTMLInputElement).value ?? "" : null;
     });
   }
-  /** Sets the `.value` of an input element. Pass `[selectorOrElement, value]`. */
+  /** Sets the `.value` of an input element. Pass `[selectorOrElement, value]`.
+   * @param {[2]} setValue Two-element array: `[selectorOrElement, value]`.
+   */
   setValue(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.setValue, context, args => {
       if (Array.isArray(args) && args.length >= 2) {
@@ -192,7 +217,9 @@ export class DomNode extends Node {
       return null;
     });
   }
-  /** Sets the `innerHTML` of an element. Pass `[selectorOrElement, html]`. */
+  /** Sets the `innerHTML` of an element. Pass `[selectorOrElement, html]`.
+   * @param {[2]} setHtml Two-element array: `[selectorOrElement, html]`.
+   */
   setHtml(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.setHtml, context, args => {
       if (Array.isArray(args) && args.length >= 2) {
@@ -203,7 +230,9 @@ export class DomNode extends Node {
       return null;
     });
   }
-  /** Sets the `textContent` of an element. Pass `[selectorOrElement, text]`. */
+  /** Sets the `textContent` of an element. Pass `[selectorOrElement, text]`.
+   * @param {[2]} setText Two-element array: `[selectorOrElement, text]`.
+   */
   setText(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.setText, context, args => {
       if (Array.isArray(args) && args.length >= 2) {
@@ -214,7 +243,9 @@ export class DomNode extends Node {
       return null;
     });
   }
-  /** Appends HTML to an element (`insertAdjacentHTML("beforeend")`) and scrolls to the bottom. Pass `[selectorOrElement, html]`. */
+  /** Appends HTML to an element (`insertAdjacentHTML("beforeend")`) and scrolls to the bottom. Pass `[selectorOrElement, html]`.
+   * @param {[2]} append Two-element array: `[selectorOrElement, html]`.
+   */
   append(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.append, context, args => {
       if (Array.isArray(args) && args.length >= 2) {

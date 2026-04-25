@@ -64,6 +64,7 @@ export class RouterNode extends Node {
    * Supports exact segments, `*` (single param with optional `paramName`/`paramRegex`),
    * `**` (catch-all), conditional `"if"` guards per node, param/body validation, and WebSocket upgrade.
    *
+   * @param {object} routes Route tree object with optional `"children"` map, `"methods"` map, `"if"`, `"paramName"`, `"paramRegex"`.
    * @example
    * { "routes": { "children": { "users": { "methods": { "GET": { "file": "pages/users.json" } } } } } }
    */

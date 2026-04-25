@@ -23,23 +23,23 @@ function hashString(str: string): number {
 }
 
 export class MathNode extends Node {
-  /** @example { "sqrt": 16 } */
+  /** Returns the square root of a number. @example { "sqrt": 16 } */
   sqrt(d: Record<string, unknown>, c: Context) {
     return resolve(d.sqrt, c, v => Math.sqrt(this.toNumber(v)));
   }
-  /** @example { "abs": -5 } */
+  /** Returns the absolute value of a number. @example { "abs": -5 } */
   abs(d: Record<string, unknown>, c: Context) {
     return resolve(d.abs, c, v => Math.abs(this.toNumber(v)));
   }
-  /** @example { "round": 3.6 } */
+  /** Rounds a number to the nearest integer. @example { "round": 3.6 } */
   round(d: Record<string, unknown>, c: Context) {
     return resolve(d.round, c, v => Math.round(this.toNumber(v)));
   }
-  /** @example { "floor": 3.9 } */
+  /** Rounds a number down to the nearest integer. @example { "floor": 3.9 } */
   floor(d: Record<string, unknown>, c: Context) {
     return resolve(d.floor, c, v => Math.floor(this.toNumber(v)));
   }
-  /** @example { "ceil": 3.1 } */
+  /** Rounds a number up to the nearest integer. @example { "ceil": 3.1 } */
   ceil(d: Record<string, unknown>, c: Context) {
     return resolve(d.ceil, c, v => Math.ceil(this.toNumber(v)));
   }
@@ -59,11 +59,25 @@ export class MathNode extends Node {
   cos(d: Record<string, unknown>, c: Context) {
     return resolve(d.cos, c, v => Math.cos(this.toNumber(v) * Math.PI / 180));
   }
-  /** Sums all numbers in an array. @example { "sum": [1, 2, 3] } */
+
+  /**
+   * Sums all numbers in an array.
+   *
+   * @param {number[]} sum Numbers to sum.
+   * @example
+   * { "sum": [1, 2, 3] }
+   */
   sum(def: Record<string, unknown>, c: Context) {
     return resolve(def.sum, c, arr => this.toArray(arr).reduce((s: number, v) => s + this.toNumber(v), 0));
   }
-  /** Returns the arithmetic mean of an array of numbers. @example { "avg": [1, 2, 3] } */
+
+  /**
+   * Returns the arithmetic mean of an array of numbers.
+   *
+   * @param {number[]} avg Numbers to average.
+   * @example
+   * { "avg": [1, 2, 3] }
+   */
   avg(def: Record<string, unknown>, c: Context) {
     return resolve(def.avg, c, arr => {
       const items = this.toArray(arr);
@@ -72,14 +86,26 @@ export class MathNode extends Node {
     });
   }
 
-  /** Sums two or more numbers. @example { "add": [{ "var": "$price" }, 10] } */
+  /**
+   * Sums two or more numbers.
+   *
+   * @param {number[]} add Numbers to add together.
+   * @example
+   * { "add": [{ "var": "$price" }, 10] }
+   */
   add(def: Record<string, unknown>, c: Context) {
     return resolve(def.add, c, values =>
       this.toArray(values).reduce((sum: number, v) => sum + this.toNumber(v), 0)
     );
   }
 
-  /** Subtracts subsequent values from the first: `[a, b, ...]`. Single-element negates. @example { "subtract": [10, 3] } */
+  /**
+   * Subtracts subsequent values from the first. Single-element negates.
+   *
+   * @param {number[]} subtract Numbers: `[a, b, ...]`.
+   * @example
+   * { "subtract": [10, 3] }
+   */
   subtract(def: Record<string, unknown>, c: Context) {
     return resolve(def.subtract, c, values => {
       const arr = this.toArray(values);
@@ -89,14 +115,26 @@ export class MathNode extends Node {
     });
   }
 
-  /** Multiplies two or more numbers. @example { "multiply": [{ "var": "$qty" }, { "var": "$price" }] } */
+  /**
+   * Multiplies two or more numbers.
+   *
+   * @param {number[]} multiply Numbers to multiply together.
+   * @example
+   * { "multiply": [{ "var": "$qty" }, { "var": "$price" }] }
+   */
   multiply(def: Record<string, unknown>, c: Context) {
     return resolve(def.multiply, c, values =>
       this.toArray(values).reduce((p: number, v) => p * this.toNumber(v), 1)
     );
   }
 
-  /** Divides the first value by the second; returns `0` on division by zero. @example { "divide": [10, 4] } */
+  /**
+   * Divides the first value by the second; returns `0` on division by zero.
+   *
+   * @param {[2]} divide `[dividend, divisor]`.
+   * @example
+   * { "divide": [10, 4] }
+   */
   divide(def: Record<string, unknown>, c: Context) {
     return resolve(def.divide, c, values => {
       const arr = this.toArray(values);
@@ -106,7 +144,13 @@ export class MathNode extends Node {
     });
   }
 
-  /** Remainder of `a % b`; returns `0` if `b` is zero. @example { "mod": [10, 3] } */
+  /**
+   * Remainder of `a % b`; returns `0` if `b` is zero.
+   *
+   * @param {[2]} mod `[a, b]`.
+   * @example
+   * { "mod": [10, 3] }
+   */
   mod(def: Record<string, unknown>, c: Context) {
     return resolve(def.mod, c, values => {
       const arr = this.toArray(values);
@@ -116,7 +160,13 @@ export class MathNode extends Node {
     });
   }
 
-  /** Raises `base` to `exponent`: `[base, exp]`. @example { "power": [2, 10] } */
+  /**
+   * Raises `base` to `exponent`.
+   *
+   * @param {[2]} power `[base, exponent]`.
+   * @example
+   * { "power": [2, 10] }
+   */
   power(def: Record<string, unknown>, c: Context) {
     return resolve(def.power, c, values => {
       const arr = this.toArray(values);
@@ -125,7 +175,13 @@ export class MathNode extends Node {
     });
   }
 
-  /** Returns the smallest number in an array. @example { "min": [3, 1, 4, 1, 5] } */
+  /**
+   * Returns the smallest number in an array.
+   *
+   * @param {number[]} min Numbers to compare.
+   * @example
+   * { "min": [3, 1, 4, 1, 5] }
+   */
   min(def: Record<string, unknown>, c: Context) {
     return resolve(def.min, c, values => {
       const nums = this.toArray(values).map(v => this.toNumber(v));
@@ -133,7 +189,13 @@ export class MathNode extends Node {
     });
   }
 
-  /** Returns the largest number in an array. @example { "max": [3, 1, 4, 1, 5] } */
+  /**
+   * Returns the largest number in an array.
+   *
+   * @param {number[]} max Numbers to compare.
+   * @example
+   * { "max": [3, 1, 4, 1, 5] }
+   */
   max(def: Record<string, unknown>, c: Context) {
     return resolve(def.max, c, values => {
       const nums = this.toArray(values).map(v => this.toNumber(v));
@@ -141,7 +203,13 @@ export class MathNode extends Node {
     });
   }
 
-  /** Clamps a value between min and max: `[value, min, max]`. @example { "clamp": [{ "var": "$health" }, 0, 100] } */
+  /**
+   * Clamps a value between min and max.
+   *
+   * @param {[3]} clamp `[value, min, max]`.
+   * @example
+   * { "clamp": [{ "var": "$health" }, 0, 100] }
+   */
   clamp(def: Record<string, unknown>, c: Context) {
     return resolve(def.clamp, c, values => {
       const arr = this.toArray(values);
@@ -150,7 +218,13 @@ export class MathNode extends Node {
     });
   }
 
-  /** Formats a number to a fixed number of decimal places (default 2): `[value, decimals?]`. @example { "toFixed": [3.14159, 2] } */
+  /**
+   * Formats a number to a fixed number of decimal places (default 2).
+   *
+   * @param {[1,2]} toFixed `[value, decimals?]`.
+   * @example
+   * { "toFixed": [3.14159, 2] }
+   */
   toFixed(def: Record<string, unknown>, c: Context) {
     return resolve(def.toFixed, c, values => {
       const arr = this.toArray(values);
@@ -160,7 +234,13 @@ export class MathNode extends Node {
     });
   }
 
-  /** Returns the angle in degrees between the positive x-axis and the point `[y, x]`. @example { "atan2": [1, 1] } */
+  /**
+   * Returns the angle in degrees between the positive x-axis and the point `[y, x]`.
+   *
+   * @param {[2]} atan2 `[y, x]`.
+   * @example
+   * { "atan2": [1, 1] }
+   */
   atan2(def: Record<string, unknown>, c: Context) {
     return resolve(def.atan2, c, values => {
       const arr = this.toArray(values);
@@ -173,6 +253,7 @@ export class MathNode extends Node {
    * Returns a random number. No args → float `[0, 1)`. One arg → integer `[0, n]`. Two args → integer `[min, max]`.
    * Uses the seeded RNG if `randomSeed` has been called.
    *
+   * @param {[0,2]} random `[]`, `[max]`, or `[min, max]`.
    * @example
    * { "random": [1, 6] }
    */

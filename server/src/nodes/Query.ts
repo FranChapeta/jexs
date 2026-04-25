@@ -1,7 +1,10 @@
 import { Knex as KnexType } from "knex";
-import { Node, Context, NodeValue, resolve } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll } from "@jexs/core";
 import { DatabaseNode } from "./Database.js";
 import { SchemaNode } from "./Schema.js";
+
+const VALID_QUERY_TYPES = new Set(["select","insert","upsert","update","delete","count","create","drop","alter"]);
+const WHERE_OPS = new Set(["eq","neq","ne","!=","gt",">","gte",">=","lt","<","lte","<=","like","notLike","in","notIn","between","notBetween","null"]);
 
 /**
  * Valid SQL value types that Knex accepts
@@ -202,71 +205,44 @@ function isObject(value: unknown): value is Record<string, unknown> {
  */
 export class QueryNode extends Node {
   /**
-   * Executes a SQL query defined as a JSON object. Types: `"select"`, `"insert"`, `"upsert"`,
-   * `"update"`, `"delete"`, `"count"`, `"create"`, `"drop"`, `"alter"`.
+   * Executes a SQL query. The operation type is the primary key value; all other query fields are siblings.
    * Column names in `where`/`data` are protected from resolver key collisions.
-   * Add `"first": true` to return a single row instead of an array.
    *
+   * @param {"select"|"insert"|"upsert"|"update"|"delete"|"count"|"create"|"drop"|"alter"} query Operation type.
+   * @param {string} table Table name.
+   * @param {boolean} first Return a single row instead of an array.
+   * @param {string} connection Named database connection to use (default connection if omitted).
    * @example
-   * { "query": { "type": "select", "table": "users", "where": { "id": { "var": "$id" } } }, "first": true }
+   * { "query": "select", "table": "users", "where": { "id": { "var": "$id" } }, "first": true }
    */
-  query(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.connection ?? null, context, async connectionRaw => {
-    // Get connection name
-    const connectionName = connectionRaw
-      ? String(connectionRaw)
+  async query(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+    const connRaw = await resolve(def.connection ?? null, context);
+    const connectionName = connRaw
+      ? String(connRaw)
       : (DatabaseNode.getDefaultConnection() ?? "default");
-
-    // Get Knex instance
     const knex = DatabaseNode.getKnex(connectionName);
 
-    // Resolve the query definition selectively to avoid resolver conflicts.
-    // Column names like "slug", "length", "type" would collide with node keys
-    // (StringNode, ArrayNode, etc.) if we passed the whole structure through
-    // the resolver. Instead, resolve only the values that need it.
-    const resolvedQuery = await resolveQueryDef(
-      def.query as Record<string, unknown>,
-      context,
-    );
+    const resolvedQuery = await resolveQueryDef(def, context);
 
-    // Run schema validator if defined (skip for system queries)
     if (!def.system) {
-      const validatorResult = await runValidator(
-        resolvedQuery,
-        context,
-      );
+      const validatorResult = await runValidator(resolvedQuery, context);
       if (validatorResult !== undefined) return validatorResult as NodeValue;
     }
 
-    // Check for "first" flag at outer level
     const first = def.first === true || resolvedQuery.first === true;
 
-    // Execute based on type
     switch (resolvedQuery.type) {
-      case "select":
-        return executeSelect(knex, resolvedQuery, first) as Promise<NodeValue>;
-      case "insert":
-        return executeInsert(knex, resolvedQuery) as Promise<NodeValue>;
-      case "upsert":
-        return executeUpsert(knex, resolvedQuery) as Promise<NodeValue>;
-      case "update":
-        return executeUpdate(knex, resolvedQuery) as Promise<NodeValue>;
-      case "delete":
-        return executeDelete(knex, resolvedQuery) as Promise<NodeValue>;
-      case "count":
-        return executeCount(knex, resolvedQuery) as Promise<NodeValue>;
-      case "create":
-        return executeCreate(knex, resolvedQuery) as Promise<NodeValue>;
-      case "drop":
-        return executeDrop(knex, resolvedQuery) as Promise<NodeValue>;
-      case "alter":
-        return executeAlter(knex, resolvedQuery) as Promise<NodeValue>;
-      default:
-        throw new Error(
-          `Unknown query type: ${(resolvedQuery as QueryDefinition).type}`,
-        );
+      case "select":  return executeSelect(knex, resolvedQuery, first) as Promise<NodeValue>;
+      case "insert":  return executeInsert(knex, resolvedQuery) as Promise<NodeValue>;
+      case "upsert":  return executeUpsert(knex, resolvedQuery) as Promise<NodeValue>;
+      case "update":  return executeUpdate(knex, resolvedQuery) as Promise<NodeValue>;
+      case "delete":  return executeDelete(knex, resolvedQuery) as Promise<NodeValue>;
+      case "count":   return executeCount(knex, resolvedQuery) as Promise<NodeValue>;
+      case "create":  return executeCreate(knex, resolvedQuery) as Promise<NodeValue>;
+      case "drop":    return executeDrop(knex, resolvedQuery) as Promise<NodeValue>;
+      case "alter":   return executeAlter(knex, resolvedQuery) as Promise<NodeValue>;
+      default: throw new Error(`Unknown query type: ${resolvedQuery.type}`);
     }
-    });
   }
 }
 
@@ -282,13 +258,10 @@ async function runValidator(
     return undefined;
   }
 
-  const tableSchema = query.table ? SchemaNode.get(query.table) : undefined;
-  const validator =
-    tableSchema?.validator !== undefined ? tableSchema.validator : SchemaNode.globalValidator;
+  const tableSchema = SchemaNode.get(query.table);
+  const validator = tableSchema?.validator !== undefined ? tableSchema.validator : SchemaNode.globalValidator;
 
-  if (!validator || !Array.isArray(validator)) {
-    return undefined;
-  }
+  if (!validator || !Array.isArray(validator)) return undefined;
 
   const validatorContext: Context = {
     ...context,
@@ -325,29 +298,44 @@ async function runValidator(
  * Uses the schema registry to identify column names.
  */
 async function resolveQueryDef(
-  raw: Record<string, unknown>,
+  def: Record<string, unknown>,
   context: Context,
 ): Promise<QueryDefinition> {
-  const { where, data, orderBy, groupBy, schema, addColumns, group_concat, conflict, ...rest } = raw;
+  const { where, data, orderBy, groupBy, schema, addColumns, group_concat, conflict,
+          connection, system, ...rest } = def;
 
-  const query = validateQuery(await resolve(rest, context));
+  const query = validateQuery(await resolve(rest, context) as Record<string, unknown>);
 
   const tableSchema = query.table ? SchemaNode.get(query.table) : undefined;
   const columns = tableSchema?.columns
     ? new Set(Object.keys(tableSchema.columns))
     : undefined;
 
-  if (where) query.where = await resolveColumnValues(where, columns, context) as WhereClause;
-  if (data !== undefined) {
-    const rd = async (d: unknown) => await resolveColumnValues(d, columns, context) as Record<string, unknown>;
-    query.data = Array.isArray(data) ? await Promise.all(data.map(rd)) : await rd(data);
-  }
-  if (orderBy) query.orderBy = orderBy as QueryDefinition["orderBy"];
-  if (groupBy) query.groupBy = groupBy as QueryDefinition["groupBy"];
-  if (schema) query.schema = schema as string | TableSchema;
+  const rd = async (d: unknown) => await resolveColumnValues(d, columns, context) as Record<string, unknown>;
+
+  await Promise.all([
+    where
+      ? resolveColumnValues(where, columns, context).then(v => { query.where = v as WhereClause; })
+      : null,
+    data !== undefined
+      ? (Array.isArray(data) ? Promise.all(data.map(rd)) : rd(data))
+          .then(v => { query.data = v as QueryDefinition["data"]; })
+      : null,
+    Promise.resolve(resolveAll(
+      [orderBy ?? null, groupBy ?? null, schema ?? null, group_concat ?? null, conflict ?? null],
+      context,
+      ([rOrderBy, rGroupBy, rSchema, rGroupConcat, rConflict]) => {
+        if (rOrderBy     !== null) query.orderBy      = rOrderBy     as QueryDefinition["orderBy"];
+        if (rGroupBy     !== null) query.groupBy      = rGroupBy     as QueryDefinition["groupBy"];
+        if (rSchema      !== null) query.schema       = rSchema      as string | TableSchema;
+        if (rGroupConcat !== null) query.group_concat = rGroupConcat as QueryDefinition["group_concat"];
+        if (rConflict    !== null) query.conflict     = rConflict    as string[];
+        return null;
+      },
+    )),
+  ]);
+
   if (addColumns) query.addColumns = addColumns as Record<string, ColumnDef>;
-  if (group_concat) query.group_concat = group_concat as QueryDefinition["group_concat"];
-  if (conflict) query.conflict = conflict as string[];
 
   return query;
 }
@@ -374,8 +362,6 @@ async function resolveColumnValues(
 
   if (!hasColumnKey) return resolve(obj, context);
 
-  const WHERE_OPS = new Set(["eq","neq","ne","!=","gt",">","gte",">=","lt","<","lte","<=","like","notLike","in","notIn","between","notBetween","null"]);
-
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj)) {
     if ((key === "or" || key === "and") && Array.isArray(value)) {
@@ -399,38 +385,19 @@ async function resolveColumnValues(
 /**
  * Validate query structure at runtime
  */
-function validateQuery(query: unknown): QueryDefinition {
-  if (!query || typeof query !== "object") {
-    throw new Error("Query must be an object");
+function validateQuery(q: Record<string, unknown>): QueryDefinition {
+  const type = q.query;
+  if (typeof type !== "string" || !VALID_QUERY_TYPES.has(type)) {
+    throw new Error(`Invalid query type: "${type}". Must be one of: ${[...VALID_QUERY_TYPES].join(", ")}`);
   }
 
-  const q = query as Record<string, unknown>;
+  q.type = type;
 
-  if (typeof q.type !== "string") {
-    throw new Error("Query must have a type property");
-  }
-
-  const validTypes = [
-    "select",
-    "insert",
-    "upsert",
-    "update",
-    "delete",
-    "count",
-    "create",
-    "drop",
-    "alter",
-  ];
-  if (!validTypes.includes(q.type)) {
-    throw new Error(`Invalid query type: ${q.type}`);
-  }
-
-  // Schema operations don't require table (it's in the schema)
-  if (q.type !== "create" && typeof q.table !== "string") {
+  if (type !== "create" && typeof q.table !== "string") {
     throw new Error("Query must have a table property");
   }
 
-  return query as QueryDefinition;
+  return q as unknown as QueryDefinition;
 }
 
 /**
@@ -465,14 +432,10 @@ async function executeSelect(
   }
 
   // Joins
-  if (query.innerJoin) {
-    builder = applyJoins(builder, query.innerJoin, "inner");
-  }
-  if (query.leftJoin) {
-    builder = applyJoins(builder, query.leftJoin, "left");
-  }
-  if (query.rightJoin) {
-    builder = applyJoins(builder, query.rightJoin, "right");
+  for (const [joins, type] of [
+    [query.innerJoin, "inner"], [query.leftJoin, "left"], [query.rightJoin, "right"],
+  ] as [JoinDefinition[] | undefined, "inner" | "left" | "right"][]) {
+    if (joins) builder = applyJoins(builder, joins, type);
   }
 
   // Where
@@ -949,34 +912,15 @@ function applyJoins(
   joins: JoinDefinition[],
   type: "inner" | "left" | "right",
 ): KnexType.QueryBuilder {
+  const method = type === "left" ? "leftJoin" : type === "right" ? "rightJoin" : "innerJoin";
   for (const join of joins) {
     const tableName = join.as ? `${join.table} as ${join.as}` : join.table;
-    const onClauses = Object.entries(join.on);
-
-    switch (type) {
-      case "left":
-        builder = builder.leftJoin(tableName, (qb) => {
-          for (const [left, right] of onClauses) {
-            qb.on(left, "=", right);
-          }
-        });
-        break;
-      case "right":
-        builder = builder.rightJoin(tableName, (qb) => {
-          for (const [left, right] of onClauses) {
-            qb.on(left, "=", right);
-          }
-        });
-        break;
-      default:
-        builder = builder.innerJoin(tableName, (qb) => {
-          for (const [left, right] of onClauses) {
-            qb.on(left, "=", right);
-          }
-        });
-    }
+    builder = (builder[method] as Function)(tableName, (qb: KnexType.JoinClause) => {
+      for (const [left, right] of Object.entries(join.on)) {
+        qb.on(left, "=", right);
+      }
+    });
   }
-
   return builder;
 }
 

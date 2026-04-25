@@ -94,6 +94,14 @@ export class OAuthNode extends Node {
    * OAuth 2.0 flow helpers. Operations: `"configure"`, `"authUrl"`, `"exchange"`, `"refresh"`, `"userInfo"`, `"state"`, `"providers"`.
    * Built-in providers: `google`, `github`, `facebook`, `discord`, `twitter`, `microsoft`.
    *
+   * @param {"configure"|"authUrl"|"exchange"|"refresh"|"userInfo"|"state"|"providers"} oauth Operation to perform.
+   * @param {string} provider Provider name (`"google"`, `"github"`, `"facebook"`, `"discord"`, `"twitter"`, `"microsoft"`).
+   * @param {string} clientId OAuth client ID (used with `"configure"`).
+   * @param {string} clientSecret OAuth client secret (used with `"configure"`).
+   * @param {string} redirectUri OAuth redirect URI (used with `"authUrl"` and `"exchange"`).
+   * @param {string} code Authorization code from redirect (used with `"exchange"`).
+   * @param {string} accessToken Bearer token (used with `"userInfo"`).
+   * @param {string} refreshToken Refresh token (used with `"refresh"`).
    * @example
    * { "oauth": "authUrl", "provider": "google", "redirectUri": { "var": "$redirectUri" } }
    */

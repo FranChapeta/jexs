@@ -5,6 +5,7 @@ export class PushNode extends Node {
    * Requests notification permission and subscribes to Web Push using the given VAPID public key.
    * Returns the `PushSubscription` JSON — send it to your server to enable push delivery.
    * Requires a registered service worker with `PushManager` support.
+   * @param {string} push-subscribe VAPID public key string.
    * @example
    * { "push-subscribe": { "var": "$vapidPublicKey" } }
    */
@@ -27,6 +28,7 @@ export class PushNode extends Node {
   /**
    * Unsubscribes from Web Push. Pass the stored `PushSubscription` JSON object to verify the endpoint.
    * Returns `true` on success, `false` if no matching subscription was found.
+   * @param {expr} push-unsubscribe Stored `PushSubscription` JSON object (from your server/session).
    * @example
    * { "push-unsubscribe": { "var": "$session.pushSubscription" } }
    */

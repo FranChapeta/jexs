@@ -41,9 +41,12 @@ export class SchemaNode extends Node {
   }
 
   /**
-   * Registers table schemas for use by QueryNode. Operations: `"register"`, `"get"`, `"list"`, `"validator"`.
-   * Pass `"path"` to load all JSON schema files from a directory, or `"table"` for an inline schema object.
+   * Registers table schemas for use by QueryNode.
    *
+   * @param {"register"|"get"|"list"|"validator"} schema Operation to perform.
+   * @param {string} path Directory path to load JSON schema files from (used with `"register"`).
+   * @param {string} table Table name to retrieve or register inline (used with `"get"` and `"register"`).
+   * @param {steps} run Step sequence to run as a schema validator (used with `"validator"`).
    * @example
    * { "schema": "register", "path": "db/tables" }
    */

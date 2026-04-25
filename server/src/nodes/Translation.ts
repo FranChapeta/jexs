@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, resolve } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveObj } from "@jexs/core";
 import { DatabaseNode } from "./Database.js";
 import { Cache } from "../cache/Cache.js";
 import { sha256 } from "./Crypto.js";
@@ -15,17 +15,17 @@ export class TranslationNode extends Node {
    * Configures automatic string translation for the current request.
    * Sets `context._translate` so the resolver auto-translates strings via a DB lookup table.
    *
+   * @param {expr} translate Target language code (e.g. `"es"`, `"fr"`).
+   * @param {string} table DB table name for translations (default `"translations"`).
    * @example
-   * { "translate": { "to": { "var": "$session.lang" }, "table": "translations" } }
+   * { "translate": { "var": "$session.lang" }, "table": "translations" }
    */
   translate(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.translate, context, config => {
-      if (this.isObject(config)) {
-        (context as Record<string, unknown>)._translate = {
-          to: config.to ? String(config.to) : undefined,
-          table: config.table ? String(config.table) : "translations",
-        };
-      }
+    return resolveObj(def, context, r => {
+      (context as Record<string, unknown>)._translate = {
+        to: r.translate ? String(r.translate) : undefined,
+        table: r.table ? String(r.table) : "translations",
+      };
       return null;
     });
   }

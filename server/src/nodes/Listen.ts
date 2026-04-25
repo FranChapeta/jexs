@@ -22,7 +22,11 @@ export class ListenNode extends Node {
    * Set `"client": true` (or a path string) to auto-serve the `@jexs/client` browser bundle
    * and inject the script tag into rendered `<head>` elements.
    * Set `"sw"` to an object to enable service worker registration.
-   *
+   * @param {number} listen Port number to listen on (default `3000`).
+   * @param {steps} do Per-request steps run for each incoming HTTP request.
+   * @param {boolean} client Pass `true` to serve the browser bundle at `/jexs`, or a string path to use a custom route.
+   * @param {number} maxBodySize Maximum request body size in bytes.
+   * @param {object} sw Service worker config object. Pass `{}` to use the default config.
    * @example
    * { "listen": 3000, "client": true, "do": [{ "session": "load" }, { "routes": { "var": "$routes" } }] }
    */

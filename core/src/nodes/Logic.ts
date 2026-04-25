@@ -6,6 +6,9 @@ export class LogicNode extends Node {
   /**
    * Resolves `then` when the condition is truthy, otherwise `else`. Both branches are optional.
    *
+   * @param {expr} if The condition expression to evaluate.
+   * @param {stepsOrExpr} then Value to resolve when condition is truthy.
+   * @param {stepsOrExpr} else Value to resolve when condition is falsy.
    * @example
    * { "if": { "var": "$active" }, "then": "yes", "else": "no" }
    */
@@ -20,6 +23,9 @@ export class LogicNode extends Node {
   /**
    * Resolves the value of `switch`, matches it against string keys in `cases`, falls back to `default`.
    *
+   * @param {expr} switch The value to match against case keys.
+   * @param {map} cases Object mapping string keys to result expressions.
+   * @param {stepsOrExpr} default Value to resolve when no case matches.
    * @example
    * { "switch": { "var": "$role" }, "cases": { "admin": "full", "user": "limited" }, "default": "none" }
    */
@@ -40,6 +46,10 @@ export class LogicNode extends Node {
    * `key` for the index variable, and `parallel: true` to resolve all iterations concurrently.
    * Each iteration receives a `loop` context with `item`, `index`, `first`, `last`, and `length`.
    *
+   * @param {expr} foreach The array or expression to iterate over.
+   * @param {stepsOrExpr} do Steps or expression to resolve for each item.
+   * @param {string} key Variable name to expose the current index (default `"index"`).
+   * @param {boolean} parallel Resolve all iterations concurrently instead of sequentially.
    * @example
    * { "foreach": { "var": "$users" }, "as": "user", "do": { "var": "user.name" } }
    */
@@ -87,6 +97,7 @@ export class LogicNode extends Node {
   /**
    * Short-circuit AND — returns `true` only if all conditions are truthy, stops at first falsy value.
    *
+   * @param {expr[]} and Array of conditions to evaluate.
    * @example
    * { "and": [{ "var": "$loggedIn" }, { "var": "$verified" }] }
    */
@@ -108,6 +119,7 @@ export class LogicNode extends Node {
   /**
    * Short-circuit OR — returns `true` at the first truthy condition, `false` if all are falsy.
    *
+   * @param {expr[]} or Array of conditions to evaluate.
    * @example
    * { "or": [{ "var": "$isAdmin" }, { "var": "$isModerator" }] }
    */
@@ -129,6 +141,7 @@ export class LogicNode extends Node {
   /**
    * Boolean negation — resolves the value and returns its logical inverse.
    *
+   * @param {expr} not The expression to negate.
    * @example
    * { "not": { "var": "$active" } }
    */
@@ -139,6 +152,7 @@ export class LogicNode extends Node {
   /**
    * Strict equality check between two resolved values.
    *
+   * @param {[2]} eq Two values to compare: `[a, b]`.
    * @example
    * { "eq": [{ "var": "$status" }, "active"] }
    */
@@ -152,6 +166,7 @@ export class LogicNode extends Node {
   /**
    * Strict inequality check between two resolved values.
    *
+   * @param {[2]} neq Two values to compare: `[a, b]`.
    * @example
    * { "neq": [{ "var": "$status" }, "banned"] }
    */
@@ -165,6 +180,7 @@ export class LogicNode extends Node {
   /**
    * Greater-than comparison: `a > b`.
    *
+   * @param {[2]} gt Two values: `[a, b]`.
    * @example
    * { "gt": [{ "var": "$age" }, 18] }
    */
@@ -178,6 +194,7 @@ export class LogicNode extends Node {
   /**
    * Greater-than-or-equal comparison: `a >= b`.
    *
+   * @param {[2]} gte Two values: `[a, b]`.
    * @example
    * { "gte": [{ "var": "$score" }, 100] }
    */
@@ -191,6 +208,7 @@ export class LogicNode extends Node {
   /**
    * Less-than comparison: `a < b`.
    *
+   * @param {[2]} lt Two values: `[a, b]`.
    * @example
    * { "lt": [{ "var": "$remaining" }, 10] }
    */
@@ -204,6 +222,7 @@ export class LogicNode extends Node {
   /**
    * Less-than-or-equal comparison: `a <= b`.
    *
+   * @param {[2]} lte Two values: `[a, b]`.
    * @example
    * { "lte": [{ "var": "$quantity" }, 100] }
    */
@@ -217,6 +236,7 @@ export class LogicNode extends Node {
   /**
    * Tests membership: `needle in haystack`. Works with arrays, strings (substring), and object keys.
    *
+   * @param {[2]} in Two values: `[needle, haystack]`.
    * @example
    * { "in": ["admin", { "var": "$roles" }] }
    */
@@ -234,6 +254,7 @@ export class LogicNode extends Node {
   /**
    * Inclusive range check: `min <= value <= max`.
    *
+   * @param {[3]} between Three values: `[value, min, max]`.
    * @example
    * { "between": [{ "var": "$age" }, 18, 65] }
    */
@@ -248,6 +269,7 @@ export class LogicNode extends Node {
   /**
    * Returns `true` if the value is `null`, `undefined`, `""`, `[]`, or `{}`.
    *
+   * @param {expr} empty The value to check.
    * @example
    * { "empty": { "var": "$items" } }
    */
@@ -264,6 +286,7 @@ export class LogicNode extends Node {
   /**
    * Returns `true` if the value is non-null and non-empty. Inverse of `empty`.
    *
+   * @param {expr} notEmpty The value to check.
    * @example
    * { "notEmpty": { "var": "$items" } }
    */
@@ -280,6 +303,7 @@ export class LogicNode extends Node {
   /**
    * Pauses execution for the given number of milliseconds, then resolves to `null`.
    *
+   * @param {number} sleep Duration in milliseconds.
    * @example
    * { "sleep": 500 }
    */
@@ -294,6 +318,7 @@ export class LogicNode extends Node {
   /**
    * Resolves its value, then executes the result as a step sequence. Useful for running dynamically resolved step arrays.
    *
+   * @param {expr} exec The expression or step array to execute.
    * @example
    * { "exec": { "var": "$steps" } }
    */

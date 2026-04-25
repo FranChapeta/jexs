@@ -54,6 +54,10 @@ export class TailwindNode extends Node {
    * Extracts Tailwind class names from JSON templates and compiles CSS.
    * Operations: `"extract"`, `"add"`, `"compile"`, `"build"`, `"clear"`, `"classes"`.
    *
+   * @param {"extract"|"add"|"compile"|"build"|"clear"|"classes"} tailwind Operation to perform.
+   * @param {expr} data JSON template to extract Tailwind classes from (used with `"extract"`, `"add"`, `"build"`).
+   * @param {string[]} classes Explicit class names to register (used with `"add"`).
+   * @param {string} content Glob pattern for additional content sources (used with `"build"`).
    * @example
    * { "tailwind": "build", "data": { "var": "$template" } }
    */

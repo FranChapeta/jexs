@@ -21,9 +21,13 @@ import { Cache, CacheConfig } from "../cache/Cache.js";
  */
 export class CacheNode extends Node {
   /**
-   * Connects to or operates on a cache store. Operations: `"connect"`, `"get"`, `"set"`,
-   * `"delete"`, `"has"`, `"clear"`, `"close"`, `"stats"`.
+   * Connects to or operates on a cache store.
    *
+   * @param {"connect"|"get"|"set"|"delete"|"has"|"clear"|"close"|"stats"} cache Operation to perform.
+   * @param {"redis"|"memory"|"memcached"} type Cache driver (used with `"connect"`).
+   * @param {string} key Cache key (used with `"get"`, `"set"`, `"delete"`, `"has"`).
+   * @param {expr} value Value to store (used with `"set"`).
+   * @param {number} ttl Time-to-live in seconds (used with `"set"`).
    * @example
    * { "cache": "set", "key": "user:42", "value": { "var": "$user" }, "ttl": 3600 }
    */

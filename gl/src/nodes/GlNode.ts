@@ -107,6 +107,12 @@ export class GlNode extends Node {
    * Initializes a WebGL canvas (WebGL2 with WebGL1 fallback). Pass the canvas CSS selector as `gl-init`.
    * Use `width`/`height` to set logical size, `clear` for background color, `depth: true` for 3D depth test.
    * Pass `on-frame` steps to run every animation frame — receives `$dt` (delta seconds) and `$time` in context.
+   * @param {string} gl-init CSS selector for the canvas element.
+   * @param {number} width Logical canvas width in pixels.
+   * @param {number} height Logical canvas height in pixels.
+   * @param {number[]} clear Background clear color as `[r, g, b, a]` (default `[0,0,0,1]`).
+   * @param {boolean} depth Enable depth testing for 3D rendering.
+   * @param {expr[]} on-frame Steps to run each animation frame (`$dt`, `$time` available).
    * @example
    * { "gl-init": "#canvas", "width": 800, "height": 600, "clear": [0, 0, 0, 1], "on-frame": [] }
    */
@@ -390,6 +396,9 @@ export class GlNode extends Node {
   /**
    * Hit-tests a point against all visible entities (front-to-back). Returns the topmost entity id or `null`.
    * Supports 2D (AABB/circle) and 3D (ray-AABB) automatically based on the current render mode.
+   * @param {boolean} gl-hit Pass `true` to perform the hit test.
+   * @param {number} x Screen X coordinate.
+   * @param {number} y Screen Y coordinate.
    * @example
    * { "gl-hit": true, "x": { "var": "$event.clientX" }, "y": { "var": "$event.clientY" } }
    */
@@ -479,6 +488,12 @@ export class GlNode extends Node {
    * Controls the camera. In 2D: `x`, `y`, `zoom`, `rotation`, `follow` (entity id).
    * Shake: `shake` (intensity), `shakeDuration`, `shakeDecay`. Trauma: `trauma` (0–1 accumulated).
    * In 3D: `z`, `fov`, `near`, `far`, `lookAt` ([x,y,z]), `up` ([x,y,z]).
+   * @param {boolean} gl-camera Pass `true` to update the camera.
+   * @param {number} x Camera X position.
+   * @param {number} y Camera Y position.
+   * @param {number} zoom Camera zoom factor.
+   * @param {string} follow Entity ID to follow.
+   * @param {number} shake Shake intensity.
    * @example
    * { "gl-camera": true, "follow": "player", "zoom": 1.5 }
    */
@@ -559,6 +574,8 @@ export class GlNode extends Node {
 
   /**
    * Loads an image from `src` and registers it as a named texture. Assign to entities via `texture: "name"`.
+   * @param {string} gl-texture Texture name.
+   * @param {string} src URL of the image to load.
    * @example
    * { "gl-texture": "ship", "src": "/assets/ship.png" }
    */
@@ -593,6 +610,10 @@ export class GlNode extends Node {
   /**
    * Loads a spritesheet and pre-computes UV rects for each frame. Pass `cols` and `rows` to define the grid.
    * Returns the total frame count. Use frame indices with `gl-animate` or `gl-frame`.
+   * @param {string} gl-atlas Atlas name.
+   * @param {string} src URL of the spritesheet image.
+   * @param {number} cols Number of columns in the grid.
+   * @param {number} rows Number of rows in the grid.
    * @example
    * { "gl-atlas": "tiles", "src": "/assets/tiles.png", "cols": 8, "rows": 4 }
    */
@@ -636,6 +657,12 @@ export class GlNode extends Node {
   /**
    * Starts a frame animation on an entity from an atlas. Pass `atlas`, `frames` (array of frame indices),
    * `fps`, and `loop`. Set `stop: true` to cancel the current animation.
+   * @param {string} gl-animate Entity ID to animate.
+   * @param {string} atlas Atlas name (registered via `gl-atlas`).
+   * @param {number[]} frames Array of frame indices from the atlas.
+   * @param {number} fps Frames per second for the animation.
+   * @param {boolean} loop Whether to loop the animation.
+   * @param {boolean} stop Pass `true` to stop the current animation.
    * @example
    * { "gl-animate": "player", "atlas": "sprites", "frames": [0, 1, 2, 3], "fps": 12, "loop": true }
    */
@@ -679,6 +706,9 @@ export class GlNode extends Node {
 
   /**
    * Sets a static atlas frame on an entity (no animation). Pass entity id, `atlas`, and `frame` index.
+   * @param {string} gl-frame Entity ID.
+   * @param {string} atlas Atlas name (registered via `gl-atlas`).
+   * @param {number} frame Frame index within the atlas.
    * @example
    * { "gl-frame": "player", "atlas": "sprites", "frame": 5 }
    */
@@ -715,6 +745,11 @@ export class GlNode extends Node {
    * Builds an efficient GPU tilemap VBO from a 2D array of atlas frame indices.
    * Pass `atlas`, `data` (rows of frame indices), `tileWidth`, `tileHeight`, and optional `z`.
    * Returns the rendered tile count.
+   * @param {string} gl-tilemap Tilemap entity ID.
+   * @param {string} atlas Atlas name (registered via `gl-atlas`).
+   * @param {number[][]} data 2D array of atlas frame indices (rows × columns).
+   * @param {number} tileWidth Width of each tile in pixels (default `32`).
+   * @param {number} tileHeight Height of each tile in pixels (default `32`).
    * @example
    * { "gl-tilemap": "level1", "atlas": "tiles", "data": [[1,0,2],[3,1,0]], "tileWidth": 32, "tileHeight": 32 }
    */
@@ -826,6 +861,10 @@ export class GlNode extends Node {
   /**
    * Attaches a motion trail to an entity. The trail follows the entity's position each frame.
    * Pass entity id, `length` (max trail points), `width`, and `color`.
+   * @param {string} gl-trail Entity ID to attach trail to.
+   * @param {number} length Maximum number of trail points (default `20`).
+   * @param {number} width Trail line width in pixels (default `2`).
+   * @param {number[]} color Trail color as `[r, g, b, a]`.
    * @example
    * { "gl-trail": "player", "length": 20, "width": 3, "color": [1, 0.5, 0, 0.8] }
    */
@@ -857,6 +896,10 @@ export class GlNode extends Node {
   /**
    * Casts a ray from `from` in direction `dir` and returns all hit entities sorted by distance.
    * Pass `mask` (array of group names) to restrict which entities are tested.
+   * @param {boolean} gl-raycast Pass `true` to cast.
+   * @param {expr} from Origin vector `{x, y, z?}`.
+   * @param {expr} dir Direction vector `{x, y, z?}`.
+   * @param {string[]} mask Group names to test against (default: all groups).
    * @example
    * { "gl-raycast": true, "from": { "x": 0, "y": 0, "z": 0 }, "dir": { "x": 1, "y": 0, "z": 0 }, "mask": ["enemies"] }
    */
@@ -878,6 +921,10 @@ export class GlNode extends Node {
   /**
    * Renders text onto a canvas texture and assigns it to an entity. Creates the entity if it doesn't exist.
    * Pass entity id, `text`, `font` (CSS font string), `fill` (color), and position `x`, `y`, `z`.
+   * @param {string} gl-text Entity ID.
+   * @param {string} text Text content to render.
+   * @param {string} font CSS font string (e.g. `"24px Arial"`).
+   * @param {string} fill CSS color string for the text fill.
    * @example
    * { "gl-text": "score-label", "text": { "var": "$score" }, "font": "24px Arial", "fill": "#fff", "x": 10, "y": 10 }
    */
@@ -922,6 +969,9 @@ export class GlNode extends Node {
   /**
    * Compiles and registers a custom GLSL shader program. Pass `name`, `vert` (vertex source), and `frag` (fragment source).
    * Assign to entities with `shader: "name"`. Standard uniforms (`u_transform`, `u_texture`, `u_time`, etc.) are auto-bound.
+   * @param {string} gl-shader Shader name.
+   * @param {string} vert GLSL vertex shader source.
+   * @param {string} frag GLSL fragment shader source.
    * @example
    * { "gl-shader": "glow", "vert": "...", "frag": "..." }
    */
@@ -958,6 +1008,7 @@ export class GlNode extends Node {
 
   /**
    * Applies a full-screen Gaussian blur post-process effect. Pass the blur radius in pixels; `0` disables it.
+   * @param {number} gl-blur Blur radius in pixels (`0` to disable).
    * @example
    * { "gl-blur": 4 }
    */
@@ -977,6 +1028,8 @@ export class GlNode extends Node {
 
   /**
    * Plays a fade transition overlay. Pass `duration` in seconds (default 0.5).
+   * @param {boolean} gl-transition Pass `true` to trigger.
+   * @param {number} duration Transition duration in seconds (default `0.5`).
    * @example
    * { "gl-transition": true, "duration": 0.8 }
    */
@@ -997,6 +1050,10 @@ export class GlNode extends Node {
   /**
    * Animates numeric entity properties over time. Pass entity id, target values (`x`, `y`, `w`, `h`, `angle`, `opacity`, `color`, etc.),
    * `duration` (seconds), and `easing` (e.g. `"easeOutQuad"`, `"linear"`). Pass `then` steps to run on completion.
+   * @param {string} gl-tween Entity ID.
+   * @param {number} duration Animation duration in seconds (default `0.3`).
+   * @param {"linear"|"easeOutQuad"|"easeInOutCubic"|"easeInOutQuad"|"easeOutBounce"|"easeOutElastic"} easing Easing function name.
+   * @param {expr[]} then Steps to run when the tween completes.
    * @example
    * { "gl-tween": "player", "x": 400, "y": 300, "duration": 0.5, "easing": "easeInOutCubic" }
    */

@@ -44,9 +44,15 @@ let defaultConnectionName: string | null = null;
  */
 export class DatabaseNode extends Node {
   /**
-   * Manages database connections. Operations: `"connect"`, `"close"`, `"raw"`, `"tableExists"`, `"dropTable"`, `"info"`.
-   * Supports SQLite (`better-sqlite3`), MySQL (`mysql2`), and PostgreSQL (`pg`) via Knex.
+   * Manages database connections. Supports SQLite (`better-sqlite3`), MySQL (`mysql2`), and PostgreSQL (`pg`) via Knex.
    *
+   * @param {"connect"|"close"|"raw"|"tableExists"|"dropTable"|"info"} database Operation to perform.
+   * @param {string} name Connection name (used with `"connect"` and `"close"`).
+   * @param {"sqlite"|"mysql"|"pg"} type Database driver (used with `"connect"`).
+   * @param {string} filename SQLite file path (used with `"connect"` + `"sqlite"`).
+   * @param {string} sql Raw SQL string (used with `"raw"`).
+   * @param {expr[]} bindings Positional bindings for the raw SQL query.
+   * @param {string} table Table name (used with `"tableExists"`, `"dropTable"`).
    * @example
    * { "database": "connect", "name": "main", "type": "sqlite", "filename": "app/data.db" }
    */

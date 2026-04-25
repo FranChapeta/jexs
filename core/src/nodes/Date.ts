@@ -4,8 +4,9 @@ import { parseInterval } from "./Timer.js";
 
 export class DateNode extends Node {
   /**
-   * Returns the current timestamp. Pass `"ms"` for Unix milliseconds, `"iso"` for ISO 8601, or `"datetime"` (default) for UTC `YYYY-MM-DD HH:MM:SS`.
+   * Returns the current timestamp.
    *
+   * @param {"ms"|"iso"|"datetime"} dateNow Output format: `"ms"` for Unix milliseconds, `"iso"` for ISO 8601, `"datetime"` for UTC `YYYY-MM-DD HH:MM:SS` (default).
    * @example
    * { "dateNow": "iso" }
    */
@@ -16,9 +17,10 @@ export class DateNode extends Node {
   }
 
   /**
-   * Adds a duration to a Unix-ms timestamp: `[timestamp, interval]`. Optionally pass `"format"` for output formatting.
-   * Interval formats: `"500ms"`, `"30s"`, `"5m"`, `"1h"`, `"7d"`.
+   * Adds a duration to a Unix-ms timestamp. Interval formats: `"500ms"`, `"30s"`, `"5m"`, `"1h"`, `"7d"`.
    *
+   * @param {[2]} dateAdd `[timestamp, interval]`.
+   * @param {"ms"|"iso"|"datetime"} format Output format (default `"ms"`).
    * @example
    * { "dateAdd": [{ "dateNow": "ms" }, "7d"], "format": "iso" }
    */
@@ -36,8 +38,10 @@ export class DateNode extends Node {
   }
 
   /**
-   * Formats a Unix-ms timestamp. Pass `"format"` as `"ms"`, `"iso"`, or `"datetime"` (default).
+   * Formats a Unix-ms timestamp.
    *
+   * @param {expr} dateFormat The Unix-ms timestamp to format.
+   * @param {"ms"|"iso"|"datetime"} format Output format (default `"datetime"`).
    * @example
    * { "dateFormat": { "var": "$createdAt" }, "format": "iso" }
    */

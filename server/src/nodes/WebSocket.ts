@@ -35,6 +35,10 @@ export class WebSocketNode extends Node {
    * `"join"`, `"leave"`, `"close"`, `"count"`, `"list"`.
    * `"broadcast"` without `"room"` sends to all connections on the same route path.
    *
+   * @param {"send"|"send-to"|"broadcast"|"join"|"leave"|"close"|"count"|"list"} ws Operation to perform.
+   * @param {expr} data Data to send (used with `"send"`, `"send-to"`, `"broadcast"`).
+   * @param {string} id Peer connection ID (used with `"send-to"`).
+   * @param {string} room Room name (used with `"join"`, `"leave"`, `"broadcast"`, `"count"`, `"list"`).
    * @example
    * { "ws": "broadcast", "data": { "type": "update", "payload": { "var": "$data" } }, "room": "general" }
    */

@@ -20,6 +20,11 @@ export class EmailNode extends Node {
    * SMTP config from env: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`.
    * Falls back to Ethereal (fake SMTP with preview URL) in development when `SMTP_HOST` is not set.
    *
+   * @param {string} email Recipient email address.
+   * @param {string} subject Email subject line.
+   * @param {string} body Plain text body.
+   * @param {string} html HTML body (used instead of `body` when provided).
+   * @param {string} from Sender address (overrides `SMTP_FROM`).
    * @example
    * { "email": { "var": "$user.email" }, "subject": "Welcome!", "html": "<p>Hi there</p>" }
    */

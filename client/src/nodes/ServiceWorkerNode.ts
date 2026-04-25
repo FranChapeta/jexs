@@ -15,6 +15,7 @@ const CACHE = "jexs-v1";
 export class ServiceWorkerNode extends Node {
   /**
    * Precaches a list of URLs during the service worker install phase.
+   * @param {string[]} cache Array of URL strings to precache.
    * @example
    * { "cache": ["/", "/app.js", "/style.css"] }
    */
@@ -35,6 +36,8 @@ export class ServiceWorkerNode extends Node {
    * Intercepts fetch events. Strategies: `"cache-first"` (serve from cache, fall back to network),
    * `"network-first"` (serve from network, fall back to cache with 503 offline fallback).
    * Pass `match` to restrict to a URL prefix pattern (e.g. `"/static/*"`).
+   * @param {"cache-first"|"network-first"} strategy Caching strategy to apply.
+   * @param {string} match URL prefix pattern to restrict interception (e.g. `"/assets/*"`).
    * @example
    * { "strategy": "cache-first", "match": "/assets/*" }
    */
@@ -68,18 +71,23 @@ export class ServiceWorkerNode extends Node {
   }
 
   /**
-   * Shows a browser notification from a push event. Pass `title` and optionally `body`, `icon`, `tag`, `data`.
+   * Shows a browser notification from a push event. Pass `notify` as the title and optionally `body`, `icon`, `tag`, `data` as siblings.
+   * @param {string} notify Notification title.
+   * @param {string} body Notification body text.
+   * @param {string} icon URL of the notification icon.
+   * @param {string} tag Notification tag for deduplication.
+   * @param {stepsOrExpr} data Arbitrary data attached to the notification.
    * @example
-   * { "notify": { "title": "New message", "body": { "var": "$data.body" }, "icon": "/icon.png" } }
+   * { "notify": "New message", "body": { "var": "$data.body" }, "icon": "/icon.png" }
    */
   notify(def: Record<string, unknown>, context: Context): NodeValue {
-    if (!def.notify || typeof def.notify !== "object" || Array.isArray(def.notify)) return null;
-    return resolveObj(def.notify as Record<string, unknown>, context, async r => {
-      const title = String(r.title ?? "");
+    if (!def.notify) return null;
+    return resolveObj(def, context, async r => {
+      const title = String(r.notify ?? "");
       const opts: NotificationOptions = {};
-      if (r.body) opts.body = String(r.body ?? "");
-      if (r.icon) opts.icon = String(r.icon ?? "");
-      if (r.tag)  opts.tag  = String(r.tag  ?? "");
+      if (r.body) opts.body = String(r.body);
+      if (r.icon) opts.icon = String(r.icon);
+      if (r.tag)  opts.tag  = String(r.tag);
       if (r.data) opts.data = r.data;
       const sw = self as unknown as ServiceWorkerGlobalScope;
       await sw.registration.showNotification(title, opts);
@@ -89,6 +97,7 @@ export class ServiceWorkerNode extends Node {
 
   /**
    * Handles a `notificationclick` event: focuses an existing window or opens a new one at the given URL.
+   * @param {string} open URL to open or focus.
    * @example
    * { "open": "/" }
    */

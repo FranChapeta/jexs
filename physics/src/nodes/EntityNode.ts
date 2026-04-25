@@ -74,6 +74,9 @@ export class EntityNode extends Node {
   /**
    * Creates a new entity store and sets it as the active context store.
    * Pass `width` and `height` to define the world bounds.
+   * @param {string} entity-init Store ID string.
+   * @param {number} width World width in pixels (default `800`).
+   * @param {number} height World height in pixels (default `600`).
    * @example
    * { "entity-init": "world", "width": 800, "height": 600 }
    */
@@ -99,6 +102,15 @@ export class EntityNode extends Node {
    * `x`, `y`, `w`, `h`, `color`, `group`, and physics properties (`mass`, `restitution`, `friction`, `damping`).
    * Set `physics: true` to enable simulation and `fixed: true` for immovable bodies.
    * Pass `pooled: true` to reuse a pooled slot for better performance.
+   * @param {string} entity-add Entity ID.
+   * @param {"quad"|"circle"|"triangle"|"line"|"line-strip"|"points"|"sphere"|"cylinder"|"cone"|"ramp"|"light"|"pivot"} type Entity type (default `"quad"`).
+   * @param {number} x Initial X position.
+   * @param {number} y Initial Y position.
+   * @param {number} w Width.
+   * @param {number} h Height.
+   * @param {boolean} physics Enable physics simulation.
+   * @param {boolean} fixed Immovable body (kinematic).
+   * @param {boolean} pooled Reuse a pooled slot for this entity.
    * @example
    * { "entity-add": "player", "type": "quad", "x": 100, "y": 100, "w": 32, "h": 32, "color": [1,0,0,1] }
    */
@@ -221,6 +233,8 @@ export class EntityNode extends Node {
 
   /**
    * Removes an entity from the store by id. Pass `pooled: true` to release back to the pool instead.
+   * @param {string} entity-remove Entity ID to remove.
+   * @param {boolean} pooled Release to pool instead of removing (default `false`).
    * @example
    * { "entity-remove": "bullet-1" }
    */
@@ -241,6 +255,10 @@ export class EntityNode extends Node {
 
   /**
    * Updates `x`, `y`, and/or `angle` on an entity. Cheaper than `entity-update` for transform-only changes.
+   * @param {string} entity-move Entity ID.
+   * @param {number} x New X position.
+   * @param {number} y New Y position.
+   * @param {number} angle New rotation angle in radians.
    * @example
    * { "entity-move": "player", "x": { "var": "$x" }, "y": { "var": "$y" } }
    */
@@ -268,6 +286,7 @@ export class EntityNode extends Node {
   /**
    * Updates any writable fields on an entity by id. Supports all fields from `entity-add`
    * plus `text` (object with `content`, `font`, `fill`), `vertices`, `shader`, `blend`, etc.
+   * @param {string} entity-update Entity ID.
    * @example
    * { "entity-update": "player", "x": { "var": "$x" }, "color": [1, 0, 0, 1] }
    */
@@ -413,6 +432,7 @@ export class EntityNode extends Node {
   /**
    * Returns all entities in the active store as an array of plain objects.
    * Pass a group name to filter, or `true` to return all groups.
+   * @param {string} entity-list Group name to filter by, or `true` for all.
    * @example
    * { "entity-list": "enemies" }
    */
@@ -438,6 +458,9 @@ export class EntityNode extends Node {
 
   /**
    * Returns the entity in `group` closest to the given `x`, `y` point, with an added `distance` field.
+   * @param {string} entity-nearest Group name to search within.
+   * @param {number} x Reference X coordinate.
+   * @param {number} y Reference Y coordinate.
    * @example
    * { "entity-nearest": "enemies", "x": { "var": "$player.x" }, "y": { "var": "$player.y" } }
    */
@@ -472,6 +495,8 @@ export class EntityNode extends Node {
   /**
    * Gets a single property or the full object for an entity. Pass `id` as the value and `prop` for a single field.
    * Omit `prop` to get the full entity object. Supports all data fields plus `worldX`, `worldY`, `worldZ`.
+   * @param {string} entity-get Entity ID.
+   * @param {string} prop Property name to get (omit to return the full entity object).
    * @example
    * { "entity-get": "player", "prop": "x" }
    */

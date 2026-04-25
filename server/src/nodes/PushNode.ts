@@ -7,6 +7,16 @@ export class PushNode extends Node {
    * Requires `"subject"` (a `mailto:` URL), `"publicKey"`, `"privateKey"`, `"to"` (PushSubscription object), and `"title"`.
    * Optional: `"body"`, `"icon"`, `"badge"`, `"data"`, `"ttl"`, `"urgency"`, `"topic"`.
    *
+   * @param {string} subject VAPID subject as a `mailto:` URL (e.g. `"mailto:admin@app.com"`).
+   * @param {string} publicKey VAPID public key.
+   * @param {string} privateKey VAPID private key.
+   * @param {expr} to PushSubscription object from the browser.
+   * @param {string} title Notification title.
+   * @param {string} body Notification body text.
+   * @param {string} icon Notification icon URL.
+   * @param {number} ttl Time-to-live in seconds.
+   * @param {"very-low"|"low"|"normal"|"high"} urgency Push urgency level.
+   * @param {string} topic Topic tag to replace earlier notifications with the same topic.
    * @example
    * { "push": true, "subject": "mailto:admin@app.com", "publicKey": "...", "privateKey": "...", "to": { "var": "$sub" }, "title": "New message" }
    */

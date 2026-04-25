@@ -33,6 +33,8 @@ export class AudioNode extends Node {
 
   /**
    * Fetches and decodes an audio file, storing it under `name` for later playback with `audio-play`.
+   * @param {string} audio-load Name to register the audio buffer under.
+   * @param {string} url URL of the audio file to load.
    * @example
    * { "audio-load": "shoot", "url": "/audio/shoot.wav" }
    */
@@ -57,6 +59,9 @@ export class AudioNode extends Node {
   /**
    * Plays a previously loaded audio buffer. Set `volume` (0–1) and `loop: true` for looping.
    * Stops any currently playing instance of the same name before starting.
+   * @param {string} audio-play Name of the buffer to play (must be loaded via `audio-load`).
+   * @param {number} volume Playback volume 0–1 (default `1`).
+   * @param {boolean} loop Whether to loop the audio (default `false`).
    * @example
    * { "audio-play": "shoot", "volume": 0.5, "loop": false }
    */
@@ -103,6 +108,7 @@ export class AudioNode extends Node {
 
   /**
    * Stops a playing audio buffer by name.
+   * @param {string} audio-stop Name of the buffer to stop.
    * @example
    * { "audio-stop": "shoot" }
    */
@@ -121,6 +127,8 @@ export class AudioNode extends Node {
 
   /**
    * Adjusts the volume of a currently playing audio source without restarting it.
+   * @param {string} audio-volume Name of the buffer to adjust.
+   * @param {number} volume New gain value 0–1.
    * @example
    * { "audio-volume": "shoot", "volume": 0.3 }
    */
@@ -136,6 +144,7 @@ export class AudioNode extends Node {
 
   /**
    * Sets the master gain for all audio output in this context (0–1).
+   * @param {number} audio-master Master gain value 0–1.
    * @example
    * { "audio-master": 0.5 }
    */

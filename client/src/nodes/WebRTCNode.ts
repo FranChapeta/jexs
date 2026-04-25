@@ -30,6 +30,11 @@ export class WebRTCNode extends Node {
    * Manages WebRTC peer connections. Signaling is done over the active `WsNode` WebSocket connection.
    * Operations: `"connect"`, `"answer"`, `"accept"`, `"ice"`, `"send"`, `"broadcast"`, `"close"`, `"close-all"`, `"on-message"`.
    * Use `"channel": "fast"` for unreliable (low-latency) delivery; default channel is reliable.
+   * @param {"connect"|"answer"|"accept"|"ice"|"send"|"broadcast"|"close"|"close-all"|"on-message"} rtc Operation to perform.
+   * @param {string} id Peer connection ID (used with `"connect"`, `"send"`, `"close"`).
+   * @param {expr} data Data to send (used with `"send"`, `"broadcast"`).
+   * @param {"data"|"fast"} channel Data channel: `"data"` (reliable) or `"fast"` (unreliable, low-latency).
+   * @param {steps} do Steps to run on incoming messages, with `$rtcMessage` and `$rtcPeerId` in context (used with `"on-message"`).
    * @example
    * { "rtc": "connect", "id": { "var": "$peerId" } }
    */

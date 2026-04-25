@@ -22,6 +22,8 @@ export class VariablesNode extends Node {
    * Resolves each value in the map and writes the result back into the context.
    * Pass `"raw": true` to skip resolving values.
    *
+   * @param {map} setVars Map of variable names to expressions or values.
+   * @param {boolean} raw Skip resolving values and write them directly.
    * @example
    * { "setVars": { "count": 0, "name": { "var": "$user.name" } } }
    */

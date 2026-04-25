@@ -47,9 +47,12 @@ onResolverDestroy(() => TimerNode.stopAll());
 
 export class TimerNode extends Node {
   /**
-   * Drift-compensating fixed-rate loop. Operations: `"start"`, `"stop"`, `"pause"`, `"resume"`.
-   * On start: requires `id` and `rate` (Hz, default 60). Steps receive `tick.count`, `tick.dt`, `tick.elapsed` in context.
+   * Drift-compensating fixed-rate loop. Steps receive `tick.count`, `tick.dt`, `tick.elapsed` in context.
    *
+   * @param {"start"|"stop"|"pause"|"resume"} tick Operation to perform.
+   * @param {string} id Unique timer identifier.
+   * @param {number} rate Tick rate in Hz (default `60`). Used on `"start"`.
+   * @param {steps} do Steps to execute on each tick. Used on `"start"`.
    * @example
    * { "tick": "start", "id": "game", "rate": 60, "do": [{ "var": "tick.dt" }] }
    */
@@ -58,9 +61,13 @@ export class TimerNode extends Node {
   }
 
   /**
-   * Interval-based scheduled task. Operations: `"start"`, `"stop"`, `"pause"`, `"resume"`.
-   * On start: requires `id` and `every` (e.g. `"5m"`, `"30s"`). Steps receive `cron.runCount`, `cron.lastRun`, `cron.elapsed` in context.
+   * Interval-based scheduled task. Steps receive `cron.runCount`, `cron.lastRun`, `cron.elapsed` in context.
+   * Interval formats: `"500ms"`, `"30s"`, `"5m"`, `"1h"`, `"1d"`.
    *
+   * @param {"start"|"stop"|"pause"|"resume"} cron Operation to perform.
+   * @param {string} id Unique timer identifier.
+   * @param {string} every Interval string (e.g. `"5m"`, `"30s"`). Used on `"start"`.
+   * @param {steps} do Steps to execute on each interval. Used on `"start"`.
    * @example
    * { "cron": "start", "id": "poll", "every": "30s", "do": [{ "fetch": "/api/status" }] }
    */

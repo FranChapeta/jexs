@@ -31,10 +31,10 @@ const COOKIE_NAME = "sid";
  */
 export class SessionNode extends Node {
   /**
-   * Manages request sessions stored in cache. Operations: `"load"`, `"create"`, `"destroy"`, `"regenerate"`.
-   * Pass an object to set session values. Read values with `{ "var": "$session.key" }`.
+   * Manages request sessions stored in cache. Pass an object to set session values. Read values with `{ "var": "$session.key" }`.
    * Session ID is stored in a `sid` HTTP-only cookie with a 24-hour TTL.
    *
+   * @param {"load"|"create"|"destroy"|"regenerate"|object} session Operation or object of key-value pairs to set on the session.
    * @example
    * { "session": { "user_id": { "var": "$user.id" }, "role": { "var": "$user.role" } } }
    */

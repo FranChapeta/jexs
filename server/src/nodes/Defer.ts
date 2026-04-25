@@ -18,6 +18,9 @@ export class DeferNode extends Node {
    * Use `"loader"` for the placeholder expression shown while the content resolves.
    * Pass `"delay"` (ms) to add an artificial delay before resolving.
    *
+   * @param {expr} defer Expression to resolve in the background.
+   * @param {expr} loader Placeholder expression shown while the deferred content loads.
+   * @param {number} delay Milliseconds to wait before resolving (for staggered loading effects).
    * @example
    * { "defer": { "file": "components/chart.json" }, "loader": { "tag": "div", "class": "skeleton" } }
    */

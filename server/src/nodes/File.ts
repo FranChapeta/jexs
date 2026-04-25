@@ -42,6 +42,11 @@ export class FileNode extends Node {
    * Pass `"raw": true` for raw string content, `"data": true` to skip resolution,
    * `"params"` to provide scoped variables, or `"write"` to write data to the file.
    *
+   * @param {string} file Path to the file, relative to `app/`.
+   * @param {boolean} raw Return raw string content without parsing.
+   * @param {boolean} data Parse JSON but skip expression resolution.
+   * @param {map} params Scoped variables passed into the loaded file's context.
+   * @param {expr} write Data to write to the file (triggers write mode).
    * @example
    * { "file": "pages/home.json", "params": { "title": "Home" } }
    */
@@ -53,8 +58,10 @@ export class FileNode extends Node {
 
   /**
    * Lists directory contents relative to `app/`. Returns `[{ name, path, size, modified }]`.
-   * Pass `"recursive": true` to traverse subdirectories, `"extension"` to filter by file type.
    *
+   * @param {string} directory Path to the directory, relative to `app/`.
+   * @param {boolean} recursive Traverse subdirectories recursively.
+   * @param {string|string[]} extension Filter by file extension(s), e.g. `"json"`.
    * @example
    * { "directory": "data/posts", "extension": "json", "recursive": true }
    */

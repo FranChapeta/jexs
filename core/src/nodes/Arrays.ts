@@ -67,8 +67,9 @@ export class ArrayNode extends Node {
   }
 
   /**
-   * Sorts an array of objects by a key: `[arr, key, direction?]`. Direction is `"asc"` (default) or `"desc"`.
+   * Sorts an array of objects by a key. Direction is `"asc"` (default) or `"desc"`.
    *
+   * @param {expr[]} sortBy `[array, key, direction?]` — the array to sort, the key to sort by, and optional direction.
    * @example
    * { "sortBy": [{ "var": "$users" }, "name", "desc"] }
    */
@@ -87,7 +88,13 @@ export class ArrayNode extends Node {
     });
   }
 
-  /** Extracts the value of a key from each object in an array: `[arr, key]`. @example { "pluck": [{ "var": "$users" }, "name"] } */
+  /**
+   * Extracts the value of a key from each object in an array.
+   *
+   * @param {[2]} pluck `[array, key]`.
+   * @example
+   * { "pluck": [{ "var": "$users" }, "name"] }
+   */
   pluck(def: Record<string, unknown>, c: Context) {
     return resolve(def.pluck, c, args => {
       const a = this.toArray(args);
@@ -97,7 +104,13 @@ export class ArrayNode extends Node {
     });
   }
 
-  /** Returns a portion of an array: `[arr, start, end?]`. @example { "slice": [{ "var": "$items" }, 0, 5] } */
+  /**
+   * Returns a portion of an array.
+   *
+   * @param {[2,3]} slice `[array, start, end?]`.
+   * @example
+   * { "slice": [{ "var": "$items" }, 0, 5] }
+   */
   slice(def: Record<string, unknown>, c: Context) {
     return resolve(def.slice, c, args => {
       const a = this.toArray(args);
@@ -108,7 +121,13 @@ export class ArrayNode extends Node {
     });
   }
 
-  /** Returns a new array with an item appended: `[arr, item]`. @example { "push": [{ "var": "$items" }, "new"] } */
+  /**
+   * Returns a new array with an item appended.
+   *
+   * @param {[2]} push `[array, item]`.
+   * @example
+   * { "push": [{ "var": "$items" }, "new"] }
+   */
   push(def: Record<string, unknown>, c: Context) {
     return resolve(def.push, c, args => {
       const a = this.toArray(args);
@@ -116,7 +135,13 @@ export class ArrayNode extends Node {
     });
   }
 
-  /** Returns a new array with an item prepended: `[arr, item]`. @example { "unshift": [{ "var": "$items" }, "first"] } */
+  /**
+   * Returns a new array with an item prepended.
+   *
+   * @param {[2]} unshift `[array, item]`.
+   * @example
+   * { "unshift": [{ "var": "$items" }, "first"] }
+   */
   unshift(def: Record<string, unknown>, c: Context) {
     return resolve(def.unshift, c, args => {
       const a = this.toArray(args);
@@ -127,6 +152,7 @@ export class ArrayNode extends Node {
   /**
    * Merges multiple arrays (concatenation) or multiple objects (shallow merge).
    *
+   * @param {expr[]} merge Arrays or objects to merge.
    * @example
    * { "merge": [{ "a": 1 }, { "b": 2 }] }
    */
@@ -143,9 +169,10 @@ export class ArrayNode extends Node {
   }
 
   /**
-   * Returns items for which the condition expression is truthy: `[arr, condition]`.
+   * Returns items for which the condition expression is truthy.
    * Each iteration exposes `item`, `index`, and `loop` in context.
    *
+   * @param {[2]} filter `[array, condition]`.
    * @example
    * { "filter": [{ "var": "$nums" }, { "gt": [{ "var": "item" }, 2] }] }
    */
@@ -175,9 +202,10 @@ export class ArrayNode extends Node {
   }
 
   /**
-   * Returns the first item for which the condition is truthy: `[arr, condition]`.
+   * Returns the first item for which the condition is truthy.
    * Each iteration exposes `item`, `index`, and `loop` in context.
    *
+   * @param {[2]} find `[array, condition]`.
    * @example
    * { "find": [{ "var": "$users" }, { "eq": [{ "var": "item.role" }, "admin"] }] }
    */
@@ -206,9 +234,10 @@ export class ArrayNode extends Node {
   }
 
   /**
-   * Transforms each item by resolving a template: `[arr, template]`.
+   * Transforms each item by resolving a template.
    * Each iteration exposes `item`, `index`, and `loop` in context.
    *
+   * @param {[2]} map `[array, template]`.
    * @example
    * { "map": [{ "var": "$nums" }, { "multiply": [{ "var": "item" }, 2] }] }
    */
@@ -234,9 +263,10 @@ export class ArrayNode extends Node {
   }
 
   /**
-   * Reduces an array to a single value: `[arr, reducer, initial]`.
+   * Reduces an array to a single value.
    * Each iteration exposes `item`, `index`, `accumulator`, and `loop` in context.
    *
+   * @param {[3]} reduce `[array, reducer, initial]`.
    * @example
    * { "reduce": [{ "var": "$nums" }, { "add": [{ "var": "accumulator" }, { "var": "item" }] }, 0] }
    */
@@ -263,7 +293,13 @@ export class ArrayNode extends Node {
     });
   }
 
-  /** Groups an array of objects by a key: `[arr, key]`. Returns an object keyed by group values. @example { "groupBy": [{ "var": "$users" }, "role"] } */
+  /**
+   * Groups an array of objects by a key. Returns an object keyed by group values.
+   *
+   * @param {[2]} groupBy `[array, key]`.
+   * @example
+   * { "groupBy": [{ "var": "$users" }, "role"] }
+   */
   groupBy(def: Record<string, unknown>, c: Context) {
     return resolve(def.groupBy, c, args => {
       const a = this.toArray(args);
@@ -281,8 +317,9 @@ export class ArrayNode extends Node {
 
   /**
    * Checks if an array contains a value: `[arr, value]`.
-   * With three arguments `[arr, key, value]`, checks if any object in the array has that key-value pair.
+   * With three arguments `[arr, key, value]`, checks if any object has that key-value pair.
    *
+   * @param {[2,3]} includes `[array, value]` or `[array, key, value]`.
    * @example
    * { "includes": [{ "var": "$roles" }, "admin"] }
    */
@@ -299,7 +336,13 @@ export class ArrayNode extends Node {
     });
   }
 
-  /** Returns the element at a given index: `[arr, index]`. @example { "index": [{ "var": "$items" }, 2] } */
+  /**
+   * Returns the element at a given index.
+   *
+   * @param {[2]} index `[array, index]`.
+   * @example
+   * { "index": [{ "var": "$items" }, 2] }
+   */
   index(def: Record<string, unknown>, c: Context) {
     return resolve(def.index, c, args => {
       const a = this.toArray(args);
@@ -308,8 +351,9 @@ export class ArrayNode extends Node {
   }
 
   /**
-   * Generates a numeric sequence: `[start, end, step?]`. Inclusive on both ends.
+   * Generates a numeric sequence. Inclusive on both ends.
    *
+   * @param {[2,3]} range `[start, end, step?]`.
    * @example
    * { "range": [1, 5] }
    */
