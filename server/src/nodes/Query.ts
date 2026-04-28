@@ -1,5 +1,5 @@
 import { Knex as KnexType } from "knex";
-import { Node, Context, NodeValue, resolve, resolveAll } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll, runSteps } from "@jexs/core";
 import { DatabaseNode } from "./Database.js";
 import { SchemaNode } from "./Schema.js";
 
@@ -224,10 +224,7 @@ export class QueryNode extends Node {
 
     const resolvedQuery = await resolveQueryDef(def, context);
 
-    if (!def.system) {
-      const validatorResult = await runValidator(resolvedQuery, context);
-      if (validatorResult !== undefined) return validatorResult as NodeValue;
-    }
+    if (!def.system) await runValidator(resolvedQuery, context);
 
     const first = def.first === true || resolvedQuery.first === true;
 
@@ -253,42 +250,24 @@ export class QueryNode extends Node {
 async function runValidator(
   query: QueryDefinition,
   context: Context,
-): Promise<unknown | undefined> {
+): Promise<void> {
   if (!query.table || (context as Record<string, unknown>).$validating) {
-    return undefined;
+    return;
   }
 
   const tableSchema = SchemaNode.get(query.table);
   const validator = tableSchema?.validator !== undefined ? tableSchema.validator : SchemaNode.globalValidator;
 
-  if (!validator || !Array.isArray(validator)) return undefined;
+  if (!validator || !Array.isArray(validator)) return;
 
   const validatorContext: Context = {
     ...context,
     $validating: true,
     schema: tableSchema ?? { table: query.table },
-    operation: query.type,
+    operation: query.type === "count" ? "select" : query.type,
   };
 
-  for (const step of validator) {
-    const result = await resolve(step, validatorContext);
-
-    // Check for response (error, redirect, etc.)
-    if (isObject(result) && "type" in result) {
-      const type = String((result as Record<string, unknown>).type);
-      if (["error", "redirect", "json", "html", "notFound"].includes(type)) {
-        return result;
-      }
-    }
-
-    // Support "as" variable assignment
-    if (isObject(step) && "as" in step) {
-      const varName = String((step as Record<string, unknown>).as).replace(/^\$/, "");
-      validatorContext[varName] = result;
-    }
-  }
-
-  return undefined;
+  await Promise.resolve(runSteps(validator, validatorContext));
 }
 
 
@@ -302,9 +281,9 @@ async function resolveQueryDef(
   context: Context,
 ): Promise<QueryDefinition> {
   const { where, data, orderBy, groupBy, schema, addColumns, group_concat, conflict,
-          connection, system, ...rest } = def;
+          connection, system, first, as: _as, query: queryType, ...rest } = def;
 
-  const query = validateQuery(await resolve(rest, context) as Record<string, unknown>);
+  const query = validateQuery({ ...rest, query: queryType });
 
   const tableSchema = query.table ? SchemaNode.get(query.table) : undefined;
   const columns = tableSchema?.columns

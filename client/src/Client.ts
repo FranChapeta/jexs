@@ -1,4 +1,4 @@
-import { createResolver, ResolverFn, coreNodes } from "@jexs/core";
+import { createResolver, ResolverFn, coreNodes, runSteps } from "@jexs/core";
 import { Context, Node } from "@jexs/core";
 import { DomNode } from "./nodes/DomNode.js";
 import { FetchNode } from "./nodes/FetchNode.js";
@@ -24,6 +24,17 @@ export class Client {
   }
 
   /**
+   * Merge event-specific keys into the shared context.
+   * Only overwrites keys that have real values, so concurrent async handlers
+   * don't clobber each other's $value/$target.
+   */
+  private applyEventData(eventData: Partial<Context>): void {
+    for (const [k, v] of Object.entries(eventData)) {
+      if (v !== null && v !== undefined) this.context[k] = v;
+    }
+  }
+
+  /**
    * Scan for elements with data-jexs-events and attach listeners.
    * Call with no args to scan the whole document, or pass a root element.
    */
@@ -44,7 +55,8 @@ export class Client {
         for (const evt of events) {
           if (evt.type === "load") {
             const value = (el as HTMLInputElement).value ?? null;
-            this.run(evt.do, { target: el, value, event: null });
+            this.applyEventData({ target: el, value, event: null });
+            runSteps(evt.do, this.context);
           } else {
             el.addEventListener(evt.type, (e: Event) => {
               if (evt.preventDefault) e.preventDefault();
@@ -61,7 +73,8 @@ export class Client {
                 } catch { /* ignore malformed */ }
               }
 
-              this.run(evt.do, eventData);
+              this.applyEventData(eventData);
+              runSteps(evt.do, this.context);
             });
           }
         }
@@ -69,37 +82,6 @@ export class Client {
         console.error("[Jexs] Failed to parse events on", el, err);
       }
     });
-  }
-
-  /**
-   * Process an array of steps sequentially through the client resolver.
-   * Supports "as" for variable assignment between steps.
-   */
-  async run(steps: unknown[], eventData: Partial<Context>): Promise<unknown> {
-    // Only overwrite event-specific keys if they have real values,
-    // so concurrent async handlers don't clobber each other's $value/$target
-    for (const [k, v] of Object.entries(eventData)) {
-      if (v !== null && v !== undefined) this.context[k] = v;
-    }
-    let lastResult: unknown = null;
-
-    for (const step of steps) {
-      lastResult = await this.resolver(step, this.context);
-
-      if (
-        step &&
-        typeof step === "object" &&
-        !Array.isArray(step) &&
-        "as" in step
-      ) {
-        const varName = String(
-          (step as Record<string, unknown>).as,
-        ).replace(/^\$/, "");
-        this.context[varName] = lastResult;
-      }
-    }
-
-    return lastResult;
   }
 }
 
@@ -109,3 +91,4 @@ interface EventDef {
   preventDefault?: boolean;
   stopPropagation?: boolean;
 }
+

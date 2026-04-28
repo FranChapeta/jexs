@@ -18,9 +18,7 @@
  */
 
 import { Node, Context, NodeValue } from "./Node.js";
-import { resolve, resolveAll, onResolverDestroy } from "../Resolver.js";
-import { runSteps } from "../runSteps.js";
-
+import { resolve, resolveAll, onResolverDestroy, runSteps } from "../Resolver.js";
 // ─── Shared state ───────────────────────────────────────────────────────────
 
 interface TimerState {

@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, resolve } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, runSteps, createHttpError } from "@jexs/core";
 
 /**
  * Route handler structure
@@ -254,42 +254,26 @@ async function executeHandler(
       (context.request?.body as Record<string, unknown> | undefined)?._csrf ??
       (context.request?.headers as Record<string, string | undefined> | undefined)?.["x-csrf-token"];
     if (!submittedToken || sessionToken !== submittedToken) {
-      return { type: "error", status: 403, content: "CSRF token mismatch" };
+      throw createHttpError(403, "CSRF token mismatch");
     }
   }
 
   // Validate URL params
   if (handler.params) {
-    const validation = validateSchema(handler.params, context as unknown as Record<string, unknown>, "param");
-    if (validation) return validation;
+    validateSchema(handler.params, context as unknown as Record<string, unknown>, "param");
   }
 
   // Validate body parameters
   if (handler.body) {
-    const validation = validateSchema(handler.body, context.request?.body as Record<string, unknown> ?? {}, "field");
-    if (validation) return validation;
+    validateSchema(handler.body, context.request?.body as Record<string, unknown> ?? {}, "field");
   }
 
   // Execute run steps
   let lastResult: unknown = null;
   if (handler.run && Array.isArray(handler.run)) {
-    for (const step of handler.run) {
-      const result = await resolve(step, context);
-
-      // Check for early return (response, redirect, error)
-      if (isResponse(result)) {
-        return result;
-      }
-
-      // If step has "as", store result in context (supports dot notation)
-      if (isObject(step) && "as" in step) {
-        Node.setContextValue(context, String(step.as), result);
-      }
-
-      if (result !== null && result !== undefined) {
-        lastResult = result;
-      }
-    }
+    const result = await Promise.resolve(runSteps(handler.run, context));
+    if (isResponse(result)) return result;
+    lastResult = result ?? null;
   }
 
   // Resolve file template through the resolver (FileNode + ElementNode)
@@ -311,13 +295,13 @@ async function executeHandler(
 
 /**
  * Validate values against a schema (used for both params and body).
- * Returns an error response if validation fails, or null if valid.
+ * Throws an HTTP error if validation fails.
  */
 function validateSchema(
   schema: Record<string, unknown>,
   source: Record<string, unknown>,
   label: string,
-): Record<string, unknown> | null {
+): void {
   for (const [field, def] of Object.entries(schema)) {
     const fieldDef = isObject(def)
       ? (def as Record<string, unknown>)
@@ -329,27 +313,17 @@ function validateSchema(
       fieldDef.required &&
       (raw === undefined || raw === null || raw === "")
     ) {
-      return {
-        type: "error",
-        status: 400,
-        content: `Missing required ${label}: ${field}`,
-      };
+      throw createHttpError(400, `Missing required ${label}: ${field}`);
     }
 
     // Type check (only if value is present)
     if (raw !== undefined && raw !== null && raw !== "") {
       const expectedType = String(fieldDef.type ?? "string");
       if (expectedType === "number" && isNaN(Number(raw))) {
-        return {
-          type: "error",
-          status: 400,
-          content: `${label} ${field} must be a number`,
-        };
+        throw createHttpError(400, `${label} ${field} must be a number`);
       }
     }
   }
-
-  return null;
 }
 
 /**

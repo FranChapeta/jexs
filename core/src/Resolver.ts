@@ -1,4 +1,5 @@
 import { Context, Node } from "./nodes/Node.js";
+import { isHttpError } from "./errors.js";
 
 export type ResolverFn = (value: unknown, context: Context) => unknown;
 export type TranslateFn = (text: string, context: Context) => Promise<string>;
@@ -55,6 +56,25 @@ export async function translate(text: string, context: Context): Promise<string>
   return text;
 }
 
+function isObject(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+function storeAs(step: unknown, value: unknown, context: Context): void {
+  if (isObject(step) && "as" in step) {
+    Node.setContextValue(context, String((step as Record<string, unknown>).as), value);
+  }
+}
+
+function handleErr(err: unknown, value: unknown, context: Context): unknown {
+  if (isHttpError(err) && isObject(value) && Array.isArray((value as Record<string, unknown>).catch)) {
+    const catchSteps = (value as Record<string, unknown>).catch as unknown[];
+    const catchCtx = { ...context, $error: { status: err.status, message: err.message } };
+    return runSteps(catchSteps, catchCtx);
+  }
+  throw err;
+}
+
 /**
  * Resolve a value in the given context.
  * Returns the resolved value synchronously, or a Promise if any part of the
@@ -63,9 +83,22 @@ export async function translate(text: string, context: Context): Promise<string>
  * Optional continuation `then`: if provided, called with the resolved value.
  * On the sync path `then` is called immediately — no Promise created.
  * On the async path `then` is chained via .then() on the Promise.
+ *
+ * If the step def has a `"catch"` array and an HTTP error is thrown,
+ * the catch steps are run with `$error: { status, message }` in context.
  */
 export function resolve(value: unknown, context: Context, then?: (v: unknown) => unknown): unknown {
-  const r = _resolve ? _resolve(value, context) : value;
+  const hasCatch = isObject(value) && Array.isArray((value as Record<string, unknown>).catch);
+
+  let r: unknown;
+  try {
+    r = _resolve ? _resolve(value, context) : value;
+  } catch (err) {
+    if (hasCatch) return handleErr(err, value, context);
+    throw err;
+  }
+
+  if (r instanceof Promise && hasCatch) r = r.catch(err => handleErr(err, value, context));
   if (!then) return r;
   return r instanceof Promise ? r.then(then) : then(r);
 }
@@ -113,6 +146,32 @@ export function resolveAll(values: unknown[], context: Context, then: (args: unk
 }
 
 /**
+ * Run an array of steps sequentially, sync-first. Returns the last step's value.
+ * Handles the `"as"` global property on each step (stores result in context).
+ * Stops early if a step returns `{ type: "return" }` (file-template early exit).
+ */
+export function runSteps(steps: unknown[], context: Context): unknown {
+  let i = 0;
+  function next(): unknown {
+    if (i >= steps.length) return;
+    const step = steps[i++];
+    const isLast = i >= steps.length;
+    return resolve(step, context, v => {
+      storeAs(step, v, context);
+      if (isLast) return v;
+      if (isObject(v) && v.type === "return") return v;
+      return next();
+    });
+  }
+  return next();
+}
+
+/** Resolve a single step or an array of steps. */
+export function resolveSteps(value: unknown, context: Context): unknown {
+  return Array.isArray(value) ? runSteps(value, context) : resolve(value, context);
+}
+
+/**
  * Creates a resolver function from a list of nodes.
  * The resolver interprets JSON expressions at runtime.
  */
@@ -144,7 +203,7 @@ export function createResolver(nodes: Node[], options?: ResolverOptions): Resolv
 
     if (Array.isArray(value)) {
       const arr = value as unknown[];
-      let results: unknown[] = arr; // reuse original if nothing changes (copy-on-write)
+      let results: unknown[] = arr;
       const pendingPromises: Promise<unknown>[] = [];
       const pendingIndices: number[] = [];
       for (let i = 0; i < arr.length; i++) {

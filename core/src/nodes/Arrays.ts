@@ -235,17 +235,20 @@ export class ArrayNode extends Node {
 
   /**
    * Transforms each item by resolving a template.
-   * Each iteration exposes `item`, `index`, and `loop` in context.
+   * Each iteration exposes the named variable (default `item`), `index`, and `loop` in context.
+   * When `do` is an array it is resolved as a literal (all elements), not as sequential steps.
    *
-   * @param {[2]} map `[array, template]`.
+   * @param {expr} map The array or expression to iterate over.
+   * @param {string} item Variable name for the current item (default `"item"`).
+   * @param {expr|expr[]} do Template to resolve for each item.
    * @example
-   * { "map": [{ "var": "$nums" }, { "multiply": [{ "var": "item" }, 2] }] }
+   * { "map": { "var": "$nums" }, "as": "num", "do": { "multiply": [{ "var": "$num" }, 2] } }
    */
   map(def: Record<string, unknown>, context: Context) {
-    const args = this.toArray(def.map);
-    return resolve(args[0], context, arr => {
+    const itemName = typeof def.item === "string" ? def.item : "item";
+    const template = def.do;
+    return resolve(def.map, context, arr => {
       const items = this.toArray(arr);
-      const transform = args[1];
       const results: unknown[] = [];
       let i = 0;
       function next(): unknown {
@@ -253,10 +256,11 @@ export class ArrayNode extends Node {
         const idx = i++;
         const item = items[idx];
         const itemCtx: Context = {
-          ...context, item, index: idx,
+          ...context,
+          [itemName]: item,
           loop: { item, index: idx, key: idx, first: idx === 0, last: idx === items.length - 1, length: items.length },
         };
-        return resolve(transform, itemCtx, v => { results.push(v); return next(); });
+        return resolve(template, itemCtx, v => { results.push(v); return next(); });
       }
       return next();
     });

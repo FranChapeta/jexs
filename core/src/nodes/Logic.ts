@@ -1,6 +1,6 @@
 import { Node, Context, NodeValue } from "./Node.js";
 import { resolve, resolveAll } from "../Resolver.js";
-import { runSteps, resolveSteps } from "../runSteps.js";
+import { runSteps, resolveSteps } from "../Resolver.js";
 
 export class LogicNode extends Node {
   /**
@@ -56,7 +56,7 @@ export class LogicNode extends Node {
   foreach(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll([def.foreach, def.parallel], context, ([items, parallel]) => {
       const arr = this.toArray(items);
-      const itemName = typeof def.as === "string" ? def.as : "item";
+      const itemName = typeof def.item === "string" ? def.item : "item";
       const keyName = typeof def.key === "string" ? def.key : null;
       const template = def.do;
 

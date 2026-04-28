@@ -1,7 +1,7 @@
 import fs from "fs/promises";
 import { statfsSync } from "fs";
 import path from "path";
-import { Node, Context, NodeValue, resolve, resolveAll, resolveObj } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll, resolveObj, runSteps } from "@jexs/core";
 
 function toBoolean(value: unknown): boolean {
   if (typeof value === "boolean") return value;
@@ -159,28 +159,12 @@ function loadFile(
 
       // Array -> execute steps in sequence
       if (Array.isArray(parsed)) {
-        let lastResult: unknown = null;
-        for (const step of parsed) {
-          lastResult = await resolve(step, fileContext);
-          if (
-            lastResult &&
-            typeof lastResult === "object" &&
-            !Array.isArray(lastResult) &&
-            (lastResult as Record<string, unknown>).type === "return"
-          ) {
-            return (lastResult as Record<string, unknown>).value ?? null;
-          }
-          if (
-            step &&
-            typeof step === "object" &&
-            !Array.isArray(step) &&
-            "as" in step
-          ) {
-            const varName = String((step as Record<string, unknown>).as).replace(/^\$/, "");
-            fileContext[varName] = lastResult;
-          }
+        const result = await Promise.resolve(runSteps(parsed, fileContext));
+        if (result && typeof result === "object" && !Array.isArray(result) &&
+            (result as Record<string, unknown>).type === "return") {
+          return (result as Record<string, unknown>).value ?? null;
         }
-        return lastResult;
+        return result ?? null;
       }
 
       // Single object: resolve with file context if params were provided
