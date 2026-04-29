@@ -68,7 +68,7 @@ try {
 } catch { /* not installed */ }
 
 // Set up resolver if core is available
-let resolve: ((value: unknown, context: Record<string, unknown>) => Promise<unknown>) | null = null;
+let resolve: ((value: unknown, context: Record<string, unknown>) => unknown) | null = null;
 try {
   const core = await import("@jexs/core");
   resolve = core.createResolver(nodes as any);
@@ -123,7 +123,7 @@ mcpServer.registerTool(
     }
     try {
       const parsed = JSON.parse(expression);
-      const result = await resolve(parsed, {});
+      const result = await Promise.resolve(resolve(parsed, {}));
       return {
         content: [{
           type: "text",
