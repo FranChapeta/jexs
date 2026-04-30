@@ -81,14 +81,14 @@ function writePreTransformed(
   const nm = normalMat3(model);
   for (let i = 0; i < totalVerts; i++) {
     const si = i * 6;
-    const px = srcVerts[si], py = srcVerts[si+1], pz = srcVerts[si+2];
-    const nx = srcVerts[si+3], ny = srcVerts[si+4], nz = srcVerts[si+5];
-    out[offset++] = model[0]*px + model[4]*py + model[8]*pz + model[12];
-    out[offset++] = model[1]*px + model[5]*py + model[9]*pz + model[13];
-    out[offset++] = model[2]*px + model[6]*py + model[10]*pz + model[14];
-    out[offset++] = nm[0]*nx + nm[3]*ny + nm[6]*nz;
-    out[offset++] = nm[1]*nx + nm[4]*ny + nm[7]*nz;
-    out[offset++] = nm[2]*nx + nm[5]*ny + nm[8]*nz;
+    const px = srcVerts[si], py = srcVerts[si + 1], pz = srcVerts[si + 2];
+    const nx = srcVerts[si + 3], ny = srcVerts[si + 4], nz = srcVerts[si + 5];
+    out[offset++] = model[0] * px + model[4] * py + model[8] * pz + model[12];
+    out[offset++] = model[1] * px + model[5] * py + model[9] * pz + model[13];
+    out[offset++] = model[2] * px + model[6] * py + model[10] * pz + model[14];
+    out[offset++] = nm[0] * nx + nm[3] * ny + nm[6] * nz;
+    out[offset++] = nm[1] * nx + nm[4] * ny + nm[7] * nz;
+    out[offset++] = nm[2] * nx + nm[5] * ny + nm[8] * nz;
     out[offset++] = cr; out[offset++] = cg; out[offset++] = cb; out[offset++] = ca;
     out[offset++] = u + px * uW; out[offset++] = v + py * uH;
     out[offset++] = useTex;
@@ -123,256 +123,256 @@ export class GlNode extends Node {
     for (const [k, v] of Object.entries(def)) { if (k !== "on-frame") resolvable[k] = v; }
 
     return resolveObj(resolvable, context, r => {
-    const selector = String(r["gl-init"]);
+      const selector = String(r["gl-init"]);
 
-    const prev = GlNode.instances.get(selector);
-    if (prev) GlNode.destroyInstance(prev, selector);
+      const prev = GlNode.instances.get(selector);
+      if (prev) GlNode.destroyInstance(prev, selector);
 
-    const canvas = GlNode.resolveCanvas(selector);
-    if (!canvas) { console.error("[GL] No element found for selector:", selector); return null; }
+      const canvas = GlNode.resolveCanvas(selector);
+      if (!canvas) { console.error("[GL] No element found for selector:", selector); return null; }
 
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width  = r["width"]  !== undefined ? Number(r["width"])  * dpr : (canvas.clientWidth  || 300) * dpr;
-    canvas.height = r["height"] !== undefined ? Number(r["height"]) * dpr : (canvas.clientHeight || 150) * dpr;
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = r["width"] !== undefined ? Number(r["width"]) * dpr : (canvas.clientWidth || 300) * dpr;
+      canvas.height = r["height"] !== undefined ? Number(r["height"]) * dpr : (canvas.clientHeight || 150) * dpr;
 
-    // Try WebGL2 first, fall back to WebGL1
-    const gl2 = canvas.getContext("webgl2", { antialias: true }) as WebGL2RenderingContext | null;
-    const gl = (gl2 || canvas.getContext("webgl", { antialias: true })) as WebGLRenderingContext | null;
-    const isWebGL2 = !!gl2;
-    if (!gl) { console.error("[GL] WebGL not supported"); return null; }
-    if (isWebGL2) console.log("[GL] Using WebGL2");
+      // Try WebGL2 first, fall back to WebGL1
+      const gl2 = canvas.getContext("webgl2", { antialias: true }) as WebGL2RenderingContext | null;
+      const gl = (gl2 || canvas.getContext("webgl", { antialias: true })) as WebGLRenderingContext | null;
+      const isWebGL2 = !!gl2;
+      if (!gl) { console.error("[GL] WebGL not supported"); return null; }
+      if (isWebGL2) console.log("[GL] Using WebGL2");
 
-    const clearColor = (r["clear"] ?? [0, 0, 0, 1]) as [number, number, number, number];
-    const enableDepth = !!def["depth"];
+      const clearColor = (r["clear"] ?? [0, 0, 0, 1]) as [number, number, number, number];
+      const enableDepth = !!def["depth"];
 
-    const setupGL = (): {
-      program: WebGLProgram; positionBuf: WebGLBuffer;
-      uTransform: WebGLUniformLocation; uProjection: WebGLUniformLocation;
-      uColor: WebGLUniformLocation; uUvRect: WebGLUniformLocation;
-      uUseTexture: WebGLUniformLocation; uTexture: WebGLUniformLocation;
-      aPosition: number;
-      batchProg: WebGLProgram; batchBuf: WebGLBuffer;
-      batchLocs: GlInstance["batchLocs"];
-    } | null => {
-      const program = GlNode.createProgram(gl, VERT_SRC, FRAG_SRC, isWebGL2);
-      if (!program) return null;
-      const batchProg = GlNode.createProgram(gl, BATCH_VERT_SRC, BATCH_FRAG_SRC, isWebGL2);
-      if (!batchProg) return null;
-      if (enableDepth) gl.enable(gl.DEPTH_TEST);
-      gl.enable(gl.BLEND);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-      return {
-        program,
-        positionBuf: gl.createBuffer()!,
-        uTransform:  gl.getUniformLocation(program, "u_transform")!,
-        uProjection: gl.getUniformLocation(program, "u_projection")!,
-        uColor:      gl.getUniformLocation(program, "u_color")!,
-        uUvRect:     gl.getUniformLocation(program, "u_uvRect")!,
-        uUseTexture: gl.getUniformLocation(program, "u_useTexture")!,
-        uTexture:    gl.getUniformLocation(program, "u_texture")!,
-        aPosition:   gl.getAttribLocation(program, "a_position"),
-        batchProg,
-        batchBuf: gl.createBuffer()!,
-        batchLocs: {
-          aPosition:   gl.getAttribLocation(batchProg, "a_position"),
-          aColor:      gl.getAttribLocation(batchProg, "a_color"),
-          aUv:         gl.getAttribLocation(batchProg, "a_uv"),
-          aUseTex:     gl.getAttribLocation(batchProg, "a_useTexture"),
-          uProjection: gl.getUniformLocation(batchProg, "u_projection")!,
-          uTexture:    gl.getUniformLocation(batchProg, "u_texture")!,
-        },
+      const setupGL = (): {
+        program: WebGLProgram; positionBuf: WebGLBuffer;
+        uTransform: WebGLUniformLocation; uProjection: WebGLUniformLocation;
+        uColor: WebGLUniformLocation; uUvRect: WebGLUniformLocation;
+        uUseTexture: WebGLUniformLocation; uTexture: WebGLUniformLocation;
+        aPosition: number;
+        batchProg: WebGLProgram; batchBuf: WebGLBuffer;
+        batchLocs: GlInstance["batchLocs"];
+      } | null => {
+        const program = GlNode.createProgram(gl, VERT_SRC, FRAG_SRC, isWebGL2);
+        if (!program) return null;
+        const batchProg = GlNode.createProgram(gl, BATCH_VERT_SRC, BATCH_FRAG_SRC, isWebGL2);
+        if (!batchProg) return null;
+        if (enableDepth) gl.enable(gl.DEPTH_TEST);
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        return {
+          program,
+          positionBuf: gl.createBuffer()!,
+          uTransform: gl.getUniformLocation(program, "u_transform")!,
+          uProjection: gl.getUniformLocation(program, "u_projection")!,
+          uColor: gl.getUniformLocation(program, "u_color")!,
+          uUvRect: gl.getUniformLocation(program, "u_uvRect")!,
+          uUseTexture: gl.getUniformLocation(program, "u_useTexture")!,
+          uTexture: gl.getUniformLocation(program, "u_texture")!,
+          aPosition: gl.getAttribLocation(program, "a_position"),
+          batchProg,
+          batchBuf: gl.createBuffer()!,
+          batchLocs: {
+            aPosition: gl.getAttribLocation(batchProg, "a_position"),
+            aColor: gl.getAttribLocation(batchProg, "a_color"),
+            aUv: gl.getAttribLocation(batchProg, "a_uv"),
+            aUseTex: gl.getAttribLocation(batchProg, "a_useTexture"),
+            uProjection: gl.getUniformLocation(batchProg, "u_projection")!,
+            uTexture: gl.getUniformLocation(batchProg, "u_texture")!,
+          },
+        };
       };
-    };
 
-    const initial = setupGL();
-    if (!initial) return null;
+      const initial = setupGL();
+      if (!initial) return null;
 
-    const store = new EntityStore();
-    const vw = r["virtualWidth"]  ? Number(r["virtualWidth"])  : 0;
-    const vh = r["virtualHeight"] ? Number(r["virtualHeight"]) : 0;
-    store.width  = vw || canvas.width;
-    store.height = vh || canvas.height;
-    store.virtualWidth  = vw;
-    store.virtualHeight = vh;
+      const store = new EntityStore();
+      const vw = r["virtualWidth"] ? Number(r["virtualWidth"]) : 0;
+      const vh = r["virtualHeight"] ? Number(r["virtualHeight"]) : 0;
+      store.width = vw || canvas.width;
+      store.height = vh || canvas.height;
+      store.virtualWidth = vw;
+      store.virtualHeight = vh;
 
-    const fit = r["fit"] ? String(r["fit"]) : "contain";
+      const fit = r["fit"] ? String(r["fit"]) : "contain";
 
-    const inst: GlInstance = {
-      canvas,
-      gl,
-      isWebGL2,
-      ...initial,
-      store,
-      clearColor,
-      rafId: null,
-      dirty: true,
-      resizeObserver: null,
-      onFrame,
-      frameContext: context,
-      frameLoopContext: null,
-      lastTime: 0,
-      fit,
-      vpScale: 1,
-      vpOffsetX: 0,
-      vpOffsetY: 0,
-      camera: { x: 0, y: 0, zoom: 1, rotation: 0, follow: null, shake: 0, shakeDuration: 0.3, shakeDecay: 1, shakeElapsed: 0, shakeX: 0, shakeY: 0, shakeAngle: 0, trauma: 0, traumaDecay: 1, maxShake: 10, maxShakeAngle: 3, z: 0, fov: 60, near: 0.1, far: 1000, lookAt: [0, 0, 0], up: [0, 1, 0], pitch: 0, yaw: 0, followMode: null, followOffsetZ: 0, tpsDistance: 8, tpsHeight: 6 },
-      textures: new Map(),
-      textCache: new Map(),
-      atlases: new Map(),
-      tilemaps: new Map(),
-      shaders: new Map(),
-      metrics: !!def["metrics"],
-      metricsEl: null,
-      metricsFrames: 0,
-      metricsTime: 0,
-      metricsFps: 0,
-      metricsDrawCalls: 0,
-      batchData: new Float32Array(1024 * 6 * BATCH_STRIDE_FLOATS),
-      batchCap: 1024 * 6,
-      fboA: null, fboTexA: null,
-      fboB: null, fboTexB: null,
-      fboWidth: 0, fboHeight: 0,
-      postProg: null, postLocs: null, blurProg: null, blurLocs: null, postQuadBuf: null,
-      blur: null, transition: null,
-      tweens: [],
-      mode3d: !!(def["perspective"] || def["mode3d"]),
-      prog3d: null, prog3dLocs: null, prog3dBuf: null,
-      batch3dData: new Float32Array(0), batch3dCap: 0,
-      batchShrinkFrames: 0, batch3dShrinkFrames: 0,
-      extInstanced: null,
-      progInst: null, progInstLocs: null,
-      geoVBOs: new Map(), instanceBuf: null,
-      instanceData: new Float32Array(0), instanceCap: 0,
-      lightDir: [-0.5, -0.7, -1.0],
-      lightColor: [1, 1, 1],
-      ambientColor: [1, 1, 1],
-      ambient: 0.3,
-      shininess: 32,
-      pointLights: new Float32Array(96), // 12 floats * 8 lights
-      pointLightCount: 0,
-      lightSlots: [],
-      lightsDirty: true,
-      skyboxProg: null, skyboxLocs: null, skyboxBuf: null,
-      skyTop: null, skyBottom: null,
-      fogColor: [0.7, 0.75, 0.85],
-      fogNear: 0,
-      fogFar: 0,
-      ortho: false,
-      fxaa: false,
-      fxaaProg: null, fxaaLocs: null,
-      bloom: null,
-      bloomBrightProg: null, bloomBrightLocs: null,
-      bloomCompProg: null, bloomCompLocs: null,
-      fboC: null, fboTexC: null,
-      trails: new Map(),
-      // GPU Particles (lazily initialized)
-      gpuParticles: new Map(),
-      gpuParticleProg: null,
-      gpuParticleLocs: null,
-      gpuParticleQuadBuf: null,
-      // Shadow mapping (cascaded, lazily initialized)
-      shadow: null,
-      shadowCascadeSplits: new Float32Array(3),
-      shadowFbo: null, shadowTex: null,
-      shadowProg: null, shadowLocs: null,
-      shadowInstProg: null, shadowInstLocs: null,
-      shadowLightVP: new Float32Array(48),
-      // SSAO (lazily initialized)
-      ssao: null,
-      ssaoDepthFbo: null, ssaoDepthTex: null,
-      ssaoFbo: null, ssaoTex: null,
-      ssaoBlurFbo: null, ssaoBlurTex: null,
-      ssaoWidth: 0, ssaoHeight: 0,
-      ssaoDepthProg: null, ssaoDepthLocs: null,
-      ssaoProg: null, ssaoLocs: null,
-      ssaoBlurProg: null, ssaoBlurLocs: null,
-      ssaoCompProg: null, ssaoCompLocs: null,
-    };
-
-    if (inst.mode3d) {
-      gl.enable(gl.DEPTH_TEST);
-      init3dProgram(inst, GlNode.createProgram);
-      inst.camera.z = r["cameraZ"] !== undefined ? Number(r["cameraZ"]) : 5;
-      if (r["fov"] !== undefined) inst.camera.fov = Number(r["fov"]);
-    }
-
-    if (r["lightDir"]     !== undefined) inst.lightDir     = r["lightDir"]     as [number, number, number];
-    if (r["ambient"]      !== undefined) inst.ambient      = Number(r["ambient"]);
-    if (r["shininess"]    !== undefined) inst.shininess    = Number(r["shininess"]);
-    if (r["lightColor"]   !== undefined) inst.lightColor   = r["lightColor"]   as [number, number, number];
-    if (r["ambientColor"] !== undefined) inst.ambientColor = r["ambientColor"] as [number, number, number];
-    if (r["skyTop"]       !== undefined) inst.skyTop       = r["skyTop"]       as [number, number, number];
-    if (r["skyBottom"]    !== undefined) inst.skyBottom    = r["skyBottom"]    as [number, number, number];
-    if (r["fogColor"]     !== undefined) inst.fogColor     = r["fogColor"]     as [number, number, number];
-    if (r["fogNear"]      !== undefined) inst.fogNear      = Number(r["fogNear"]);
-    if (r["fogFar"]       !== undefined) inst.fogFar       = Number(r["fogFar"]);
-    if (r["ortho"]        !== undefined) inst.ortho        = !!r["ortho"];
-    if (r["fxaa"]         !== undefined) inst.fxaa         = !!r["fxaa"];
-    if (r["bloom"]        !== undefined) { const bloom = parseBloom(r["bloom"]); if (bloom) inst.bloom = bloom; }
-    if (r["shadow"]       !== undefined && r["shadow"] && typeof r["shadow"] === "object") {
-      const s = r["shadow"] as Record<string, unknown>;
-      inst.shadow = {
-        resolution: Number(s.resolution ?? 1024),
-        bias:       Number(s.bias       ?? 0.005),
-        softness:   Number(s.softness   ?? 2),
-        far:        Number(s.far        ?? 100),
+      const inst: GlInstance = {
+        canvas,
+        gl,
+        isWebGL2,
+        ...initial,
+        store,
+        clearColor,
+        rafId: null,
+        dirty: true,
+        resizeObserver: null,
+        onFrame,
+        frameContext: context,
+        frameLoopContext: null,
+        lastTime: 0,
+        fit,
+        vpScale: 1,
+        vpOffsetX: 0,
+        vpOffsetY: 0,
+        camera: { x: 0, y: 0, zoom: 1, rotation: 0, follow: null, shake: 0, shakeDuration: 0.3, shakeDecay: 1, shakeElapsed: 0, shakeX: 0, shakeY: 0, shakeAngle: 0, trauma: 0, traumaDecay: 1, maxShake: 10, maxShakeAngle: 3, z: 0, fov: 60, near: 0.1, far: 1000, lookAt: [0, 0, 0], up: [0, 1, 0], pitch: 0, yaw: 0, followMode: null, followOffsetZ: 0, tpsDistance: 8, tpsHeight: 6 },
+        textures: new Map(),
+        textCache: new Map(),
+        atlases: new Map(),
+        tilemaps: new Map(),
+        shaders: new Map(),
+        metrics: !!def["metrics"],
+        metricsEl: null,
+        metricsFrames: 0,
+        metricsTime: 0,
+        metricsFps: 0,
+        metricsDrawCalls: 0,
+        batchData: new Float32Array(1024 * 6 * BATCH_STRIDE_FLOATS),
+        batchCap: 1024 * 6,
+        fboA: null, fboTexA: null,
+        fboB: null, fboTexB: null,
+        fboWidth: 0, fboHeight: 0,
+        postProg: null, postLocs: null, blurProg: null, blurLocs: null, postQuadBuf: null,
+        blur: null, transition: null,
+        tweens: [],
+        mode3d: !!(def["perspective"] || def["mode3d"]),
+        prog3d: null, prog3dLocs: null, prog3dBuf: null,
+        batch3dData: new Float32Array(0), batch3dCap: 0,
+        batchShrinkFrames: 0, batch3dShrinkFrames: 0,
+        extInstanced: null,
+        progInst: null, progInstLocs: null,
+        geoVBOs: new Map(), instanceBuf: null,
+        instanceData: new Float32Array(0), instanceCap: 0,
+        lightDir: [-0.5, -0.7, -1.0],
+        lightColor: [1, 1, 1],
+        ambientColor: [1, 1, 1],
+        ambient: 0.3,
+        shininess: 32,
+        pointLights: new Float32Array(96), // 12 floats * 8 lights
+        pointLightCount: 0,
+        lightSlots: [],
+        lightsDirty: true,
+        skyboxProg: null, skyboxLocs: null, skyboxBuf: null,
+        skyTop: null, skyBottom: null,
+        fogColor: [0.7, 0.75, 0.85],
+        fogNear: 0,
+        fogFar: 0,
+        ortho: false,
+        fxaa: false,
+        fxaaProg: null, fxaaLocs: null,
+        bloom: null,
+        bloomBrightProg: null, bloomBrightLocs: null,
+        bloomCompProg: null, bloomCompLocs: null,
+        fboC: null, fboTexC: null,
+        trails: new Map(),
+        // GPU Particles (lazily initialized)
+        gpuParticles: new Map(),
+        gpuParticleProg: null,
+        gpuParticleLocs: null,
+        gpuParticleQuadBuf: null,
+        // Shadow mapping (cascaded, lazily initialized)
+        shadow: null,
+        shadowCascadeSplits: new Float32Array(3),
+        shadowFbo: null, shadowTex: null,
+        shadowProg: null, shadowLocs: null,
+        shadowInstProg: null, shadowInstLocs: null,
+        shadowLightVP: new Float32Array(48),
+        // SSAO (lazily initialized)
+        ssao: null,
+        ssaoDepthFbo: null, ssaoDepthTex: null,
+        ssaoFbo: null, ssaoTex: null,
+        ssaoBlurFbo: null, ssaoBlurTex: null,
+        ssaoWidth: 0, ssaoHeight: 0,
+        ssaoDepthProg: null, ssaoDepthLocs: null,
+        ssaoProg: null, ssaoLocs: null,
+        ssaoBlurProg: null, ssaoBlurLocs: null,
+        ssaoCompProg: null, ssaoCompLocs: null,
       };
-      initShadow(inst, GlNode.createProgram);
-    }
 
-    if (def["resize"] !== false) {
-      const ro = new ResizeObserver(() => {
-        const d = window.devicePixelRatio || 1;
-        const pw = Math.round(canvas.clientWidth * d);
-        const ph = Math.round(canvas.clientHeight * d);
-        if (pw !== canvas.width || ph !== canvas.height) {
-          canvas.width = pw;
-          canvas.height = ph;
-          if (!inst.store.virtualWidth) {
-            inst.store.width = canvas.clientWidth;
-            inst.store.height = canvas.clientHeight;
+      if (inst.mode3d) {
+        gl.enable(gl.DEPTH_TEST);
+        init3dProgram(inst, GlNode.createProgram);
+        inst.camera.z = r["cameraZ"] !== undefined ? Number(r["cameraZ"]) : 5;
+        if (r["fov"] !== undefined) inst.camera.fov = Number(r["fov"]);
+      }
+
+      if (r["lightDir"] !== undefined) inst.lightDir = r["lightDir"] as [number, number, number];
+      if (r["ambient"] !== undefined) inst.ambient = Number(r["ambient"]);
+      if (r["shininess"] !== undefined) inst.shininess = Number(r["shininess"]);
+      if (r["lightColor"] !== undefined) inst.lightColor = r["lightColor"] as [number, number, number];
+      if (r["ambientColor"] !== undefined) inst.ambientColor = r["ambientColor"] as [number, number, number];
+      if (r["skyTop"] !== undefined) inst.skyTop = r["skyTop"] as [number, number, number];
+      if (r["skyBottom"] !== undefined) inst.skyBottom = r["skyBottom"] as [number, number, number];
+      if (r["fogColor"] !== undefined) inst.fogColor = r["fogColor"] as [number, number, number];
+      if (r["fogNear"] !== undefined) inst.fogNear = Number(r["fogNear"]);
+      if (r["fogFar"] !== undefined) inst.fogFar = Number(r["fogFar"]);
+      if (r["ortho"] !== undefined) inst.ortho = !!r["ortho"];
+      if (r["fxaa"] !== undefined) inst.fxaa = !!r["fxaa"];
+      if (r["bloom"] !== undefined) { const bloom = parseBloom(r["bloom"]); if (bloom) inst.bloom = bloom; }
+      if (r["shadow"] !== undefined && r["shadow"] && typeof r["shadow"] === "object") {
+        const s = r["shadow"] as Record<string, unknown>;
+        inst.shadow = {
+          resolution: Number(s.resolution ?? 1024),
+          bias: Number(s.bias ?? 0.005),
+          softness: Number(s.softness ?? 2),
+          far: Number(s.far ?? 100),
+        };
+        initShadow(inst, GlNode.createProgram);
+      }
+
+      if (def["resize"] !== false) {
+        const ro = new ResizeObserver(() => {
+          const d = window.devicePixelRatio || 1;
+          const pw = Math.round(canvas.clientWidth * d);
+          const ph = Math.round(canvas.clientHeight * d);
+          if (pw !== canvas.width || ph !== canvas.height) {
+            canvas.width = pw;
+            canvas.height = ph;
+            if (!inst.store.virtualWidth) {
+              inst.store.width = canvas.clientWidth;
+              inst.store.height = canvas.clientHeight;
+            }
+            const reloaded = setupGL();
+            if (reloaded) Object.assign(inst, reloaded);
+            if (inst.mode3d) init3dProgram(inst, GlNode.createProgram);
+            inst.fboWidth = 0; // force FBO re-creation on next post-process render
+            inst.dirty = true;
+            GlNode.scheduleRender(inst);
           }
-          const reloaded = setupGL();
-          if (reloaded) Object.assign(inst, reloaded);
-          if (inst.mode3d) init3dProgram(inst, GlNode.createProgram);
-          inst.fboWidth = 0; // force FBO re-creation on next post-process render
-          inst.dirty = true;
-          GlNode.scheduleRender(inst);
-        }
-      });
-      ro.observe(canvas);
-      inst.resizeObserver = ro;
-    }
+        });
+        ro.observe(canvas);
+        inst.resizeObserver = ro;
+      }
 
-    GlNode.instances.set(selector, inst);
+      GlNode.instances.set(selector, inst);
 
-    if (inst.metrics) {
-      const el = document.createElement("div");
-      el.style.cssText = "position:absolute;top:4px;left:4px;background:rgba(0,0,0,.7);color:#0f0;font:11px/1.4 monospace;padding:4px 6px;pointer-events:none;z-index:999;border-radius:3px;white-space:pre";
-      canvas.parentElement?.style.setProperty("position", "relative");
-      canvas.parentElement?.appendChild(el);
-      inst.metricsEl = el;
-    }
+      if (inst.metrics) {
+        const el = document.createElement("div");
+        el.style.cssText = "position:absolute;top:4px;left:4px;background:rgba(0,0,0,.7);color:#0f0;font:11px/1.4 monospace;padding:4px 6px;pointer-events:none;z-index:999;border-radius:3px;white-space:pre";
+        canvas.parentElement?.style.setProperty("position", "relative");
+        canvas.parentElement?.appendChild(el);
+        inst.metricsEl = el;
+      }
 
-    (context as Record<string, unknown>)._glSelector = selector;
+      (context as Record<string, unknown>)._glSelector = selector;
 
-    if (!context._entityStores) context._entityStores = {};
-    (context._entityStores as Record<string, EntityStore>)[selector] = store;
+      if (!context._entityStores) context._entityStores = {};
+      (context._entityStores as Record<string, EntityStore>)[selector] = store;
 
-    // Entity mutations (via EntityNode) trigger rendering
-    store.onChange = () => {
-      inst.dirty = true;
-      inst.lightsDirty = true;
+      // Entity mutations (via EntityNode) trigger rendering
+      store.onChange = () => {
+        inst.dirty = true;
+        inst.lightsDirty = true;
+        GlNode.scheduleRender(inst);
+      };
+
+      (context as Record<string, unknown>)._onPhysicsStep = (sel: string) => {
+        const i = GlNode.instances.get(sel);
+        if (i) { i.dirty = true; GlNode.scheduleRender(i); }
+      };
+
       GlNode.scheduleRender(inst);
-    };
-
-    (context as Record<string, unknown>)._onPhysicsStep = (sel: string) => {
-      const i = GlNode.instances.get(sel);
-      if (i) { i.dirty = true; GlNode.scheduleRender(i); }
-    };
-
-    GlNode.scheduleRender(inst);
-    return null;
+      return null;
     }); // resolveObj
   }
 
@@ -407,78 +407,79 @@ export class GlNode extends Node {
     if (!inst) return null;
 
     return resolveObj(def, context, r => {
-    let px = Number(r["x"]);
-    let py = Number(r["y"]);
-    if (inst.store.virtualWidth) {
-      px = (px - inst.vpOffsetX) / inst.vpScale;
-      py = (py - inst.vpOffsetY) / inst.vpScale;
-    }
+      let px = Number(r["x"]);
+      let py = Number(r["y"]);
+      if (inst.store.virtualWidth) {
+        px = (px - inst.vpOffsetX) / inst.vpScale;
+        py = (py - inst.vpOffsetY) / inst.vpScale;
+      }
 
-    const { store } = inst;
-    const d = store.data;
+      const { store } = inst;
+      const d = store.data;
 
-    // ── 3D ray-cast hit testing ──────────────────────────────────────────
-    if (inst.mode3d && inst.prog3dLocs) {
+      // ── 3D ray-cast hit testing ──────────────────────────────────────────
+      if (inst.mode3d && inst.prog3dLocs) {
+        const cam = inst.camera;
+        const cw = inst.canvas.width, ch = inst.canvas.height;
+        const aspect = cw / ch;
+        const proj = mat4Perspective(cam.fov, aspect, cam.near, cam.far);
+        const view = mat4LookAt(
+          [cam.x + cam.shakeX, cam.y + cam.shakeY, cam.z],
+          cam.lookAt, cam.up,
+        );
+        const ray = unprojectRay(px, py, store.width, store.height, proj, view);
+        if (!ray) return null;
+        const [ox, oy, oz] = ray.origin;
+        const [rdx, rdy, rdz] = ray.dir;
+
+        // Test all entities, find closest hit (front-to-back by draw order, but pick nearest by distance)
+        let bestDist = Infinity;
+        let bestId: string | null = null;
+        for (let i = store.order.length - 1; i >= 0; i--) {
+          const slot = store.order[i];
+          const b = slot * STRIDE;
+          if (!(d[b + F_FLAGS] & FLAG_VISIBLE)) continue;
+          const meta = store.meta[slot]!;
+          if (meta.type === "pivot" || meta.type === "line" || meta.type === "line-strip" || meta.type === "points") continue;
+          const ex = d[b + F_X], ey = d[b + F_Y], ez = d[b + F_Z];
+          const ew = d[b + F_W], eh = d[b + F_H], ed = d[b + F_D] || 0.01;
+          const t = rayAABB(ox, oy, oz, rdx, rdy, rdz, ex, ey, ez, ex + ew, ey + eh, ez + ed);
+          if (t >= 0 && t < bestDist) {
+            bestDist = t;
+            bestId = meta.id;
+          }
+        }
+        return bestId;
+      }
+
+      // ── 2D hit testing ───────────────────────────────────────────────────
       const cam = inst.camera;
-      const cw = inst.canvas.width, ch = inst.canvas.height;
-      const aspect = cw / ch;
-      const proj = mat4Perspective(cam.fov, aspect, cam.near, cam.far);
-      const view = mat4LookAt(
-        [cam.x + cam.shakeX, cam.y + cam.shakeY, cam.z],
-        cam.lookAt, cam.up,
-      );
-      const ray = unprojectRay(px, py, store.width, store.height, proj, view);
-      if (!ray) return null;
-      const [ox, oy, oz] = ray.origin;
-      const [rdx, rdy, rdz] = ray.dir;
+      if (cam.zoom !== 1 || cam.x !== 0 || cam.y !== 0) {
+        const vw = inst.store.virtualWidth || inst.store.width;
+        const vh = inst.store.virtualHeight || inst.store.height;
+        px = (px - vw / 2) / cam.zoom + cam.x + vw / 2;
+        py = (py - vh / 2) / cam.zoom + cam.y + vh / 2;
+      }
 
-      // Test all entities, find closest hit (front-to-back by draw order, but pick nearest by distance)
-      let bestDist = Infinity;
-      let bestId: string | null = null;
       for (let i = store.order.length - 1; i >= 0; i--) {
         const slot = store.order[i];
         const b = slot * STRIDE;
         if (!(d[b + F_FLAGS] & FLAG_VISIBLE)) continue;
-        const meta = store.meta[slot]!;
-        if (meta.type === "pivot" || meta.type === "line" || meta.type === "line-strip" || meta.type === "points") continue;
-        const ex = d[b + F_X], ey = d[b + F_Y], ez = d[b + F_Z];
-        const ew = d[b + F_W], eh = d[b + F_H], ed = d[b + F_D] || 0.01;
-        const t = rayAABB(ox, oy, oz, rdx, rdy, rdz, ex, ey, ez, ex + ew, ey + eh, ez + ed);
-        if (t >= 0 && t < bestDist) {
-          bestDist = t;
-          bestId = meta.id;
+        const meta = store.meta[slot];
+        if (!meta) continue;
+        if (meta.type === "pivot") continue;
+        const x = d[b + F_X], y = d[b + F_Y], w = d[b + F_W], h = d[b + F_H];
+        if (meta.type === "circle") {
+          const cx = x + w / 2, cy = y + h / 2;
+          const rx = w / 2, ry = h / 2;
+          if (rx <= 0 || ry <= 0) continue;
+          const dx = (px - cx) / rx, dy = (py - cy) / ry;
+          if (dx * dx + dy * dy <= 1) return meta.id;
+        } else if (meta.type !== "line" && meta.type !== "line-strip") {
+          if (px >= x && px <= x + w && py >= y && py <= y + h) return meta.id;
         }
       }
-      return bestId;
-    }
-
-    // ── 2D hit testing ───────────────────────────────────────────────────
-    const cam = inst.camera;
-    if (cam.zoom !== 1 || cam.x !== 0 || cam.y !== 0) {
-      const vw = inst.store.virtualWidth || inst.store.width;
-      const vh = inst.store.virtualHeight || inst.store.height;
-      px = (px - vw / 2) / cam.zoom + cam.x + vw / 2;
-      py = (py - vh / 2) / cam.zoom + cam.y + vh / 2;
-    }
-
-    for (let i = store.order.length - 1; i >= 0; i--) {
-      const slot = store.order[i];
-      const b = slot * STRIDE;
-      if (!(d[b + F_FLAGS] & FLAG_VISIBLE)) continue;
-      const meta = store.meta[slot]!;
-      if (meta.type === "pivot") continue;
-      const x = d[b + F_X], y = d[b + F_Y], w = d[b + F_W], h = d[b + F_H];
-      if (meta.type === "circle") {
-        const cx = x + w / 2, cy = y + h / 2;
-        const rx = w / 2, ry = h / 2;
-        if (rx <= 0 || ry <= 0) continue;
-        const dx = (px - cx) / rx, dy = (py - cy) / ry;
-        if (dx * dx + dy * dy <= 1) return meta.id;
-      } else if (meta.type !== "line" && meta.type !== "line-strip") {
-        if (px >= x && px <= x + w && py >= y && py <= y + h) return meta.id;
-      }
-    }
-    return null;
+      return null;
     }); // resolveObj
   }
 
@@ -503,60 +504,60 @@ export class GlNode extends Node {
 
     return resolveObj(def, context, r => {
       const cam = inst.camera;
-      if (r["x"]        !== undefined) cam.x        = Number(r["x"]);
-      if (r["y"]        !== undefined) cam.y        = Number(r["y"]);
-      if (r["zoom"]     !== undefined) cam.zoom     = Number(r["zoom"]);
+      if (r["x"] !== undefined) cam.x = Number(r["x"]);
+      if (r["y"] !== undefined) cam.y = Number(r["y"]);
+      if (r["zoom"] !== undefined) cam.zoom = Number(r["zoom"]);
       if (r["rotation"] !== undefined) cam.rotation = Number(r["rotation"]);
-      if (r["follow"]   !== undefined) cam.follow   = r["follow"] ? String(r["follow"]) : null;
+      if (r["follow"] !== undefined) cam.follow = r["follow"] ? String(r["follow"]) : null;
 
       if (r["shake"] !== undefined) {
         cam.shake = Number(r["shake"]);
         cam.shakeElapsed = 0;
         if (r["shakeDuration"] !== undefined) cam.shakeDuration = Number(r["shakeDuration"]);
-        if (r["shakeDecay"]    !== undefined) cam.shakeDecay    = Number(r["shakeDecay"]);
+        if (r["shakeDecay"] !== undefined) cam.shakeDecay = Number(r["shakeDecay"]);
       }
       if (r["trauma"] !== undefined) {
         cam.trauma = Math.min(1, cam.trauma + Number(r["trauma"]));
-        if (r["traumaDecay"]   !== undefined) cam.traumaDecay   = Number(r["traumaDecay"]);
-        if (r["maxShake"]      !== undefined) cam.maxShake      = Number(r["maxShake"]);
+        if (r["traumaDecay"] !== undefined) cam.traumaDecay = Number(r["traumaDecay"]);
+        if (r["maxShake"] !== undefined) cam.maxShake = Number(r["maxShake"]);
         if (r["maxShakeAngle"] !== undefined) cam.maxShakeAngle = Number(r["maxShakeAngle"]);
       }
 
-      if (r["z"]      !== undefined) cam.z      = Number(r["z"]);
-      if (r["fov"]    !== undefined) cam.fov    = Number(r["fov"]);
-      if (r["near"]   !== undefined) cam.near   = Number(r["near"]);
-      if (r["far"]    !== undefined) cam.far    = Number(r["far"]);
+      if (r["z"] !== undefined) cam.z = Number(r["z"]);
+      if (r["fov"] !== undefined) cam.fov = Number(r["fov"]);
+      if (r["near"] !== undefined) cam.near = Number(r["near"]);
+      if (r["far"] !== undefined) cam.far = Number(r["far"]);
       if (r["lookAt"] !== undefined) cam.lookAt = r["lookAt"] as [number, number, number];
-      if (r["up"]     !== undefined) cam.up     = r["up"]     as [number, number, number];
+      if (r["up"] !== undefined) cam.up = r["up"] as [number, number, number];
 
-      if (r["pitch"]         !== undefined) cam.pitch         = Number(r["pitch"]);
-      if (r["yaw"]           !== undefined) cam.yaw           = Number(r["yaw"]);
-      if (r["followMode"]    !== undefined) cam.followMode    = r["followMode"] as "fps" | "tps" | null;
+      if (r["pitch"] !== undefined) cam.pitch = Number(r["pitch"]);
+      if (r["yaw"] !== undefined) cam.yaw = Number(r["yaw"]);
+      if (r["followMode"] !== undefined) cam.followMode = r["followMode"] as "fps" | "tps" | null;
       if (r["followOffsetZ"] !== undefined) cam.followOffsetZ = Number(r["followOffsetZ"]);
-      if (r["tpsDistance"]   !== undefined) cam.tpsDistance   = Number(r["tpsDistance"]);
-      if (r["tpsHeight"]     !== undefined) cam.tpsHeight     = Number(r["tpsHeight"]);
+      if (r["tpsDistance"] !== undefined) cam.tpsDistance = Number(r["tpsDistance"]);
+      if (r["tpsHeight"] !== undefined) cam.tpsHeight = Number(r["tpsHeight"]);
 
-      if (r["lightDir"]     !== undefined) inst.lightDir     = r["lightDir"]     as [number, number, number];
-      if (r["ambient"]      !== undefined) inst.ambient      = Number(r["ambient"]);
-      if (r["shininess"]    !== undefined) inst.shininess    = Number(r["shininess"]);
-      if (r["lightColor"]   !== undefined) inst.lightColor   = r["lightColor"]   as [number, number, number];
+      if (r["lightDir"] !== undefined) inst.lightDir = r["lightDir"] as [number, number, number];
+      if (r["ambient"] !== undefined) inst.ambient = Number(r["ambient"]);
+      if (r["shininess"] !== undefined) inst.shininess = Number(r["shininess"]);
+      if (r["lightColor"] !== undefined) inst.lightColor = r["lightColor"] as [number, number, number];
       if (r["ambientColor"] !== undefined) inst.ambientColor = r["ambientColor"] as [number, number, number];
-      if (r["skyTop"]       !== undefined) inst.skyTop       = r["skyTop"]       as [number, number, number];
-      if (r["skyBottom"]    !== undefined) inst.skyBottom    = r["skyBottom"]    as [number, number, number];
-      if (r["fogColor"]     !== undefined) inst.fogColor     = r["fogColor"]     as [number, number, number];
-      if (r["fogNear"]      !== undefined) inst.fogNear      = Number(r["fogNear"]);
-      if (r["fogFar"]       !== undefined) inst.fogFar       = Number(r["fogFar"]);
-      if (r["ortho"]        !== undefined) inst.ortho        = !!r["ortho"];
-      if (r["fxaa"]         !== undefined) inst.fxaa         = !!r["fxaa"];
-      if (r["bloom"]        !== undefined) inst.bloom        = parseBloom(r["bloom"]);
-      if (r["shadow"]       !== undefined) {
+      if (r["skyTop"] !== undefined) inst.skyTop = r["skyTop"] as [number, number, number];
+      if (r["skyBottom"] !== undefined) inst.skyBottom = r["skyBottom"] as [number, number, number];
+      if (r["fogColor"] !== undefined) inst.fogColor = r["fogColor"] as [number, number, number];
+      if (r["fogNear"] !== undefined) inst.fogNear = Number(r["fogNear"]);
+      if (r["fogFar"] !== undefined) inst.fogFar = Number(r["fogFar"]);
+      if (r["ortho"] !== undefined) inst.ortho = !!r["ortho"];
+      if (r["fxaa"] !== undefined) inst.fxaa = !!r["fxaa"];
+      if (r["bloom"] !== undefined) inst.bloom = parseBloom(r["bloom"]);
+      if (r["shadow"] !== undefined) {
         if (r["shadow"] && typeof r["shadow"] === "object") {
           const s = r["shadow"] as Record<string, unknown>;
           inst.shadow = {
             resolution: Number(s.resolution ?? 1024),
-            bias:       Number(s.bias       ?? 0.005),
-            softness:   Number(s.softness   ?? 2),
-            far:        Number(s.far        ?? 100),
+            bias: Number(s.bias ?? 0.005),
+            softness: Number(s.softness ?? 2),
+            far: Number(s.far ?? 100),
           };
           if (!inst.shadowFbo) initShadow(inst, GlNode.createProgram);
         } else {
@@ -584,7 +585,7 @@ export class GlNode extends Node {
     if (!inst) return null;
     return resolveAll([def["gl-texture"], def["src"]], context, ([nameV, srcV]) => {
       const name = String(nameV);
-      const src  = String(srcV);
+      const src = String(srcV);
       const img = new Image();
       img.crossOrigin = "anonymous";
       return new Promise<NodeValue>((res) => {
@@ -622,7 +623,7 @@ export class GlNode extends Node {
     if (!inst) return null;
     return resolveObj(def, context, r => {
       const name = String(r["gl-atlas"]);
-      const src  = String(r["src"]);
+      const src = String(r["src"]);
       const cols = Number(r["cols"]) || 1;
       const rows = Number(r["rows"]) || 1;
       const img = new Image();
@@ -686,7 +687,7 @@ export class GlNode extends Node {
       } else {
         frames = r["frames"] as [number, number, number, number][];
       }
-      const fps  = r["fps"]  !== undefined ? Number(r["fps"])  : 12;
+      const fps = r["fps"] !== undefined ? Number(r["fps"]) : 12;
       const loop = r["loop"] !== undefined ? this.toBoolean(r["loop"]) : true;
       meta.anim = { frames, fps, loop, current: 0, elapsed: 0 };
       if (frames.length > 0) {
@@ -932,7 +933,7 @@ export class GlNode extends Node {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
     return resolveObj(def, context, r => {
-      const id   = String(r["gl-text"]);
+      const id = String(r["gl-text"]);
       const text = String(r["text"]);
       const font = r["font"] ? String(r["font"]) : "16px sans-serif";
       const fill = r["fill"] ? String(r["fill"]) : "#ffffff";
@@ -986,18 +987,18 @@ export class GlNode extends Node {
       if (!program) { console.error("[GL] Failed to compile shader:", name); return null; }
       const gl = inst.gl;
       const uniforms: Record<string, WebGLUniformLocation | null> = {
-        u_transform:  gl.getUniformLocation(program, "u_transform"),
+        u_transform: gl.getUniformLocation(program, "u_transform"),
         u_projection: gl.getUniformLocation(program, "u_projection"),
-        u_color:      gl.getUniformLocation(program, "u_color"),
-        u_uvRect:     gl.getUniformLocation(program, "u_uvRect"),
+        u_color: gl.getUniformLocation(program, "u_color"),
+        u_uvRect: gl.getUniformLocation(program, "u_uvRect"),
         u_useTexture: gl.getUniformLocation(program, "u_useTexture"),
-        u_texture:    gl.getUniformLocation(program, "u_texture"),
-        u_time:       gl.getUniformLocation(program, "u_time"),
+        u_texture: gl.getUniformLocation(program, "u_texture"),
+        u_time: gl.getUniformLocation(program, "u_time"),
         u_resolution: gl.getUniformLocation(program, "u_resolution"),
-        u_view:       gl.getUniformLocation(program, "u_view"),
-        u_model:      gl.getUniformLocation(program, "u_model"),
-        u_lightDir:   gl.getUniformLocation(program, "u_lightDir"),
-        u_ambient:    gl.getUniformLocation(program, "u_ambient"),
+        u_view: gl.getUniformLocation(program, "u_view"),
+        u_model: gl.getUniformLocation(program, "u_model"),
+        u_lightDir: gl.getUniformLocation(program, "u_lightDir"),
+        u_ambient: gl.getUniformLocation(program, "u_ambient"),
       };
       inst.shaders.set(name, { program, uniforms });
       return null;
@@ -1116,8 +1117,8 @@ export class GlNode extends Node {
       if (!enabled || enabled === "false") { inst.ssao = null; return null; }
       return resolveObj(def, context, r => {
         inst.ssao = {
-          radius:    Number(r["radius"]    ?? 0.5),
-          bias:      Number(r["bias"]      ?? 0.025),
+          radius: Number(r["radius"] ?? 0.5),
+          bias: Number(r["bias"] ?? 0.025),
           intensity: Number(r["intensity"] ?? 1.5),
         };
         if (!inst.ssaoProg) initSsao(inst, GlNode.createProgram);
@@ -1197,14 +1198,14 @@ export class GlNode extends Node {
         gravity: [grav[0] ?? 0, grav[1] ?? 0, grav[2] ?? 0],
         head: 0, data, vbo,
         x: 0, y: 0, z: 0,
-        speed:  Number(r["speed"]  ?? 3),
+        speed: Number(r["speed"] ?? 3),
         spread: Number(r["spread"] ?? Math.PI * 2),
-        dirX:   Number(r["dirX"]   ?? 0),
-        dirY:   Number(r["dirY"]   ?? -1),
-        dirZ:   Number(r["dirZ"]   ?? 0),
-        size:   Number(r["size"]   ?? 0.3),
+        dirX: Number(r["dirX"] ?? 0),
+        dirY: Number(r["dirY"] ?? -1),
+        dirZ: Number(r["dirZ"] ?? 0),
+        size: Number(r["size"] ?? 0.3),
         sizeEnd: r["sizeEnd"] !== undefined ? Number(r["sizeEnd"]) : 0,
-        color:    [color[0],    color[1],    color[2],    color[3]    ?? 1],
+        color: [color[0], color[1], color[2], color[3] ?? 1],
         colorEnd: [colorEnd[0], colorEnd[1], colorEnd[2], colorEnd[3] ?? 0],
         continuous: !!r["continuous"],
         rate: Number(r["rate"] ?? 100),
@@ -1391,8 +1392,8 @@ export class GlNode extends Node {
       if (_glDebug && time - _glPerfLastLog > 2000) {
         const n = _glPerfAccum.frames || 1;
         console.log(
-          `[GL] ${n} frames/2s | render: ${(_glPerfAccum.render/n).toFixed(2)}ms | ` +
-          `onFrame: ${(_glPerfAccum.onFrame/n).toFixed(2)}ms`
+          `[GL] ${n} frames/2s | render: ${(_glPerfAccum.render / n).toFixed(2)}ms | ` +
+          `onFrame: ${(_glPerfAccum.onFrame / n).toFixed(2)}ms`
         );
         _glPerfAccum = { render: 0, onFrame: 0, frames: 0 };
         _glPerfLastLog = time;
@@ -1501,15 +1502,15 @@ export class GlNode extends Node {
     // P = [2/vw, 0, -1; 0, -2/vh, 1; 0, 0, 1]
     // V = T(cx,cy) * S(z) * R * T(-cx-camX, -cy-camY)
     const projCam = _projCam9;
-    projCam[0] = 2 * z * cosR / vw;  projCam[1] = -2 * z * sinR / vh;  projCam[2] = 0;
-    projCam[3] = -2 * z * sinR / vw; projCam[4] = -2 * z * cosR / vh;  projCam[5] = 0;
-    projCam[6] = 2 * fx / vw - 1;    projCam[7] = -2 * fy / vh + 1;    projCam[8] = 1;
+    projCam[0] = 2 * z * cosR / vw; projCam[1] = -2 * z * sinR / vh; projCam[2] = 0;
+    projCam[3] = -2 * z * sinR / vw; projCam[4] = -2 * z * cosR / vh; projCam[5] = 0;
+    projCam[6] = 2 * fx / vw - 1; projCam[7] = -2 * fy / vh + 1; projCam[8] = 1;
 
     // Base projection (no camera) for fixed/UI entities
     const projBase = _projBase9;
-    projBase[0] = 2 / vw; projBase[1] = 0;       projBase[2] = 0;
-    projBase[3] = 0;      projBase[4] = -2 / vh;  projBase[5] = 0;
-    projBase[6] = -1;     projBase[7] = 1;         projBase[8] = 1;
+    projBase[0] = 2 / vw; projBase[1] = 0; projBase[2] = 0;
+    projBase[3] = 0; projBase[4] = -2 / vh; projBase[5] = 0;
+    projBase[6] = -1; projBase[7] = 1; projBase[8] = 1;
 
     const d = store.data;
     let drawCalls = 0;
@@ -1611,7 +1612,7 @@ export class GlNode extends Node {
         const c = vp[11] + sign * vp[8 + row];
         const dd = vp[15] + sign * vp[12 + row];
         const len = Math.sqrt(a * a + b * b + c * c) || 1;
-        _frustum[i * 4]     = a / len;
+        _frustum[i * 4] = a / len;
         _frustum[i * 4 + 1] = b / len;
         _frustum[i * 4 + 2] = c / len;
         _frustum[i * 4 + 3] = dd / len;
@@ -1650,10 +1651,10 @@ export class GlNode extends Node {
 
     const applyBlendMode = (mode: string | undefined) => {
       switch (mode) {
-        case "additive":  gl.blendFunc(gl.SRC_ALPHA, gl.ONE); break;
-        case "multiply":  gl.blendFunc(gl.DST_COLOR, gl.ONE_MINUS_SRC_ALPHA); break;
-        case "screen":    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_COLOR); break;
-        default:          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); break;
+        case "additive": gl.blendFunc(gl.SRC_ALPHA, gl.ONE); break;
+        case "multiply": gl.blendFunc(gl.DST_COLOR, gl.ONE_MINUS_SRC_ALPHA); break;
+        case "screen": gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_COLOR); break;
+        default: gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); break;
       }
     };
 
@@ -1729,7 +1730,8 @@ export class GlNode extends Node {
       if (usingBatchProg) switchToLegacyProg();
 
       const b = slot * STRIDE;
-      const meta = store.meta[slot]!;
+      const meta = store.meta[slot];
+      if (!meta) return;
       const isFixed = !!(d[b + F_FLAGS] & FLAG_FIXED);
       const activeProj = isFixed ? projBase : projCam;
 
@@ -1757,8 +1759,8 @@ export class GlNode extends Node {
       const verts = meta.vertices
         ? new Float32Array(meta.vertices)
         : meta.type === "triangle" ? TRI_VERTS
-        : meta.type === "circle"   ? CIRCLE_VERTS
-        : QUAD_VERTS;
+          : meta.type === "circle" ? CIRCLE_VERTS
+            : QUAD_VERTS;
       gl.bufferData(gl.ARRAY_BUFFER, verts, gl.DYNAMIC_DRAW);
 
       // Color
@@ -1798,7 +1800,7 @@ export class GlNode extends Node {
       const rad = ((wt ? wt[2] : d[b + F_ANGLE]) * Math.PI) / 180;
       const cos = Math.cos(rad), sin = Math.sin(rad);
       const ew = d[b + F_W], eh = d[b + F_H];
-      _xform9[0] = ew * cos;  _xform9[1] = ew * sin; _xform9[2] = 0;
+      _xform9[0] = ew * cos; _xform9[1] = ew * sin; _xform9[2] = 0;
       _xform9[3] = -eh * sin; _xform9[4] = eh * cos; _xform9[5] = 0;
       _xform9[6] = wt ? wt[0] : d[b + F_X]; _xform9[7] = wt ? wt[1] : d[b + F_Y]; _xform9[8] = 1;
       gl.uniformMatrix3fv(transformLoc, false, _xform9);
@@ -1808,11 +1810,11 @@ export class GlNode extends Node {
         gl.lineWidth(meta.lineWidth);
       }
 
-      const mode = meta.type === "points"     ? gl.POINTS
-                 : meta.type === "circle"      ? gl.TRIANGLE_FAN
-                 : meta.type === "line"        ? gl.LINES
-                 : meta.type === "line-strip"  ? gl.LINE_STRIP
-                 : gl.TRIANGLES;
+      const mode = meta.type === "points" ? gl.POINTS
+        : meta.type === "circle" ? gl.TRIANGLE_FAN
+          : meta.type === "line" ? gl.LINES
+            : meta.type === "line-strip" ? gl.LINE_STRIP
+              : gl.TRIANGLES;
       applyBlendMode(meta.blend);
       gl.drawArrays(mode, 0, verts.length / 2);
       drawCalls++;
@@ -2046,7 +2048,8 @@ export class GlNode extends Node {
         }
       }
 
-      const meta = store.meta[slot]!;
+      const meta = store.meta[slot];
+      if (!meta) continue;
 
       // Light entities are data-only, not rendered as geometry
       if (meta.type === "light") continue;
@@ -2164,7 +2167,7 @@ export class GlNode extends Node {
           const singleBuf = _singleBuf;
           for (let i = 0; i < vertCount; i++) {
             const off = i * STRIDE_3D;
-            singleBuf[off]     = verts[i * 2];      // x (local)
+            singleBuf[off] = verts[i * 2];      // x (local)
             singleBuf[off + 1] = verts[i * 2 + 1];  // y (local)
             singleBuf[off + 2] = 0;                  // z (local)
             singleBuf[off + 3] = 0;                  // normal x
@@ -2183,11 +2186,11 @@ export class GlNode extends Node {
           if ((meta.type === "line" || meta.type === "line-strip") && meta.lineWidth) {
             gl.lineWidth(meta.lineWidth);
           }
-          const glMode = meta.type === "points"     ? gl.POINTS
-                       : meta.type === "line"        ? gl.LINES
-                       : meta.type === "line-strip"  ? gl.LINE_STRIP
-                       : meta.type === "circle"      ? gl.TRIANGLE_FAN
-                       : gl.TRIANGLES;
+          const glMode = meta.type === "points" ? gl.POINTS
+            : meta.type === "line" ? gl.LINES
+              : meta.type === "line-strip" ? gl.LINE_STRIP
+                : meta.type === "circle" ? gl.TRIANGLE_FAN
+                  : gl.TRIANGLES;
           applyBlendMode(meta.blend);
           gl.drawArrays(glMode, 0, vertCount);
           drawCalls++;
@@ -2226,11 +2229,11 @@ export class GlNode extends Node {
           // Inverse squared scale for normal matrix in shader: 1/w², 1/h², 1/d²
           const invSqW = ew ? 1 / (ew * ew) : 1, invSqH = eh ? 1 / (eh * eh) : 1, invSqD = ed ? 1 / (ed * ed) : 1;
           // model matrix (column-major, 16 floats)
-          instData[instOffset++] = model[0];  instData[instOffset++] = model[1];
-          instData[instOffset++] = model[2];  instData[instOffset++] = model[3];
-          instData[instOffset++] = model[4];  instData[instOffset++] = model[5];
-          instData[instOffset++] = model[6];  instData[instOffset++] = model[7];
-          instData[instOffset++] = model[8];  instData[instOffset++] = model[9];
+          instData[instOffset++] = model[0]; instData[instOffset++] = model[1];
+          instData[instOffset++] = model[2]; instData[instOffset++] = model[3];
+          instData[instOffset++] = model[4]; instData[instOffset++] = model[5];
+          instData[instOffset++] = model[6]; instData[instOffset++] = model[7];
+          instData[instOffset++] = model[8]; instData[instOffset++] = model[9];
           instData[instOffset++] = model[10]; instData[instOffset++] = model[11];
           instData[instOffset++] = model[12]; instData[instOffset++] = model[13];
           instData[instOffset++] = model[14]; instData[instOffset++] = model[15];
@@ -2270,7 +2273,7 @@ export class GlNode extends Node {
       // Can this entity be batched?
       const isBatchable = !meta.shader && !meta.vertices
         && (meta.type === "quad" || meta.type === "triangle" || meta.type === "circle"
-        || meta.type === "sphere" || meta.type === "cylinder" || meta.type === "cone" || meta.type === "ramp" || !meta.type);
+          || meta.type === "sphere" || meta.type === "cylinder" || meta.type === "cone" || meta.type === "ramp" || !meta.type);
 
       if (!isBatchable) {
         flushBatch();

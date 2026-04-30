@@ -64,14 +64,29 @@ function pushCookie(context: Context, cookie: string): void {
   }
 }
 
-function buildCookie(value: string, maxAge?: number): string {
+function shouldUseSecureCookie(context: Context): boolean {
+  const baseUrl = process.env.BASE_URL;
+  if (baseUrl && /^https:\/\//i.test(baseUrl)) return true;
+
+  const forwardedProto = context.request?.headers?.["x-forwarded-proto"];
+  if (typeof forwardedProto === "string") {
+    return forwardedProto.split(",")[0].trim().toLowerCase() === "https";
+  }
+
+  return false;
+}
+
+function buildCookie(context: Context, value: string, maxAge?: number): string {
   const parts = [
     `${COOKIE_NAME}=${value}`,
     "Path=/",
     "HttpOnly",
     "SameSite=Lax",
-    "Secure",
   ];
+
+  if (shouldUseSecureCookie(context)) {
+    parts.push("Secure");
+  }
 
   if (maxAge !== undefined) {
     parts.push(`Max-Age=${maxAge}`);
@@ -108,7 +123,7 @@ async function initSession(
     context.request.cookies[COOKIE_NAME] = id;
   }
 
-  const cookie = buildCookie(id);
+  const cookie = buildCookie(context, id);
   pushCookie(context, cookie);
 
   return { type: "session", action: "create", sessionId: id, cookie };
@@ -128,7 +143,7 @@ async function destroySession(context: Context): Promise<SessionResult> {
 
   context.session = {};
 
-  const cookie = buildCookie("", 0);
+  const cookie = buildCookie(context, "", 0);
   pushCookie(context, cookie);
 
   return {
@@ -178,7 +193,7 @@ async function setSessionValues(
 
   if (isNew) {
     result.sessionId = sessionId;
-    result.cookie = buildCookie(sessionId);
+    result.cookie = buildCookie(context, sessionId);
     pushCookie(context, result.cookie);
   }
 
@@ -205,14 +220,32 @@ async function regenerateSession(context: Context): Promise<SessionResult> {
 async function loadSession(context: Context): Promise<null> {
   const sessionId = getSessionId(context);
   if (!sessionId) {
-    context.session = {};
+    const method = context.request?.method?.toUpperCase() ?? "GET";
+    if (["GET", "HEAD", "OPTIONS"].includes(method)) {
+      await initSession(context, {});
+    } else {
+      context.session = {};
+    }
     return null;
   }
 
   const cache = Cache.getInstance();
   const sessionData = await cache.get<SessionData>(PREFIX + sessionId);
 
-  const data = sessionData?.data ?? {};
+  if (!sessionData) {
+    const restoredData: Record<string, unknown> = {
+      _csrf: randomBytes(32).toString("hex"),
+    };
+    await cache.set(PREFIX + sessionId, {
+      id: sessionId,
+      data: restoredData,
+      createdAt: Date.now(),
+    }, TTL);
+    context.session = restoredData;
+    return null;
+  }
+
+  const data = sessionData.data ?? {};
 
   // Auto-generate CSRF token if missing
   if (!data._csrf) {
