@@ -351,7 +351,7 @@ export class EntityNode extends Node {
             case "visible": {
               const vis = this.toBoolean(v);
               if (vis) d[b + F_FLAGS] |= FLAG_VISIBLE;
-              else     d[b + F_FLAGS] &= ~FLAG_VISIBLE;
+              else d[b + F_FLAGS] &= ~FLAG_VISIBLE;
               meta.dirty |= DIRTY_VISUAL;
               store.setChildrenVisible(slot, vis);
               break;

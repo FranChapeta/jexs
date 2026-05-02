@@ -214,6 +214,8 @@ export class GlNode extends Node {
         onFramePending: false,
         onFrameLatestTime: 0,
         onFrameLatestDelta: 0,
+        onFrameLastDuration: 0,
+        onFrameBudgetMs: r["budget"] !== undefined ? Number(r["budget"]) : 8,
         lastTime: 0,
         fit,
         vpScale: 1,
@@ -370,7 +372,7 @@ export class GlNode extends Node {
         GlNode.scheduleRender(inst);
       };
 
-      (context as Record<string, unknown>)._onPhysicsStep = (sel: string) => {
+(context as Record<string, unknown>)._onPhysicsStep = (sel: string) => {
         const i = GlNode.instances.get(sel);
         if (i) { i.dirty = true; GlNode.scheduleRender(i); }
       };
@@ -1328,33 +1330,57 @@ export class GlNode extends Node {
       return;
     }
 
-    const runLatest = (): void => {
-      if (!inst.onFrame || !inst.frameContext) {
-        inst.onFrameRunning = false;
-        inst.onFramePending = false;
-        return;
-      }
-
+    // Budget guard: if previous on-frame ran over budget, defer this RAF's invocation
+    // to a microtask so render and input get a clear lane. Latest time/delta are
+    // captured above, so the deferred run sees the most recent values.
+    if (inst.onFrameLastDuration > inst.onFrameBudgetMs) {
       inst.onFrameRunning = true;
-      const frameCtx = {
-        ...inst.frameContext,
-        glTime: inst.onFrameLatestTime,
-        glDelta: inst.onFrameLatestDelta,
-      };
+      Promise.resolve().then(() => GlNode.runOnFrameOnce(inst));
+      return;
+    }
 
-      Promise.resolve(runSteps(inst.onFrame, frameCtx))
-        .catch(err => console.error("[GL] Error in on-frame steps:", err))
-        .finally(() => {
-          if (inst.onFramePending) {
-            inst.onFramePending = false;
-            runLatest();
-            return;
-          }
-          inst.onFrameRunning = false;
-        });
+    GlNode.runOnFrameOnce(inst);
+  }
+
+  private static runOnFrameOnce(inst: GlInstance): void {
+    if (!inst.onFrame || !inst.frameContext) {
+      inst.onFrameRunning = false;
+      inst.onFramePending = false;
+      return;
+    }
+
+    inst.onFrameRunning = true;
+    const frameCtx = {
+      ...inst.frameContext,
+      glTime: inst.onFrameLatestTime,
+      glDelta: inst.onFrameLatestDelta,
     };
 
-    runLatest();
+    const _t0 = performance.now();
+    const drain = (): void => {
+      inst.onFrameLastDuration = performance.now() - _t0;
+      if (inst.onFramePending) {
+        inst.onFramePending = false;
+        GlNode.runOnFrameOnce(inst);
+        return;
+      }
+      inst.onFrameRunning = false;
+    };
+
+    let r: unknown;
+    try {
+      r = runSteps(inst.onFrame, frameCtx);
+    } catch (err) {
+      console.error("[GL] Error in on-frame steps:", err);
+      drain();
+      return;
+    }
+
+    if (r instanceof Promise) {
+      r.catch(err => console.error("[GL] Error in on-frame steps:", err)).finally(drain);
+    } else {
+      drain();
+    }
   }
 
   static scheduleRender(inst: GlInstance): void {
@@ -1393,15 +1419,18 @@ export class GlNode extends Node {
       }
 
       // Apply fixed-timestep interpolation for smooth rendering.
-      // Skip interpolation for the camera-follow entity so camera and
-      // rendered position use the same raw physics position (prevents jitter).
+      // Skip interpolation entirely when not rendering this frame — the apply/restore
+      // round trip is O(N) and pointless if no draw call follows. Skip for the
+      // camera-follow entity so camera and rendered position use the same raw
+      // physics position (prevents jitter).
       const store = inst.store;
-      const hasInterp = store.interpolationAlpha < 1;
-      const followSlot = inst.camera.follow ? store.slot(inst.camera.follow) : -1;
+      const willRender = inst.dirty;
+      const hasInterp = willRender && store.interpolationAlpha < 1;
+      const followSlot = (hasInterp && inst.camera.follow) ? store.slot(inst.camera.follow) : -1;
       if (hasInterp) store.applyInterpolation(followSlot);
 
       const _rt0 = performance.now();
-      if (inst.dirty) GlNode.render(inst, delta);
+      if (willRender) GlNode.render(inst, delta);
       const _rt1 = performance.now();
 
       if (hasInterp) store.restoreFromInterpolation();
@@ -1447,9 +1476,19 @@ export class GlNode extends Node {
   private static tickTweensAndDispatch(inst: GlInstance, dt: number): void {
     const callbacks = tickTweens(inst, dt);
     if (callbacks) {
+      // Sync-fast-path: run sync callbacks inline, only schedule a microtask for async ones.
+      // Avoids N microtask schedules per frame when many tweens complete at once.
       for (const cb of callbacks) {
-        Promise.resolve(runSteps(cb.then, cb.context))
-          .catch(err => console.error("[GL] Error in tween steps:", err));
+        let r: unknown;
+        try {
+          r = runSteps(cb.then, cb.context);
+        } catch (err) {
+          console.error("[GL] Error in tween steps:", err);
+          continue;
+        }
+        if (r instanceof Promise) {
+          r.catch(err => console.error("[GL] Error in tween steps:", err));
+        }
       }
     }
     if (inst.tweens.length > 0 || callbacks) GlNode.scheduleRender(inst);
@@ -1495,24 +1534,8 @@ export class GlNode extends Node {
 
     gl.viewport(vpX, ch - vpY - vpH, vpW, vpH);
 
-    // Sort by z if needed — insertion sort for nearly-sorted (few Z changes), built-in otherwise
-    if (store.zDirty) {
-      const d = store.data;
-      const ord = store.order;
-      if (store.zDirtyCount < 10) {
-        for (let i = 1; i < ord.length; i++) {
-          const key = ord[i];
-          const keyZ = d[key * STRIDE + F_Z];
-          let j = i - 1;
-          while (j >= 0 && d[ord[j] * STRIDE + F_Z] > keyZ) { ord[j + 1] = ord[j]; j--; }
-          ord[j + 1] = key;
-        }
-      } else {
-        ord.sort((a, b) => d[a * STRIDE + F_Z] - d[b * STRIDE + F_Z]);
-      }
-      store.zDirty = false;
-      store.zDirtyCount = 0;
-    }
+    // Sort by z if needed — delegates to EntityStore so slotToOrderIdx is rebuilt atomically
+    if (store.zDirty) store.sortByZ();
 
     // Build camera matrix
     const cam = inst.camera;

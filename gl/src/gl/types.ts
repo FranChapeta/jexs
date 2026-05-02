@@ -69,6 +69,8 @@ export interface GlInstance {
   onFramePending: boolean;
   onFrameLatestTime: number;
   onFrameLatestDelta: number;
+  onFrameLastDuration: number;
+  onFrameBudgetMs: number;
   lastTime: number;
   fit: string;
   vpScale: number;

@@ -242,7 +242,7 @@ export class EntityStore {
 
   /** Remove by ID. Defers automatically when inside a physics step. */
   remove(id: string): boolean {
-    const slot = this.idToSlot.get(id);
+    let slot = this.idToSlot.get(id);
     if (slot === undefined) return false;
     if (this.deferringRemovals) {
       this.deferredRemovals.push(id);
@@ -269,6 +269,14 @@ export class EntityStore {
       for (const childId of childrenCopy) {
         this.remove(childId);
       }
+      // Re-lookup slot: a child's swap-and-pop may have moved this entity to a
+      // different slot (e.g. if this entity was the last in the store and the
+      // child's removal swapped it down). Without this re-lookup the subsequent
+      // order and data operations would target the now-stale original slot,
+      // leaving a ghost entry in store.order and corrupting store.count.
+      const movedSlot = this.idToSlot.get(id);
+      if (movedSlot === undefined) return true; // removed as a cascade side-effect
+      slot = movedSlot;
     }
 
     const last = this.count - 1;
@@ -553,6 +561,11 @@ export class EntityStore {
    * Lerp positions in-place for rendering. Call before drawing.
    * Overwrites data[F_X/F_Y/F_Z] with interpolated values and
    * stashes the real physics positions into prevPositions.
+   *
+   * Invalidates worldTransform cache for any entity whose position changed —
+   * stale caches built before this call would otherwise propagate through
+   * child entities during the render pass and during any on-frame work that
+   * reads `worldX/worldY/worldZ` after the matching restoreFromInterpolation.
    */
   applyInterpolation(skipSlot = -1): void {
     const d = this.data, p = this.prevPositions;
@@ -561,14 +574,13 @@ export class EntityStore {
     for (let i = 0; i < this.count; i++) {
       const b = i * STRIDE, pb = i * 3;
       const cx = d[b + F_X], cy = d[b + F_Y], cz = d[b + F_Z];
-      // Skip interpolation for the camera-follow entity so it stays
-      // at its raw physics position (matching what the camera reads)
       if (i !== skipSlot) {
         d[b + F_X] = p[pb]     * oneMinusAlpha + cx * alpha;
         d[b + F_Y] = p[pb + 1] * oneMinusAlpha + cy * alpha;
         d[b + F_Z] = p[pb + 2] * oneMinusAlpha + cz * alpha;
+        const m = this.meta[i];
+        if (m && m.worldTransform) m.worldTransform = null;
       }
-      // Stash physics positions in prevPositions temporarily
       p[pb]     = cx;
       p[pb + 1] = cy;
       p[pb + 2] = cz;
@@ -580,11 +592,43 @@ export class EntityStore {
     const d = this.data, p = this.prevPositions;
     for (let i = 0; i < this.count; i++) {
       const b = i * STRIDE, pb = i * 3;
-      // Restore real physics positions from where applyInterpolation stashed them
       d[b + F_X] = p[pb];
       d[b + F_Y] = p[pb + 1];
       d[b + F_Z] = p[pb + 2];
+      const m = this.meta[i];
+      if (m && m.worldTransform) m.worldTransform = null;
     }
+  }
+
+  /**
+   * Sort draw order by Z ascending and rebuild the slotToOrderIdx reverse index.
+   * Must be called instead of sorting `order` directly — any external sort would
+   * leave slotToOrderIdx stale, causing subsequent remove() calls to corrupt order.
+   */
+  sortByZ(): void {
+    const d = this.data;
+    if (this.zDirtyCount < 10) {
+      // Insertion sort: fast for nearly-sorted arrays (few Z changes per frame)
+      for (let i = 1; i < this.order.length; i++) {
+        const key = this.order[i];
+        const keyZ = d[key * STRIDE + F_Z];
+        let j = i - 1;
+        while (j >= 0 && d[this.order[j] * STRIDE + F_Z] > keyZ) {
+          this.order[j + 1] = this.order[j];
+          j--;
+        }
+        this.order[j + 1] = key;
+      }
+    } else {
+      this.order.sort((a, b) => d[a * STRIDE + F_Z] - d[b * STRIDE + F_Z]);
+    }
+    // Rebuild reverse index — the sort changes every entry's position.
+    this.slotToOrderIdx.clear();
+    for (let i = 0; i < this.order.length; i++) {
+      this.slotToOrderIdx.set(this.order[i], i);
+    }
+    this.zDirty = false;
+    this.zDirtyCount = 0;
   }
 
   /** Double the capacity. */

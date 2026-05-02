@@ -6,7 +6,7 @@
  * Works on both client (RAF) and server (setTimeout).
  */
 
-import { Node, Context, NodeValue, resolve, runSteps } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll, runSteps } from "@jexs/core";
 import {
   EntityStore,
   STRIDE,
@@ -530,7 +530,7 @@ export class PhysicsNode extends Node {
    * @example
    * { "physics-init": true, "gravity": [0, 980], "damping": 0.01 }
    */
-  async ["physics-init"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  ["physics-init"](def: Record<string, unknown>, context: Context): NodeValue {
     const selector = PhysicsNode.sel(context);
     if (!selector) { console.error("[Physics] No _glSelector on context"); return null; }
 
@@ -541,51 +541,51 @@ export class PhysicsNode extends Node {
     const store = stores?.[selector];
     if (!store) { console.error("[Physics] No entity store for", selector); return null; }
 
-    const config: PhysicsConfig = {
-      gravity: def.gravity
-        ? (await resolve(def.gravity, context) as [number, number])
-        : [0, 980],
-      damping: def.damping !== undefined
-        ? Number(await resolve(def.damping, context))
-        : 0.01,
-      bounds: def.bounds
-        ? (await resolve(def.bounds, context) as PhysicsConfig["bounds"])
-        : null,
-    };
-
-    const world: PhysicsWorld = {
-      config,
-      store,
-      handlers: [],
-      constraints: [],
-      loopId: null,
-      lastTime: 0,
-      accumulator: 0,
+    return resolveAll(
+      [def.gravity ?? null, def.damping ?? null, def.bounds ?? null],
       context,
-      paused: false,
-      onStep: (context._onPhysicsStep as ((selector: string) => void) | undefined)
-        ? () => (context._onPhysicsStep as (s: string) => void)(selector)
-        : null,
-    };
+      ([gravityRaw, dampingRaw, boundsRaw]) => {
+        const config: PhysicsConfig = {
+          gravity: gravityRaw ? gravityRaw as [number, number] : [0, 980],
+          damping: dampingRaw !== null ? Number(dampingRaw) : 0.01,
+          bounds: boundsRaw ? boundsRaw as PhysicsConfig["bounds"] : null,
+        };
 
-    worlds.set(selector, world);
-    startLoop(world);
-    return null;
+        const world: PhysicsWorld = {
+          config,
+          store,
+          handlers: [],
+          constraints: [],
+          loopId: null,
+          lastTime: 0,
+          accumulator: 0,
+          context,
+          paused: false,
+          onStep: (context._onPhysicsStep as ((selector: string) => void) | undefined)
+            ? () => (context._onPhysicsStep as (s: string) => void)(selector)
+            : null,
+        };
+
+        worlds.set(selector, world);
+        startLoop(world);
+        return null;
+      },
+    );
   }
 
-  async ["physics-pause"](_def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  ["physics-pause"](_def: Record<string, unknown>, context: Context): NodeValue {
     const w = worlds.get(PhysicsNode.sel(context));
     if (w) w.paused = true;
     return null;
   }
 
-  async ["physics-resume"](_def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  ["physics-resume"](_def: Record<string, unknown>, context: Context): NodeValue {
     const w = worlds.get(PhysicsNode.sel(context));
     if (w) { w.paused = false; w.lastTime = 0; }
     return null;
   }
 
-  async ["physics-destroy"](_def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  ["physics-destroy"](_def: Record<string, unknown>, context: Context): NodeValue {
     const selector = PhysicsNode.sel(context);
     const w = worlds.get(selector);
     if (w?.loopId != null) cancelFrame(w.loopId);
@@ -593,21 +593,21 @@ export class PhysicsNode extends Node {
     return null;
   }
 
-  async ["physics-apply"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  ["physics-apply"](def: Record<string, unknown>, context: Context): NodeValue {
     const selector = PhysicsNode.sel(context);
     const stores = context._entityStores as Record<string, EntityStore> | undefined;
     const store = stores?.[selector];
     if (!store) return null;
 
-    const id = String(await resolve(def["physics-apply"], context));
-    const slot = store.slot(id);
-    if (slot === -1) return null;
-
-    if (def.impulse) {
-      const imp = (await resolve(def.impulse, context)) as number[];
-      applyImpulse(store, slot, imp[0], imp[1], imp[2]);
-    }
-    return null;
+    return resolveAll([def["physics-apply"], def.impulse ?? null], context, ([idRaw, impRaw]) => {
+      const slot = store.slot(String(idRaw));
+      if (slot === -1) return null;
+      if (impRaw) {
+        const imp = impRaw as number[];
+        applyImpulse(store, slot, imp[0], imp[1], imp[2]);
+      }
+      return null;
+    });
   }
 
   /**
@@ -616,47 +616,46 @@ export class PhysicsNode extends Node {
    * @param {boolean} physics-step Pass `true` to step.
    * @param {number} dt Delta time in seconds (default `1/60`).
    */
-  async ["physics-step"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  ["physics-step"](def: Record<string, unknown>, context: Context): NodeValue {
     const selector = PhysicsNode.sel(context);
     const world = worlds.get(selector);
     if (!world) return null;
 
-    const dt = def.dt !== undefined
-      ? Number(await resolve(def.dt, context))
-      : 1 / 60;
-
-    const contacts = physicsStep(world.store, world.config, dt, world.constraints);
-    world.store.deferringRemovals = true;
-    await fireCollisionHandlers(world, contacts);
-    world.store.flushRemovals();
-    if (world.onStep) world.onStep();
-    return contacts.length;
+    return resolve(def.dt ?? null, context, dtRaw => {
+      const dt = dtRaw !== null ? Number(dtRaw) : 1 / 60;
+      const contacts = physicsStep(world.store, world.config, dt, world.constraints);
+      world.store.deferringRemovals = true;
+      const fired = fireCollisionHandlers(world, contacts);
+      const finish = (): number => {
+        world.store.flushRemovals();
+        if (world.onStep) world.onStep();
+        return contacts.length;
+      };
+      return fired instanceof Promise ? fired.then(finish) : finish();
+    });
   }
 
   // ── physics-raycast — cast a ray and return sorted hits (works on client & server) ──
   // { "physics-raycast": true, "from": {"x":0,"y":0,"z":0}, "dir": {"x":1,"y":0,"z":0}, "mask": ["enemy"] }
 
-  async ["physics-raycast"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  ["physics-raycast"](def: Record<string, unknown>, context: Context): NodeValue {
     const selector = PhysicsNode.sel(context);
     const stores = context._entityStores as Record<string, EntityStore> | undefined;
     const store = stores?.[selector];
     if (!store) return [];
 
-    const from = (await resolve(def["from"], context)) as { x: number; y: number; z?: number } | null;
-    const dir = (await resolve(def["dir"], context)) as { x: number; y: number; z?: number } | null;
-    if (!from || !dir) return [];
-
-    const maskArr = def["mask"] !== undefined
-      ? (await resolve(def["mask"], context)) as string[]
-      : null;
-    const maskSet = maskArr ? new Set(maskArr) : null;
-
-    return raycastStore(
-      store,
-      from.x, from.y, from.z ?? 0,
-      dir.x, dir.y, dir.z ?? 0,
-      maskSet,
-    );
+    return resolveAll([def["from"], def["dir"], def["mask"] ?? null], context, ([fromRaw, dirRaw, maskRaw]) => {
+      const from = fromRaw as { x: number; y: number; z?: number } | null;
+      const dir = dirRaw as { x: number; y: number; z?: number } | null;
+      if (!from || !dir) return [];
+      const maskSet = maskRaw ? new Set(maskRaw as string[]) : null;
+      return raycastStore(
+        store,
+        from.x, from.y, from.z ?? 0,
+        dir.x, dir.y, dir.z ?? 0,
+        maskSet,
+      );
+    });
   }
 }
 
@@ -674,24 +673,27 @@ export class CollisionNode extends Node {
    * @example
    * { "collision-on": true, "groups": ["player", "enemy"], "do": [{ "var": "$collisionA" }] }
    */
-  async ["collision-on"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  ["collision-on"](def: Record<string, unknown>, context: Context): NodeValue {
     const w = worlds.get(PhysicsNode.sel(context));
     if (!w) return null;
 
-    const groups = (await resolve(def.groups, context)) as [string, string];
-    const id = def.id ? String(await resolve(def.id, context)) : `h${w.handlers.length}`;
-    const steps = Array.isArray(def.do) ? def.do as unknown[] : [];
-
-    w.handlers.push({ id, groups, do: steps });
-    return id;
+    return resolveAll([def.groups, def.id ?? null], context, ([groupsRaw, idRaw]) => {
+      const groups = groupsRaw as [string, string];
+      const id = idRaw !== null ? String(idRaw) : `h${w.handlers.length}`;
+      const steps = Array.isArray(def.do) ? def.do as unknown[] : [];
+      w.handlers.push({ id, groups, do: steps });
+      return id;
+    });
   }
 
-  async ["collision-off"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  ["collision-off"](def: Record<string, unknown>, context: Context): NodeValue {
     const w = worlds.get(PhysicsNode.sel(context));
     if (!w) return null;
-    const id = String(await resolve(def["collision-off"], context));
-    w.handlers = w.handlers.filter(h => h.id !== id);
-    return null;
+    return resolve(def["collision-off"], context, idRaw => {
+      const id = String(idRaw);
+      w.handlers = w.handlers.filter(h => h.id !== id);
+      return null;
+    });
   }
 }
 
@@ -711,72 +713,94 @@ export class JointNode extends Node {
    * @example
    * { "joint-add": "rope", "type": "spring", "a": "anchor", "b": "ball", "restLength": 100 }
    */
-  async ["joint-add"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  ["joint-add"](def: Record<string, unknown>, context: Context): NodeValue {
     const w = worlds.get(PhysicsNode.sel(context));
     if (!w) return null;
 
-    const id = String(await resolve(def["joint-add"], context));
-    const type = (def.type ? String(await resolve(def.type, context)) : "distance") as ConstraintType;
+    return resolveAll(
+      [
+        def["joint-add"],
+        def.type ?? null,
+        def.a,
+        def.b,
+        def.restLength ?? null,
+        def.anchorA ?? null,
+        def.anchorB ?? null,
+        def.stiffness ?? null,
+        def.damping ?? null,
+        def.minAngle ?? null,
+        def.maxAngle ?? null,
+      ],
+      context,
+      ([idRaw, typeRaw, aRaw, bRaw, restRaw, anchorARaw, anchorBRaw, stiffRaw, dampRaw, minAngleRaw, maxAngleRaw]) => {
+        const id = String(idRaw);
+        const type = (typeRaw !== null ? String(typeRaw) : "distance") as ConstraintType;
+        const entityA = String(aRaw);
+        const entityB = String(bRaw);
+        const slotA = w.store.slot(entityA);
+        const slotB = w.store.slot(entityB);
+        if (slotA === -1 || slotB === -1) return null;
 
-    const entityA = String(await resolve(def.a, context));
-    const entityB = String(await resolve(def.b, context));
-    const slotA = w.store.slot(entityA);
-    const slotB = w.store.slot(entityB);
-    if (slotA === -1 || slotB === -1) return null;
+        let restLength: number;
+        if (restRaw !== null) {
+          restLength = Number(restRaw);
+        } else {
+          const d = w.store.data;
+          const ba = slotA * STRIDE, bb = slotB * STRIDE;
+          const dx = d[bb + F_X] - d[ba + F_X];
+          const dy = d[bb + F_Y] - d[ba + F_Y];
+          restLength = Math.sqrt(dx * dx + dy * dy);
+        }
 
-    // Default rest length: current distance between entities
-    let restLength: number;
-    if (def.restLength !== undefined) {
-      restLength = Number(await resolve(def.restLength, context));
-    } else {
-      const d = w.store.data;
-      const ba = slotA * STRIDE, bb = slotB * STRIDE;
-      const dx = d[bb + F_X] - d[ba + F_X];
-      const dy = d[bb + F_Y] - d[ba + F_Y];
-      restLength = Math.sqrt(dx * dx + dy * dy);
-    }
+        const anchorA = (anchorARaw ?? [0, 0]) as [number, number];
+        const anchorB = (anchorBRaw ?? [0, 0]) as [number, number];
 
-    const anchorA = def.anchorA ? (await resolve(def.anchorA, context)) as [number, number] : [0, 0];
-    const anchorB = def.anchorB ? (await resolve(def.anchorB, context)) as [number, number] : [0, 0];
+        const constraint: Constraint = {
+          id,
+          type,
+          entityA,
+          entityB,
+          restLength,
+          stiffness: stiffRaw !== null ? Number(stiffRaw) : 0.5,
+          damping: dampRaw !== null ? Number(dampRaw) : 0.1,
+          anchorA,
+          anchorB,
+          minAngle: minAngleRaw !== null ? Number(minAngleRaw) : NaN,
+          maxAngle: maxAngleRaw !== null ? Number(maxAngleRaw) : NaN,
+        };
 
-    const constraint: Constraint = {
-      id,
-      type,
-      entityA,
-      entityB,
-      restLength,
-      stiffness: def.stiffness !== undefined ? Number(await resolve(def.stiffness, context)) : 0.5,
-      damping: def.damping !== undefined ? Number(await resolve(def.damping, context)) : 0.1,
-      anchorA: anchorA as [number, number],
-      anchorB: anchorB as [number, number],
-      minAngle: def.minAngle !== undefined ? Number(await resolve(def.minAngle, context)) : NaN,
-      maxAngle: def.maxAngle !== undefined ? Number(await resolve(def.maxAngle, context)) : NaN,
-    };
+        const idx = w.constraints.findIndex(c => c.id === id);
+        if (idx !== -1) w.constraints[idx] = constraint;
+        else w.constraints.push(constraint);
 
-    // Replace existing constraint with same ID, or push new
-    const idx = w.constraints.findIndex(c => c.id === id);
-    if (idx !== -1) w.constraints[idx] = constraint;
-    else w.constraints.push(constraint);
-
-    return id;
+        return id;
+      },
+    );
   }
 
   /** Remove a constraint by ID. { "joint-remove": "myJoint" } */
-  async ["joint-remove"](def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  ["joint-remove"](def: Record<string, unknown>, context: Context): NodeValue {
     const w = worlds.get(PhysicsNode.sel(context));
     if (!w) return null;
-    const id = String(await resolve(def["joint-remove"], context));
-    w.constraints = w.constraints.filter(c => c.id !== id);
-    return null;
+    return resolve(def["joint-remove"], context, idRaw => {
+      const id = String(idRaw);
+      w.constraints = w.constraints.filter(c => c.id !== id);
+      return null;
+    });
   }
 }
 
 // ─── Collision handler dispatch ──────────────────────────────────────────────
 
-async function fireCollisionHandlers(world: PhysicsWorld, contacts: Contact[]): Promise<void> {
+function fireCollisionHandlers(world: PhysicsWorld, contacts: Contact[]): void | Promise<void> {
+  // Sync-fast-path: walk all contacts/handlers inline; only return a Promise chain
+  // when a handler actually returns one. Sequential ordering is preserved on the
+  // async path so `world.context.collisionX` is not clobbered between handlers.
+  let chain: Promise<unknown> | null = null;
   for (const { slotA, slotB, nx, ny, nz } of contacts) {
     const ma = world.store.meta[slotA]!, mb = world.store.meta[slotB]!;
     for (const h of world.handlers) {
+      if (h.do.length === 0) continue;
       const [g1, g2] = h.groups;
       let ca: string, cb: string, cnx: number, cny: number, cnz: number;
       if (ma.group === g1 && mb.group === g2) {
@@ -784,16 +808,25 @@ async function fireCollisionHandlers(world: PhysicsWorld, contacts: Contact[]): 
       } else if (ma.group === g2 && mb.group === g1) {
         ca = mb.id; cb = ma.id; cnx = -nx; cny = -ny; cnz = -nz;
       } else continue;
-      if (h.do.length > 0) {
+
+      const run = (): unknown => {
         world.context.collisionA = ca;
         world.context.collisionB = cb;
         world.context.collisionNx = cnx;
         world.context.collisionNy = cny;
         world.context.collisionNz = cnz;
-        await runSteps(h.do, world.context);
+        return runSteps(h.do, world.context);
+      };
+
+      if (chain) {
+        chain = chain.then(run);
+      } else {
+        const r = run();
+        if (r instanceof Promise) chain = r;
       }
     }
   }
+  return chain ? chain.then(() => undefined) : undefined;
 }
 
 // ─── Simulation loop ─────────────────────────────────────────────────────────
@@ -830,12 +863,15 @@ function startLoop(world: PhysicsWorld): void {
     let contacts: Contact[] = [];
     let steps = 0;
 
-    // Fixed timestep: run as many FIXED_DT steps as accumulated time allows
+    // Fixed timestep: run as many FIXED_DT steps as accumulated time allows.
+    // Skip the microtask hop when collision handlers ran sync — await on undefined
+    // still queues a microtask, which adds up across many fixed steps per frame.
     while (world.accumulator >= FIXED_DT) {
       snapshotPositions(world.store);
       contacts = physicsStep(world.store, world.config, FIXED_DT, world.constraints);
       world.store.deferringRemovals = true;
-      await fireCollisionHandlers(world, contacts);
+      const fired = fireCollisionHandlers(world, contacts);
+      if (fired) await fired;
       world.accumulator -= FIXED_DT;
       steps++;
     }
