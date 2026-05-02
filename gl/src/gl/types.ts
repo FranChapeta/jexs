@@ -65,6 +65,10 @@ export interface GlInstance {
   onFrame: unknown[] | null;
   frameContext: Context | null;
   frameLoopContext: Context | null;  // pre-allocated context for onFrame (avoids spread per frame)
+  onFrameRunning: boolean;
+  onFramePending: boolean;
+  onFrameLatestTime: number;
+  onFrameLatestDelta: number;
   lastTime: number;
   fit: string;
   vpScale: number;

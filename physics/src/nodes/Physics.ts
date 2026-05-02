@@ -816,7 +816,7 @@ function snapshotPositions(store: EntityStore): void {
 }
 
 function startLoop(world: PhysicsWorld): void {
-  const tick = (time: number) => {
+  const tick = async (time: number) => {
     world.loopId = scheduleFrame(tick);
     if (world.paused) { world.lastTime = 0; world.accumulator = 0; return; }
 
@@ -831,19 +831,15 @@ function startLoop(world: PhysicsWorld): void {
     let steps = 0;
 
     // Fixed timestep: run as many FIXED_DT steps as accumulated time allows
-    const handlerBatches: Promise<unknown>[] = [];
     while (world.accumulator >= FIXED_DT) {
       snapshotPositions(world.store);
       contacts = physicsStep(world.store, world.config, FIXED_DT, world.constraints);
       world.store.deferringRemovals = true;
-      handlerBatches.push(fireCollisionHandlers(world, contacts));
+      await fireCollisionHandlers(world, contacts);
       world.accumulator -= FIXED_DT;
       steps++;
     }
-    // Handlers run in parallel — flush deferred removals when all complete
-    if (handlerBatches.length > 0) {
-      Promise.allSettled(handlerBatches).then(() => world.store.flushRemovals());
-    }
+    world.store.flushRemovals();
 
     // Interpolation alpha: how far into the next fixed step we are
     world.store.interpolationAlpha = world.accumulator / FIXED_DT;

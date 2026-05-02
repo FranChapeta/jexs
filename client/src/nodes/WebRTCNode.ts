@@ -10,6 +10,11 @@ let ws: WebSocket | null = null;
 let localId: string | null = null;
 let onMessageSteps: unknown[] | null = null;
 let onMessageContext: Context | null = null;
+const FAST_BUFFERED_AMOUNT_LIMIT = 128 * 1024;
+const pendingFastCoalescedByKey: Map<string, { peerId: string; data: unknown }> = new Map();
+let fastCoalesceFlushScheduled = false;
+let fastCoalesceProcessing = false;
+const FAST_COALESCE_FLUSH_MS = 16;
 
 /**
  * WebRTCNode — Client-side WebRTC peer connection management.
@@ -198,8 +203,10 @@ function doIce(def: Record<string, unknown>, context: Context): unknown {
 
 function doSend(def: Record<string, unknown>, context: Context): unknown {
   return resolveAll([def.id, def.data, def.channel ?? "data"], context, ([idRaw, data, chRaw]: unknown[]) => {
-    const channel = (String(chRaw) === "fast" ? fastChannels : channels).get(String(idRaw));
+    const isFast = String(chRaw) === "fast";
+    const channel = (isFast ? fastChannels : channels).get(String(idRaw));
     if (!channel || channel.readyState !== "open") return null;
+    if (isFast && channel.bufferedAmount > FAST_BUFFERED_AMOUNT_LIMIT) return null;
     channel.send(typeof data === "string" ? data : JSON.stringify(data));
     return null;
   });
@@ -207,10 +214,13 @@ function doSend(def: Record<string, unknown>, context: Context): unknown {
 
 function doBroadcast(def: Record<string, unknown>, context: Context): unknown {
   return resolveAll([def.data, def.channel ?? "data"], context, ([data, chRaw]: unknown[]) => {
-    const map = String(chRaw) === "fast" ? fastChannels : channels;
+    const isFast = String(chRaw) === "fast";
+    const map = isFast ? fastChannels : channels;
     const payload = typeof data === "string" ? data : JSON.stringify(data);
     for (const [, channel] of map) {
-      if (channel.readyState === "open") channel.send(payload);
+      if (channel.readyState !== "open") continue;
+      if (isFast && channel.bufferedAmount > FAST_BUFFERED_AMOUNT_LIMIT) continue;
+      channel.send(payload);
     }
     return null;
   });
@@ -268,15 +278,70 @@ function setupChannel(channel: RTCDataChannel, peerId: string, _label: string): 
       data = event.data;
     }
 
-    if (onMessageFn) onMessageFn(peerId, data);
-
-    if (onMessageSteps && onMessageContext) {
-      Promise.resolve(runSteps(onMessageSteps, { ...onMessageContext, rtcMessage: data, rtcPeerId: peerId }))
-        .catch(e => console.error("[WebRTC] on-message error:", e));
+    if (_label === "fast") {
+      const coalesceKey = getFastCoalesceKey(peerId, data);
+      if (coalesceKey) {
+        pendingFastCoalescedByKey.set(coalesceKey, { peerId, data });
+        scheduleFastCoalesceFlush();
+        return;
+      }
     }
+
+    dispatchRtcMessage(peerId, data);
   };
 
-  channel.onclose = () => { channels.delete(peerId); };
+  channel.onclose = () => {
+    channels.delete(peerId);
+    for (const [key, entry] of pendingFastCoalescedByKey) {
+      if (entry.peerId === peerId) pendingFastCoalescedByKey.delete(key);
+    }
+  };
+}
+
+function getFastCoalesceKey(peerId: string, data: unknown): string | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const message = data as Record<string, unknown>;
+  if (message.__coalesce !== true) return null;
+
+  const customKey = typeof message.__coalesceKey === "string" ? message.__coalesceKey.trim() : "";
+  if (customKey) return `${peerId}:${customKey}`;
+
+  const type = typeof message.type === "string" ? message.type : "message";
+  return `${peerId}:${type}`;
+}
+
+function scheduleFastCoalesceFlush(): void {
+  if (fastCoalesceFlushScheduled) return;
+  fastCoalesceFlushScheduled = true;
+  setTimeout(() => {
+    fastCoalesceFlushScheduled = false;
+    if (pendingFastCoalescedByKey.size === 0) return;
+    if (fastCoalesceProcessing) {
+      scheduleFastCoalesceFlush();
+      return;
+    }
+
+    const batch = Array.from(pendingFastCoalescedByKey.values());
+    pendingFastCoalescedByKey.clear();
+
+    fastCoalesceProcessing = true;
+    Promise.allSettled(batch.map(entry => Promise.resolve(dispatchRtcMessage(entry.peerId, entry.data))))
+      .finally(() => {
+        fastCoalesceProcessing = false;
+        if (pendingFastCoalescedByKey.size > 0) scheduleFastCoalesceFlush();
+      });
+  }, FAST_COALESCE_FLUSH_MS);
+}
+
+function dispatchRtcMessage(peerId: string, data: unknown): unknown {
+  if (onMessageFn) onMessageFn(peerId, data);
+
+  if (onMessageSteps && onMessageContext) {
+    return Promise.resolve(runSteps(onMessageSteps, { ...onMessageContext, rtcMessage: data, rtcPeerId: peerId }))
+      .catch(e => console.error("[WebRTC] on-message error:", e));
+  }
+
+  return null;
 }
 
 function signal(message: Record<string, unknown>): void {

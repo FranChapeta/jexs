@@ -26,6 +26,7 @@ interface TimerState {
   intervalMs: number;
   steps: unknown[];
   context: Context;
+  detach: boolean;
   timerId: ReturnType<typeof setTimeout> | null;
   count: number;
   startTime: number;
@@ -50,9 +51,10 @@ export class TimerNode extends Node {
    * @param {"start"|"stop"|"pause"|"resume"} tick Operation to perform.
    * @param {string} id Unique timer identifier.
    * @param {number} rate Tick rate in Hz (default `60`). Used on `"start"`.
+   * @param {boolean} detach Run `do` steps fire-and-forget each tick without waiting for completion.
    * @param {steps} do Steps to execute on each tick. Used on `"start"`.
    * @example
-   * { "tick": "start", "id": "game", "rate": 60, "do": [{ "var": "tick.dt" }] }
+   * { "tick": "start", "id": "game", "rate": 60, "detach": true, "do": [{ "var": "tick.dt" }] }
    */
   tick(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.tick, context, op => dispatch(String(op), def, context, "tick"));
@@ -148,17 +150,18 @@ function resume(
 // ─── Tick: compensating setTimeout loop ─────────────────────────────────────
 
 function startTick(def: Record<string, unknown>, context: Context): unknown {
-  return resolveAll([def.id, def.rate ?? 60], context, ([idRaw, rateRaw]: unknown[]) => {
+  return resolveAll([def.id, def.rate ?? 60, def.detach ?? false], context, ([idRaw, rateRaw, detachRaw]: unknown[]) => {
     const id = String(idRaw);
     const rate = Number(rateRaw);
     const steps = Array.isArray(def.do) ? def.do as unknown[] : [];
+    const detach = detachRaw === true || detachRaw === 1 || detachRaw === "1" || detachRaw === "true";
 
     const prev = ticks.get(id);
     if (prev?.timerId != null) clearTimeout(prev.timerId);
 
     const now = Date.now();
     const state: TimerState = {
-      id, intervalMs: 1000 / rate, steps, context,
+      id, intervalMs: 1000 / rate, steps, context, detach,
       timerId: null, count: 0, startTime: now, lastTime: now,
       paused: false, pausedAt: null, pausedTotal: 0,
     };
@@ -174,7 +177,7 @@ function scheduleTick(state: TimerState): void {
   const drift = now - state.lastTime - state.intervalMs;
   const delay = Math.max(0, state.intervalMs - (drift > 0 ? drift : 0));
 
-  state.timerId = setTimeout(async () => {
+  state.timerId = setTimeout(() => {
     if (!ticks.has(state.id)) return;
 
     if (state.paused) {
@@ -193,13 +196,29 @@ function scheduleTick(state: TimerState): void {
       elapsed: (now - state.startTime - state.pausedTotal) / 1000,
     };
 
-    try {
-      await runSteps(state.steps, state.context);
-    } catch (err) {
-      console.error(`[tick] Error in "${state.id}":`, err);
+    if (state.detach) {
+      try {
+        const result = runSteps(state.steps, state.context);
+        if (result instanceof Promise) {
+          result.catch(err => {
+            console.error(`[tick] Error in "${state.id}":`, err);
+          });
+        }
+      } catch (err) {
+        console.error(`[tick] Error in "${state.id}":`, err);
+      }
+
+      if (ticks.has(state.id)) scheduleTick(state);
+      return;
     }
 
-    if (ticks.has(state.id)) scheduleTick(state);
+    Promise.resolve(runSteps(state.steps, state.context))
+      .catch(err => {
+        console.error(`[tick] Error in "${state.id}":`, err);
+      })
+      .finally(() => {
+        if (ticks.has(state.id)) scheduleTick(state);
+      });
   }, delay);
 }
 
@@ -226,7 +245,7 @@ function startCron(def: Record<string, unknown>, context: Context): unknown {
 
     const now = Date.now();
     const state: TimerState = {
-      id: String(id), intervalMs, steps, context,
+      id: String(id), intervalMs, steps, context, detach: false,
       timerId: null, count: 0, startTime: now, lastTime: now,
       paused: false, pausedAt: null, pausedTotal: 0,
     };

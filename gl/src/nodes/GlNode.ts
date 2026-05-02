@@ -210,6 +210,10 @@ export class GlNode extends Node {
         onFrame,
         frameContext: context,
         frameLoopContext: null,
+        onFrameRunning: false,
+        onFramePending: false,
+        onFrameLatestTime: 0,
+        onFrameLatestDelta: 0,
         lastTime: 0,
         fit,
         vpScale: 1,
@@ -1313,6 +1317,46 @@ export class GlNode extends Node {
 
   // ── Render loop ─────────────────────────────────────────────────────────
 
+  private static dispatchOnFrame(inst: GlInstance, time: number, delta: number): void {
+    if (!inst.onFrame || !inst.frameContext) return;
+
+    inst.onFrameLatestTime = time;
+    inst.onFrameLatestDelta = delta;
+
+    if (inst.onFrameRunning) {
+      inst.onFramePending = true;
+      return;
+    }
+
+    const runLatest = (): void => {
+      if (!inst.onFrame || !inst.frameContext) {
+        inst.onFrameRunning = false;
+        inst.onFramePending = false;
+        return;
+      }
+
+      inst.onFrameRunning = true;
+      const frameCtx = {
+        ...inst.frameContext,
+        glTime: inst.onFrameLatestTime,
+        glDelta: inst.onFrameLatestDelta,
+      };
+
+      Promise.resolve(runSteps(inst.onFrame, frameCtx))
+        .catch(err => console.error("[GL] Error in on-frame steps:", err))
+        .finally(() => {
+          if (inst.onFramePending) {
+            inst.onFramePending = false;
+            runLatest();
+            return;
+          }
+          inst.onFrameRunning = false;
+        });
+    };
+
+    runLatest();
+  }
+
   static scheduleRender(inst: GlInstance): void {
     if (inst.rafId !== null) return;
     inst.rafId = requestAnimationFrame((time) => {
@@ -1363,8 +1407,7 @@ export class GlNode extends Node {
       if (hasInterp) store.restoreFromInterpolation();
 
       if (inst.onFrame && inst.frameContext) {
-        Promise.resolve(runSteps(inst.onFrame, { ...inst.frameContext, glTime: time, glDelta: delta }))
-          .catch(err => console.error("[GL] Error in on-frame steps:", err));
+        GlNode.dispatchOnFrame(inst, time, delta);
         GlNode.scheduleRender(inst);
       }
 
@@ -2030,10 +2073,14 @@ export class GlNode extends Node {
 
       // Frustum cull
       if (is3d) {
-        const ed3 = d[b + F_D] || 0.01;
-        // Bounding sphere: center of entity, radius = half diagonal
-        const cx3 = cullX + ew * 0.5, cy3 = cullY + eh * 0.5, cz3 = cullZ + ed3 * 0.5;
-        const radius = Math.sqrt(ew * ew + eh * eh + ed3 * ed3) * 0.5;
+        const w3 = Math.abs(ew);
+        const h3 = Math.abs(eh);
+        const d3 = Math.max(Math.abs(d[b + F_D]), 0.01);
+        // Conservative sphere around entity origin.
+        // This avoids false culls for rotated/parented entities where
+        // the local [0..1] center offset rotates in world space.
+        const cx3 = cullX, cy3 = cullY, cz3 = cullZ;
+        const radius = Math.sqrt(w3 * w3 + h3 * h3 + d3 * d3);
         let culled = false;
         for (let pi = 0; pi < 6; pi++) {
           const dist = _frustum[pi * 4] * cx3 + _frustum[pi * 4 + 1] * cy3 + _frustum[pi * 4 + 2] * cz3 + _frustum[pi * 4 + 3];
