@@ -7,7 +7,7 @@
 import {
   EntityStore,
   STRIDE,
-  F_X, F_Y, F_VX, F_VY, F_INV_MASS, F_ANGLE,
+  F_TX, F_TY, F_VX, F_VY, F_INV_MASS, F_QZ, F_QW,
 } from "./EntityStore.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -60,10 +60,10 @@ export function solveConstraints(store: EntityStore, constraints: Constraint[], 
       const totalInv = invA + invB;
       if (totalInv === 0) continue;
 
-      const axW = d[ba + F_X] + c.anchorA[0];
-      const ayW = d[ba + F_Y] + c.anchorA[1];
-      const bxW = d[bb + F_X] + c.anchorB[0];
-      const byW = d[bb + F_Y] + c.anchorB[1];
+      const axW = d[ba + F_TX] + c.anchorA[0];
+      const ayW = d[ba + F_TY] + c.anchorA[1];
+      const bxW = d[bb + F_TX] + c.anchorB[0];
+      const byW = d[bb + F_TY] + c.anchorB[1];
 
       const dx = bxW - axW;
       const dy = byW - ayW;
@@ -74,10 +74,10 @@ export function solveConstraints(store: EntityStore, constraints: Constraint[], 
         const diff = (dist - c.restLength) / dist;
         const px = dx * diff / totalInv;
         const py = dy * diff / totalInv;
-        d[ba + F_X] += px * invA;
-        d[ba + F_Y] += py * invA;
-        d[bb + F_X] -= px * invB;
-        d[bb + F_Y] -= py * invB;
+        d[ba + F_TX] += px * invA;
+        d[ba + F_TY] += py * invA;
+        d[bb + F_TX] -= px * invB;
+        d[bb + F_TY] -= py * invB;
       } else if (c.type === "spring") {
         if (dist < 1e-6) continue;
         const nx = dx / dist, ny = dy / dist;
@@ -99,28 +99,39 @@ export function solveConstraints(store: EntityStore, constraints: Constraint[], 
         if (dist > 1e-6) {
           const px = dx / totalInv;
           const py = dy / totalInv;
-          d[ba + F_X] += px * invA;
-          d[ba + F_Y] += py * invA;
-          d[bb + F_X] -= px * invB;
-          d[bb + F_Y] -= py * invB;
+          d[ba + F_TX] += px * invA;
+          d[ba + F_TY] += py * invA;
+          d[bb + F_TX] -= px * invB;
+          d[bb + F_TY] -= py * invB;
         }
 
         // Angular limits (if set)
         if (c.minAngle === c.minAngle && c.maxAngle === c.maxAngle) { // not NaN
-          const angleA = d[ba + F_ANGLE];
-          const angleB = d[bb + F_ANGLE];
+          const R2D = 180 / Math.PI, D2R = Math.PI / 180;
+          const angleA = 2 * Math.atan2(d[ba + F_QZ], d[ba + F_QW]) * R2D;
+          const angleB = 2 * Math.atan2(d[bb + F_QZ], d[bb + F_QW]) * R2D;
           let relAngle = angleB - angleA;
           while (relAngle > 180) relAngle -= 360;
           while (relAngle < -180) relAngle += 360;
 
           if (relAngle < c.minAngle) {
             const correction = (c.minAngle - relAngle) / totalInv;
-            d[ba + F_ANGLE] -= correction * invA;
-            d[bb + F_ANGLE] += correction * invB;
+            const da = -correction * invA * D2R, db = correction * invB * D2R;
+            const cqzA = d[ba + F_QZ], cqwA = d[ba + F_QW];
+            d[ba + F_QZ] = cqzA + cqwA * da * 0.5;
+            d[ba + F_QW] = cqwA - cqzA * da * 0.5;
+            const cqzB = d[bb + F_QZ], cqwB = d[bb + F_QW];
+            d[bb + F_QZ] = cqzB + cqwB * db * 0.5;
+            d[bb + F_QW] = cqwB - cqzB * db * 0.5;
           } else if (relAngle > c.maxAngle) {
             const correction = (relAngle - c.maxAngle) / totalInv;
-            d[ba + F_ANGLE] += correction * invA;
-            d[bb + F_ANGLE] -= correction * invB;
+            const da = correction * invA * D2R, db = -correction * invB * D2R;
+            const cqzA = d[ba + F_QZ], cqwA = d[ba + F_QW];
+            d[ba + F_QZ] = cqzA + cqwA * da * 0.5;
+            d[ba + F_QW] = cqwA - cqzA * da * 0.5;
+            const cqzB = d[bb + F_QZ], cqwB = d[bb + F_QW];
+            d[bb + F_QZ] = cqzB + cqwB * db * 0.5;
+            d[bb + F_QW] = cqwB - cqzB * db * 0.5;
           }
         }
       }

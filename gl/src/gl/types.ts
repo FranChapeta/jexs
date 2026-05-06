@@ -8,6 +8,19 @@ import { Context } from "@jexs/core";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+/**
+ * GPU-side handle for an imported mesh. Stored on `MeshEntry.gpu` (typed as `unknown`
+ * in the env-agnostic physics package) and cast on read here in the GL layer.
+ */
+export interface GpuMesh {
+  vbo: WebGLBuffer;        // interleaved pos3 + normal3 + uv2 (Float32Array layout)
+  ibo: WebGLBuffer | null; // index buffer when the mesh is indexed
+  vertCount: number;       // for drawArrays
+  indexCount: number;      // for drawElements
+  indexType: number;       // gl.UNSIGNED_SHORT or gl.UNSIGNED_INT
+  hasUvs: boolean;
+}
+
 export interface GlCamera {
   x: number;
   y: number;

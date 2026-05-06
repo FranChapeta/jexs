@@ -9,13 +9,18 @@
 import {
   EntityStore,
   STRIDE,
-  F_X, F_Y, F_W, F_H, F_Z, F_D,
+  F_TX, F_TY, F_TZ,
+  F_SX, F_SY, F_SZ,
+  F_QX, F_QY, F_QZ, F_QW,
   F_VX, F_VY, F_VZ,
   F_INV_MASS, F_RESTITUTION, F_FRICTION,
-  F_FLAGS, F_RX, F_RY, F_ANGLE,
+  F_FLAGS,
   FLAG_TRIGGER, FLAG_SLEEPING,
+  type EntityMeta,
 } from "./EntityStore.js";
 import type { Contact, PhysicsConfig } from "./nodes/Physics.js";
+import { buildBvh, queryAabb, readTriangle } from "./Bvh.js";
+import type { MeshEntry } from "./Mesh.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -23,34 +28,28 @@ function shapeOf(meta: { type: string }): "circle" | "rect" {
   return meta.type === "circle" ? "circle" : "rect";
 }
 
-const DEG2RAD = Math.PI / 180;
-
-/** Check if entity has any rotation. */
-export function isRotated(d: Float64Array, base: number): boolean {
-  return d[base + F_RX] !== 0 || d[base + F_RY] !== 0 || d[base + F_ANGLE] !== 0;
-}
-
-/**
- * Compute 3x3 rotation matrix from Euler angles (degrees).
- * Order: R = Rz * Rx * Ry (ZXY) -- matches GlNode mat4Model.
- */
-function rotMatrix(rxDeg: number, ryDeg: number, rzDeg: number, out: Float32Array): void {
-  const cx = Math.cos(rxDeg * DEG2RAD), sx = Math.sin(rxDeg * DEG2RAD);
-  const cy = Math.cos(ryDeg * DEG2RAD), sy = Math.sin(ryDeg * DEG2RAD);
-  const cz = Math.cos(rzDeg * DEG2RAD), sz = Math.sin(rzDeg * DEG2RAD);
-  out[0] = cz*cy + sz*sx*sy;   out[1] = sz*cx;   out[2] = -cz*sy + sz*sx*cy;
-  out[3] = -sz*cy + cz*sx*sy;  out[4] = cz*cx;   out[5] = sz*sy + cz*sx*cy;
-  out[6] = cx*sy;               out[7] = -sx;     out[8] = cx*cy;
-}
-
 const _rotIdentity = new Float32Array([1,0,0, 0,1,0, 0,0,1]);
+export function isRotated(d: Float64Array, base: number): boolean {
+  return d[base + F_QX] !== 0 || d[base + F_QY] !== 0 || d[base + F_QZ] !== 0;
+}
+
+/** Compute 3x3 rotation matrix from unit quaternion [qx,qy,qz,qw]. */
+function rotMatrixQuat(qx: number, qy: number, qz: number, qw: number, out: Float32Array): void {
+  const x2 = qx+qx, y2 = qy+qy, z2 = qz+qz;
+  const xx = qx*x2, xy = qx*y2, xz = qx*z2;
+  const yy = qy*y2, yz = qy*z2, zz = qz*z2;
+  const wx = qw*x2, wy = qw*y2, wz = qw*z2;
+  out[0] = 1-yy-zz; out[1] = xy+wz;   out[2] = xz-wy;
+  out[3] = xy-wz;   out[4] = 1-xx-zz; out[5] = yz+wx;
+  out[6] = xz+wy;   out[7] = yz-wx;   out[8] = 1-xx-yy;
+}
 
 // ─── Detection primitives ───────────────────────────────────────────────────
 
 /** Check Z-axis overlap. Returns overlap amount, or 0 if both have zero depth (2D mode). */
 function zOverlap(d: Float64Array, ba: number, bb: number): number {
-  const az = d[ba + F_Z], ad = d[ba + F_D];
-  const bz = d[bb + F_Z], bd = d[bb + F_D];
+  const az = d[ba + F_TZ], ad = d[ba + F_SZ];
+  const bz = d[bb + F_TZ], bd = d[bb + F_SZ];
   if (ad === 0 && bd === 0) return 0;
   const adEff = ad || 0.01, bdEff = bd || 0.01;
   const oz = Math.min(az + adEff, bz + bdEff) - Math.max(az, bz);
@@ -59,8 +58,8 @@ function zOverlap(d: Float64Array, ba: number, bb: number): number {
 
 function rectVsRect(d: Float64Array, slotA: number, slotB: number): Contact | null {
   const ba = slotA * STRIDE, bb = slotB * STRIDE;
-  const ax = d[ba+F_X], ay = d[ba+F_Y], aw = d[ba+F_W], ah = d[ba+F_H];
-  const bx = d[bb+F_X], by = d[bb+F_Y], bw = d[bb+F_W], bh = d[bb+F_H];
+  const ax = d[ba+F_TX], ay = d[ba+F_TY], aw = d[ba+F_SX], ah = d[ba+F_SY];
+  const bx = d[bb+F_TX], by = d[bb+F_TY], bw = d[bb+F_SX], bh = d[bb+F_SY];
 
   const overlapX = Math.min(ax+aw, bx+bw) - Math.max(ax, bx);
   const overlapY = Math.min(ay+ah, by+bh) - Math.max(ay, by);
@@ -73,8 +72,8 @@ function rectVsRect(d: Float64Array, slotA: number, slotB: number): Contact | nu
   const bcx = bx + bw/2, bcy = by + bh/2;
 
   if (oz > 0 && oz < overlapX && oz < overlapY) {
-    const acz = d[ba+F_Z] + (d[ba+F_D] || 0.01) / 2;
-    const bcz = d[bb+F_Z] + (d[bb+F_D] || 0.01) / 2;
+    const acz = d[ba+F_TZ] + (d[ba+F_SZ] || 0.01) / 2;
+    const bcz = d[bb+F_TZ] + (d[bb+F_SZ] || 0.01) / 2;
     return { slotA, slotB, nx: 0, ny: 0, nz: acz < bcz ? 1 : -1, depth: oz, trigger: false };
   }
   if (overlapX < overlapY) {
@@ -89,17 +88,17 @@ function circleVsCircle(d: Float64Array, slotA: number, slotB: number): Contact 
   const oz = zOverlap(d, ba, bb);
   if (oz < 0) return null;
 
-  const acx = d[ba+F_X]+d[ba+F_W]/2, acy = d[ba+F_Y]+d[ba+F_H]/2;
-  const bcx = d[bb+F_X]+d[bb+F_W]/2, bcy = d[bb+F_Y]+d[bb+F_H]/2;
-  const ar = Math.min(d[ba+F_W], d[ba+F_H])/2;
-  const br = Math.min(d[bb+F_W], d[bb+F_H])/2;
+  const acx = d[ba+F_TX]+d[ba+F_SX]/2, acy = d[ba+F_TY]+d[ba+F_SY]/2;
+  const bcx = d[bb+F_TX]+d[bb+F_SX]/2, bcy = d[bb+F_TY]+d[bb+F_SY]/2;
+  const ar = Math.min(d[ba+F_SX], d[ba+F_SY])/2;
+  const br = Math.min(d[bb+F_SX], d[bb+F_SY])/2;
 
   const dx = bcx-acx, dy = bcy-acy;
   let dz = 0;
-  const ad = d[ba+F_D], bd = d[bb+F_D];
+  const ad = d[ba+F_SZ], bd = d[bb+F_SZ];
   if (ad > 0 || bd > 0) {
-    const acz = d[ba+F_Z] + (ad || 0.01) / 2;
-    const bcz = d[bb+F_Z] + (bd || 0.01) / 2;
+    const acz = d[ba+F_TZ] + (ad || 0.01) / 2;
+    const bcz = d[bb+F_TZ] + (bd || 0.01) / 2;
     dz = bcz - acz;
   }
   const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
@@ -117,10 +116,10 @@ function circleVsRect(
   const oz = zOverlap(d, bc, br);
   if (oz < 0) return null;
 
-  const cx = d[bc+F_X]+d[bc+F_W]/2, cy = d[bc+F_Y]+d[bc+F_H]/2;
-  const r = Math.min(d[bc+F_W], d[bc+F_H])/2;
+  const cx = d[bc+F_TX]+d[bc+F_SX]/2, cy = d[bc+F_TY]+d[bc+F_SY]/2;
+  const r = Math.min(d[bc+F_SX], d[bc+F_SY])/2;
 
-  const rx = d[br+F_X], ry = d[br+F_Y], rw = d[br+F_W], rh = d[br+F_H];
+  const rx = d[br+F_TX], ry = d[br+F_TY], rw = d[br+F_SX], rh = d[br+F_SY];
   const closestX = Math.max(rx, Math.min(cx, rx+rw));
   const closestY = Math.max(ry, Math.min(cy, ry+rh));
 
@@ -148,9 +147,9 @@ function circleVsRect(
 
 function rampVsRect(d: Float64Array, slotR: number, slotE: number, swapped: boolean): Contact | null {
   const br = slotR * STRIDE, be = slotE * STRIDE;
-  const rpx = d[br+F_X], rpy = d[br+F_Y], rpw = d[br+F_W], rph = d[br+F_H], rpd = d[br+F_D] || 0.01;
-  const ex = d[be+F_X], ey = d[be+F_Y], ew = d[be+F_W], eh = d[be+F_H];
-  const ez = d[be+F_Z];
+  const rpx = d[br+F_TX], rpy = d[br+F_TY], rpw = d[br+F_SX], rph = d[br+F_SY], rpd = d[br+F_SZ] || 0.01;
+  const ex = d[be+F_TX], ey = d[be+F_TY], ew = d[be+F_SX], eh = d[be+F_SY];
+  const ez = d[be+F_TZ];
 
   const overlapX = Math.min(rpx+rpw, ex+ew) - Math.max(rpx, ex);
   if (overlapX <= 0) return null;
@@ -160,7 +159,7 @@ function rampVsRect(d: Float64Array, slotR: number, slotE: number, swapped: bool
   const entityCenterY = ey + eh / 2;
   let t = (entityCenterY - rpy) / rph;
   t = Math.max(0, Math.min(1, t));
-  const rampZ = d[br+F_Z];
+  const rampZ = d[br+F_TZ];
   const slopeHeight = rampZ + rpd * (1 - t);
 
   const penetration = slopeHeight - ez;
@@ -195,19 +194,19 @@ function rampVsRect(d: Float64Array, slotR: number, slotE: number, swapped: bool
 function obbVsObb(d: Float64Array, slotA: number, slotB: number): Contact | null {
   const ba = slotA * STRIDE, bb = slotB * STRIDE;
 
-  const aEx = d[ba+F_W]/2, aEy = d[ba+F_H]/2, aEz = (d[ba+F_D] || 0.01) / 2;
-  const bEx = d[bb+F_W]/2, bEy = d[bb+F_H]/2, bEz = (d[bb+F_D] || 0.01) / 2;
+  const aEx = d[ba+F_SX]/2, aEy = d[ba+F_SY]/2, aEz = (d[ba+F_SZ] || 0.01) / 2;
+  const bEx = d[bb+F_SX]/2, bEy = d[bb+F_SY]/2, bEz = (d[bb+F_SZ] || 0.01) / 2;
 
-  const aCx = d[ba+F_X] + aEx, aCy = d[ba+F_Y] + aEy, aCz = d[ba+F_Z] + aEz;
-  const bCx = d[bb+F_X] + bEx, bCy = d[bb+F_Y] + bEy, bCz = d[bb+F_Z] + bEz;
+  const aCx = d[ba+F_TX] + aEx, aCy = d[ba+F_TY] + aEy, aCz = d[ba+F_TZ] + aEz;
+  const bCx = d[bb+F_TX] + bEx, bCy = d[bb+F_TY] + bEy, bCz = d[bb+F_TZ] + bEz;
 
   const rotABuf = isRotated(d, ba) ? new Float32Array(9) : null;
   const rotBBuf = isRotated(d, bb) ? new Float32Array(9) : null;
   const rotARef = rotABuf
-    ? (rotMatrix(d[ba+F_RX], d[ba+F_RY], d[ba+F_ANGLE], rotABuf), rotABuf)
+    ? (rotMatrixQuat(d[ba+F_QX], d[ba+F_QY], d[ba+F_QZ], d[ba+F_QW], rotABuf), rotABuf)
     : _rotIdentity;
   const rotBRef = rotBBuf
-    ? (rotMatrix(d[bb+F_RX], d[bb+F_RY], d[bb+F_ANGLE], rotBBuf), rotBBuf)
+    ? (rotMatrixQuat(d[bb+F_QX], d[bb+F_QY], d[bb+F_QZ], d[bb+F_QW], rotBBuf), rotBBuf)
     : _rotIdentity;
 
   const a0x = rotARef[0], a0y = rotARef[1], a0z = rotARef[2];
@@ -271,12 +270,240 @@ function obbVsObb(d: Float64Array, slotA: number, slotB: number): Contact | null
   return { slotA, slotB, nx: bestNx, ny: bestNy, nz: bestNz, depth: minOverlap, trigger: false };
 }
 
+// ─── Triangle-mesh collision (BVH) ──────────────────────────────────────────
+
+const _triBuf = new Float32Array(9);
+const _triCandidates: number[] = [];
+
+/**
+ * Lazy BVH build. The mesh entry holds positions + indices from `register-mesh`;
+ * the BVH is built the first time collision queries it.
+ */
+function ensureBvh(entry: MeshEntry): void {
+  if (entry.bvh) return;
+  if (!entry.positions) return;
+  entry.bvh = buildBvh(entry.positions, entry.indices ?? null);
+}
+
+/**
+ * Triangle mesh (slot M) vs. AABB (slot O) — used when one entity is a registered
+ * mesh and the other a rect/quad. The mesh is treated as fixed/static; entity
+ * positions are mesh local origins (so triangle world position = entity.pos + tri.local).
+ *
+ * Returns the deepest single-axis contact found across overlapping triangles.
+ */
+function triMeshVsAabb(
+  d: Float64Array, slotM: number, slotO: number, entry: MeshEntry,
+): Contact | null {
+  ensureBvh(entry);
+  if (!entry.bvh || !entry.positions) return null;
+
+  const bm = slotM * STRIDE;
+  const bo = slotO * STRIDE;
+  // Mesh world origin (where local (0,0,0) sits). entity-add sized w/h/d from bounds,
+  // so the entity AABB covers `(F_TX + bounds.min, F_TX + bounds.max)`. World mesh origin
+  // therefore = entity.pos - bounds.min.
+  const ox = d[bm + F_TX] - entry.bounds.min[0];
+  const oy = d[bm + F_TY] - entry.bounds.min[1];
+  const oz = d[bm + F_TZ] - entry.bounds.min[2];
+
+  const ax0 = d[bo + F_TX], ay0 = d[bo + F_TY], az0 = d[bo + F_TZ];
+  const ax1 = ax0 + d[bo + F_SX], ay1 = ay0 + d[bo + F_SY], az1 = az0 + (d[bo + F_SZ] || 0.01);
+
+  // Translate dynamic AABB into mesh local space.
+  const lMinX = ax0 - ox, lMinY = ay0 - oy, lMinZ = az0 - oz;
+  const lMaxX = ax1 - ox, lMaxY = ay1 - oy, lMaxZ = az1 - oz;
+
+  _triCandidates.length = 0;
+  queryAabb(entry.bvh, lMinX, lMinY, lMinZ, lMaxX, lMaxY, lMaxZ, _triCandidates);
+  if (_triCandidates.length === 0) return null;
+
+  // Box center + half-extents (local).
+  const bcx = (lMinX + lMaxX) * 0.5, bcy = (lMinY + lMaxY) * 0.5, bcz = (lMinZ + lMaxZ) * 0.5;
+  const bhx = (lMaxX - lMinX) * 0.5, bhy = (lMaxY - lMinY) * 0.5, bhz = (lMaxZ - lMinZ) * 0.5;
+
+  let bestDepth = 0;
+  let bestNx = 0, bestNy = 0, bestNz = 0;
+
+  for (let i = 0; i < _triCandidates.length; i++) {
+    const triIdx = _triCandidates[i];
+    readTriangle(entry.positions, entry.indices ?? null, triIdx, _triBuf);
+    const v0x = _triBuf[0], v0y = _triBuf[1], v0z = _triBuf[2];
+    const v1x = _triBuf[3], v1y = _triBuf[4], v1z = _triBuf[5];
+    const v2x = _triBuf[6], v2y = _triBuf[7], v2z = _triBuf[8];
+
+    // 1. AABB axis tests (separating).
+    if (Math.max(v0x, v1x, v2x) < lMinX || Math.min(v0x, v1x, v2x) > lMaxX) continue;
+    if (Math.max(v0y, v1y, v2y) < lMinY || Math.min(v0y, v1y, v2y) > lMaxY) continue;
+    if (Math.max(v0z, v1z, v2z) < lMinZ || Math.min(v0z, v1z, v2z) > lMaxZ) continue;
+
+    // 2. Triangle-normal SAT.
+    const e1x = v1x - v0x, e1y = v1y - v0y, e1z = v1z - v0z;
+    const e2x = v2x - v0x, e2y = v2y - v0y, e2z = v2z - v0z;
+    let nx = e1y * e2z - e1z * e2y;
+    let ny = e1z * e2x - e1x * e2z;
+    let nz = e1x * e2y - e1y * e2x;
+    const nLen = Math.hypot(nx, ny, nz);
+    if (nLen < 1e-9) continue;
+    nx /= nLen; ny /= nLen; nz /= nLen;
+    const planeD = nx * v0x + ny * v0y + nz * v0z;
+    const r = bhx * Math.abs(nx) + bhy * Math.abs(ny) + bhz * Math.abs(nz);
+    const s = nx * bcx + ny * bcy + nz * bcz - planeD;
+    if (Math.abs(s) > r) continue;
+
+    // Penetration depth on the triangle-normal axis.
+    const depth = r - Math.abs(s);
+    if (depth > bestDepth) {
+      bestDepth = depth;
+      // Push dynamic body away from the triangle (along the normal pointing toward it).
+      const sign = s >= 0 ? 1 : -1;
+      bestNx = nx * sign; bestNy = ny * sign; bestNz = nz * sign;
+    }
+  }
+
+  if (bestDepth <= 0) return null;
+  // Contact convention: normal from B to A, where A = mesh, B = other. The dispatcher
+  // flips signs when the mesh is the second slot.
+  return { slotA: slotM, slotB: slotO, nx: -bestNx, ny: -bestNy, nz: -bestNz, depth: bestDepth, trigger: false };
+}
+
+/**
+ * Triangle mesh vs. circle (sphere). Closest-point-on-triangle vs. sphere center;
+ * if the distance is less than the radius, that's a contact.
+ */
+function triMeshVsSphere(
+  d: Float64Array, slotM: number, slotO: number, entry: MeshEntry,
+): Contact | null {
+  ensureBvh(entry);
+  if (!entry.bvh || !entry.positions) return null;
+
+  const bm = slotM * STRIDE;
+  const bo = slotO * STRIDE;
+  const ox = d[bm + F_TX] - entry.bounds.min[0];
+  const oy = d[bm + F_TY] - entry.bounds.min[1];
+  const oz = d[bm + F_TZ] - entry.bounds.min[2];
+
+  // Sphere = circle entity. Treat F_SX as diameter (existing convention).
+  const radius = d[bo + F_SX] * 0.5;
+  const cx = d[bo + F_TX] + radius - ox;
+  const cy = d[bo + F_TY] + radius - oy;
+  const cz = d[bo + F_TZ] + (d[bo + F_SZ] || d[bo + F_SX]) * 0.5 - oz;
+
+  _triCandidates.length = 0;
+  queryAabb(entry.bvh, cx - radius, cy - radius, cz - radius, cx + radius, cy + radius, cz + radius, _triCandidates);
+  if (_triCandidates.length === 0) return null;
+
+  let bestDepth = 0;
+  let bestNx = 0, bestNy = 0, bestNz = 0;
+
+  for (let i = 0; i < _triCandidates.length; i++) {
+    const triIdx = _triCandidates[i];
+    readTriangle(entry.positions, entry.indices ?? null, triIdx, _triBuf);
+    const cp = closestPointOnTriangle(
+      cx, cy, cz,
+      _triBuf[0], _triBuf[1], _triBuf[2],
+      _triBuf[3], _triBuf[4], _triBuf[5],
+      _triBuf[6], _triBuf[7], _triBuf[8],
+    );
+    const dx = cx - cp[0], dy = cy - cp[1], dz = cz - cp[2];
+    const dist = Math.hypot(dx, dy, dz);
+    if (dist >= radius) continue;
+    const depth = radius - dist;
+    if (depth > bestDepth) {
+      bestDepth = depth;
+      const inv = dist > 1e-9 ? 1 / dist : 0;
+      bestNx = dx * inv; bestNy = dy * inv; bestNz = dz * inv;
+    }
+  }
+
+  if (bestDepth <= 0) return null;
+  return { slotA: slotM, slotB: slotO, nx: -bestNx, ny: -bestNy, nz: -bestNz, depth: bestDepth, trigger: false };
+}
+
+/** Closest point on triangle (v0,v1,v2) to point p. Returns [x,y,z]. */
+function closestPointOnTriangle(
+  px: number, py: number, pz: number,
+  v0x: number, v0y: number, v0z: number,
+  v1x: number, v1y: number, v1z: number,
+  v2x: number, v2y: number, v2z: number,
+): [number, number, number] {
+  // Real-Time Collision Detection (Ericson) section 5.1.5.
+  const abx = v1x - v0x, aby = v1y - v0y, abz = v1z - v0z;
+  const acx = v2x - v0x, acy = v2y - v0y, acz = v2z - v0z;
+  const apx = px - v0x,  apy = py - v0y,  apz = pz - v0z;
+  const dAB_AP = abx * apx + aby * apy + abz * apz;
+  const dAC_AP = acx * apx + acy * apy + acz * apz;
+  if (dAB_AP <= 0 && dAC_AP <= 0) return [v0x, v0y, v0z];
+
+  const bpx = px - v1x, bpy = py - v1y, bpz = pz - v1z;
+  const dAB_BP = abx * bpx + aby * bpy + abz * bpz;
+  const dAC_BP = acx * bpx + acy * bpy + acz * bpz;
+  if (dAB_BP >= 0 && dAC_BP <= dAB_BP) return [v1x, v1y, v1z];
+
+  const vc = dAB_AP * dAC_BP - dAB_BP * dAC_AP;
+  if (vc <= 0 && dAB_AP >= 0 && dAB_BP <= 0) {
+    const t = dAB_AP / (dAB_AP - dAB_BP);
+    return [v0x + t * abx, v0y + t * aby, v0z + t * abz];
+  }
+
+  const cpx = px - v2x, cpy = py - v2y, cpz = pz - v2z;
+  const dAB_CP = abx * cpx + aby * cpy + abz * cpz;
+  const dAC_CP = acx * cpx + acy * cpy + acz * cpz;
+  if (dAC_CP >= 0 && dAB_CP <= dAC_CP) return [v2x, v2y, v2z];
+
+  const vb = dAB_CP * dAC_AP - dAB_AP * dAC_CP;
+  if (vb <= 0 && dAC_AP >= 0 && dAC_CP <= 0) {
+    const t = dAC_AP / (dAC_AP - dAC_CP);
+    return [v0x + t * acx, v0y + t * acy, v0z + t * acz];
+  }
+
+  const va = dAB_BP * dAC_CP - dAB_CP * dAC_BP;
+  if (va <= 0 && (dAC_BP - dAB_BP) >= 0 && (dAB_CP - dAC_CP) >= 0) {
+    const t = (dAC_BP - dAB_BP) / ((dAC_BP - dAB_BP) + (dAB_CP - dAC_CP));
+    return [v1x + t * (v2x - v1x), v1y + t * (v2y - v1y), v1z + t * (v2z - v1z)];
+  }
+
+  const denom = 1 / (va + vb + vc);
+  const v = vb * denom, w = vc * denom;
+  return [v0x + abx * v + acx * w, v0y + aby * v + acy * w, v0z + abz * v + acz * w];
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 export function detectCollision(
-  d: Float64Array, slotA: number, slotB: number,
-  metaA: { type: string }, metaB: { type: string },
+  store: EntityStore, slotA: number, slotB: number,
+  metaA: EntityMeta, metaB: EntityMeta,
 ): Contact | null {
+  const d = store.data;
+
+  // Triangle-mesh dispatch — only when one side is a registered mesh entity.
+  // Dynamic-mesh-vs-dynamic-mesh is out of scope; falls back to AABB-vs-AABB below.
+  const idA = metaA.meshId, idB = metaB.meshId;
+  if (idA && !idB) {
+    const entry = store.meshes.get(idA);
+    if (entry) {
+      const c = metaB.type === "circle"
+        ? triMeshVsSphere(d, slotA, slotB, entry)
+        : triMeshVsAabb(d, slotA, slotB, entry);
+      if (c) c.trigger = !!(d[slotA * STRIDE + F_FLAGS] & FLAG_TRIGGER) || !!(d[slotB * STRIDE + F_FLAGS] & FLAG_TRIGGER);
+      return c;
+    }
+  } else if (idB && !idA) {
+    const entry = store.meshes.get(idB);
+    if (entry) {
+      const c = metaA.type === "circle"
+        ? triMeshVsSphere(d, slotB, slotA, entry)
+        : triMeshVsAabb(d, slotB, slotA, entry);
+      if (!c) return null;
+      // Flip slot ordering + normal so caller convention (slotA = first input) holds.
+      const flipped: Contact = {
+        slotA, slotB, nx: -c.nx, ny: -c.ny, nz: -c.nz, depth: c.depth, trigger: false,
+      };
+      flipped.trigger = !!(d[slotA * STRIDE + F_FLAGS] & FLAG_TRIGGER) || !!(d[slotB * STRIDE + F_FLAGS] & FLAG_TRIGGER);
+      return flipped;
+    }
+  }
+
   const ta = metaA.type, tb = metaB.type;
   let c: Contact | null;
   if (ta === "ramp" && tb !== "ramp") c = rampVsRect(d, slotA, slotB, true);
@@ -309,8 +536,8 @@ export function resolveCollision(store: EntityStore, { slotA, slotB, nx, ny, nz,
   if (invB > 0) wakeBody(store, slotB);
 
   const corr = depth / totalInv;
-  d[ba+F_X] -= corr*nx*invA;  d[ba+F_Y] -= corr*ny*invA;  d[ba+F_Z] -= corr*nz*invA;
-  d[bb+F_X] += corr*nx*invB;  d[bb+F_Y] += corr*ny*invB;  d[bb+F_Z] += corr*nz*invB;
+  d[ba+F_TX] -= corr*nx*invA;  d[ba+F_TY] -= corr*ny*invA;  d[ba+F_TZ] -= corr*nz*invA;
+  d[bb+F_TX] += corr*nx*invB;  d[bb+F_TY] += corr*ny*invB;  d[bb+F_TZ] += corr*nz*invB;
 
   if ((invA === 0 || invB === 0) && config) {
     const gx = config.gravity[0], gy = config.gravity[1], gz = config.gravity[2] ?? 0;

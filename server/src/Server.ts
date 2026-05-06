@@ -412,6 +412,8 @@ export class Server {
       ".ico",
       ".woff",
       ".woff2",
+      ".gltf",
+      ".bin",
     ];
     const ext = path.extname(requestPath).toLowerCase();
 
@@ -478,6 +480,8 @@ export class Server {
       ".ico": "image/x-icon",
       ".woff": "font/woff",
       ".woff2": "font/woff2",
+      ".gltf": "model/gltf+json",
+      ".bin": "application/octet-stream",
     };
     return mimeTypes[ext] || "application/octet-stream";
   }

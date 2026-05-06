@@ -22,25 +22,69 @@ import { Node, Context, NodeValue, resolve, resolveObj } from "@jexs/core";
 import {
   EntityStore, EntityMeta, FIELD_OFFSETS,
   STRIDE,
-  F_X, F_Y, F_W, F_H, F_ANGLE,
+  F_TX, F_TY, F_TZ,
+  F_SX, F_SY, F_SZ,
+  F_QX, F_QY, F_QZ, F_QW,
   F_CR, F_CG, F_CB, F_CA,
-  F_VX, F_VY, F_AX, F_AY,
+  F_VX, F_VY, F_VZ, F_AX, F_AY, F_AZ,
   F_MASS, F_INV_MASS, F_RESTITUTION, F_FRICTION, F_DAMPING,
-  F_MOVE_X, F_MOVE_Y, F_FLAGS, F_Z,
-  F_U, F_V, F_UW, F_UH, F_OPACITY,
-  F_D, F_RX, F_RY, F_VZ, F_AZ,
+  F_MOVE_X, F_MOVE_Y, F_FLAGS, F_U, F_V, F_UW, F_UH, F_OPACITY,
   FLAG_VISIBLE, FLAG_PHYSICS, FLAG_FIXED, FLAG_POOLED, FLAG_TRIGGER, FLAG_CCD,
   DIRTY_TRANSFORM, DIRTY_VISUAL, DIRTY_TEXT, DIRTY_Z,
 } from "../EntityStore.js";
 
 const KNOWN_KEYS = new Set([
   "entity-add", "entity-update", "gl-update", "as", "type",
-  "x", "y", "w", "h", "angle", "vx", "vy", "ax", "ay",
-  "mass", "restitution", "friction", "damping", "z", "color", "uv",
+  "translation", "scale", "rotation",
+  "angle", "rx", "ry", "rotation-velocity", // convenience converters → quaternion
+  "vx", "vy", "vz", "ax", "ay", "az",
+  "mass", "restitution", "friction", "damping", "color", "uv",
   "moveX", "moveY", "visible", "physics", "fixed",
-  "vertices", "group", "mask", "texture", "normalMap", "normalScale", "lineWidth", "shader", "blend", "opacity", "text",
-  "d", "rx", "ry", "vz", "az", "borderRadius", "emissive", "billboard", "pooled", "parent",
+  "vertices", "mesh", "group", "mask", "texture", "normalMap", "normalScale", "lineWidth", "shader", "blend", "opacity", "text",
+  "borderRadius", "emissive", "billboard", "pooled", "parent",
 ]);
+
+/** Convert a Z-axis angle (degrees) to a quaternion [qx,qy,qz,qw]. */
+function angleToQuat(deg: number): [number, number, number, number] {
+  const r = (deg * Math.PI) / 360; // half-angle in radians
+  return [0, 0, Math.sin(r), Math.cos(r)];
+}
+
+/** Convert an X-axis angle (degrees) to a quaternion [qx,qy,qz,qw]. */
+function rxToQuat(deg: number): [number, number, number, number] {
+  const r = (deg * Math.PI) / 360;
+  return [Math.sin(r), 0, 0, Math.cos(r)];
+}
+
+/** Convert a Y-axis angle (degrees) to a quaternion [qx,qy,qz,qw]. */
+function ryToQuat(deg: number): [number, number, number, number] {
+  const r = (deg * Math.PI) / 360;
+  return [0, Math.sin(r), 0, Math.cos(r)];
+}
+
+/** Quaternion that rotates [0,0,1] to point along the given velocity direction. */
+function quatFromVelocity(vx: number, vy: number, vz: number): [number, number, number, number] {
+  const len = Math.sqrt(vx*vx + vy*vy + vz*vz);
+  if (len < 1e-6) return [0, 0, 0, 1];
+  const nx = vx/len, ny = vy/len, nz = vz/len;
+  if (nz < -0.9999) return [1, 0, 0, 0]; // 180° around X
+  const qw = Math.sqrt((1 + nz) / 2);
+  const s = 1 / (2 * qw);
+  return [-ny * s, nx * s, 0, qw];
+}
+
+/** Resolve rotation from a resolved param object: "rotation" array, or "angle"/"rx"/"ry"/"rotation-velocity" convenience. */
+function resolveRotation(r: Record<string, unknown>): [number, number, number, number] | undefined {
+  if (r["rotation"] !== undefined) return r["rotation"] as [number, number, number, number];
+  if (r["rotation-velocity"] !== undefined) {
+    const v = r["rotation-velocity"] as [number, number, number];
+    return quatFromVelocity(v[0], v[1], v[2]);
+  }
+  if (r["angle"] !== undefined) return angleToQuat(Number(r["angle"]));
+  if (r["rx"] !== undefined) return rxToQuat(Number(r["rx"]));
+  if (r["ry"] !== undefined) return ryToQuat(Number(r["ry"]));
+  return undefined;
+}
 
 function getStore(context: Context): EntityStore | null {
   const selector = context._glSelector as string | undefined;
@@ -54,16 +98,16 @@ function entityToObject(store: EntityStore, slot: number): Record<string, unknow
   const d = store.data;
   const b = slot * STRIDE;
   const m = store.meta[slot]!;
+  const t = [d[b + F_TX], d[b + F_TY], d[b + F_TZ]];
   const entry: Record<string, unknown> = {
     id: m.id, group: m.group, type: m.type,
-    x: d[b + F_X], y: d[b + F_Y], w: d[b + F_W], h: d[b + F_H],
-    z: d[b + F_Z],
-    vx: d[b + F_VX], vy: d[b + F_VY],
+    translation: t,
+    scale: [d[b + F_SX], d[b + F_SY], d[b + F_SZ]],
+    rotation: [d[b + F_QX], d[b + F_QY], d[b + F_QZ], d[b + F_QW]],
+    vx: d[b + F_VX], vy: d[b + F_VY], vz: d[b + F_VZ],
     mass: d[b + F_MASS],
     ...m.custom,
   };
-  const dd = d[b + F_D];
-  if (dd) { entry.d = dd; entry.rx = d[b + F_RX]; entry.ry = d[b + F_RY]; entry.vz = d[b + F_VZ]; }
   return entry;
 }
 
@@ -104,10 +148,11 @@ export class EntityNode extends Node {
    * Pass `pooled: true` to reuse a pooled slot for better performance.
    * @param {string} entity-add Entity ID.
    * @param {"quad"|"circle"|"triangle"|"line"|"line-strip"|"points"|"sphere"|"cylinder"|"cone"|"ramp"|"light"|"pivot"} type Entity type (default `"quad"`).
-   * @param {number} x Initial X position.
-   * @param {number} y Initial Y position.
-   * @param {number} w Width.
-   * @param {number} h Height.
+   * @param {number[]} color RGBA color array with values from 0 to 1 (default `[1,1,1,1]`).
+   * @param {string} group Collision group name (default `"default"`).
+   * @param {number[]} scale Scale array [sx, sy, sz] (default `[1,1,1]`).
+   * @param {number[]} translation Translation array [x, y, z] (default `[0,0,0]`).
+   * @param {number[]} rotation Rotation array [qx, qy, qz, qw] (default `[0,0,0,1]`).
    * @param {boolean} physics Enable physics simulation.
    * @param {boolean} fixed Immovable body (kinematic).
    * @param {boolean} pooled Reuse a pooled slot for this entity.
@@ -127,6 +172,41 @@ export class EntityNode extends Node {
 
       let slot = pooled ? store.poolAcquire(type, id) : -1;
 
+      // If the entity references a registered mesh, pull bounds for default scale.
+      const meshId = r["mesh"] != null ? String(r["mesh"]) : null;
+      const meshEntry = meshId ? store.meshes.get(meshId) : null;
+      let meshSX: number | undefined, meshSY: number | undefined, meshSZ: number | undefined;
+      if (meshEntry) {
+        meshSX = meshEntry.bounds.max[0] - meshEntry.bounds.min[0];
+        meshSY = meshEntry.bounds.max[1] - meshEntry.bounds.min[1];
+        meshSZ = meshEntry.bounds.max[2] - meshEntry.bounds.min[2];
+      }
+
+      // Resolve translation
+      let translation: [number, number, number] | undefined;
+      if (r["translation"] !== undefined) {
+        translation = r["translation"] as [number, number, number];
+      }
+
+      // Resolve scale: input scale multiplied by mesh bounds when mesh present
+      let scale: [number, number, number] | undefined;
+      if (r["scale"] !== undefined) {
+        const s = r["scale"] as [number, number, number];
+        if (meshEntry) {
+          scale = [
+            (meshSX ?? 1) * s[0],
+            (meshSY ?? 1) * s[1],
+            (meshSZ ?? 1) * s[2],
+          ];
+        } else {
+          scale = s;
+        }
+      } else if (meshEntry) {
+        scale = [meshSX ?? 1, meshSY ?? 1, meshSZ ?? 1];
+      }
+
+      const rotation = resolveRotation(r);
+
       if (slot === -1) {
         const color    = (r["color"] ?? [1, 1, 1, 1]) as [number, number, number, number];
         const mass     = r["mass"] !== undefined ? Number(r["mass"]) : 1;
@@ -139,16 +219,16 @@ export class EntityNode extends Node {
           r["mask"]  ? r["mask"]  as string[] : ["default"],
           vertices,
           {
-            x:     r["x"]     !== undefined ? Number(r["x"])     : undefined,
-            y:     r["y"]     !== undefined ? Number(r["y"])     : undefined,
-            w:     r["w"]     !== undefined ? Number(r["w"])     : undefined,
-            h:     r["h"]     !== undefined ? Number(r["h"])     : undefined,
-            angle: r["angle"] !== undefined ? Number(r["angle"]) : undefined,
+            translation,
+            scale,
+            rotation,
             color,
             vx:          r["vx"]          !== undefined ? Number(r["vx"])          : undefined,
             vy:          r["vy"]          !== undefined ? Number(r["vy"])          : undefined,
+            vz:          r["vz"]          !== undefined ? Number(r["vz"])          : undefined,
             ax:          r["ax"]          !== undefined ? Number(r["ax"])          : undefined,
             ay:          r["ay"]          !== undefined ? Number(r["ay"])          : undefined,
+            az:          r["az"]          !== undefined ? Number(r["az"])          : undefined,
             mass,
             restitution: r["restitution"] !== undefined ? Number(r["restitution"]) : undefined,
             friction:    r["friction"]    !== undefined ? Number(r["friction"])    : undefined,
@@ -158,13 +238,7 @@ export class EntityNode extends Node {
             visible: r["visible"] !== undefined ? this.toBoolean(r["visible"]) : undefined,
             physics: r["physics"] !== undefined ? this.toBoolean(r["physics"]) : undefined,
             fixed:   r["fixed"]   !== undefined ? this.toBoolean(r["fixed"])   : undefined,
-            z:  r["z"]  !== undefined ? Number(r["z"])  : undefined,
             uv,
-            d:  r["d"]  !== undefined ? Number(r["d"])  : undefined,
-            rx: r["rx"] !== undefined ? Number(r["rx"]) : undefined,
-            ry: r["ry"] !== undefined ? Number(r["ry"]) : undefined,
-            vz: r["vz"] !== undefined ? Number(r["vz"]) : undefined,
-            az: r["az"] !== undefined ? Number(r["az"]) : undefined,
           },
         );
       } else {
@@ -174,21 +248,26 @@ export class EntityNode extends Node {
         meta.mask  = r["mask"]  ? r["mask"] as string[] : ["default"];
         const color = (r["color"] ?? [1, 1, 1, 1]) as [number, number, number, number];
         d[b + F_CR] = color[0]; d[b + F_CG] = color[1]; d[b + F_CB] = color[2]; d[b + F_CA] = color[3];
-        if (r["x"]     !== undefined) d[b + F_X]     = Number(r["x"]);
-        if (r["y"]     !== undefined) d[b + F_Y]     = Number(r["y"]);
-        if (r["w"]     !== undefined) d[b + F_W]     = Number(r["w"]);
-        if (r["h"]     !== undefined) d[b + F_H]     = Number(r["h"]);
-        if (r["angle"] !== undefined) d[b + F_ANGLE] = Number(r["angle"]);
-        if (r["z"]     !== undefined) d[b + F_Z]     = Number(r["z"]);
-        if (r["d"]     !== undefined) d[b + F_D]     = Number(r["d"]);
-        if (r["rx"]    !== undefined) d[b + F_RX]    = Number(r["rx"]);
-        if (r["ry"]    !== undefined) d[b + F_RY]    = Number(r["ry"]);
-        if (r["vx"]    !== undefined) d[b + F_VX]    = Number(r["vx"]);
-        if (r["vy"]    !== undefined) d[b + F_VY]    = Number(r["vy"]);
-        if (r["vz"]    !== undefined) d[b + F_VZ]    = Number(r["vz"]);
-        if (r["ax"]    !== undefined) d[b + F_AX]    = Number(r["ax"]);
-        if (r["ay"]    !== undefined) d[b + F_AY]    = Number(r["ay"]);
-        if (r["az"]    !== undefined) d[b + F_AZ]    = Number(r["az"]);
+        if (translation) {
+          d[b + F_TX] = translation[0];
+          d[b + F_TY] = translation[1];
+          d[b + F_TZ] = translation[2];
+        }
+        if (scale) {
+          d[b + F_SX] = scale[0]; d[b + F_SY] = scale[1]; d[b + F_SZ] = scale[2];
+        } else if (meshEntry) {
+          d[b + F_SX] = meshSX ?? 1; d[b + F_SY] = meshSY ?? 1; d[b + F_SZ] = meshSZ ?? 1;
+        }
+        if (rotation) {
+          d[b + F_QX] = rotation[0]; d[b + F_QY] = rotation[1];
+          d[b + F_QZ] = rotation[2]; d[b + F_QW] = rotation[3];
+        }
+        if (r["vx"]  !== undefined) d[b + F_VX]  = Number(r["vx"]);
+        if (r["vy"]  !== undefined) d[b + F_VY]  = Number(r["vy"]);
+        if (r["vz"]  !== undefined) d[b + F_VZ]  = Number(r["vz"]);
+        if (r["ax"]  !== undefined) d[b + F_AX]  = Number(r["ax"]);
+        if (r["ay"]  !== undefined) d[b + F_AY]  = Number(r["ay"]);
+        if (r["az"]  !== undefined) d[b + F_AZ]  = Number(r["az"]);
         let flags = d[b + F_FLAGS];
         if (r["physics"] !== undefined && this.toBoolean(r["physics"])) flags |= FLAG_PHYSICS;
         if (r["fixed"]   !== undefined && this.toBoolean(r["fixed"]))   flags |= FLAG_FIXED;
@@ -202,23 +281,27 @@ export class EntityNode extends Node {
       }
 
       const meta = store.meta[slot]!;
-      if (r["texture"])                 meta.textureName  = String(r["texture"]);
-      if (r["normalMap"])               meta.normalMap    = String(r["normalMap"]);
-      if (r["normalScale"] !== undefined) meta.normalScale = Number(r["normalScale"]);
-      if (r["lineWidth"])               meta.lineWidth    = Number(r["lineWidth"]);
-      if (r["shader"])                  meta.shader       = String(r["shader"]);
-      if (r["blend"])                   meta.blend        = String(r["blend"]) as EntityMeta["blend"];
-      if (r["opacity"]     !== undefined) store.data[slot * STRIDE + F_OPACITY] = Number(r["opacity"]);
+      if (meshId)                         meta.meshId       = meshId;
+      if (r["texture"])                   meta.textureName  = String(r["texture"]);
+      if (r["normalMap"])                 meta.normalMap    = String(r["normalMap"]);
+      if (r["normalScale"] !== undefined) meta.normalScale  = Number(r["normalScale"]);
+      if (r["lineWidth"])                 meta.lineWidth    = Number(r["lineWidth"]);
+      if (r["shader"])                    meta.shader       = String(r["shader"]);
+      if (r["blend"])                     meta.blend        = String(r["blend"]) as EntityMeta["blend"];
+      if (r["opacity"]      !== undefined) store.data[slot * STRIDE + F_OPACITY] = Number(r["opacity"]);
       if (r["borderRadius"] !== undefined) meta.borderRadius = Number(r["borderRadius"]);
-      if (r["emissive"]    !== undefined) meta.emissive   = !!r["emissive"];
-      if (r["billboard"]   !== undefined) meta.billboard  = !!r["billboard"];
+      if (r["emissive"]     !== undefined) meta.emissive    = !!r["emissive"];
+      if (r["billboard"]    !== undefined) meta.billboard   = !!r["billboard"];
 
       for (const key of keys) {
         if (!KNOWN_KEYS.has(key)) meta.custom[key] = r[key];
       }
 
       meta.dirty = DIRTY_TRANSFORM | DIRTY_VISUAL;
-      if (r["z"] !== undefined) { meta.dirty |= DIRTY_Z; store.zDirty = true; store.zDirtyCount++; }
+      if (r["translation"] !== undefined) {
+        const tz = (r["translation"] as number[])[2];
+        if (tz !== undefined) { meta.dirty |= DIRTY_Z; store.zDirty = true; store.zDirtyCount++; }
+      }
 
       if (r["parent"] !== undefined) {
         store.setParent(id, r["parent"] ? String(r["parent"]) : undefined);
@@ -271,11 +354,20 @@ export class EntityNode extends Node {
       if (slot === -1) return null;
 
       const d = store.data, b = slot * STRIDE;
-      if (r["x"]     !== undefined) d[b + F_X]     = Number(r["x"]);
-      if (r["y"]     !== undefined) d[b + F_Y]     = Number(r["y"]);
-      if (r["angle"] !== undefined) d[b + F_ANGLE] = Number(r["angle"]);
+      const meta = store.meta[slot]!;
 
-      store.meta[slot]!.dirty |= DIRTY_TRANSFORM;
+      if (r["translation"] !== undefined) {
+        const t = r["translation"] as [number, number, number];
+        d[b + F_TX] = t[0]; d[b + F_TY] = t[1]; d[b + F_TZ] = t[2];
+        if (t[2] !== undefined) { meta.dirty |= DIRTY_Z; store.zDirty = true; store.zDirtyCount++; }
+      }
+      const rot = resolveRotation(r);
+      if (rot) {
+        d[b + F_QX] = rot[0]; d[b + F_QY] = rot[1]; d[b + F_QZ] = rot[2]; d[b + F_QW] = rot[3];
+      }
+
+      meta.dirty |= DIRTY_TRANSFORM;
+      store.invalidateWorldTransform(slot);
       store.onChange?.();
       return null;
     });
@@ -306,28 +398,52 @@ export class EntityNode extends Node {
         if (key === "entity-update" || key === "as") continue;
         const v = r[key];
           switch (key) {
-            case "x":     d[b + F_X]     = Number(v); meta.dirty |= DIRTY_TRANSFORM; break;
-            case "y":     d[b + F_Y]     = Number(v); meta.dirty |= DIRTY_TRANSFORM; break;
-            case "w":     d[b + F_W]     = Number(v); meta.dirty |= DIRTY_TRANSFORM; break;
-            case "h":     d[b + F_H]     = Number(v); meta.dirty |= DIRTY_TRANSFORM; break;
-            case "angle": d[b + F_ANGLE] = Number(v); meta.dirty |= DIRTY_TRANSFORM; break;
+            case "translation": {
+              const t = v as [number, number, number];
+              d[b + F_TX] = t[0]; d[b + F_TY] = t[1]; d[b + F_TZ] = t[2];
+              meta.dirty |= DIRTY_TRANSFORM | DIRTY_Z;
+              store.zDirty = true; store.zDirtyCount++;
+              break;
+            }
+            case "scale": {
+              const s = v as [number, number, number];
+              d[b + F_SX] = s[0]; d[b + F_SY] = s[1]; d[b + F_SZ] = s[2];
+              meta.dirty |= DIRTY_TRANSFORM;
+              break;
+            }
+            case "rotation": {
+              const q = v as [number, number, number, number];
+              d[b + F_QX] = q[0]; d[b + F_QY] = q[1]; d[b + F_QZ] = q[2]; d[b + F_QW] = q[3];
+              meta.dirty |= DIRTY_TRANSFORM;
+              break;
+            }
+            case "angle": {
+              const q = angleToQuat(Number(v));
+              d[b + F_QX] = q[0]; d[b + F_QY] = q[1]; d[b + F_QZ] = q[2]; d[b + F_QW] = q[3];
+              meta.dirty |= DIRTY_TRANSFORM;
+              break;
+            }
+            case "rx": {
+              const q = rxToQuat(Number(v));
+              d[b + F_QX] = q[0]; d[b + F_QY] = q[1]; d[b + F_QZ] = q[2]; d[b + F_QW] = q[3];
+              meta.dirty |= DIRTY_TRANSFORM;
+              break;
+            }
+            case "ry": {
+              const q = ryToQuat(Number(v));
+              d[b + F_QX] = q[0]; d[b + F_QY] = q[1]; d[b + F_QZ] = q[2]; d[b + F_QW] = q[3];
+              meta.dirty |= DIRTY_TRANSFORM;
+              break;
+            }
             case "vx":    d[b + F_VX]    = Number(v); meta.dirty |= DIRTY_TRANSFORM; break;
             case "vy":    d[b + F_VY]    = Number(v); meta.dirty |= DIRTY_TRANSFORM; break;
+            case "vz":    d[b + F_VZ]    = Number(v); meta.dirty |= DIRTY_TRANSFORM; break;
             case "ax":    d[b + F_AX]    = Number(v); meta.dirty |= DIRTY_TRANSFORM; break;
             case "ay":    d[b + F_AY]    = Number(v); meta.dirty |= DIRTY_TRANSFORM; break;
-            case "d":     d[b + F_D]     = Number(v); meta.dirty |= DIRTY_TRANSFORM; break;
-            case "rx":    d[b + F_RX]    = Number(v); meta.dirty |= DIRTY_TRANSFORM; break;
-            case "ry":    d[b + F_RY]    = Number(v); meta.dirty |= DIRTY_TRANSFORM; break;
-            case "vz":    d[b + F_VZ]    = Number(v); meta.dirty |= DIRTY_TRANSFORM; break;
             case "az":    d[b + F_AZ]    = Number(v); meta.dirty |= DIRTY_TRANSFORM; break;
             case "restitution": d[b + F_RESTITUTION] = Number(v); break;
             case "friction":    d[b + F_FRICTION]    = Number(v); break;
             case "damping":     d[b + F_DAMPING]     = Number(v); break;
-            case "z":
-              d[b + F_Z] = Number(v);
-              meta.dirty |= DIRTY_Z;
-              store.zDirty = true; store.zDirtyCount++;
-              break;
             case "color": {
               const c = v as [number, number, number, number];
               d[b + F_CR] = c[0]; d[b + F_CG] = c[1]; d[b + F_CB] = c[2]; d[b + F_CA] = c[3];
@@ -479,7 +595,7 @@ export class EntityNode extends Node {
         if (!m || m.group !== group) continue;
         const b = i * STRIDE;
         if (d[b + F_FLAGS] & FLAG_POOLED) continue;
-        const dx = d[b + F_X] - px, dy = d[b + F_Y] - py;
+        const dx = d[b + F_TX] - px, dy = d[b + F_TY] - py;
         const d2 = dx * dx + dy * dy;
         if (d2 < bestD2) { bestD2 = d2; bestSlot = i; }
       }
@@ -541,10 +657,25 @@ export class EntityNode extends Node {
         if (prop === "ccd")     return !!(d[b + F_FLAGS] & FLAG_CCD);
         if (prop === "color")   return [d[b + F_CR], d[b + F_CG], d[b + F_CB], d[b + F_CA]] as unknown as NodeValue;
         if (prop === "uv")      return [d[b + F_U], d[b + F_V], d[b + F_UW], d[b + F_UH]] as unknown as NodeValue;
+        if (prop === "translation") return [d[b + F_TX], d[b + F_TY], d[b + F_TZ]] as unknown as NodeValue;
+        if (prop === "scale")       return [d[b + F_SX], d[b + F_SY], d[b + F_SZ]] as unknown as NodeValue;
+        if (prop === "rotation")    return [d[b + F_QX], d[b + F_QY], d[b + F_QZ], d[b + F_QW]] as unknown as NodeValue;
+
+        if (prop === "tx") return d[b + F_TX];
+        if (prop === "ty") return d[b + F_TY];
+        if (prop === "tz") return d[b + F_TZ];
+        if (prop === "sx") return d[b + F_SX];
+        if (prop === "sy") return d[b + F_SY];
+        if (prop === "sz") return d[b + F_SZ];
+        if (prop === "qx") return d[b + F_QX];
+        if (prop === "qy") return d[b + F_QY];
+        if (prop === "qz") return d[b + F_QZ];
+        if (prop === "qw") return d[b + F_QW];
+        if (prop === "angle") return 2 * Math.atan2(d[b + F_QZ], d[b + F_QW]) * (180 / Math.PI);
 
         if (prop === "worldX") return store.getWorldTransform(slot)[0];
         if (prop === "worldY") return store.getWorldTransform(slot)[1];
-        if (prop === "worldZ") return store.getWorldTransform(slot)[3];
+        if (prop === "worldZ") return store.getWorldTransform(slot)[2];
 
         if (meta.custom && prop in meta.custom) return meta.custom[prop] as NodeValue;
         return null;

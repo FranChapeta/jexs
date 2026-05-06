@@ -44,10 +44,11 @@ export function mat4LookAt(eye: number[], target: number[], up: number[]): Float
 
 export const MAT4_IDENTITY = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
 
-// Scratch buffer reused by mat4Model to avoid allocation per entity
+// Scratch buffer reused by mat4ModelQuat to avoid allocation per entity
 export const _m4 = new Float32Array(16);
 // Scratch buffer for inverse-transpose of upper-left 3x3 (normal matrix)
 export const _n9 = new Float32Array(9);
+
 /** Compute inverse-transpose of upper-left 3x3 of a 4x4 matrix (for correct normals under non-uniform scale). */
 export function normalMat3(m: Float32Array): Float32Array {
   const a00 = m[0], a01 = m[1], a02 = m[2];
@@ -56,39 +57,33 @@ export function normalMat3(m: Float32Array): Float32Array {
   const det = a00*(a11*a22 - a12*a21) - a01*(a10*a22 - a12*a20) + a02*(a10*a21 - a11*a20);
   if (Math.abs(det) < 1e-10) { _n9[0]=1;_n9[1]=0;_n9[2]=0;_n9[3]=0;_n9[4]=1;_n9[5]=0;_n9[6]=0;_n9[7]=0;_n9[8]=1; return _n9; }
   const id = 1 / det;
-  // Inverse, then transpose: result[col][row] = cofactor[row][col] / det
-  // Since we want transpose(inverse(M3)), we store cofactors directly (no transpose step needed
-  // because cofactor matrix = det * inverse^T, so cofactor/det = inverse^T)
-  _n9[0] = (a11*a22 - a12*a21) * id;  // row0
+  _n9[0] = (a11*a22 - a12*a21) * id;
   _n9[1] = (a02*a21 - a01*a22) * id;
   _n9[2] = (a01*a12 - a02*a11) * id;
-  _n9[3] = (a12*a20 - a10*a22) * id;  // row1
+  _n9[3] = (a12*a20 - a10*a22) * id;
   _n9[4] = (a00*a22 - a02*a20) * id;
   _n9[5] = (a02*a10 - a00*a12) * id;
-  _n9[6] = (a10*a21 - a11*a20) * id;  // row2
+  _n9[6] = (a10*a21 - a11*a20) * id;
   _n9[7] = (a01*a20 - a00*a21) * id;
   _n9[8] = (a00*a11 - a01*a10) * id;
   return _n9;
 }
 
-export function mat4Model(
-  x: number, y: number, zPos: number,
-  w: number, h: number, d: number,
-  rx: number, ry: number, rz: number,
+export function mat4ModelQuat(
+  tx: number, ty: number, tz: number,
+  sx: number, sy: number, sz: number,
+  qx: number, qy: number, qz: number, qw: number,
 ): Float32Array {
   const m = _m4;
   m[3] = 0; m[7] = 0; m[11] = 0; m[15] = 1;
-  // translate
-  m[12] = x; m[13] = y; m[14] = zPos;
-  // rotate Y then X then Z (degrees → rad)
-  const cY = Math.cos(ry * Math.PI / 180), sY = Math.sin(ry * Math.PI / 180);
-  const cX = Math.cos(rx * Math.PI / 180), sX = Math.sin(rx * Math.PI / 180);
-  const cZ = Math.cos(rz * Math.PI / 180), sZ = Math.sin(rz * Math.PI / 180);
-  // R = Rz * Rx * Ry  (column-major)
-  // scale * rotation
-  m[0] = (cZ * cY + sZ * sX * sY) * w; m[1] = sZ * cX * w;  m[2] = (-cZ * sY + sZ * sX * cY) * w;
-  m[4] = (-sZ * cY + cZ * sX * sY) * h; m[5] = cZ * cX * h;  m[6] = (sZ * sY + cZ * sX * cY) * h;
-  m[8] = cX * sY * d;                    m[9] = -sX * d;       m[10] = cX * cY * d;
+  m[12] = tx; m[13] = ty; m[14] = tz;
+  const x2=qx+qx, y2=qy+qy, z2=qz+qz;
+  const xx=qx*x2, xy=qx*y2, xz=qx*z2;
+  const yy=qy*y2, yz=qy*z2, zz=qz*z2;
+  const wx=qw*x2, wy=qw*y2, wz=qw*z2;
+  m[0]=(1-yy-zz)*sx; m[1]=(xy+wz)*sx;   m[2]=(xz-wy)*sx;
+  m[4]=(xy-wz)*sy;   m[5]=(1-xx-zz)*sy; m[6]=(yz+wx)*sy;
+  m[8]=(xz+wy)*sz;   m[9]=(yz-wx)*sz;   m[10]=(1-xx-yy)*sz;
   return m;
 }
 

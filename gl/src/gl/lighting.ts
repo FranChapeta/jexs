@@ -4,7 +4,7 @@
  */
 
 import {
-  STRIDE, F_X, F_Y, F_W, F_H, F_Z, F_D,
+  STRIDE, F_TX, F_TY, F_SX, F_SY, F_TZ, F_SZ,
   F_CR, F_CG, F_CB, F_FLAGS, FLAG_VISIBLE,
 } from "@jexs/physics";
 import type { EntityStore } from "@jexs/physics";
@@ -46,9 +46,9 @@ export function collectPointLights(inst: GlInstance, store: EntityStore): void {
     if (!(d[lb + F_FLAGS] & FLAG_VISIBLE)) continue;
     const meta = store.meta[si]!;
     const oi = inst.pointLightCount * 12;
-    pl[oi]     = d[lb + F_X] + d[lb + F_W] * 0.5;
-    pl[oi + 1] = d[lb + F_Y] + d[lb + F_H] * 0.5;
-    pl[oi + 2] = d[lb + F_Z] + (d[lb + F_D] || 0);
+    pl[oi]     = d[lb + F_TX] + d[lb + F_SX] * 0.5;
+    pl[oi + 1] = d[lb + F_TY] + d[lb + F_SY] * 0.5;
+    pl[oi + 2] = d[lb + F_TZ] + (d[lb + F_SZ] || 0);
     pl[oi + 3] = d[lb + F_CR]; pl[oi + 4] = d[lb + F_CG]; pl[oi + 5] = d[lb + F_CB];
     pl[oi + 6] = (meta.custom?.radius as number) ?? 30;
     pl[oi + 7] = (meta.custom?.coneAngle as number) ?? 0;

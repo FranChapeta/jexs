@@ -2,32 +2,43 @@
  * Struct-of-arrays entity storage backed by Float64Array.
  *
  * Numeric fields are packed into a single interleaved Float64Array
- * (stride = 26 floats per entity). Non-numeric metadata (id, type,
+ * (stride = 33 floats per entity). Non-numeric metadata (id, type,
  * group, mask, vertices) lives in a parallel JS array.
+ *
+ * Transform layout (offsets 0-9) matches GLTF node format:
+ *   translation[3], scale[3], rotation quaternion[4]
  *
  * Removal uses swap-and-pop for O(1) dense iteration.
  * Draw order is tracked in a separate index array.
  */
 
+import type { MeshEntry } from "./Mesh.js";
+
 // ─── Field offsets within the stride ─────────────────────────────────────────
 
-export const STRIDE = 32;
+export const STRIDE = 33;
 
-export const F_X = 0, F_Y = 1, F_W = 2, F_H = 3, F_ANGLE = 4;
-export const F_CR = 5, F_CG = 6, F_CB = 7, F_CA = 8;
-export const F_VX = 9, F_VY = 10, F_AX = 11, F_AY = 12;
-export const F_MASS = 13, F_INV_MASS = 14, F_RESTITUTION = 15, F_FRICTION = 16;
-export const F_MOVE_X = 17, F_MOVE_Y = 18, F_FLAGS = 19;
-export const F_Z = 20;
-export const F_U = 21, F_V = 22, F_UW = 23, F_UH = 24;
-export const F_OPACITY = 25;
-export const F_DAMPING = 26;
-// 3D extensions
-export const F_D = 27;          // depth (z-size)
-export const F_RX = 28;         // rotation around X axis (degrees)
-export const F_RY = 29;         // rotation around Y axis (degrees)
-export const F_VZ = 30;         // velocity Z
-export const F_AZ = 31;         // acceleration Z
+// Transform (contiguous, matches GLTF node order)
+export const F_TX = 0, F_TY = 1, F_TZ = 2;           // translation
+export const F_SX = 3, F_SY = 4, F_SZ = 5;           // scale
+export const F_QX = 6, F_QY = 7, F_QZ = 8, F_QW = 9; // rotation quaternion
+
+// Visual
+export const F_CR = 10, F_CG = 11, F_CB = 12, F_CA = 13;
+
+// Motion
+export const F_VX = 14, F_VY = 15, F_VZ = 16;
+export const F_AX = 17, F_AY = 18, F_AZ = 19;
+
+// Physics
+export const F_MASS = 20, F_INV_MASS = 21, F_RESTITUTION = 22, F_FRICTION = 23;
+export const F_MOVE_X = 24, F_MOVE_Y = 25;
+export const F_FLAGS = 26;
+
+// UV / misc
+export const F_U = 27, F_V = 28, F_UW = 29, F_UH = 30;
+export const F_OPACITY = 31;
+export const F_DAMPING = 32;
 
 export const FLAG_VISIBLE = 1;
 export const FLAG_PHYSICS = 2;
@@ -39,7 +50,7 @@ export const FLAG_CCD = 64;
 
 // ─── Per-entity dirty bitmask ───────────────────────────────────────────────
 
-export const DIRTY_TRANSFORM = 1;  // x, y, angle, w, h
+export const DIRTY_TRANSFORM = 1;  // translation, scale, rotation
 export const DIRTY_VISUAL    = 2;  // color, texture, opacity, uv
 export const DIRTY_TEXT      = 4;  // text content changed, needs texture re-render
 export const DIRTY_Z         = 8;  // z changed, needs re-sort
@@ -47,24 +58,27 @@ export const DIRTY_WORLD     = 16; // world transform needs recompute (parent ch
 
 /** Name → offset map for property access by string key */
 export const FIELD_OFFSETS: Record<string, number> = {
-  x: F_X, y: F_Y, w: F_W, h: F_H, angle: F_ANGLE,
-  vx: F_VX, vy: F_VY, ax: F_AX, ay: F_AY,
+  tx: F_TX, ty: F_TY, tz: F_TZ,
+  sx: F_SX, sy: F_SY, sz: F_SZ,
+  qx: F_QX, qy: F_QY, qz: F_QZ, qw: F_QW,
+  vx: F_VX, vy: F_VY, vz: F_VZ,
+  ax: F_AX, ay: F_AY, az: F_AZ,
   mass: F_MASS, invMass: F_INV_MASS,
   restitution: F_RESTITUTION, friction: F_FRICTION, damping: F_DAMPING,
-  z: F_Z,
   u: F_U, v: F_V, uW: F_UW, uH: F_UH,
   opacity: F_OPACITY,
-  d: F_D, rx: F_RX, ry: F_RY, vz: F_VZ, az: F_AZ,
 };
 
 // ─── Metadata side table ─────────────────────────────────────────────────────
 
 export interface EntityMeta {
   id: string;
-  type: "quad" | "triangle" | "points" | "circle" | "line" | "line-strip" | "sphere" | "cylinder" | "cone" | "light" | "ramp" | "pivot";
+  type: "quad" | "triangle" | "points" | "circle" | "line" | "line-strip" | "sphere" | "cylinder" | "cone" | "light" | "ramp" | "pivot" | "mesh";
   group: string;
   mask: string[];
   vertices?: number[];
+  /** Reference into `EntityStore.meshes` (registered via MeshNode `register-mesh`). */
+  meshId?: string | null;
   textureName?: string;
   normalMap?: string;
   normalScale?: number;
@@ -77,7 +91,10 @@ export interface EntityMeta {
   billboard?: boolean;
   parent?: string;
   children: string[];
-  /** Cached world transform: [wx, wy, wAngle, wz]. Null = needs recompute. */
+  /**
+   * Cached world transform: [wtx, wty, wtz, wsx, wsy, wsz, wqx, wqy, wqz, wqw].
+   * Null = needs recompute.
+   */
   worldTransform: Float64Array | null;
   custom: Record<string, unknown>;
   anim?: {
@@ -121,6 +138,13 @@ export class EntityStore {
   pool: Map<string, number[]> = new Map();
   static readonly POOL_MAX_PER_TYPE = 50;
 
+  /**
+   * Registered meshes (from GLB/GLTF imports). Keyed by mesh id.
+   * Each entry holds whatever is needed by its consumers: GPU upload (`gpu`) for
+   * rendering, BVH + positions/indices for collision. Populated via MeshNode `register-mesh`.
+   */
+  meshes: Map<string, MeshEntry> = new Map();
+
   /** Previous positions for fixed-timestep interpolation (3 floats per entity: x, y, z). */
   prevPositions: Float64Array;
   /** Interpolation alpha [0..1] for rendering between prev and current positions. */
@@ -151,15 +175,16 @@ export class EntityStore {
     mask: string[],
     vertices: number[] | undefined,
     numerics: {
-      x?: number; y?: number; w?: number; h?: number; angle?: number;
+      translation?: [number, number, number];
+      scale?: [number, number, number];
+      rotation?: [number, number, number, number]; // quaternion [qx,qy,qz,qw]
       color?: [number, number, number, number];
-      vx?: number; vy?: number; ax?: number; ay?: number;
+      vx?: number; vy?: number; vz?: number;
+      ax?: number; ay?: number; az?: number;
       mass?: number; restitution?: number; friction?: number; damping?: number;
       moveX?: number | null; moveY?: number | null;
       visible?: boolean; physics?: boolean; fixed?: boolean;
-      z?: number;
       uv?: [number, number, number, number];
-      d?: number; rx?: number; ry?: number; vz?: number; az?: number;
     },
   ): number {
     if (this.count >= this.capacity) this.grow();
@@ -170,11 +195,15 @@ export class EntityStore {
     // Zero everything, then set defaults
     this.data.fill(0, base, base + STRIDE);
     const d = this.data;
-    d[base + F_W] = numerics.w ?? 1;
-    d[base + F_H] = numerics.h ?? 1;
-    d[base + F_X] = numerics.x ?? 0;
-    d[base + F_Y] = numerics.y ?? 0;
-    d[base + F_ANGLE] = numerics.angle ?? 0;
+
+    const t = numerics.translation ?? [0, 0, 0];
+    d[base + F_TX] = t[0]; d[base + F_TY] = t[1]; d[base + F_TZ] = t[2];
+
+    const s = numerics.scale ?? [1, 1, 1];
+    d[base + F_SX] = s[0]; d[base + F_SY] = s[1]; d[base + F_SZ] = s[2];
+
+    const q = numerics.rotation ?? [0, 0, 0, 1];
+    d[base + F_QX] = q[0]; d[base + F_QY] = q[1]; d[base + F_QZ] = q[2]; d[base + F_QW] = q[3];
 
     const c = numerics.color ?? [1, 1, 1, 1];
     d[base + F_CR] = c[0]; d[base + F_CG] = c[1];
@@ -182,15 +211,17 @@ export class EntityStore {
 
     d[base + F_VX] = numerics.vx ?? 0;
     d[base + F_VY] = numerics.vy ?? 0;
+    d[base + F_VZ] = numerics.vz ?? 0;
     d[base + F_AX] = numerics.ax ?? 0;
     d[base + F_AY] = numerics.ay ?? 0;
+    d[base + F_AZ] = numerics.az ?? 0;
 
     const mass = numerics.mass ?? 1;
     d[base + F_MASS] = mass;
     d[base + F_INV_MASS] = mass === 0 ? 0 : 1 / mass;
     d[base + F_RESTITUTION] = numerics.restitution ?? 0.3;
     d[base + F_FRICTION] = numerics.friction ?? 0.1;
-    d[base + F_DAMPING] = numerics.damping ?? -1;  // -1 = use global damping
+    d[base + F_DAMPING] = numerics.damping ?? -1;
 
     d[base + F_MOVE_X] = numerics.moveX != null ? numerics.moveX : NaN;
     d[base + F_MOVE_Y] = numerics.moveY != null ? numerics.moveY : NaN;
@@ -201,26 +232,17 @@ export class EntityStore {
     if (numerics.fixed === true) flags |= FLAG_FIXED;
     d[base + F_FLAGS] = flags;
 
-    d[base + F_Z] = numerics.z ?? 0;
-
     const uv = numerics.uv ?? [0, 0, 1, 1];
     d[base + F_U] = uv[0]; d[base + F_V] = uv[1];
     d[base + F_UW] = uv[2]; d[base + F_UH] = uv[3];
 
     d[base + F_OPACITY] = 1.0;
 
-    // 3D fields
-    d[base + F_D]  = numerics.d  ?? 0;
-    d[base + F_RX] = numerics.rx ?? 0;
-    d[base + F_RY] = numerics.ry ?? 0;
-    d[base + F_VZ] = numerics.vz ?? 0;
-    d[base + F_AZ] = numerics.az ?? 0;
-
     // Initialize prev positions for interpolation
     const pb = slot * 3;
-    this.prevPositions[pb]     = d[base + F_X];
-    this.prevPositions[pb + 1] = d[base + F_Y];
-    this.prevPositions[pb + 2] = d[base + F_Z];
+    this.prevPositions[pb]     = t[0];
+    this.prevPositions[pb + 1] = t[1];
+    this.prevPositions[pb + 2] = t[2];
 
     this.meta[slot] = { id, type, group, mask, vertices, dirty: 0, children: [], worldTransform: null, custom: {} };
     this.idToSlot.set(id, slot);
@@ -450,7 +472,7 @@ export class EntityStore {
   }
 
   /**
-   * Get world transform for a slot: [worldX, worldY, worldAngle, worldZ].
+   * Get world transform for a slot: [wtx, wty, wtz, wsx, wsy, wsz, wqx, wqy, wqz, wqw].
    * Computes from parent chain if not cached. Caches the result.
    */
   getWorldTransform(slot: number): Float64Array {
@@ -459,14 +481,16 @@ export class EntityStore {
     if (meta.worldTransform) return meta.worldTransform;
 
     const b = slot * STRIDE;
-    const lx = this.data[b + F_X], ly = this.data[b + F_Y];
-    const la = this.data[b + F_ANGLE], lz = this.data[b + F_Z];
-    const lrx = this.data[b + F_RX], lry = this.data[b + F_RY];
+    const lx = this.data[b + F_TX], ly = this.data[b + F_TY], lz = this.data[b + F_TZ];
+    const lsx = this.data[b + F_SX], lsy = this.data[b + F_SY], lsz = this.data[b + F_SZ];
+    const lqx = this.data[b + F_QX], lqy = this.data[b + F_QY];
+    const lqz = this.data[b + F_QZ], lqw = this.data[b + F_QW];
 
     if (!meta.parent) {
-      const wt = new Float64Array(6);
-      wt[0] = lx; wt[1] = ly; wt[2] = la; wt[3] = lz;
-      wt[4] = lrx; wt[5] = lry;
+      const wt = new Float64Array(10);
+      wt[0]=lx; wt[1]=ly; wt[2]=lz;
+      wt[3]=lsx; wt[4]=lsy; wt[5]=lsz;
+      wt[6]=lqx; wt[7]=lqy; wt[8]=lqz; wt[9]=lqw;
       meta.worldTransform = wt;
       meta.dirty &= ~DIRTY_WORLD;
       return wt;
@@ -474,69 +498,42 @@ export class EntityStore {
 
     const parentSlot = this.slot(meta.parent);
     if (parentSlot === -1) {
-      const wt = new Float64Array(6);
-      wt[0] = lx; wt[1] = ly; wt[2] = la; wt[3] = lz;
-      wt[4] = lrx; wt[5] = lry;
+      const wt = new Float64Array(10);
+      wt[0]=lx; wt[1]=ly; wt[2]=lz;
+      wt[3]=lsx; wt[4]=lsy; wt[5]=lsz;
+      wt[6]=lqx; wt[7]=lqy; wt[8]=lqz; wt[9]=lqw;
       meta.worldTransform = wt;
       meta.dirty &= ~DIRTY_WORLD;
       return wt;
     }
 
     const pwt = this.getWorldTransform(parentSlot);
-    const px = pwt[0], py = pwt[1], pa = pwt[2], pz = pwt[3];
-    const prx = pwt[4], pry = pwt[5];
-    const DEG = Math.PI / 180;
+    const px = pwt[0], py = pwt[1], pz = pwt[2];
+    const psx = pwt[3], psy = pwt[4], psz = pwt[5];
+    const pqx = pwt[6], pqy = pwt[7], pqz = pwt[8], pqw = pwt[9];
 
-    // Full 3D rotation: R = Rz * Rx * Ry (matching mat4Model order)
-    const cZ = Math.cos(pa * DEG), sZ = Math.sin(pa * DEG);
-    const cX = Math.cos(prx * DEG), sX = Math.sin(prx * DEG);
-    const cY = Math.cos(pry * DEG), sY = Math.sin(pry * DEG);
+    // World scale: component-wise multiply
+    const wsx = psx * lsx, wsy = psy * lsy, wsz = psz * lsz;
 
-    // Rotation matrix columns (R = Rz * Rx * Ry)
-    const r00 = cZ * cY + sZ * sX * sY;
-    const r10 = sZ * cX;
-    const r20 = -cZ * sY + sZ * sX * cY;
-    const r01 = -sZ * cY + cZ * sX * sY;
-    const r11 = cZ * cX;
-    const r21 = sZ * sY + cZ * sX * cY;
-    const r02 = cX * sY;
-    const r12 = -sX;
-    const r22 = cX * cY;
+    // Rotate local translation by parent world quaternion, then add parent world translation
+    const x2=pqx+pqx, y2=pqy+pqy, z2=pqz+pqz;
+    const xx=pqx*x2, xy=pqx*y2, xz=pqx*z2;
+    const yy=pqy*y2, yz=pqy*z2, zz=pqz*z2;
+    const wx=pqw*x2, wy=pqw*y2, wz=pqw*z2;
+    const wtx = px + (1-yy-zz)*lx + (xy-wz)*ly + (xz+wy)*lz;
+    const wty = py + (xy+wz)*lx + (1-xx-zz)*ly + (yz-wx)*lz;
+    const wtz = pz + (xz-wy)*lx + (yz+wx)*ly + (1-xx-yy)*lz;
 
-    // Build child rotation matrix: R_child = Rz(la) * Rx(lrx) * Ry(lry)
-    const ccZ = Math.cos(la * DEG), scZ = Math.sin(la * DEG);
-    const ccX = Math.cos(lrx * DEG), scX = Math.sin(lrx * DEG);
-    const ccY = Math.cos(lry * DEG), scY = Math.sin(lry * DEG);
-    const c00 = ccZ * ccY + scZ * scX * scY;
-    const c10 = scZ * ccX;
-    const c20 = -ccZ * scY + scZ * scX * ccY;
-    const c01 = -scZ * ccY + ccZ * scX * scY;
-    const c11 = ccZ * ccX;
-    const c21 = scZ * scY + ccZ * scX * ccY;
-    const c02 = ccX * scY;
-    const c12 = -scX;
-    const c22 = ccX * ccY;
+    // World rotation: Hamilton product (parent * child)
+    const wqx = pqw*lqx + pqx*lqw + pqy*lqz - pqz*lqy;
+    const wqy = pqw*lqy - pqx*lqz + pqy*lqw + pqz*lqx;
+    const wqz = pqw*lqz + pqx*lqy - pqy*lqx + pqz*lqw;
+    const wqw = pqw*lqw - pqx*lqx - pqy*lqy - pqz*lqz;
 
-    // Combined rotation: R_world = R_parent * R_child
-    const m10 = r10 * c00 + r11 * c10 + r12 * c20;
-    const m11 = r10 * c01 + r11 * c11 + r12 * c21;
-    const m12 = r10 * c02 + r11 * c12 + r12 * c22;
-    const m02 = r00 * c02 + r01 * c12 + r02 * c22;
-    const m22 = r20 * c02 + r21 * c12 + r22 * c22;
-
-    // Extract Euler angles: R = Rz * Rx * Ry → rx = asin(-m12), ry = atan2(m02,m22), rz = atan2(m10,m11)
-    const clampedM12 = Math.max(-1, Math.min(1, m12));
-    const wrx = Math.asin(-clampedM12) / DEG;
-    const wry = Math.atan2(m02, m22) / DEG;
-    const wrz = Math.atan2(m10, m11) / DEG;
-
-    const wt = new Float64Array(6);
-    wt[0] = px + lx * r00 + ly * r01 + lz * r02;
-    wt[1] = py + lx * r10 + ly * r11 + lz * r12;
-    wt[2] = wrz;
-    wt[3] = pz + lx * r20 + ly * r21 + lz * r22;
-    wt[4] = wrx;
-    wt[5] = wry;
+    const wt = new Float64Array(10);
+    wt[0]=wtx; wt[1]=wty; wt[2]=wtz;
+    wt[3]=wsx; wt[4]=wsy; wt[5]=wsz;
+    wt[6]=wqx; wt[7]=wqy; wt[8]=wqz; wt[9]=wqw;
     meta.worldTransform = wt;
     meta.dirty &= ~DIRTY_WORLD;
     return wt;
@@ -573,11 +570,11 @@ export class EntityStore {
     const oneMinusAlpha = 1 - alpha;
     for (let i = 0; i < this.count; i++) {
       const b = i * STRIDE, pb = i * 3;
-      const cx = d[b + F_X], cy = d[b + F_Y], cz = d[b + F_Z];
+      const cx = d[b + F_TX], cy = d[b + F_TY], cz = d[b + F_TZ];
       if (i !== skipSlot) {
-        d[b + F_X] = p[pb]     * oneMinusAlpha + cx * alpha;
-        d[b + F_Y] = p[pb + 1] * oneMinusAlpha + cy * alpha;
-        d[b + F_Z] = p[pb + 2] * oneMinusAlpha + cz * alpha;
+        d[b + F_TX] = p[pb]     * oneMinusAlpha + cx * alpha;
+        d[b + F_TY] = p[pb + 1] * oneMinusAlpha + cy * alpha;
+        d[b + F_TZ] = p[pb + 2] * oneMinusAlpha + cz * alpha;
         const m = this.meta[i];
         if (m && m.worldTransform) m.worldTransform = null;
       }
@@ -592,9 +589,9 @@ export class EntityStore {
     const d = this.data, p = this.prevPositions;
     for (let i = 0; i < this.count; i++) {
       const b = i * STRIDE, pb = i * 3;
-      d[b + F_X] = p[pb];
-      d[b + F_Y] = p[pb + 1];
-      d[b + F_Z] = p[pb + 2];
+      d[b + F_TX] = p[pb];
+      d[b + F_TY] = p[pb + 1];
+      d[b + F_TZ] = p[pb + 2];
       const m = this.meta[i];
       if (m && m.worldTransform) m.worldTransform = null;
     }
@@ -611,16 +608,16 @@ export class EntityStore {
       // Insertion sort: fast for nearly-sorted arrays (few Z changes per frame)
       for (let i = 1; i < this.order.length; i++) {
         const key = this.order[i];
-        const keyZ = d[key * STRIDE + F_Z];
+        const keyZ = d[key * STRIDE + F_TZ];
         let j = i - 1;
-        while (j >= 0 && d[this.order[j] * STRIDE + F_Z] > keyZ) {
+        while (j >= 0 && d[this.order[j] * STRIDE + F_TZ] > keyZ) {
           this.order[j + 1] = this.order[j];
           j--;
         }
         this.order[j + 1] = key;
       }
     } else {
-      this.order.sort((a, b) => d[a * STRIDE + F_Z] - d[b * STRIDE + F_Z]);
+      this.order.sort((a, b) => d[a * STRIDE + F_TZ] - d[b * STRIDE + F_TZ]);
     }
     // Rebuild reverse index — the sort changes every entry's position.
     this.slotToOrderIdx.clear();
@@ -650,4 +647,4 @@ export class EntityStore {
   }
 }
 
-const _identityWT = new Float64Array(6);
+const _identityWT = new Float64Array([0,0,0, 1,1,1, 0,0,0,1]);

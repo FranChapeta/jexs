@@ -2,19 +2,30 @@
 export {
   EntityStore, type EntityMeta,
   STRIDE, FIELD_OFFSETS,
-  F_X, F_Y, F_W, F_H, F_ANGLE,
+  F_TX, F_TY, F_TZ,
+  F_SX, F_SY, F_SZ,
+  F_QX, F_QY, F_QZ, F_QW,
   F_CR, F_CG, F_CB, F_CA,
-  F_VX, F_VY, F_AX, F_AY,
+  F_VX, F_VY, F_VZ,
+  F_AX, F_AY, F_AZ,
   F_MASS, F_INV_MASS, F_RESTITUTION, F_FRICTION, F_DAMPING,
   F_MOVE_X, F_MOVE_Y, F_FLAGS,
-  F_Z, F_U, F_V, F_UW, F_UH, F_OPACITY,
-  F_D, F_RX, F_RY, F_VZ, F_AZ,
+  F_U, F_V, F_UW, F_UH, F_OPACITY,
   FLAG_VISIBLE, FLAG_PHYSICS, FLAG_FIXED, FLAG_POOLED, FLAG_SLEEPING, FLAG_TRIGGER, FLAG_CCD,
   DIRTY_TRANSFORM, DIRTY_VISUAL, DIRTY_TEXT, DIRTY_Z, DIRTY_WORLD,
 } from "./EntityStore.js";
 
 // ── Entity Node ──
 export { EntityNode } from "./nodes/EntityNode.js";
+
+// ── Mesh Import (GLB / GLTF) ──
+export { MeshNode } from "./nodes/MeshNode.js";
+export type {
+  Bounds, MeshMaterial, MeshData, NodeData, Scene, MeshEntry, BVH,
+} from "./Mesh.js";
+export {
+  buildBvh, queryAabb, raycastBvh, rayTriangle, readTriangle, computeBounds,
+} from "./Bvh.js";
 
 // ── Physics ──
 export {

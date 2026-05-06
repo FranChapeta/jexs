@@ -6,7 +6,7 @@
  * to the batch buffer state machine.
  */
 
-import { STRIDE, F_X, F_Y, F_W, F_H } from "@jexs/physics";
+import { STRIDE, F_TX, F_TY, F_SX, F_SY } from "@jexs/physics";
 import type { GlInstance } from "./types.js";
 import { BATCH_STRIDE_FLOATS, BATCH_STRIDE_BYTES } from "./shaders.js";
 
@@ -23,8 +23,8 @@ export function updateTrails(inst: GlInstance): boolean {
     const slot = store.slot(trail.entityId);
     if (slot === -1) { inst.trails.delete(tid); continue; }
     const b = slot * STRIDE;
-    const px = store.data[b + F_X] + store.data[b + F_W] * 0.5;
-    const py = store.data[b + F_Y] + store.data[b + F_H] * 0.5;
+    const px = store.data[b + F_TX] + store.data[b + F_SX] * 0.5;
+    const py = store.data[b + F_TY] + store.data[b + F_SY] * 0.5;
     const idx = trail.head * 2;
     trail.points[idx] = px;
     trail.points[idx + 1] = py;

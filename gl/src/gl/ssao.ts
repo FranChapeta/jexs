@@ -10,11 +10,11 @@ import {
   SSAO_DEPTH_VERT_SRC, SSAO_DEPTH_FRAG_SRC,
   SSAO_FRAG_SRC, SSAO_BLUR_FRAG_SRC, SSAO_COMPOSITE_FRAG_SRC,
 } from "./shaders.js";
-import { mat4Perspective, mat4Ortho, mat4LookAt, mat4Model, _projM } from "./math.js";
+import { mat4Perspective, mat4Ortho, mat4LookAt, mat4ModelQuat, _projM } from "./math.js";
 import { SHAPE_3D } from "./geometry.js";
 import {
-  STRIDE, F_X, F_Y, F_Z, F_W, F_H, F_D,
-  F_RX, F_RY, F_ANGLE, F_FLAGS, FLAG_VISIBLE,
+  STRIDE, F_TX, F_TY, F_TZ, F_SX, F_SY, F_SZ,
+  F_QX, F_QY, F_QZ, F_QW, F_FLAGS, FLAG_VISIBLE,
 } from "@jexs/physics";
 
 type CreateProgram = (gl: WebGLRenderingContext, vert: string, frag: string, isWebGL2: boolean) => WebGLProgram | null;
@@ -65,10 +65,10 @@ export function renderSsaoPass(
     const verts = SHAPE_3D[meta.type];
     if (!verts) continue;
 
-    const model = mat4Model(
-      store.data[b + F_X], store.data[b + F_Y], store.data[b + F_Z],
-      store.data[b + F_W], store.data[b + F_H], store.data[b + F_D] || 1,
-      store.data[b + F_RX], store.data[b + F_RY], store.data[b + F_ANGLE],
+    const model = mat4ModelQuat(
+      store.data[b + F_TX], store.data[b + F_TY], store.data[b + F_TZ],
+      store.data[b + F_SX], store.data[b + F_SY], store.data[b + F_SZ] || 1,
+      store.data[b + F_QX], store.data[b + F_QY], store.data[b + F_QZ], store.data[b + F_QW],
     );
     gl.uniformMatrix4fv(sdl.uModel, false, model);
 

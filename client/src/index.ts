@@ -48,7 +48,8 @@ if (typeof window !== "undefined") {
 
   registerLazy(
     ["gl-init", "gl-destroy", "gl-hit", "gl-camera", "gl-texture", "gl-animate",
-     "gl-text", "gl-shader", "gl-blur", "gl-transition", "gl-tween", "gl-ssao"],
+     "gl-text", "gl-shader", "gl-blur", "gl-transition", "gl-tween", "gl-ssao",
+     "gl-register-mesh"],
     () => import("@jexs/gl").then(({ GlNode }) => {
       registerNode(new GlNode());
     }),
@@ -61,13 +62,15 @@ if (typeof window !== "undefined") {
      "v-add", "v-sub", "v-direction", "v-cross", "v-dot",
      "physics-init", "physics-pause", "physics-resume", "physics-destroy", "physics-apply", "physics-step",
      "collision-on", "collision-off",
-     "joint-add", "joint-remove"],
-    () => import("@jexs/physics").then(({ EntityNode, VectorNode, PhysicsNode, CollisionNode, JointNode }) => {
+     "joint-add", "joint-remove",
+     "parseGLB", "parseGLTF", "register-mesh"],
+    () => import("@jexs/physics").then(({ EntityNode, VectorNode, PhysicsNode, CollisionNode, JointNode, MeshNode }) => {
       registerNode(new EntityNode());
       registerNode(new VectorNode());
       registerNode(new PhysicsNode());
       registerNode(new CollisionNode());
       registerNode(new JointNode());
+      registerNode(new MeshNode());
     }),
   );
 

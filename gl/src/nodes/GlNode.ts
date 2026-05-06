@@ -3,11 +3,12 @@ import { resolve, resolveAll, resolveObj, runSteps } from "@jexs/core";
 import {
   EntityStore,
   STRIDE,
-  F_X, F_Y, F_W, F_H, F_ANGLE,
+  F_TX, F_TY, F_TZ,
+  F_SX, F_SY, F_SZ,
+  F_QX, F_QY, F_QZ, F_QW,
   F_CR, F_CG, F_CB, F_CA,
-  F_FLAGS, F_Z,
+  F_FLAGS,
   F_U, F_V, F_UW, F_UH, F_OPACITY,
-  F_D, F_RX, F_RY,
   FLAG_VISIBLE, FLAG_FIXED,
   DIRTY_TEXT, DIRTY_VISUAL,
 } from "@jexs/physics";
@@ -44,13 +45,14 @@ import {
 } from "../gl/geometry.js";
 import {
   mat4Perspective, mat4Ortho, mat4LookAt,
-  normalMat3, mat4Model, mat4Billboard,
+  normalMat3, mat4ModelQuat, mat4Billboard,
   mat4Multiply, unprojectRay, rayAABB,
   MAT4_IDENTITY, bindTex,
   _projM, _viewM,
   _frustum,
 } from "../gl/math.js";
-import { raycastStore } from "@jexs/physics";
+import { raycastStore, type MeshEntry, type Bounds } from "@jexs/physics";
+import type { GpuMesh } from "../gl/types.js";
 
 // ─── Module-level scratch buffers ────────────────────────────────────────────
 
@@ -447,8 +449,8 @@ export class GlNode extends Node {
           if (!(d[b + F_FLAGS] & FLAG_VISIBLE)) continue;
           const meta = store.meta[slot]!;
           if (meta.type === "pivot" || meta.type === "line" || meta.type === "line-strip" || meta.type === "points") continue;
-          const ex = d[b + F_X], ey = d[b + F_Y], ez = d[b + F_Z];
-          const ew = d[b + F_W], eh = d[b + F_H], ed = d[b + F_D] || 0.01;
+          const ex = d[b + F_TX], ey = d[b + F_TY], ez = d[b + F_TZ];
+          const ew = d[b + F_SX], eh = d[b + F_SY], ed = d[b + F_SZ] || 0.01;
           const t = rayAABB(ox, oy, oz, rdx, rdy, rdz, ex, ey, ez, ex + ew, ey + eh, ez + ed);
           if (t >= 0 && t < bestDist) {
             bestDist = t;
@@ -474,7 +476,7 @@ export class GlNode extends Node {
         const meta = store.meta[slot];
         if (!meta) continue;
         if (meta.type === "pivot") continue;
-        const x = d[b + F_X], y = d[b + F_Y], w = d[b + F_W], h = d[b + F_H];
+        const x = d[b + F_TX], y = d[b + F_TY], w = d[b + F_SX], h = d[b + F_SY];
         if (meta.type === "circle") {
           const cx = x + w / 2, cy = y + h / 2;
           const rx = w / 2, ry = h / 2;
@@ -608,6 +610,135 @@ export class GlNode extends Node {
         };
         img.src = src;
       });
+    });
+  }
+
+  // ── gl-register-mesh ───────────────────────────────────────────────────
+
+  /**
+   * Uploads an imported mesh's geometry to the GPU and stores the handle on
+   * `MeshEntry.gpu` (interleaved layout: pos3 + normal3 + uv2 = 32 bytes/vert).
+   * Idempotent — re-uploading the same id is a no-op.
+   *
+   * Auto-registers in the physics EntityStore if not yet present (so callers
+   * can skip the separate `register-mesh` step). If a baseColor texture URI is
+   * present on the material, a texture load is also kicked off.
+   *
+   * @param {string} gl-register-mesh Mesh id.
+   * @param {expr} bounds AABB bounds object { min, max }.
+   * @param {expr} positions Float32Array of XYZ vertex positions.
+   * @param {expr} normals Float32Array of per-vertex normals (optional).
+   * @param {expr} uvs Float32Array of per-vertex UVs (optional).
+   * @param {expr} indices Uint16Array / Uint32Array of triangle indices (optional).
+   * @param {expr} material Material URI map (optional).
+   * @example
+   * { "foreach": { "var": "scene.meshes" }, "item": "m", "do": {
+   *     "gl-register-mesh": { "var": "m.id" },
+   *     "bounds":    { "var": "m.bounds" },
+   *     "positions": { "var": "m.positions" },
+   *     "normals":   { "var": "m.normals" },
+   *     "uvs":       { "var": "m.uvs" },
+   *     "indices":   { "var": "m.indices" },
+   *     "material":  { "var": "m.material" }
+   * } }
+   */
+  ["gl-register-mesh"](def: Record<string, unknown>, context: Context): NodeValue {
+    const inst = GlNode.getInst(context);
+    if (!inst) return null;
+    return resolveObj(def, context, r => {
+      const idRaw = r["gl-register-mesh"];
+      if (idRaw == null) return null;
+      const id = String(idRaw);
+
+      if (inst.store.meshes.get(id)?.gpu) return id; // already uploaded
+
+      // Auto-register in physics store if not yet present.
+      if (!inst.store.meshes.has(id)) {
+        const positions = r["positions"] as Float32Array | undefined;
+        const bounds = r["bounds"] as Bounds | undefined;
+        if (!positions || !bounds) return null;
+        inst.store.meshes.set(id, {
+          bounds,
+          positions,
+          normals: r["normals"] as Float32Array | undefined,
+          uvs: r["uvs"] as Float32Array | undefined,
+          indices: r["indices"] as Uint16Array | Uint32Array | undefined,
+          material: r["material"] as MeshEntry["material"],
+        });
+      }
+
+      const entry = inst.store.meshes.get(id)!;
+      if (!entry.positions) return null;
+
+      const gl = inst.gl;
+      const positions = entry.positions;
+      const normals = entry.normals;
+      const uvs = entry.uvs;
+      const vertexCount = positions.length / 3;
+
+      const interleaved = new Float32Array(vertexCount * 8); // pos3 + normal3 + uv2
+      const hasUvs = !!uvs && uvs.length === vertexCount * 2;
+      const hasNormals = !!normals && normals.length === vertexCount * 3;
+      for (let i = 0; i < vertexCount; i++) {
+        const o = i * 8;
+        interleaved[o]     = positions[i * 3];
+        interleaved[o + 1] = positions[i * 3 + 1];
+        interleaved[o + 2] = positions[i * 3 + 2];
+        if (hasNormals) {
+          interleaved[o + 3] = normals![i * 3];
+          interleaved[o + 4] = normals![i * 3 + 1];
+          interleaved[o + 5] = normals![i * 3 + 2];
+        } else {
+          interleaved[o + 3] = 0; interleaved[o + 4] = 1; interleaved[o + 5] = 0;
+        }
+        if (hasUvs) {
+          interleaved[o + 6] = uvs![i * 2];
+          interleaved[o + 7] = uvs![i * 2 + 1];
+        } else {
+          interleaved[o + 6] = 0; interleaved[o + 7] = 0;
+        }
+      }
+
+      const vbo = gl.createBuffer()!;
+      gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+      gl.bufferData(gl.ARRAY_BUFFER, interleaved, gl.STATIC_DRAW);
+
+      let ibo: WebGLBuffer | null = null;
+      let indexCount = 0;
+      let indexType: number = gl.UNSIGNED_SHORT;
+      if (entry.indices) {
+        ibo = gl.createBuffer()!;
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, entry.indices, gl.STATIC_DRAW);
+        indexCount = entry.indices.length;
+        // UNSIGNED_INT is WebGL2 / OES_element_index_uint — narrowed type doesn't expose it
+        // through the WebGL1 binding; cast to number.
+        indexType = entry.indices instanceof Uint32Array
+          ? (gl as WebGL2RenderingContext).UNSIGNED_INT
+          : gl.UNSIGNED_SHORT;
+      }
+
+      const gpu: GpuMesh = { vbo, ibo, vertCount: vertexCount, indexCount, indexType, hasUvs };
+      entry.gpu = gpu;
+
+      // Kick off a texture load for the baseColor if the mesh advertises a URI.
+      const baseColorUri = entry.material?.baseColorUri;
+      if (baseColorUri && !inst.textures.has(baseColorUri)) {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => {
+          const tex = GlNode.createTexture(inst.gl, img);
+          if (tex) inst.textures.set(baseColorUri, { tex, w: img.width, h: img.height });
+          inst.dirty = true;
+          GlNode.scheduleRender(inst);
+        };
+        img.onerror = () => console.error("[GL] Failed to load mesh texture:", baseColorUri);
+        img.src = baseColorUri;
+      }
+
+      inst.dirty = true;
+      GlNode.scheduleRender(inst);
+      return id;
     });
   }
 
@@ -950,7 +1081,7 @@ export class GlNode extends Node {
         const z = r["z"] !== undefined ? Number(r["z"]) : 0;
         const fixed = r["fixed"] !== undefined ? this.toBoolean(r["fixed"]) : true;
         slot = inst.store.add(id, "quad", "default", ["default"], undefined, {
-          x, y, w: 1, h: 1, z, color: [1, 1, 1, 1], visible: true, fixed,
+          translation: [x, y, z], scale: [1, 1, 1], color: [1, 1, 1, 1], visible: true, fixed,
         });
         if (z !== 0) { inst.store.zDirty = true; inst.store.zDirtyCount++; }
       }
@@ -962,8 +1093,8 @@ export class GlNode extends Node {
       if (texInfo) {
         const d = inst.store.data;
         const b = slot * STRIDE;
-        d[b + F_W] = r["w"] !== undefined ? Number(r["w"]) : texInfo.w;
-        d[b + F_H] = r["h"] !== undefined ? Number(r["h"]) : texInfo.h;
+        d[b + F_SX] = r["w"] !== undefined ? Number(r["w"]) : texInfo.w;
+        d[b + F_SY] = r["h"] !== undefined ? Number(r["h"]) : texInfo.h;
       }
       inst.dirty = true;
       GlNode.scheduleRender(inst);
@@ -1863,12 +1994,12 @@ export class GlNode extends Node {
         ? (inst.shaders.get(meta.shader)?.uniforms.u_transform ?? inst.uTransform)
         : inst.uTransform;
       const wt = meta.parent ? store.getWorldTransform(slot) : null;
-      const rad = ((wt ? wt[2] : d[b + F_ANGLE]) * Math.PI) / 180;
-      const cos = Math.cos(rad), sin = Math.sin(rad);
-      const ew = d[b + F_W], eh = d[b + F_H];
+      const qz = wt ? wt[8] : d[b + F_QZ], qw = wt ? wt[9] : d[b + F_QW];
+      const cos = qw * qw - qz * qz, sin = 2 * qz * qw;
+      const ew = d[b + F_SX], eh = d[b + F_SY];
       _xform9[0] = ew * cos; _xform9[1] = ew * sin; _xform9[2] = 0;
       _xform9[3] = -eh * sin; _xform9[4] = eh * cos; _xform9[5] = 0;
-      _xform9[6] = wt ? wt[0] : d[b + F_X]; _xform9[7] = wt ? wt[1] : d[b + F_Y]; _xform9[8] = 1;
+      _xform9[6] = wt ? wt[0] : d[b + F_TX]; _xform9[7] = wt ? wt[1] : d[b + F_TY]; _xform9[8] = 1;
       gl.uniformMatrix3fv(transformLoc, false, _xform9);
 
       // Line width
@@ -2086,19 +2217,19 @@ export class GlNode extends Node {
       const meta_ = store.meta[slot];
       if (meta_?.type === "pivot") continue;
 
-      const ex = d[b + F_X], ey = d[b + F_Y], ew = d[b + F_W], eh = d[b + F_H];
+      const ex = d[b + F_TX], ey = d[b + F_TY], ew = d[b + F_SX], eh = d[b + F_SY];
       const isFixed = !!(d[b + F_FLAGS] & FLAG_FIXED);
-      let cullX = ex, cullY = ey, cullZ = d[b + F_Z];
+      let cullX = ex, cullY = ey, cullZ = d[b + F_TZ];
       if (meta_?.parent) {
         const wt = store.getWorldTransform(slot);
-        cullX = wt[0]; cullY = wt[1]; cullZ = wt[3];
+        cullX = wt[0]; cullY = wt[1]; cullZ = wt[2];
       }
 
       // Frustum cull
       if (is3d) {
         const w3 = Math.abs(ew);
         const h3 = Math.abs(eh);
-        const d3 = Math.max(Math.abs(d[b + F_D]), 0.01);
+        const d3 = Math.max(Math.abs(d[b + F_SZ]), 0.01);
         // Conservative sphere around entity origin.
         // This avoids false culls for rotated/parented entities where
         // the local [0..1] center offset rotates in world space.
@@ -2151,8 +2282,8 @@ export class GlNode extends Node {
         renderTextTexture(inst, meta.id, meta, GlNode.createTexture);
         const texInfo = inst.textures.get(meta.textureName!);
         if (texInfo) {
-          d[b + F_W] = texInfo.w;
-          d[b + F_H] = texInfo.h;
+          d[b + F_SX] = texInfo.w;
+          d[b + F_SY] = texInfo.h;
         }
       }
       meta.dirty = 0;
@@ -2180,18 +2311,74 @@ export class GlNode extends Node {
         const u = d[b + F_U], v = d[b + F_V], uW = d[b + F_UW], uH = d[b + F_UH];
         const useTex = texInfo ? 1.0 : 0.0;
         const emissiveF = meta.emissive ? 1.0 : 0.0;
-        const ez = d[b + F_Z], ed = d[b + F_D] || 0.01;
-        const erx = d[b + F_RX], ery = d[b + F_RY], erz = d[b + F_ANGLE];
+        const ez = d[b + F_TZ], ed = d[b + F_SZ] || 0.01;
+        const eqx = d[b + F_QX], eqy = d[b + F_QY], eqz = d[b + F_QZ], eqw = d[b + F_QW];
         // Apply parent world transform for 3D
-        let mx = ex, my = ey, mz = ez, mrx = erx, mry = ery, mrz = erz;
+        let mx = ex, my = ey, mz = ez, mqx = eqx, mqy = eqy, mqz = eqz, mqw = eqw;
         if (meta.parent) {
           const wt = store.getWorldTransform(slot);
-          mx = wt[0]; my = wt[1]; mrz = wt[2]; mz = wt[3];
-          mrx = wt[4]; mry = wt[5];
+          mx = wt[0]; my = wt[1]; mz = wt[2];
+          mqx = wt[6]; mqy = wt[7]; mqz = wt[8]; mqw = wt[9];
         }
         const model = meta.billboard
           ? mat4Billboard(mx, my, mz, ew, eh, ed, cam.x + cam.shakeX, cam.y + cam.shakeY, cam.z)
-          : mat4Model(mx, my, mz, ew, eh, ed, mrx, mry, mrz);
+          : mat4ModelQuat(mx, my, mz, ew, eh, ed, mqx, mqy, mqz, mqw);
+
+        // Imported mesh (GLB/GLTF) — uses uploaded VBO/IBO from `gl-register-mesh`.
+        if (meta.meshId) {
+          flush3dBatch();
+          const meshEntry = store.meshes.get(meta.meshId);
+          const gpu = meshEntry?.gpu as GpuMesh | undefined;
+          if (gpu) {
+            const locs3d = inst.prog3dLocs!;
+            gl.useProgram(inst.prog3d);
+            gl.uniformMatrix4fv(locs3d.uModel, false, model);
+            gl.uniform1f(locs3d.uEmissive, meta.emissive ? 1.0 : 0.0);
+            if (entityNormalTex) {
+              gl.activeTexture(gl.TEXTURE2);
+              gl.bindTexture(gl.TEXTURE_2D, entityNormalTex);
+              gl.uniform1f(locs3d.uNormalMapEnabled, 1.0);
+              gl.uniform1f(locs3d.uNormalScale, entityNormalScale);
+              gl.activeTexture(gl.TEXTURE0);
+            } else {
+              gl.uniform1f(locs3d.uNormalMapEnabled, 0.0);
+            }
+
+            // Bind mesh geometry: pos3 + normal3 + uv2 (stride 32 bytes).
+            gl.bindBuffer(gl.ARRAY_BUFFER, gpu.vbo);
+            gl.enableVertexAttribArray(locs3d.aPosition);
+            gl.vertexAttribPointer(locs3d.aPosition, 3, gl.FLOAT, false, 32, 0);
+            gl.enableVertexAttribArray(locs3d.aNormal);
+            gl.vertexAttribPointer(locs3d.aNormal, 3, gl.FLOAT, false, 32, 12);
+            if (gpu.hasUvs) {
+              gl.enableVertexAttribArray(locs3d.aUv);
+              gl.vertexAttribPointer(locs3d.aUv, 2, gl.FLOAT, false, 32, 24);
+            } else {
+              gl.disableVertexAttribArray(locs3d.aUv);
+              gl.vertexAttrib2f(locs3d.aUv, 0, 0);
+            }
+            // Per-entity color + useTex via constant vertex attribs (no extra VBO).
+            gl.disableVertexAttribArray(locs3d.aColor);
+            gl.vertexAttrib4f(locs3d.aColor, cr, cg, cb, ca);
+            gl.disableVertexAttribArray(locs3d.aUseTex);
+            const meshTexName = meta.textureName ?? meshEntry?.material?.baseColorUri;
+            const meshTexInfo = meshTexName ? inst.textures.get(meshTexName) : null;
+            const meshUseTex  = meshTexInfo ? 1.0 : 0.0;
+            gl.vertexAttrib1f(locs3d.aUseTex, meshUseTex);
+            if (meshTexInfo) currentTexture = bindTex(gl, meshTexInfo.tex, currentTexture);
+
+            applyBlendMode(meta.blend);
+            if (gpu.ibo) {
+              gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gpu.ibo);
+              gl.drawElements(gl.TRIANGLES, gpu.indexCount, gpu.indexType, 0);
+            } else {
+              gl.drawArrays(gl.TRIANGLES, 0, gpu.vertCount);
+            }
+            drawCalls++;
+            if (meta.blend) applyBlendMode(undefined);
+          }
+          continue;
+        }
 
         // Non-batchable 3D entities: lines, line-strips, points, custom vertices, custom shaders
         if (meta.type === "line" || meta.type === "line-strip" || meta.type === "points" || meta.vertices || meta.shader) {
@@ -2273,9 +2460,9 @@ export class GlNode extends Node {
         }
 
         // Choose geometry source: rounded cube if borderRadius, else 3D/flat shape
-        const srcVerts = meta.borderRadius && meta.borderRadius > 0 && d[b + F_D] > 0
+        const srcVerts = meta.borderRadius && meta.borderRadius > 0 && d[b + F_SZ] > 0
           ? getRoundedCubeVerts(meta.borderRadius)
-          : d[b + F_D] > 0
+          : d[b + F_SZ] > 0
             ? (SHAPE_3D[meta.type || "quad"] || CUBE_VERTS)
             : (SHAPE_FLAT[meta.type || "quad"] || FLAT_QUAD_VERTS);
 
@@ -2387,10 +2574,10 @@ export class GlNode extends Node {
       }
 
       const wt = meta.parent ? store.getWorldTransform(slot) : null;
-      const x = wt ? wt[0] : d[b + F_X], y = wt ? wt[1] : d[b + F_Y];
-      const w = d[b + F_W], h = d[b + F_H];
-      const rad = ((wt ? wt[2] : d[b + F_ANGLE]) * Math.PI) / 180;
-      const cos = Math.cos(rad), sin = Math.sin(rad);
+      const x = wt ? wt[0] : d[b + F_TX], y = wt ? wt[1] : d[b + F_TY];
+      const w = d[b + F_SX], h = d[b + F_SY];
+      const qz2 = wt ? wt[8] : d[b + F_QZ], qw2 = wt ? wt[9] : d[b + F_QW];
+      const cos = qw2 * qw2 - qz2 * qz2, sin = 2 * qz2 * qw2;
       const opacity = d[b + F_OPACITY];
       const cr = d[b + F_CR], cg = d[b + F_CG], cb = d[b + F_CB], ca = d[b + F_CA] * opacity;
       const u = d[b + F_U], v = d[b + F_V], uW = d[b + F_UW], uH = d[b + F_UH];
@@ -2430,7 +2617,7 @@ export class GlNode extends Node {
       for (const slot of transparent3d) {
         const b = slot * STRIDE;
         const meta = store.meta[slot]!;
-        const ex = d[b + F_X], ey = d[b + F_Y], ew = d[b + F_W], eh = d[b + F_H];
+        const ex = d[b + F_TX], ey = d[b + F_TY], ew = d[b + F_SX], eh = d[b + F_SY];
         const texInfo = meta.textureName ? inst.textures.get(meta.textureName) : null;
         const entityTex = texInfo?.tex ?? null;
         const entityTexName = texInfo ? meta.textureName! : null;
@@ -2442,17 +2629,17 @@ export class GlNode extends Node {
         const cr = d[b + F_CR], cg = d[b + F_CG], cb = d[b + F_CB], ca = d[b + F_CA] * opacity;
         const u = d[b + F_U], v = d[b + F_V], uW = d[b + F_UW], uH = d[b + F_UH];
         const useTex = texInfo ? 1.0 : 0.0;
-        const ez = d[b + F_Z], ed = d[b + F_D] || 0.01;
-        const erx = d[b + F_RX], ery = d[b + F_RY], erz = d[b + F_ANGLE];
-        let tmx = ex, tmy = ey, tmz = ez, tmrx = erx, tmry = ery, tmrz = erz;
+        const ez = d[b + F_TZ], ed = d[b + F_SZ] || 0.01;
+        const eqx = d[b + F_QX], eqy = d[b + F_QY], eqz = d[b + F_QZ], eqw = d[b + F_QW];
+        let tmx = ex, tmy = ey, tmz = ez, tmqx = eqx, tmqy = eqy, tmqz = eqz, tmqw = eqw;
         if (meta.parent) {
           const wt = store.getWorldTransform(slot);
-          tmx = wt[0]; tmy = wt[1]; tmrz = wt[2]; tmz = wt[3];
-          tmrx = wt[4]; tmry = wt[5];
+          tmx = wt[0]; tmy = wt[1]; tmz = wt[2];
+          tmqx = wt[6]; tmqy = wt[7]; tmqz = wt[8]; tmqw = wt[9];
         }
         const model = meta.billboard
           ? mat4Billboard(tmx, tmy, tmz, ew, eh, ed, cam.x + cam.shakeX, cam.y + cam.shakeY, cam.z)
-          : mat4Model(tmx, tmy, tmz, ew, eh, ed, tmrx, tmry, tmrz);
+          : mat4ModelQuat(tmx, tmy, tmz, ew, eh, ed, tmqx, tmqy, tmqz, tmqw);
 
         const texChanged = entityTex && entityTexName !== b3dTexName;
         const nmChanged = entityNormalName !== b3dNormalName;
@@ -2469,9 +2656,9 @@ export class GlNode extends Node {
           b3dNormalScale = entityNormalScale;
         }
 
-        const srcVerts = meta.borderRadius && meta.borderRadius > 0 && d[b + F_D] > 0
+        const srcVerts = meta.borderRadius && meta.borderRadius > 0 && d[b + F_SZ] > 0
           ? getRoundedCubeVerts(meta.borderRadius)
-          : d[b + F_D] > 0
+          : d[b + F_SZ] > 0
             ? (SHAPE_3D[meta.type || "quad"] || CUBE_VERTS)
             : (SHAPE_FLAT[meta.type || "quad"] || FLAT_QUAD_VERTS);
         b3dOffset = writePreTransformed(srcVerts, model, cr, cg, cb, ca, u, v, uW, uH, useTex, tBd3d, b3dOffset);

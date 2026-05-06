@@ -4,9 +4,10 @@
  */
 
 import {
-  F_X, F_Y, F_W, F_H, F_ANGLE,
+  F_TX, F_TY, F_TZ,
+  F_SX, F_SY, F_SZ,
+  F_QX, F_QY, F_QZ, F_QW,
   F_VX, F_VY, F_OPACITY,
-  F_Z, F_D, F_RX, F_RY,
 } from "@jexs/physics";
 
 // ─── Easing functions ────────────────────────────────────────────────────────
@@ -30,7 +31,8 @@ export const EASINGS: Record<string, (t: number) => number> = {
 };
 
 export const TWEENABLE_KEYS: Record<string, number> = {
-  x: F_X, y: F_Y, w: F_W, h: F_H, angle: F_ANGLE,
+  tx: F_TX, ty: F_TY, tz: F_TZ,
+  sx: F_SX, sy: F_SY, sz: F_SZ,
+  qx: F_QX, qy: F_QY, qz: F_QZ, qw: F_QW,
   vx: F_VX, vy: F_VY, opacity: F_OPACITY,
-  z: F_Z, d: F_D, rx: F_RX, ry: F_RY,
 };

@@ -10,12 +10,11 @@ import { Node, Context, NodeValue, resolve, resolveAll, runSteps } from "@jexs/c
 import {
   EntityStore,
   STRIDE,
-  F_X, F_Y, F_W, F_H, F_Z, F_D,
-  F_VX, F_VY, F_AX, F_AY,
-  F_VZ, F_AZ,
+  F_TX, F_TY, F_TZ,
+  F_SX, F_SY, F_SZ,
+  F_VX, F_VY, F_VZ, F_AX, F_AY, F_AZ,
   F_INV_MASS, F_RESTITUTION, F_FRICTION, F_DAMPING,
   F_MOVE_X, F_MOVE_Y, F_FLAGS,
-  F_RX, F_RY, F_ANGLE,
   FLAG_PHYSICS, FLAG_SLEEPING, FLAG_TRIGGER, FLAG_CCD,
 } from "../EntityStore.js";
 import { raycastStore } from "../Raycast.js";
@@ -189,12 +188,12 @@ function ccdPass(store: EntityStore, dynamicSlots: number[], staticSlots: number
     const pb = slot * 3;
     const prevX = store.prevPositions[pb];
     const prevY = store.prevPositions[pb + 1];
-    const curX = d[b + F_X];
-    const curY = d[b + F_Y];
+    const curX = d[b + F_TX];
+    const curY = d[b + F_TY];
     const dx = curX - prevX;
     const dy = curY - prevY;
 
-    const w = d[b + F_W], h = d[b + F_H];
+    const w = d[b + F_SX], h = d[b + F_SY];
     const minDim = Math.min(w, h);
     const dist2 = dx * dx + dy * dy;
 
@@ -216,7 +215,7 @@ function ccdPass(store: EntityStore, dynamicSlots: number[], staticSlots: number
 
       const toi = sweptAABB(
         prevX, prevY, w, h, dx, dy,
-        d[sb + F_X], d[sb + F_Y], d[sb + F_W], d[sb + F_H],
+        d[sb + F_TX], d[sb + F_TY], d[sb + F_SX], d[sb + F_SY],
       );
 
       if (toi < earliestTOI) earliestTOI = toi;
@@ -234,7 +233,7 @@ function ccdPass(store: EntityStore, dynamicSlots: number[], staticSlots: number
 
       const toi = sweptAABB(
         prevX, prevY, w, h, dx, dy,
-        d[sb + F_X], d[sb + F_Y], d[sb + F_W], d[sb + F_H],
+        d[sb + F_TX], d[sb + F_TY], d[sb + F_SX], d[sb + F_SY],
       );
 
       if (toi < earliestTOI) earliestTOI = toi;
@@ -244,8 +243,8 @@ function ccdPass(store: EntityStore, dynamicSlots: number[], staticSlots: number
     if (earliestTOI < 1) {
       // Place at TOI with a small epsilon pullback to avoid starting inside
       const t = Math.max(0, earliestTOI - CCD_TOI_EPSILON);
-      d[b + F_X] = prevX + dx * t;
-      d[b + F_Y] = prevY + dy * t;
+      d[b + F_TX] = prevX + dx * t;
+      d[b + F_TY] = prevY + dy * t;
     }
   }
 }
@@ -301,9 +300,9 @@ export function physicsStep(store: EntityStore, config: PhysicsConfig, dt: numbe
     d[b + F_VX] = vx;
     d[b + F_VY] = vy;
     d[b + F_VZ] = vz;
-    d[b + F_X] += vx * dt;
-    d[b + F_Y] += vy * dt;
-    d[b + F_Z] += vz * dt;
+    d[b + F_TX] += vx * dt;
+    d[b + F_TY] += vy * dt;
+    d[b + F_TZ] += vz * dt;
 
     // Invalidate cached worldTransform (position changed, children need recompute)
     const meta_i = store.meta[i];
@@ -343,11 +342,11 @@ export function physicsStep(store: EntityStore, config: PhysicsConfig, dt: numbe
     _grid.clear();
     for (let i = 0; i < _dynamicSlots.length; i++) {
       const s = _dynamicSlots[i], b = s * STRIDE;
-      _grid.insert(s, d[b + F_X], d[b + F_Y], d[b + F_W], d[b + F_H]);
+      _grid.insert(s, d[b + F_TX], d[b + F_TY], d[b + F_SX], d[b + F_SY]);
     }
     for (let i = 0; i < _staticSlots.length; i++) {
       const s = _staticSlots[i], b = s * STRIDE;
-      _grid.insert(s, d[b + F_X], d[b + F_Y], d[b + F_W], d[b + F_H]);
+      _grid.insert(s, d[b + F_TX], d[b + F_TY], d[b + F_SX], d[b + F_SY]);
     }
   }
 
@@ -360,7 +359,7 @@ export function physicsStep(store: EntityStore, config: PhysicsConfig, dt: numbe
     for (let i = 0; i < _dynamicSlots.length; i++) {
       const sa = _dynamicSlots[i], ba = sa * STRIDE;
       const ma = store.meta[sa]!;
-      const neighbors = _grid!.query(d[ba + F_X], d[ba + F_Y], d[ba + F_W], d[ba + F_H], sa);
+      const neighbors = _grid!.query(d[ba + F_TX], d[ba + F_TY], d[ba + F_SX], d[ba + F_SY], sa);
       for (let j = 0; j < neighbors.length; j++) {
         const sb = neighbors[j];
         if (d[sb * STRIDE + F_INV_MASS] === 0) continue; // skip statics in this pass
@@ -371,7 +370,7 @@ export function physicsStep(store: EntityStore, config: PhysicsConfig, dt: numbe
         const mb = store.meta[sb]!;
         if (!ma.mask.includes(mb.group) && !mb.mask.includes(ma.group)) { _maskSkips++; continue; }
         _narrowTests++;
-        const c = detectCollision(d, sa, sb, ma, mb);
+        const c = detectCollision(store, sa, sb, ma, mb);
         if (c) _contacts.push(c);
       }
     }
@@ -382,7 +381,7 @@ export function physicsStep(store: EntityStore, config: PhysicsConfig, dt: numbe
         const ma = store.meta[sa]!, mb = store.meta[sb]!;
         if (!ma.mask.includes(mb.group) && !mb.mask.includes(ma.group)) { _maskSkips++; continue; }
         _narrowTests++;
-        const c = detectCollision(d, sa, sb, ma, mb);
+        const c = detectCollision(store, sa, sb, ma, mb);
         if (c) _contacts.push(c);
       }
     }
@@ -393,9 +392,9 @@ export function physicsStep(store: EntityStore, config: PhysicsConfig, dt: numbe
     for (let i = 0; i < _dynamicSlots.length; i++) {
       const sa = _dynamicSlots[i], ba = sa * STRIDE;
       const ma = store.meta[sa]!;
-      const az = d[ba + F_Z], ad = d[ba + F_D] || 0.01;
+      const az = d[ba + F_TZ], ad = d[ba + F_SZ] || 0.01;
       const aTop = az + ad;
-      const neighbors = _grid!.query(d[ba + F_X], d[ba + F_Y], d[ba + F_W], d[ba + F_H], sa);
+      const neighbors = _grid!.query(d[ba + F_TX], d[ba + F_TY], d[ba + F_SX], d[ba + F_SY], sa);
       for (let j = 0; j < neighbors.length; j++) {
         const sb = neighbors[j];
         if (d[sb * STRIDE + F_INV_MASS] !== 0) continue; // skip dynamics in this pass
@@ -403,11 +402,11 @@ export function physicsStep(store: EntityStore, config: PhysicsConfig, dt: numbe
         if (!ma.mask.includes(mb.group) && !mb.mask.includes(ma.group)) { _maskSkips++; continue; }
         const bb = sb * STRIDE;
         if (!isRotated(d, bb)) {
-          const bz = d[bb + F_Z], bd = d[bb + F_D] || 0.01;
+          const bz = d[bb + F_TZ], bd = d[bb + F_SZ] || 0.01;
           if (az > bz + bd || bz > aTop) { _zSkips++; continue; }
         }
         _narrowTests++;
-        const c = detectCollision(d, sa, sb, ma, mb);
+        const c = detectCollision(store, sa, sb, ma, mb);
         if (c) _contacts.push(c);
       }
     }
@@ -416,7 +415,7 @@ export function physicsStep(store: EntityStore, config: PhysicsConfig, dt: numbe
       const sa = _dynamicSlots[i];
       const ba = sa * STRIDE;
       const ma = store.meta[sa]!;
-      const az = d[ba + F_Z], ad = d[ba + F_D] || 0.01;
+      const az = d[ba + F_TZ], ad = d[ba + F_SZ] || 0.01;
       const aTop = az + ad;
 
       for (let j = 0; j < _staticSlots.length; j++) {
@@ -428,12 +427,12 @@ export function physicsStep(store: EntityStore, config: PhysicsConfig, dt: numbe
         // Skip broadphase for rotated statics — their Z extent differs from raw d
         const bb = sb * STRIDE;
         if (!isRotated(d, bb)) {
-          const bz = d[bb + F_Z], bd = d[bb + F_D] || 0.01;
+          const bz = d[bb + F_TZ], bd = d[bb + F_SZ] || 0.01;
           if (az > bz + bd || bz > aTop) { _zSkips++; continue; }
         }
 
         _narrowTests++;
-        const c = detectCollision(d, sa, sb, ma, mb);
+        const c = detectCollision(store, sa, sb, ma, mb);
         if (c) _contacts.push(c);
       }
     }
@@ -472,16 +471,16 @@ export function physicsStep(store: EntityStore, config: PhysicsConfig, dt: numbe
     for (let i = 0; i < _dynamicSlots.length; i++) {
       const slot = _dynamicSlots[i];
       const b = slot * STRIDE;
-      const x = d[b + F_X], y = d[b + F_Y], w = d[b + F_W], h = d[b + F_H];
+      const x = d[b + F_TX], y = d[b + F_TY], w = d[b + F_SX], h = d[b + F_SY];
       const rest = d[b + F_RESTITUTION];
-      if (x < bx)           { d[b + F_X] = bx;           d[b + F_VX] =  Math.abs(d[b + F_VX]) * rest; }
-      if (y < by)           { d[b + F_Y] = by;           d[b + F_VY] =  Math.abs(d[b + F_VY]) * rest; }
-      if (x + w > bx + bw) { d[b + F_X] = bx + bw - w;  d[b + F_VX] = -Math.abs(d[b + F_VX]) * rest; }
-      if (y + h > by + bh) { d[b + F_Y] = by + bh - h;  d[b + F_VY] = -Math.abs(d[b + F_VY]) * rest; }
+      if (x < bx)           { d[b + F_TX] = bx;           d[b + F_VX] =  Math.abs(d[b + F_VX]) * rest; }
+      if (y < by)           { d[b + F_TY] = by;           d[b + F_VY] =  Math.abs(d[b + F_VY]) * rest; }
+      if (x + w > bx + bw) { d[b + F_TX] = bx + bw - w;  d[b + F_VX] = -Math.abs(d[b + F_VX]) * rest; }
+      if (y + h > by + bh) { d[b + F_TY] = by + bh - h;  d[b + F_VY] = -Math.abs(d[b + F_VY]) * rest; }
       if (bd > 0) {
-        const z = d[b + F_Z], ed = d[b + F_D] || 0;
-        if (z < bz)            { d[b + F_Z] = bz;            d[b + F_VZ] =  Math.abs(d[b + F_VZ]) * rest; }
-        if (z + ed > bz + bd)  { d[b + F_Z] = bz + bd - ed;  d[b + F_VZ] = -Math.abs(d[b + F_VZ]) * rest; }
+        const z = d[b + F_TZ], ed = d[b + F_SZ] || 0;
+        if (z < bz)            { d[b + F_TZ] = bz;            d[b + F_VZ] =  Math.abs(d[b + F_VZ]) * rest; }
+        if (z + ed > bz + bd)  { d[b + F_TZ] = bz + bd - ed;  d[b + F_VZ] = -Math.abs(d[b + F_VZ]) * rest; }
       }
     }
   }
@@ -747,8 +746,8 @@ export class JointNode extends Node {
         } else {
           const d = w.store.data;
           const ba = slotA * STRIDE, bb = slotB * STRIDE;
-          const dx = d[bb + F_X] - d[ba + F_X];
-          const dy = d[bb + F_Y] - d[ba + F_Y];
+          const dx = d[bb + F_TX] - d[ba + F_TX];
+          const dy = d[bb + F_TY] - d[ba + F_TY];
           restLength = Math.sqrt(dx * dx + dy * dy);
         }
 
@@ -842,9 +841,9 @@ function snapshotPositions(store: EntityStore): void {
   const d = store.data, p = store.prevPositions;
   for (let i = 0; i < store.count; i++) {
     const b = i * STRIDE, pb = i * 3;
-    p[pb]     = d[b + F_X];
-    p[pb + 1] = d[b + F_Y];
-    p[pb + 2] = d[b + F_Z];
+    p[pb]     = d[b + F_TX];
+    p[pb + 1] = d[b + F_TY];
+    p[pb + 2] = d[b + F_TZ];
   }
 }
 

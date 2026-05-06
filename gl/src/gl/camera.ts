@@ -3,7 +3,7 @@
  * Extracted from GlNode.ts for modularity.
  */
 
-import { EntityStore, STRIDE, F_X, F_Y, F_W, F_H, F_Z, F_D } from "@jexs/physics";
+import { EntityStore, STRIDE, F_TX, F_TY, F_SX, F_SY, F_TZ, F_SZ } from "@jexs/physics";
 import type { GlCamera, GlInstance } from "./types.js";
 
 const DEG2RAD = Math.PI / 180;
@@ -23,9 +23,9 @@ export function updateCameraFollow(inst: GlInstance): boolean {
   const b = slot * STRIDE;
 
   if (inst.mode3d) {
-    const cx = d[b + F_X] + d[b + F_W] / 2;
-    const cy = d[b + F_Y] + d[b + F_H] / 2;
-    const ez = d[b + F_Z]; // entity bottom Z (followOffsetZ is relative to this)
+    const cx = d[b + F_TX] + d[b + F_SX] / 2;
+    const cy = d[b + F_TY] + d[b + F_SY] / 2;
+    const ez = d[b + F_TZ]; // entity bottom Z (followOffsetZ is relative to this)
 
     if (cam.followMode === "fps") {
       // FPS: camera at entity + offset, lookAt forward along pitch/yaw
@@ -46,13 +46,13 @@ export function updateCameraFollow(inst: GlInstance): boolean {
       cam.x = cx - sy * cam.tpsDistance;
       cam.y = cy - cy2 * cam.tpsDistance;
       cam.z = ez + cam.tpsHeight;
-      const entityH = d[b + F_D] || 0;
+      const entityH = d[b + F_SZ] || 0;
       cam.lookAt[0] = cx;
       cam.lookAt[1] = cy;
       cam.lookAt[2] = ez + entityH * 0.7;
     } else {
       // Default 3D follow: track entity center, maintain relative offset
-      const cz = ez + (d[b + F_D] || 0) / 2;
+      const cz = ez + (d[b + F_SZ] || 0) / 2;
       const la = cam.lookAt;
       const dx = cx - la[0], dy = cy - la[1], dz = cz - la[2];
       la[0] = cx; la[1] = cy; la[2] = cz;
@@ -63,8 +63,8 @@ export function updateCameraFollow(inst: GlInstance): boolean {
   } else {
     const vw = inst.store.virtualWidth || inst.store.width;
     const vh = inst.store.virtualHeight || inst.store.height;
-    cam.x = d[b + F_X] + d[b + F_W] / 2 - vw / 2;
-    cam.y = d[b + F_Y] + d[b + F_H] / 2 - vh / 2;
+    cam.x = d[b + F_TX] + d[b + F_SX] / 2 - vw / 2;
+    cam.y = d[b + F_TY] + d[b + F_SY] / 2 - vh / 2;
   }
   return true;
 }

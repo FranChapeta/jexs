@@ -129,6 +129,21 @@ function resolvePath(pathValue: unknown, appDir: string): string {
   return path.join(appDir, p);
 }
 
+const TEXT_EXT = new Set([
+  "txt", "html", "htm", "css", "svg", "md", "js", "ts", "tsx", "jsx",
+  "glsl", "frag", "vert", "xml", "yaml", "yml", "csv", "log",
+]);
+const JSON_EXT = new Set(["json", "gltf"]);
+
+function classifyExt(filePath: string): "json" | "text" | "binary" {
+  const dot = filePath.lastIndexOf(".");
+  if (dot < 0) return "binary";
+  const ext = filePath.slice(dot + 1).toLowerCase();
+  if (JSON_EXT.has(ext)) return "json";
+  if (TEXT_EXT.has(ext)) return "text";
+  return "binary";
+}
+
 function loadFile(
   def: Record<string, unknown>,
   context: Context,
@@ -138,11 +153,21 @@ function loadFile(
     const raw = toBoolean(rawRaw);
     const data = toBoolean(dataRaw);
     const filePath = resolvePath(filePathValue, appDir);
+    const kind = classifyExt(filePath);
 
     try {
+      // Binary files: return Buffer (no text decoding, no JSON parse).
+      // `raw: true` overrides to force string decoding even for binary extensions.
+      if (kind === "binary" && !raw) {
+        return await fs.readFile(filePath);
+      }
+
       const content = await fs.readFile(filePath, "utf-8");
 
       if (raw) return content;
+
+      // Text files (non-JSON): return string content directly.
+      if (kind === "text") return content;
 
       const parsed = JSON.parse(content);
 

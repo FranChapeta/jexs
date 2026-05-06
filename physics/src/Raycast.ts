@@ -8,9 +8,10 @@
 import {
   EntityStore,
   STRIDE,
-  F_X, F_Y, F_W, F_H, F_Z, F_D, F_FLAGS,
+  F_TX, F_TY, F_SX, F_SY, F_TZ, F_SZ, F_FLAGS,
   FLAG_VISIBLE,
 } from "./EntityStore.js";
+import { buildBvh, raycastBvh } from "./Bvh.js";
 
 // ─── Ray-AABB intersection ──────────────────────────────────────────────────
 
@@ -76,18 +77,42 @@ export function raycastStore(
 
     if (maskGroups && !maskGroups.has(meta.group)) continue;
 
-    const ex = d[b + F_X], ey = d[b + F_Y], ew = d[b + F_W], eh = d[b + F_H];
-    const ez = d[b + F_Z], ed = d[b + F_D] || 0.01;
+    const ex = d[b + F_TX], ey = d[b + F_TY], ew = d[b + F_SX], eh = d[b + F_SY];
+    const ez = d[b + F_TZ], ed = d[b + F_SZ] || 0.01;
 
     const t = rayAABB(ox, oy, oz, dx, dy, dz, ex, ey, ez, ex + ew, ey + eh, ez + ed);
-    if (t >= 0) {
-      _hits.push({
-        id: meta.id,
-        slot: i,
-        distance: t,
-        point: { x: ox + dx * t, y: oy + dy * t, z: oz + dz * t },
-      });
+    if (t < 0) continue;
+
+    // Mesh entity: refine the AABB hit by descending the BVH for an exact triangle hit.
+    if (meta.meshId) {
+      const entry = store.meshes.get(meta.meshId);
+      if (entry && entry.positions) {
+        if (!entry.bvh) entry.bvh = buildBvh(entry.positions, entry.indices ?? null);
+        const meshOx = ex - entry.bounds.min[0];
+        const meshOy = ey - entry.bounds.min[1];
+        const meshOz = ez - entry.bounds.min[2];
+        // Transform ray into mesh local space (translation only).
+        const localOx = ox - meshOx, localOy = oy - meshOy, localOz = oz - meshOz;
+        const out = { t: Infinity };
+        const triHit = raycastBvh(
+          entry.bvh, entry.positions, entry.indices ?? null,
+          localOx, localOy, localOz, dx, dy, dz, Infinity, out,
+        );
+        if (triHit < 0) continue;
+        _hits.push({
+          id: meta.id, slot: i, distance: out.t,
+          point: { x: ox + dx * out.t, y: oy + dy * out.t, z: oz + dz * out.t },
+        });
+        continue;
+      }
     }
+
+    _hits.push({
+      id: meta.id,
+      slot: i,
+      distance: t,
+      point: { x: ox + dx * t, y: oy + dy * t, z: oz + dz * t },
+    });
   }
 
   _hits.sort((a, b) => a.distance - b.distance);
