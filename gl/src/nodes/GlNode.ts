@@ -2218,23 +2218,50 @@ export class GlNode extends Node {
       if (meta_?.type === "pivot") continue;
 
       const ex = d[b + F_TX], ey = d[b + F_TY], ew = d[b + F_SX], eh = d[b + F_SY];
+      const ez = d[b + F_TZ], ed = d[b + F_SZ] || 0.01;
+      const eqx = d[b + F_QX], eqy = d[b + F_QY], eqz = d[b + F_QZ], eqw = d[b + F_QW];
       const isFixed = !!(d[b + F_FLAGS] & FLAG_FIXED);
       let cullX = ex, cullY = ey, cullZ = d[b + F_TZ];
+      let cullSX = ew, cullSY = eh, cullSZ = ed;
+      let cullQX = eqx, cullQY = eqy, cullQZ = eqz, cullQW = eqw;
       if (meta_?.parent) {
         const wt = store.getWorldTransform(slot);
         cullX = wt[0]; cullY = wt[1]; cullZ = wt[2];
+        cullSX = wt[3]; cullSY = wt[4]; cullSZ = wt[5] || 0.01;
+        cullQX = wt[6]; cullQY = wt[7]; cullQZ = wt[8]; cullQW = wt[9];
       }
 
       // Frustum cull
       if (is3d) {
-        const w3 = Math.abs(ew);
-        const h3 = Math.abs(eh);
-        const d3 = Math.max(Math.abs(d[b + F_SZ]), 0.01);
-        // Conservative sphere around entity origin.
-        // This avoids false culls for rotated/parented entities where
-        // the local [0..1] center offset rotates in world space.
-        const cx3 = cullX, cy3 = cullY, cz3 = cullZ;
-        const radius = Math.sqrt(w3 * w3 + h3 * h3 + d3 * d3);
+        let minX = 0, minY = 0, minZ = 0;
+        let maxX = 1, maxY = 1, maxZ = 1;
+        if (meta_?.meshId) {
+          const meshEntry = store.meshes.get(meta_.meshId);
+          const meshBounds = meshEntry?.bounds as Bounds | undefined;
+          if (meshBounds?.min && meshBounds?.max) {
+            minX = Number(meshBounds.min[0]) || 0;
+            minY = Number(meshBounds.min[1]) || 0;
+            minZ = Number(meshBounds.min[2]) || 0;
+            maxX = Number(meshBounds.max[0]) || 1;
+            maxY = Number(meshBounds.max[1]) || 1;
+            maxZ = Number(meshBounds.max[2]) || 1;
+          }
+        }
+        const cxLocal = (minX + maxX) * 0.5;
+        const cyLocal = (minY + maxY) * 0.5;
+        const czLocal = (minZ + maxZ) * 0.5;
+        const hxLocal = Math.max((maxX - minX) * 0.5, 0.001);
+        const hyLocal = Math.max((maxY - minY) * 0.5, 0.001);
+        const hzLocal = Math.max((maxZ - minZ) * 0.5, 0.001);
+        const model = mat4ModelQuat(cullX, cullY, cullZ, cullSX, cullSY, cullSZ, cullQX, cullQY, cullQZ, cullQW);
+        const cx3 = model[0] * cxLocal + model[4] * cyLocal + model[8] * czLocal + model[12];
+        const cy3 = model[1] * cxLocal + model[5] * cyLocal + model[9] * czLocal + model[13];
+        const cz3 = model[2] * cxLocal + model[6] * cyLocal + model[10] * czLocal + model[14];
+        const radius = Math.sqrt(
+          (hxLocal * Math.max(Math.abs(cullSX), 0.001)) ** 2 +
+          (hyLocal * Math.max(Math.abs(cullSY), 0.001)) ** 2 +
+          (hzLocal * Math.max(Math.abs(cullSZ), 0.001)) ** 2
+        );
         let culled = false;
         for (let pi = 0; pi < 6; pi++) {
           const dist = _frustum[pi * 4] * cx3 + _frustum[pi * 4 + 1] * cy3 + _frustum[pi * 4 + 2] * cz3 + _frustum[pi * 4 + 3];
@@ -2311,18 +2338,17 @@ export class GlNode extends Node {
         const u = d[b + F_U], v = d[b + F_V], uW = d[b + F_UW], uH = d[b + F_UH];
         const useTex = texInfo ? 1.0 : 0.0;
         const emissiveF = meta.emissive ? 1.0 : 0.0;
-        const ez = d[b + F_TZ], ed = d[b + F_SZ] || 0.01;
-        const eqx = d[b + F_QX], eqy = d[b + F_QY], eqz = d[b + F_QZ], eqw = d[b + F_QW];
         // Apply parent world transform for 3D
-        let mx = ex, my = ey, mz = ez, mqx = eqx, mqy = eqy, mqz = eqz, mqw = eqw;
+        let mx = ex, my = ey, mz = ez, mw = ew, mh = eh, md = ed, mqx = eqx, mqy = eqy, mqz = eqz, mqw = eqw;
         if (meta.parent) {
           const wt = store.getWorldTransform(slot);
           mx = wt[0]; my = wt[1]; mz = wt[2];
+          mw = wt[3]; mh = wt[4]; md = wt[5] || 0.01;
           mqx = wt[6]; mqy = wt[7]; mqz = wt[8]; mqw = wt[9];
         }
         const model = meta.billboard
-          ? mat4Billboard(mx, my, mz, ew, eh, ed, cam.x + cam.shakeX, cam.y + cam.shakeY, cam.z)
-          : mat4ModelQuat(mx, my, mz, ew, eh, ed, mqx, mqy, mqz, mqw);
+          ? mat4Billboard(mx, my, mz, mw, mh, md, cam.x + cam.shakeX, cam.y + cam.shakeY, cam.z)
+          : mat4ModelQuat(mx, my, mz, mw, mh, md, mqx, mqy, mqz, mqw);
 
         // Imported mesh (GLB/GLTF) — uses uploaded VBO/IBO from `gl-register-mesh`.
         if (meta.meshId) {
@@ -2631,15 +2657,16 @@ export class GlNode extends Node {
         const useTex = texInfo ? 1.0 : 0.0;
         const ez = d[b + F_TZ], ed = d[b + F_SZ] || 0.01;
         const eqx = d[b + F_QX], eqy = d[b + F_QY], eqz = d[b + F_QZ], eqw = d[b + F_QW];
-        let tmx = ex, tmy = ey, tmz = ez, tmqx = eqx, tmqy = eqy, tmqz = eqz, tmqw = eqw;
+        let tmx = ex, tmy = ey, tmz = ez, tmw = ew, tmh = eh, tmd = ed, tmqx = eqx, tmqy = eqy, tmqz = eqz, tmqw = eqw;
         if (meta.parent) {
           const wt = store.getWorldTransform(slot);
           tmx = wt[0]; tmy = wt[1]; tmz = wt[2];
+          tmw = wt[3]; tmh = wt[4]; tmd = wt[5] || 0.01;
           tmqx = wt[6]; tmqy = wt[7]; tmqz = wt[8]; tmqw = wt[9];
         }
         const model = meta.billboard
-          ? mat4Billboard(tmx, tmy, tmz, ew, eh, ed, cam.x + cam.shakeX, cam.y + cam.shakeY, cam.z)
-          : mat4ModelQuat(tmx, tmy, tmz, ew, eh, ed, tmqx, tmqy, tmqz, tmqw);
+          ? mat4Billboard(tmx, tmy, tmz, tmw, tmh, tmd, cam.x + cam.shakeX, cam.y + cam.shakeY, cam.z)
+          : mat4ModelQuat(tmx, tmy, tmz, tmw, tmh, tmd, tmqx, tmqy, tmqz, tmqw);
 
         const texChanged = entityTex && entityTexName !== b3dTexName;
         const nmChanged = entityNormalName !== b3dNormalName;

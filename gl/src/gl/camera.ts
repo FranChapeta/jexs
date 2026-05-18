@@ -23,8 +23,8 @@ export function updateCameraFollow(inst: GlInstance): boolean {
   const b = slot * STRIDE;
 
   if (inst.mode3d) {
-    const cx = d[b + F_TX] + d[b + F_SX] / 2;
-    const cy = d[b + F_TY] + d[b + F_SY] / 2;
+    const cx = d[b + F_TX];
+    const cy = d[b + F_TY];
     const ez = d[b + F_TZ]; // entity bottom Z (followOffsetZ is relative to this)
 
     if (cam.followMode === "fps") {

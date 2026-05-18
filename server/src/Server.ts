@@ -412,6 +412,7 @@ export class Server {
       ".ico",
       ".woff",
       ".woff2",
+      ".glb",
       ".gltf",
       ".bin",
     ];
@@ -480,6 +481,7 @@ export class Server {
       ".ico": "image/x-icon",
       ".woff": "font/woff",
       ".woff2": "font/woff2",
+      ".glb": "model/gltf-binary",
       ".gltf": "model/gltf+json",
       ".bin": "application/octet-stream",
     };

@@ -34,19 +34,25 @@ export interface MeshData {
   material?: MeshMaterial;
 }
 
-/** A single glTF scene-graph node placement. Consumed by user `entity-add` calls. */
+/**
+ * One row to be fed into `entity-add`. The parser emits one row per draw call:
+ *  - A glTF node with 0 primitives → 1 pivot row.
+ *  - A glTF node with 1 primitive → 1 mesh row.
+ *  - A glTF node with N>1 primitives → 1 pivot row + N mesh rows parented to it.
+ *
+ * Rows are emitted parents-first, so a single `foreach scene.nodes → entity-add`
+ * works without recursion.
+ */
 export interface NodeData {
   id: string;
-  parentId: string | null;
-  /** Local-space transform (relative to parent node). */
+  parent: string | null;
+  type: "mesh" | "pivot";
+  /** Local-space transform (relative to parent). */
   translation: [number, number, number];
-  quaternion: [number, number, number, number]; // local quaternion [qx, qy, qz, qw]
+  rotation: [number, number, number, number]; // quaternion [qx, qy, qz, qw]
   scale: [number, number, number];
-  /** World-space transform (local composed with the full parent chain). */
-  worldTranslation: [number, number, number];
-  worldQuaternion: [number, number, number, number];
-  worldScale: [number, number, number];
-  meshId: string | null; // null = pivot/group node
+  /** Mesh id to draw. Null for pivots. */
+  mesh: string | null;
 }
 
 /** Top-level parser output. */
@@ -86,6 +92,13 @@ export interface MeshEntry {
   indices?: Uint16Array | Uint32Array;
   /** Built lazily for collision; shared across all entities referencing this id. */
   bvh?: BVH;
+  /**
+   * Shortest triangle edge length in mesh-local space. Cached during BVH build.
+   * Used by Physics.ts to decide when a dynamic body is moving fast enough relative
+   * to mesh features that the dynamic-vs-mesh narrowphase needs sub-stepping to
+   * avoid tunneling. Undefined until BVH is built.
+   */
+  minTriEdge?: number;
   /** Cached material URIs (same shape as MeshData.material). */
   material?: MeshMaterial;
   /**

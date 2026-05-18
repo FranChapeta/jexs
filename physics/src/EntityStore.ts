@@ -515,14 +515,15 @@ export class EntityStore {
     // World scale: component-wise multiply
     const wsx = psx * lsx, wsy = psy * lsy, wsz = psz * lsz;
 
-    // Rotate local translation by parent world quaternion, then add parent world translation
+    // Scale local translation by parent world scale, then rotate by parent world quaternion
+    const slx = psx * lx, sly = psy * ly, slz = psz * lz;
     const x2=pqx+pqx, y2=pqy+pqy, z2=pqz+pqz;
     const xx=pqx*x2, xy=pqx*y2, xz=pqx*z2;
     const yy=pqy*y2, yz=pqy*z2, zz=pqz*z2;
     const wx=pqw*x2, wy=pqw*y2, wz=pqw*z2;
-    const wtx = px + (1-yy-zz)*lx + (xy-wz)*ly + (xz+wy)*lz;
-    const wty = py + (xy+wz)*lx + (1-xx-zz)*ly + (yz-wx)*lz;
-    const wtz = pz + (xz-wy)*lx + (yz+wx)*ly + (1-xx-yy)*lz;
+    const wtx = px + (1-yy-zz)*slx + (xy-wz)*sly + (xz+wy)*slz;
+    const wty = py + (xy+wz)*slx + (1-xx-zz)*sly + (yz-wx)*slz;
+    const wtz = pz + (xz-wy)*slx + (yz+wx)*sly + (1-xx-yy)*slz;
 
     // World rotation: Hamilton product (parent * child)
     const wqx = pqw*lqx + pqx*lqw + pqy*lqz - pqz*lqy;

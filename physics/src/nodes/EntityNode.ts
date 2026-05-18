@@ -172,37 +172,31 @@ export class EntityNode extends Node {
 
       let slot = pooled ? store.poolAcquire(type, id) : -1;
 
-      // If the entity references a registered mesh, pull bounds for default scale.
+      // If the entity references a registered mesh, pull bounds — only used for `type: "mesh"`,
+      // where the entity's F_SX/SY/SZ doubles as the AABB extent for the BVH narrowphase and
+      // must match the actual geometry. For other types ("quad", "circle", ...) the mesh is
+      // render-only and scale is whatever the user provided, unchanged.
       const meshId = r["mesh"] != null ? String(r["mesh"]) : null;
       const meshEntry = meshId ? store.meshes.get(meshId) : null;
-      let meshSX: number | undefined, meshSY: number | undefined, meshSZ: number | undefined;
-      if (meshEntry) {
-        meshSX = meshEntry.bounds.max[0] - meshEntry.bounds.min[0];
-        meshSY = meshEntry.bounds.max[1] - meshEntry.bounds.min[1];
-        meshSZ = meshEntry.bounds.max[2] - meshEntry.bounds.min[2];
+      const useMeshBounds = type === "mesh" && !!meshEntry;
+      let meshSX = 1, meshSY = 1, meshSZ = 1;
+      if (useMeshBounds) {
+        meshSX = meshEntry!.bounds.max[0] - meshEntry!.bounds.min[0];
+        meshSY = meshEntry!.bounds.max[1] - meshEntry!.bounds.min[1];
+        meshSZ = meshEntry!.bounds.max[2] - meshEntry!.bounds.min[2];
       }
 
-      // Resolve translation
       let translation: [number, number, number] | undefined;
       if (r["translation"] !== undefined) {
         translation = r["translation"] as [number, number, number];
       }
 
-      // Resolve scale: input scale multiplied by mesh bounds when mesh present
       let scale: [number, number, number] | undefined;
       if (r["scale"] !== undefined) {
         const s = r["scale"] as [number, number, number];
-        if (meshEntry) {
-          scale = [
-            (meshSX ?? 1) * s[0],
-            (meshSY ?? 1) * s[1],
-            (meshSZ ?? 1) * s[2],
-          ];
-        } else {
-          scale = s;
-        }
-      } else if (meshEntry) {
-        scale = [meshSX ?? 1, meshSY ?? 1, meshSZ ?? 1];
+        scale = useMeshBounds ? [meshSX * s[0], meshSY * s[1], meshSZ * s[2]] : s;
+      } else if (useMeshBounds) {
+        scale = [meshSX, meshSY, meshSZ];
       }
 
       const rotation = resolveRotation(r);
@@ -255,8 +249,8 @@ export class EntityNode extends Node {
         }
         if (scale) {
           d[b + F_SX] = scale[0]; d[b + F_SY] = scale[1]; d[b + F_SZ] = scale[2];
-        } else if (meshEntry) {
-          d[b + F_SX] = meshSX ?? 1; d[b + F_SY] = meshSY ?? 1; d[b + F_SZ] = meshSZ ?? 1;
+        } else if (useMeshBounds) {
+          d[b + F_SX] = meshSX; d[b + F_SY] = meshSY; d[b + F_SZ] = meshSZ;
         }
         if (rotation) {
           d[b + F_QX] = rotation[0]; d[b + F_QY] = rotation[1];

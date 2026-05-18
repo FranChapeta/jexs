@@ -16,9 +16,10 @@ import {
   F_INV_MASS, F_RESTITUTION, F_FRICTION, F_DAMPING,
   F_MOVE_X, F_MOVE_Y, F_FLAGS,
   FLAG_PHYSICS, FLAG_SLEEPING, FLAG_TRIGGER, FLAG_CCD,
+  type EntityMeta,
 } from "../EntityStore.js";
 import { raycastStore } from "../Raycast.js";
-import { detectCollision, resolveCollision, wakeBody, isRotated } from "../collision.js";
+import { detectCollision, resolveCollision, wakeBody, isRotated, usesMeshCollision } from "../collision.js";
 import { solveConstraints, type Constraint, type ConstraintType } from "../constraints.js";
 import { SpatialGrid } from "../SpatialGrid.js";
 
@@ -260,6 +261,75 @@ let _dynamicSlots: number[] = [];
 let _staticSlots: number[] = [];
 let _contacts: Contact[] = [];
 
+/** Hard cap on sub-step subdivisions per pair per frame. Protects against pathological cases. */
+const MESH_SUBSTEP_LIMIT = 8;
+
+/**
+ * Dynamic-vs-mesh narrowphase wrapper. When the dynamic body's per-step displacement
+ * exceeds half the smallest triangle edge (in world units), the body is stepped along
+ * its trajectory in N slices and `detectCollision` is invoked at each slice — first
+ * contact wins. This catches tunneling for fast-moving bodies without a full swept-BVH
+ * implementation. For slow-moving bodies (the common case) it costs one extra branch.
+ */
+function meshNarrowphase(
+  store: EntityStore, sa: number, sb: number,
+  ma: EntityMeta, mb: EntityMeta, dt: number,
+): Contact | null {
+  const d = store.data;
+  const meshSlot = usesMeshCollision(ma) ? sa : sb;
+  const bodySlot = meshSlot === sa ? sb : sa;
+  const ba = bodySlot * STRIDE;
+
+  const meshId = store.meta[meshSlot]!.meshId!;
+  const entry = store.meshes.get(meshId);
+  const minEdge = entry?.minTriEdge ?? 0;
+  if (!entry || minEdge <= 0) return detectCollision(store, sa, sb, ma, mb, dt);
+
+  // Mesh world scale — convert minTriEdge from local to world units.
+  const wt = store.getWorldTransform(meshSlot);
+  const meshScaleMin = Math.min(Math.abs(wt[3]), Math.abs(wt[4]), Math.abs(wt[5])) || 1;
+  const featureWorld = minEdge * meshScaleMin;
+
+  const pb = bodySlot * 3;
+  const prevX = store.prevPositions[pb];
+  const prevY = store.prevPositions[pb + 1];
+  const prevZ = store.prevPositions[pb + 2];
+  const curX = d[ba + F_TX];
+  const curY = d[ba + F_TY];
+  const curZ = d[ba + F_TZ];
+  const dx = curX - prevX, dy = curY - prevY, dz = curZ - prevZ;
+  const dist2 = dx * dx + dy * dy + dz * dz;
+  const threshold = featureWorld * 0.5;
+  if (dist2 <= threshold * threshold) {
+    return detectCollision(store, sa, sb, ma, mb, dt);
+  }
+
+  // Need sub-stepping.
+  const steps = Math.min(Math.ceil(Math.sqrt(dist2) / threshold), MESH_SUBSTEP_LIMIT);
+  for (let k = 1; k <= steps; k++) {
+    const t = k / steps;
+    d[ba + F_TX] = prevX + dx * t;
+    d[ba + F_TY] = prevY + dy * t;
+    d[ba + F_TZ] = prevZ + dz * t;
+    // Invalidate body's world-transform cache — it depends on local position.
+    const m = store.meta[bodySlot];
+    if (m && m.worldTransform) m.worldTransform = null;
+    const c = detectCollision(store, sa, sb, ma, mb, dt / steps);
+    if (c) {
+      // Body stays at the sub-step where contact first appeared; the resolution
+      // pass will then push it out along the contact normal.
+      return c;
+    }
+  }
+  // No contact at any slice — restore final position.
+  d[ba + F_TX] = curX;
+  d[ba + F_TY] = curY;
+  d[ba + F_TZ] = curZ;
+  const m = store.meta[bodySlot];
+  if (m && m.worldTransform) m.worldTransform = null;
+  return null;
+}
+
 export function physicsStep(store: EntityStore, config: PhysicsConfig, dt: number, constraints?: Constraint[]): Contact[] {
   const d = store.data;
   const gx = config.gravity[0], gy = config.gravity[1], gz = config.gravity[2] ?? 0;
@@ -370,7 +440,7 @@ export function physicsStep(store: EntityStore, config: PhysicsConfig, dt: numbe
         const mb = store.meta[sb]!;
         if (!ma.mask.includes(mb.group) && !mb.mask.includes(ma.group)) { _maskSkips++; continue; }
         _narrowTests++;
-        const c = detectCollision(store, sa, sb, ma, mb);
+        const c = detectCollision(store, sa, sb, ma, mb, dt);
         if (c) _contacts.push(c);
       }
     }
@@ -381,7 +451,7 @@ export function physicsStep(store: EntityStore, config: PhysicsConfig, dt: numbe
         const ma = store.meta[sa]!, mb = store.meta[sb]!;
         if (!ma.mask.includes(mb.group) && !mb.mask.includes(ma.group)) { _maskSkips++; continue; }
         _narrowTests++;
-        const c = detectCollision(store, sa, sb, ma, mb);
+        const c = detectCollision(store, sa, sb, ma, mb, dt);
         if (c) _contacts.push(c);
       }
     }
@@ -401,12 +471,13 @@ export function physicsStep(store: EntityStore, config: PhysicsConfig, dt: numbe
         const mb = store.meta[sb]!;
         if (!ma.mask.includes(mb.group) && !mb.mask.includes(ma.group)) { _maskSkips++; continue; }
         const bb = sb * STRIDE;
-        if (!isRotated(d, bb)) {
+        const meshB = usesMeshCollision(mb);
+        if (!meshB && !isRotated(d, bb)) {
           const bz = d[bb + F_TZ], bd = d[bb + F_SZ] || 0.01;
           if (az > bz + bd || bz > aTop) { _zSkips++; continue; }
         }
         _narrowTests++;
-        const c = detectCollision(store, sa, sb, ma, mb);
+        const c = meshB ? meshNarrowphase(store, sa, sb, ma, mb, dt) : detectCollision(store, sa, sb, ma, mb, dt);
         if (c) _contacts.push(c);
       }
     }
@@ -426,13 +497,35 @@ export function physicsStep(store: EntityStore, config: PhysicsConfig, dt: numbe
         // Quick Z-overlap pre-check before full collision test
         // Skip broadphase for rotated statics — their Z extent differs from raw d
         const bb = sb * STRIDE;
-        if (!isRotated(d, bb)) {
+        const meshB = usesMeshCollision(mb);
+        if (!meshB && !isRotated(d, bb)) {
           const bz = d[bb + F_TZ], bd = d[bb + F_SZ] || 0.01;
           if (az > bz + bd || bz > aTop) { _zSkips++; continue; }
         }
 
         _narrowTests++;
-        const c = detectCollision(store, sa, sb, ma, mb);
+        const c = meshB ? meshNarrowphase(store, sa, sb, ma, mb, dt) : detectCollision(store, sa, sb, ma, mb, dt);
+        if (c) _contacts.push(c);
+      }
+    }
+  }
+
+  // 3c. Dynamic vs static mesh fallback pass for grid broadphase.
+  // Mesh entities can use transform chains that don't map to raw AABB extents used by the grid.
+  if (useGrid) {
+    for (let i = 0; i < _dynamicSlots.length; i++) {
+      const sa = _dynamicSlots[i];
+      const ma = store.meta[sa]!;
+      for (let j = 0; j < _staticSlots.length; j++) {
+        const sb = _staticSlots[j];
+        const mb = store.meta[sb]!;
+        if (!usesMeshCollision(mb)) continue;
+        const pairKey = sa < sb ? sa * 0x100000 + sb : sb * 0x100000 + sa;
+        if (_pairsSeen!.has(pairKey)) continue;
+        _pairsSeen!.add(pairKey);
+        if (!ma.mask.includes(mb.group) && !mb.mask.includes(ma.group)) { _maskSkips++; continue; }
+        _narrowTests++;
+        const c = meshNarrowphase(store, sa, sb, ma, mb, dt);
         if (c) _contacts.push(c);
       }
     }

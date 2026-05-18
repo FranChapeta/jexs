@@ -21,11 +21,28 @@ import {
 import type { Contact, PhysicsConfig } from "./nodes/Physics.js";
 import { buildBvh, queryAabb, readTriangle } from "./Bvh.js";
 import type { MeshEntry } from "./Mesh.js";
+import { rotateVecByQuat } from "./quat.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+/**
+ * Numerical slack added to the adaptive back-side thickness, in world units.
+ * Keeps a body that *just* touched the surface (within ~1mm at unit scale)
+ * registered as in contact, even with zero velocity.
+ */
+const MESH_THICKNESS_SLACK = 0.01;
+
 function shapeOf(meta: { type: string }): "circle" | "rect" {
   return meta.type === "circle" ? "circle" : "rect";
+}
+
+/**
+ * True when this entity should collide as a triangle mesh. An entity must explicitly
+ * declare `type: "mesh"` to opt in — `type: "quad" | "circle"` with a mesh id renders
+ * the mesh but uses primitive (AABB / sphere) narrowphase, which is much cheaper.
+ */
+export function usesMeshCollision(meta: EntityMeta): boolean {
+  return meta.type === "mesh" && !!meta.meshId;
 }
 
 const _rotIdentity = new Float32Array([1,0,0, 0,1,0, 0,0,1]);
@@ -283,6 +300,61 @@ function ensureBvh(entry: MeshEntry): void {
   if (entry.bvh) return;
   if (!entry.positions) return;
   entry.bvh = buildBvh(entry.positions, entry.indices ?? null);
+  entry.minTriEdge = computeMinTriEdge(entry.positions, entry.indices ?? null);
+}
+
+/**
+ * Shortest triangle edge in mesh-local space — used as a tunneling threshold:
+ * a body moving faster than this distance per step against a mesh face can skip
+ * over it entirely, so the narrowphase falls back to sub-stepping.
+ */
+function computeMinTriEdge(
+  positions: Float32Array,
+  indices: Uint16Array | Uint32Array | null,
+): number {
+  const triCount = indices ? indices.length / 3 : positions.length / 9;
+  let minSq = Infinity;
+  for (let t = 0; t < triCount; t++) {
+    const i0 = indices ? indices[t * 3]     : t * 3;
+    const i1 = indices ? indices[t * 3 + 1] : t * 3 + 1;
+    const i2 = indices ? indices[t * 3 + 2] : t * 3 + 2;
+    const ax = positions[i0 * 3], ay = positions[i0 * 3 + 1], az = positions[i0 * 3 + 2];
+    const bx = positions[i1 * 3], by = positions[i1 * 3 + 1], bz = positions[i1 * 3 + 2];
+    const cx = positions[i2 * 3], cy = positions[i2 * 3 + 1], cz = positions[i2 * 3 + 2];
+    const e0 = (bx-ax)*(bx-ax) + (by-ay)*(by-ay) + (bz-az)*(bz-az);
+    const e1 = (cx-bx)*(cx-bx) + (cy-by)*(cy-by) + (cz-bz)*(cz-bz);
+    const e2 = (ax-cx)*(ax-cx) + (ay-cy)*(ay-cy) + (az-cz)*(az-cz);
+    if (e0 > 0 && e0 < minSq) minSq = e0;
+    if (e1 > 0 && e1 < minSq) minSq = e1;
+    if (e2 > 0 && e2 < minSq) minSq = e2;
+  }
+  return minSq === Infinity ? 0 : Math.sqrt(minSq);
+}
+
+function worldToMeshLocal(
+  x: number, y: number, z: number,
+  tx: number, ty: number, tz: number,
+  sx: number, sy: number, sz: number,
+  iqx: number, iqy: number, iqz: number, iqw: number,
+): [number, number, number] {
+  const rx = x - tx;
+  const ry = y - ty;
+  const rz = z - tz;
+  const [ux, uy, uz] = rotateVecByQuat(rx, ry, rz, iqx, iqy, iqz, iqw);
+  return [ux / sx, uy / sy, uz / sz];
+}
+
+function localNormalToWorld(
+  nx: number, ny: number, nz: number,
+  sx: number, sy: number, sz: number,
+  qx: number, qy: number, qz: number, qw: number,
+): [number, number, number] {
+  const lx = nx / sx;
+  const ly = ny / sy;
+  const lz = nz / sz;
+  const [wx, wy, wz] = rotateVecByQuat(lx, ly, lz, qx, qy, qz, qw);
+  const len = Math.hypot(wx, wy, wz) || 1;
+  return [wx / len, wy / len, wz / len];
 }
 
 /**
@@ -293,26 +365,44 @@ function ensureBvh(entry: MeshEntry): void {
  * Returns the deepest single-axis contact found across overlapping triangles.
  */
 function triMeshVsAabb(
-  d: Float64Array, slotM: number, slotO: number, entry: MeshEntry,
+  store: EntityStore, d: Float64Array, slotM: number, slotO: number, entry: MeshEntry, dt: number,
 ): Contact | null {
   ensureBvh(entry);
   if (!entry.bvh || !entry.positions) return null;
 
-  const bm = slotM * STRIDE;
   const bo = slotO * STRIDE;
-  // Mesh world origin (where local (0,0,0) sits). entity-add sized w/h/d from bounds,
-  // so the entity AABB covers `(F_TX + bounds.min, F_TX + bounds.max)`. World mesh origin
-  // therefore = entity.pos - bounds.min.
-  const ox = d[bm + F_TX] - entry.bounds.min[0];
-  const oy = d[bm + F_TY] - entry.bounds.min[1];
-  const oz = d[bm + F_TZ] - entry.bounds.min[2];
+  const wt = store.getWorldTransform(slotM);
+  const tx = wt[0], ty = wt[1], tz = wt[2];
+  const sx = Math.max(Math.abs(wt[3]), 1e-6), sy = Math.max(Math.abs(wt[4]), 1e-6), sz = Math.max(Math.abs(wt[5]), 1e-6);
+  const qx = wt[6], qy = wt[7], qz = wt[8], qw = wt[9];
+  const iqx = -qx, iqy = -qy, iqz = -qz, iqw = qw;
+
+  // Convert the dynamic body's world velocity into mesh-local space so we can compare
+  // it against per-triangle normals (also local). We rotate by the inverse mesh quaternion
+  // then divide by mesh scale — the same chain worldToMeshLocal applies, minus translation.
+  const vWx = d[bo + F_VX], vWy = d[bo + F_VY], vWz = d[bo + F_VZ];
+  const [vRx, vRy, vRz] = rotateVecByQuat(vWx, vWy, vWz, iqx, iqy, iqz, iqw);
+  const vLx = vRx / sx, vLy = vRy / sy, vLz = vRz / sz;
+  const slackLocal = MESH_THICKNESS_SLACK / Math.min(sx, sy, sz);
 
   const ax0 = d[bo + F_TX], ay0 = d[bo + F_TY], az0 = d[bo + F_TZ];
   const ax1 = ax0 + d[bo + F_SX], ay1 = ay0 + d[bo + F_SY], az1 = az0 + (d[bo + F_SZ] || 0.01);
 
-  // Translate dynamic AABB into mesh local space.
-  const lMinX = ax0 - ox, lMinY = ay0 - oy, lMinZ = az0 - oz;
-  const lMaxX = ax1 - ox, lMaxY = ay1 - oy, lMaxZ = az1 - oz;
+  const corners: [number, number, number][] = [
+    [ax0, ay0, az0], [ax1, ay0, az0], [ax0, ay1, az0], [ax1, ay1, az0],
+    [ax0, ay0, az1], [ax1, ay0, az1], [ax0, ay1, az1], [ax1, ay1, az1],
+  ];
+  let lMinX = Infinity, lMinY = Infinity, lMinZ = Infinity;
+  let lMaxX = -Infinity, lMaxY = -Infinity, lMaxZ = -Infinity;
+  for (const c of corners) {
+    const [lx, ly, lz] = worldToMeshLocal(c[0], c[1], c[2], tx, ty, tz, sx, sy, sz, iqx, iqy, iqz, iqw);
+    if (lx < lMinX) lMinX = lx;
+    if (ly < lMinY) lMinY = ly;
+    if (lz < lMinZ) lMinZ = lz;
+    if (lx > lMaxX) lMaxX = lx;
+    if (ly > lMaxY) lMaxY = ly;
+    if (lz > lMaxZ) lMaxZ = lz;
+  }
 
   _triCandidates.length = 0;
   queryAabb(entry.bvh, lMinX, lMinY, lMinZ, lMaxX, lMaxY, lMaxZ, _triCandidates);
@@ -349,22 +439,33 @@ function triMeshVsAabb(
     const planeD = nx * v0x + ny * v0y + nz * v0z;
     const r = bhx * Math.abs(nx) + bhy * Math.abs(ny) + bhz * Math.abs(nz);
     const s = nx * bcx + ny * bcy + nz * bcz - planeD;
-    if (Math.abs(s) > r) continue;
 
-    // Penetration depth on the triangle-normal axis.
-    const depth = r - Math.abs(s);
+    // Penetration on the triangle-normal axis. For bodies that crossed the plane
+    // this step we extend the test by exactly the distance they could have travelled
+    // along -n (plus a small slack), so a body at rest gets ~0 back-side tolerance
+    // and only an actually-moving body gets a tunnel-catching extension.
+    const vAlongN = vLx * nx + vLy * ny + vLz * nz;
+    const backReach = Math.max(0, -vAlongN) * dt + slackLocal;
+    let depth: number;
+    if (s >= 0) {
+      if (s > r) continue;
+      depth = r - s;
+    } else {
+      if (s < -(r + backReach)) continue;
+      depth = r + backReach + s;
+    }
     if (depth > bestDepth) {
       bestDepth = depth;
-      // Push dynamic body away from the triangle (along the normal pointing toward it).
-      const sign = s >= 0 ? 1 : -1;
-      bestNx = nx * sign; bestNy = ny * sign; bestNz = nz * sign;
+      // Always push toward front face for both front and tunneled contacts —
+      // the return negates this, so negated-normal points in the separation direction.
+      bestNx = nx; bestNy = ny; bestNz = nz;
     }
   }
 
   if (bestDepth <= 0) return null;
-  // Contact convention: normal from B to A, where A = mesh, B = other. The dispatcher
-  // flips signs when the mesh is the second slot.
-  return { slotA: slotM, slotB: slotO, nx: -bestNx, ny: -bestNy, nz: -bestNz, depth: bestDepth, trigger: false };
+  const [wnx, wny, wnz] = localNormalToWorld(bestNx, bestNy, bestNz, sx, sy, sz, qx, qy, qz, qw);
+  const depthWorld = bestDepth * Math.hypot(bestNx * sx, bestNy * sy, bestNz * sz);
+  return { slotA: slotM, slotB: slotO, nx: wnx, ny: wny, nz: wnz, depth: depthWorld, trigger: false };
 }
 
 /**
@@ -372,22 +473,28 @@ function triMeshVsAabb(
  * if the distance is less than the radius, that's a contact.
  */
 function triMeshVsSphere(
-  d: Float64Array, slotM: number, slotO: number, entry: MeshEntry,
+  store: EntityStore, d: Float64Array, slotM: number, slotO: number, entry: MeshEntry, _dt: number,
 ): Contact | null {
   ensureBvh(entry);
   if (!entry.bvh || !entry.positions) return null;
 
-  const bm = slotM * STRIDE;
   const bo = slotO * STRIDE;
-  const ox = d[bm + F_TX] - entry.bounds.min[0];
-  const oy = d[bm + F_TY] - entry.bounds.min[1];
-  const oz = d[bm + F_TZ] - entry.bounds.min[2];
+  const wt = store.getWorldTransform(slotM);
+  const tx = wt[0], ty = wt[1], tz = wt[2];
+  const sx = Math.max(Math.abs(wt[3]), 1e-6), sy = Math.max(Math.abs(wt[4]), 1e-6), sz = Math.max(Math.abs(wt[5]), 1e-6);
+  const qx = wt[6], qy = wt[7], qz = wt[8], qw = wt[9];
+  const iqx = -qx, iqy = -qy, iqz = -qz, iqw = qw;
 
   // Sphere = circle entity. Treat F_SX as diameter (existing convention).
-  const radius = d[bo + F_SX] * 0.5;
-  const cx = d[bo + F_TX] + radius - ox;
-  const cy = d[bo + F_TY] + radius - oy;
-  const cz = d[bo + F_TZ] + (d[bo + F_SZ] || d[bo + F_SX]) * 0.5 - oz;
+  // (Sphere narrowphase relies on closest-point distance, not a back-plane test, so
+  // it doesn't take an adaptive thickness. Sub-stepping in Physics.ts is what catches
+  // tunneling for fast circles — `_dt` is accepted for signature parity.)
+  const radiusWorld = d[bo + F_SX] * 0.5;
+  const cxWorld = d[bo + F_TX] + radiusWorld;
+  const cyWorld = d[bo + F_TY] + radiusWorld;
+  const czWorld = d[bo + F_TZ] + (d[bo + F_SZ] || d[bo + F_SX]) * 0.5;
+  const [cx, cy, cz] = worldToMeshLocal(cxWorld, cyWorld, czWorld, tx, ty, tz, sx, sy, sz, iqx, iqy, iqz, iqw);
+  const radius = radiusWorld / Math.min(sx, sy, sz);
 
   _triCandidates.length = 0;
   queryAabb(entry.bvh, cx - radius, cy - radius, cz - radius, cx + radius, cy + radius, cz + radius, _triCandidates);
@@ -417,7 +524,9 @@ function triMeshVsSphere(
   }
 
   if (bestDepth <= 0) return null;
-  return { slotA: slotM, slotB: slotO, nx: -bestNx, ny: -bestNy, nz: -bestNz, depth: bestDepth, trigger: false };
+  const [wnx, wny, wnz] = localNormalToWorld(bestNx, bestNy, bestNz, sx, sy, sz, qx, qy, qz, qw);
+  const depthWorld = bestDepth * Math.hypot(bestNx * sx, bestNy * sy, bestNz * sz);
+  return { slotA: slotM, slotB: slotO, nx: wnx, ny: wny, nz: wnz, depth: depthWorld, trigger: false };
 }
 
 /** Closest point on triangle (v0,v1,v2) to point p. Returns [x,y,z]. */
@@ -472,28 +581,31 @@ function closestPointOnTriangle(
 
 export function detectCollision(
   store: EntityStore, slotA: number, slotB: number,
-  metaA: EntityMeta, metaB: EntityMeta,
+  metaA: EntityMeta, metaB: EntityMeta, dt: number,
 ): Contact | null {
   const d = store.data;
 
-  // Triangle-mesh dispatch — only when one side is a registered mesh entity.
-  // Dynamic-mesh-vs-dynamic-mesh is out of scope; falls back to AABB-vs-AABB below.
-  const idA = metaA.meshId, idB = metaB.meshId;
-  if (idA && !idB) {
-    const entry = store.meshes.get(idA);
+  // Triangle-mesh dispatch — only when the entity's `type` is explicitly "mesh".
+  // An entity with type "quad"/"circle" + a meshId renders the mesh but collides
+  // as a box/sphere using the existing primitive paths below. This keeps narrowphase
+  // cheap for decorative or simple-shape objects.
+  const meshA = usesMeshCollision(metaA);
+  const meshB = usesMeshCollision(metaB);
+  if (meshA && !meshB) {
+    const entry = store.meshes.get(metaA.meshId!);
     if (entry) {
       const c = metaB.type === "circle"
-        ? triMeshVsSphere(d, slotA, slotB, entry)
-        : triMeshVsAabb(d, slotA, slotB, entry);
+        ? triMeshVsSphere(store, d, slotA, slotB, entry, dt)
+        : triMeshVsAabb(store, d, slotA, slotB, entry, dt);
       if (c) c.trigger = !!(d[slotA * STRIDE + F_FLAGS] & FLAG_TRIGGER) || !!(d[slotB * STRIDE + F_FLAGS] & FLAG_TRIGGER);
       return c;
     }
-  } else if (idB && !idA) {
-    const entry = store.meshes.get(idB);
+  } else if (meshB && !meshA) {
+    const entry = store.meshes.get(metaB.meshId!);
     if (entry) {
       const c = metaA.type === "circle"
-        ? triMeshVsSphere(d, slotB, slotA, entry)
-        : triMeshVsAabb(d, slotB, slotA, entry);
+        ? triMeshVsSphere(store, d, slotB, slotA, entry, dt)
+        : triMeshVsAabb(store, d, slotB, slotA, entry, dt);
       if (!c) return null;
       // Flip slot ordering + normal so caller convention (slotA = first input) holds.
       const flipped: Contact = {

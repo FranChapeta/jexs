@@ -15,7 +15,7 @@
  * FileNode (server) or FetchNode (client).
  */
 
-import { Node, Context, NodeValue, resolve, resolveObj } from "@jexs/core";
+import { Node, Context, NodeValue, resolveAll, resolveObj } from "@jexs/core";
 import { EntityStore } from "../EntityStore.js";
 import { computeBounds } from "../Bvh.js";
 import type {
@@ -209,48 +209,6 @@ function typedArrayCtor(componentType: number) {
   throw new Error(`MeshNode: unsupported componentType ${componentType}`);
 }
 
-const IDENTITY_MAT4: number[] = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
-
-/** Multiply two column-major 4x4 matrices: out = a * b. */
-function multiplyMat4(a: number[], b: number[]): number[] {
-  const out: number[] = new Array(16);
-  for (let c = 0; c < 4; c++) {
-    for (let r = 0; r < 4; r++) {
-      out[c * 4 + r] =
-        a[0 * 4 + r] * b[c * 4 + 0] +
-        a[1 * 4 + r] * b[c * 4 + 1] +
-        a[2 * 4 + r] * b[c * 4 + 2] +
-        a[3 * 4 + r] * b[c * 4 + 3];
-    }
-  }
-  return out;
-}
-
-/** Compose a column-major 4x4 matrix from translation, quaternion, scale (glTF order: T * R * S). */
-function composeMatrixTRS(t: number[], q: number[], s: number[]): number[] {
-  const qx = q[0], qy = q[1], qz = q[2], qw = q[3];
-  const x2 = qx + qx, y2 = qy + qy, z2 = qz + qz;
-  const xx = qx * x2, xy = qx * y2, xz = qx * z2;
-  const yy = qy * y2, yz = qy * z2, zz = qz * z2;
-  const wx = qw * x2, wy = qw * y2, wz = qw * z2;
-  const sx = s[0], sy = s[1], sz = s[2];
-  const m: number[] = new Array(16);
-  m[0]  = (1 - (yy + zz)) * sx;
-  m[1]  = (xy + wz) * sx;
-  m[2]  = (xz - wy) * sx;
-  m[3]  = 0;
-  m[4]  = (xy - wz) * sy;
-  m[5]  = (1 - (xx + zz)) * sy;
-  m[6]  = (yz + wx) * sy;
-  m[7]  = 0;
-  m[8]  = (xz + wy) * sz;
-  m[9]  = (yz - wx) * sz;
-  m[10] = (1 - (xx + yy)) * sz;
-  m[11] = 0;
-  m[12] = t[0]; m[13] = t[1]; m[14] = t[2]; m[15] = 1;
-  return m;
-}
-
 /** Decompose a glTF column-major 4x4 matrix into translation, quaternion, scale. */
 function decomposeMatrix(m: number[]): {
   translation: [number, number, number];
@@ -436,13 +394,11 @@ function parseGltfJson(
   const bufferDefs = (json.buffers as Array<Record<string, unknown>> | undefined) ?? [];
   const bufferBytes: Uint8Array[] = bufferDefs.map((b, i) => resolveBuffer(b, i, buffers, glbBin));
 
-  // Build MeshData per (mesh, primitive).
+  // Build MeshData per (mesh, primitive). A glTF "mesh" is a container of 1..N primitives,
+  // and each primitive is one draw call (own material). We emit one MeshData per primitive
+  // and remember which primitive ids came from which mesh container for the node traversal below.
   const meshDefs = (json.meshes as Array<Record<string, unknown>> | undefined) ?? [];
   const meshes: Record<string, MeshData> = {};
-  // meshIdToFirstPrimId[meshIdx] = id for that mesh's primitive 0 (used by node placement);
-  // a node referencing a mesh with multiple primitives uses primitive 0 as the canonical id
-  // in NodeData.meshId; the other primitives are still in `Scene.meshes` for the user to
-  // spawn separately if desired.
   const meshIdToPrimIds: string[][] = [];
 
   for (let mi = 0; mi < meshDefs.length; mi++) {
@@ -456,7 +412,7 @@ function parseGltfJson(
       const attribs = (prim.attributes as Record<string, number>) ?? {};
       if (attribs.POSITION == null) continue;
 
-      const posAcc    = readAccessor(json, bufferBytes, attribs.POSITION);
+      const posAcc = readAccessor(json, bufferBytes, attribs.POSITION);
       const positions = posAcc.array instanceof Float32Array ? posAcc.array : Float32Array.from(posAcc.array);
 
       let indices: Uint16Array | Uint32Array | undefined;
@@ -495,7 +451,11 @@ function parseGltfJson(
     meshIdToPrimIds.push(primIds);
   }
 
-  // Build NodeData tree from the default scene (or scene 0).
+  // Build entity-shaped node list from the default scene (or scene 0).
+  // Emission order is DFS pre-order so parents are always written before children.
+  // For nodes with >1 primitive, we emit a pivot row carrying the node transform plus
+  // one mesh-row child per primitive (identity local) — engine renders one draw call
+  // per entity, so multi-material objects need one entity per primitive sharing a parent.
   const nodeDefs = (json.nodes as Array<Record<string, unknown>> | undefined) ?? [];
   const sceneDefs = (json.scenes as Array<Record<string, unknown>> | undefined) ?? [];
   const sceneIdx = (json.scene as number | undefined) ?? 0;
@@ -505,50 +465,70 @@ function parseGltfJson(
 
   const nodes: NodeData[] = [];
 
-  function visit(nodeIdx: number, parentId: string | null, parentWorld: number[]): void {
-    const def  = nodeDefs[nodeIdx];
+  function visit(nodeIdx: number, parent: string | null): void {
+    const def = nodeDefs[nodeIdx];
     const baseName = (def.name as string | undefined) ?? `node_${nodeIdx}`;
-    const id   = `${name}/${baseName}`;
+    const id = `${name}/${baseName}`;
 
-    // Build the node's local matrix (either provided directly, or composed from TRS).
-    let localMatrix: number[];
+    let translation: [number, number, number];
+    let rotation: [number, number, number, number];
+    let scale: [number, number, number];
     if (Array.isArray(def.matrix) && def.matrix.length === 16) {
-      localMatrix = def.matrix as number[];
+      const d = decomposeMatrix(def.matrix as number[]);
+      translation = d.translation;
+      rotation = d.quaternion;
+      scale = d.scale;
     } else {
-      const t = (Array.isArray(def.translation) && def.translation.length === 3
-        ? def.translation : [0, 0, 0]) as number[];
-      const q = (Array.isArray(def.rotation) && def.rotation.length === 4
-        ? def.rotation : [0, 0, 0, 1]) as number[];
-      const s = (Array.isArray(def.scale) && def.scale.length === 3
-        ? def.scale : [1, 1, 1]) as number[];
-      localMatrix = composeMatrixTRS(t, q, s);
+      translation = (Array.isArray(def.translation) && def.translation.length === 3
+        ? [(def.translation as number[])[0], (def.translation as number[])[1], (def.translation as number[])[2]]
+        : [0, 0, 0]);
+      rotation = (Array.isArray(def.rotation) && def.rotation.length === 4
+        ? [(def.rotation as number[])[0], (def.rotation as number[])[1], (def.rotation as number[])[2], (def.rotation as number[])[3]]
+        : [0, 0, 0, 1]);
+      scale = (Array.isArray(def.scale) && def.scale.length === 3
+        ? [(def.scale as number[])[0], (def.scale as number[])[1], (def.scale as number[])[2]]
+        : [1, 1, 1]);
     }
 
-    const local = decomposeMatrix(localMatrix);
-    const worldMatrix = multiplyMat4(parentWorld, localMatrix);
-    const world = decomposeMatrix(worldMatrix);
+    const primIds = def.mesh != null ? (meshIdToPrimIds[def.mesh as number] ?? []) : [];
 
-    // A node may reference a mesh; if that mesh has multiple primitives, the node
-    // gets the first primitive's id and the rest are available in Scene.meshes for
-    // the user to attach to extra entities if desired.
-    let meshId: string | null = null;
-    if (def.mesh != null) {
-      const primIds = meshIdToPrimIds[def.mesh as number] ?? [];
-      meshId = primIds[0] ?? null;
+    if (primIds.length <= 1) {
+      // 0 prims → pivot, 1 prim → mesh row. Single row carries the node transform.
+      nodes.push({
+        id,
+        parent,
+        type: primIds.length === 1 ? "mesh" : "pivot",
+        translation, rotation, scale,
+        mesh: primIds[0] ?? null,
+      });
+    } else {
+      // Multi-primitive: emit a pivot row holding the transform, then N child rows
+      // with identity locals so they ride on the pivot's world transform.
+      nodes.push({
+        id,
+        parent,
+        type: "pivot",
+        translation, rotation, scale,
+        mesh: null,
+      });
+      for (let pi = 0; pi < primIds.length; pi++) {
+        nodes.push({
+          id: `${id}#prim${pi}`,
+          parent: id,
+          type: "mesh",
+          translation: [0, 0, 0],
+          rotation: [0, 0, 0, 1],
+          scale: [1, 1, 1],
+          mesh: primIds[pi],
+        });
+      }
     }
-
-    nodes.push({
-      id, parentId,
-      translation: local.translation, quaternion: local.quaternion, scale: local.scale,
-      worldTranslation: world.translation, worldQuaternion: world.quaternion, worldScale: world.scale,
-      meshId,
-    });
 
     const children = def.children as number[] | undefined;
-    if (children) for (const c of children) visit(c, id, worldMatrix);
+    if (children) for (const c of children) visit(c, id);
   }
 
-  for (const r of rootIndices) visit(r, null, IDENTITY_MAT4);
+  for (const r of rootIndices) visit(r, null);
 
   return { meshes, nodes };
 }
@@ -577,7 +557,7 @@ export class MeshNode extends Node {
    * { "parseGLB": { "var": "buf" }, "name": "duck", "as": "scene" }
    */
   parseGLB(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll2(def.parseGLB, def.name, context, (bufRaw, nameRaw) => {
+    return resolveAll([def.parseGLB, def.name], context, ([bufRaw, nameRaw]) => {
       const bytes = toUint8(bufRaw);
       const { json, bin } = readGlb(bytes);
       const name = (nameRaw as string | undefined) ?? randomName();
@@ -655,12 +635,3 @@ export class MeshNode extends Node {
   }
 }
 
-/** Two-argument resolveAll wrapper that doesn't care about array packing semantics. */
-function resolveAll2(
-  a: unknown, b: unknown, context: Context,
-  cb: (a: unknown, b: unknown) => unknown,
-): unknown {
-  return resolve(a, context, ra =>
-    resolve(b, context, rb => cb(ra, rb)),
-  );
-}
