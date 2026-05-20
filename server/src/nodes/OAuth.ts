@@ -1,4 +1,5 @@
 import { Node, Context, NodeValue, resolve, resolveAll, resolveObj, randomString } from "@jexs/core";
+import type { JexsNodeSchema } from "@jexs/core";
 
 // Types
 interface OAuthProvider {
@@ -90,21 +91,55 @@ const providers: Map<string, OAuthProvider> = new Map();
  * { "oauth": "providers" }
  */
 export class OAuthNode extends Node {
-  /**
-   * OAuth 2.0 flow helpers. Operations: `"configure"`, `"authUrl"`, `"exchange"`, `"refresh"`, `"userInfo"`, `"state"`, `"providers"`.
-   * Built-in providers: `google`, `github`, `facebook`, `discord`, `twitter`, `microsoft`.
-   *
-   * @param {"configure"|"authUrl"|"exchange"|"refresh"|"userInfo"|"state"|"providers"} oauth Operation to perform.
-   * @param {string} provider Provider name (`"google"`, `"github"`, `"facebook"`, `"discord"`, `"twitter"`, `"microsoft"`).
-   * @param {string} clientId OAuth client ID (used with `"configure"`).
-   * @param {string} clientSecret OAuth client secret (used with `"configure"`).
-   * @param {string} redirectUri OAuth redirect URI (used with `"authUrl"` and `"exchange"`).
-   * @param {string} code Authorization code from redirect (used with `"exchange"`).
-   * @param {string} accessToken Bearer token (used with `"userInfo"`).
-   * @param {string} refreshToken Refresh token (used with `"refresh"`).
-   * @example
-   * { "oauth": "authUrl", "provider": "google", "redirectUri": { "var": "$redirectUri" } }
-   */
+  static schema: JexsNodeSchema = {
+    oauth: {
+      type: "string",
+      enum: [
+        "configure",
+        "authUrl",
+        "exchange",
+        "refresh",
+        "userInfo",
+        "state",
+        "providers",
+      ],
+      markdownDescription: "OAuth 2.0 flow helpers. Operations: `\"configure\"`, `\"authUrl\"`, `\"exchange\"`, `\"refresh\"`, `\"userInfo\"`, `\"state\"`, `\"providers\"`.\nBuilt-in providers: `google`, `github`, `facebook`, `discord`, `twitter`, `microsoft`.",
+      examples: [
+        "{ \"oauth\": \"authUrl\", \"provider\": \"google\", \"redirectUri\": { \"var\": \"$redirectUri\" } }",
+      ],
+      siblings: {
+        provider: {
+          type: "string",
+          description: "Provider name (`\"google\"`, `\"github\"`, `\"facebook\"`, `\"discord\"`, `\"twitter\"`, `\"microsoft\"`).",
+        },
+        clientId: {
+          type: "string",
+          description: "OAuth client ID (used with `\"configure\"`).",
+        },
+        clientSecret: {
+          type: "string",
+          description: "OAuth client secret (used with `\"configure\"`).",
+        },
+        redirectUri: {
+          type: "string",
+          description: "OAuth redirect URI (used with `\"authUrl\"` and `\"exchange\"`).",
+        },
+        code: {
+          type: "string",
+          description: "Authorization code from redirect (used with `\"exchange\"`).",
+        },
+        accessToken: {
+          type: "string",
+          description: "Bearer token (used with `\"userInfo\"`).",
+        },
+        refreshToken: {
+          type: "string",
+          description: "Refresh token (used with `\"refresh\"`).",
+        },
+      },
+    },
+  };
+
   oauth(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.oauth, context, operation => {
       switch (String(operation)) {

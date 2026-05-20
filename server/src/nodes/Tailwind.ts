@@ -3,6 +3,7 @@ import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 import { Node, Context, NodeValue, resolve, resolveAll } from "@jexs/core";
+import type { JexsNodeSchema } from "@jexs/core";
 
 const execAsync = promisify(exec);
 
@@ -50,17 +51,40 @@ const STANDALONE_CLASSES = [
  * { "tailwind": "classes" }
  */
 export class TailwindNode extends Node {
-  /**
-   * Extracts Tailwind class names from JSON templates and compiles CSS.
-   * Operations: `"extract"`, `"add"`, `"compile"`, `"build"`, `"clear"`, `"classes"`.
-   *
-   * @param {"extract"|"add"|"compile"|"build"|"clear"|"classes"} tailwind Operation to perform.
-   * @param {expr} data JSON template to extract Tailwind classes from (used with `"extract"`, `"add"`, `"build"`).
-   * @param {string[]} classes Explicit class names to register (used with `"add"`).
-   * @param {string} content Glob pattern for additional content sources (used with `"build"`).
-   * @example
-   * { "tailwind": "build", "data": { "var": "$template" } }
-   */
+  static schema: JexsNodeSchema = {
+    tailwind: {
+      type: "string",
+      enum: [
+        "extract",
+        "add",
+        "compile",
+        "build",
+        "clear",
+        "classes",
+      ],
+      markdownDescription: "Extracts Tailwind class names from JSON templates and compiles CSS.\nOperations: `\"extract\"`, `\"add\"`, `\"compile\"`, `\"build\"`, `\"clear\"`, `\"classes\"`.",
+      examples: [
+        "{ \"tailwind\": \"build\", \"data\": { \"var\": \"$template\" } }",
+      ],
+      siblings: {
+        data: {
+          description: "JSON template to extract Tailwind classes from (used with `\"extract\"`, `\"add\"`, `\"build\"`).",
+        },
+        classes: {
+          type: "array",
+          items: {
+            type: "string",
+          },
+          description: "Explicit class names to register (used with `\"add\"`).",
+        },
+        content: {
+          type: "string",
+          description: "Glob pattern for additional content sources (used with `\"build\"`).",
+        },
+      },
+    },
+  };
+
   tailwind(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.tailwind, context, operation => {
       switch (String(operation)) {

@@ -2,6 +2,7 @@ import Knex, { Knex as KnexType } from "knex";
 import fs from "node:fs";
 import path from "node:path";
 import { Node, Context, NodeValue, resolve, resolveAll, resolveObj } from "@jexs/core";
+import type { JexsNodeSchema } from "@jexs/core";
 
 // Database configuration interface
 export interface DatabaseConfig {
@@ -43,19 +44,55 @@ let defaultConnectionName: string | null = null;
  * { "database": "dropTable", "table": "users" }
  */
 export class DatabaseNode extends Node {
-  /**
-   * Manages database connections. Supports SQLite (`better-sqlite3`), MySQL (`mysql2`), and PostgreSQL (`pg`) via Knex.
-   *
-   * @param {"connect"|"close"|"raw"|"tableExists"|"dropTable"|"info"} database Operation to perform.
-   * @param {string} name Connection name (used with `"connect"` and `"close"`).
-   * @param {"sqlite"|"mysql"|"pg"} type Database driver (used with `"connect"`).
-   * @param {string} filename SQLite file path (used with `"connect"` + `"sqlite"`).
-   * @param {string} sql Raw SQL string (used with `"raw"`).
-   * @param {expr[]} bindings Positional bindings for the raw SQL query.
-   * @param {string} table Table name (used with `"tableExists"`, `"dropTable"`).
-   * @example
-   * { "database": "connect", "name": "main", "type": "sqlite", "filename": "app/data.db" }
-   */
+  static schema: JexsNodeSchema = {
+    database: {
+      type: "string",
+      enum: [
+        "connect",
+        "close",
+        "raw",
+        "tableExists",
+        "dropTable",
+        "info",
+      ],
+      markdownDescription: "Manages database connections. Supports SQLite (`better-sqlite3`), MySQL (`mysql2`), and PostgreSQL (`pg`) via Knex.",
+      examples: [
+        "{ \"database\": \"connect\", \"name\": \"main\", \"type\": \"sqlite\", \"filename\": \"app/data.db\" }",
+      ],
+      siblings: {
+        name: {
+          type: "string",
+          description: "Connection name (used with `\"connect\"` and `\"close\"`).",
+        },
+        type: {
+          type: "string",
+          enum: [
+            "sqlite",
+            "mysql",
+            "pg",
+          ],
+          description: "Database driver (used with `\"connect\"`).",
+        },
+        filename: {
+          type: "string",
+          description: "SQLite file path (used with `\"connect\"` + `\"sqlite\"`).",
+        },
+        sql: {
+          type: "string",
+          description: "Raw SQL string (used with `\"raw\"`).",
+        },
+        bindings: {
+          type: "array",
+          description: "Positional bindings for the raw SQL query.",
+        },
+        table: {
+          type: "string",
+          description: "Table name (used with `\"tableExists\"`, `\"dropTable\"`).",
+        },
+      },
+    },
+  };
+
   database(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.database, context, operation => {
       switch (String(operation)) {

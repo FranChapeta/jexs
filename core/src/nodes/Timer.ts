@@ -19,6 +19,7 @@
 
 import { Node, Context, NodeValue } from "./Node.js";
 import { resolve, resolveAll, onResolverDestroy, runSteps } from "../Resolver.js";
+import type { JexsNodeSchema } from "../schema.js";
 // ─── Shared state ───────────────────────────────────────────────────────────
 
 interface TimerState {
@@ -45,32 +46,71 @@ onResolverDestroy(() => TimerNode.stopAll());
 // ─── TimerNode ──────────────────────────────────────────────────────────────
 
 export class TimerNode extends Node {
-  /**
-   * Drift-compensating fixed-rate loop. Steps receive `tick.count`, `tick.dt`, `tick.elapsed` in context.
-   *
-   * @param {"start"|"stop"|"pause"|"resume"} tick Operation to perform.
-   * @param {string} id Unique timer identifier.
-   * @param {number} rate Tick rate in Hz (default `60`). Used on `"start"`.
-   * @param {boolean} detach Run `do` steps fire-and-forget each tick without waiting for completion.
-   * @param {steps} do Steps to execute on each tick. Used on `"start"`.
-   * @example
-   * { "tick": "start", "id": "game", "rate": 60, "detach": true, "do": [{ "var": "tick.dt" }] }
-   */
+  static schema: JexsNodeSchema = {
+    tick: {
+      type: "string",
+      enum: [
+        "start",
+        "stop",
+        "pause",
+        "resume",
+      ],
+      markdownDescription: "Drift-compensating fixed-rate loop. Steps receive `tick.count`, `tick.dt`, `tick.elapsed` in context.",
+      examples: [
+        "{ \"tick\": \"start\", \"id\": \"game\", \"rate\": 60, \"detach\": true, \"do\": [{ \"var\": \"tick.dt\" }] }",
+      ],
+      siblings: {
+        id: {
+          type: "string",
+          description: "Unique timer identifier.",
+        },
+        rate: {
+          type: "number",
+          description: "Tick rate in Hz (default `60`). Used on `\"start\"`.",
+        },
+        detach: {
+          type: "boolean",
+          description: "Run `do` steps fire-and-forget each tick without waiting for completion.",
+        },
+        do: {
+          steps: true,
+          description: "Steps to execute on each tick. Used on `\"start\"`.",
+        },
+      },
+    },
+    cron: {
+      type: "string",
+      enum: [
+        "start",
+        "stop",
+        "pause",
+        "resume",
+      ],
+      markdownDescription: "Interval-based scheduled task. Steps receive `cron.runCount`, `cron.lastRun`, `cron.elapsed` in context.\r\nInterval formats: `\"500ms\"`, `\"30s\"`, `\"5m\"`, `\"1h\"`, `\"1d\"`.",
+      examples: [
+        "{ \"cron\": \"start\", \"id\": \"poll\", \"every\": \"30s\", \"do\": [{ \"fetch\": \"/api/status\" }] }",
+      ],
+      siblings: {
+        id: {
+          type: "string",
+          description: "Unique timer identifier.",
+        },
+        every: {
+          type: "string",
+          description: "Interval string (e.g. `\"5m\"`, `\"30s\"`). Used on `\"start\"`.",
+        },
+        do: {
+          steps: true,
+          description: "Steps to execute on each interval. Used on `\"start\"`.",
+        },
+      },
+    },
+  };
+
   tick(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.tick, context, op => dispatch(String(op), def, context, "tick"));
   }
 
-  /**
-   * Interval-based scheduled task. Steps receive `cron.runCount`, `cron.lastRun`, `cron.elapsed` in context.
-   * Interval formats: `"500ms"`, `"30s"`, `"5m"`, `"1h"`, `"1d"`.
-   *
-   * @param {"start"|"stop"|"pause"|"resume"} cron Operation to perform.
-   * @param {string} id Unique timer identifier.
-   * @param {string} every Interval string (e.g. `"5m"`, `"30s"`). Used on `"start"`.
-   * @param {steps} do Steps to execute on each interval. Used on `"start"`.
-   * @example
-   * { "cron": "start", "id": "poll", "every": "30s", "do": [{ "fetch": "/api/status" }] }
-   */
   cron(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.cron, context, op => dispatch(String(op), def, context, "cron"));
   }

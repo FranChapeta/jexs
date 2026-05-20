@@ -1,14 +1,25 @@
 import { Node, Context, NodeValue, resolve } from "@jexs/core";
+import type { JexsNodeSchema } from "@jexs/core";
 
 export class PushNode extends Node {
-  /**
-   * Requests notification permission and subscribes to Web Push using the given VAPID public key.
-   * Returns the `PushSubscription` JSON — send it to your server to enable push delivery.
-   * Requires a registered service worker with `PushManager` support.
-   * @param {string} push-subscribe VAPID public key string.
-   * @example
-   * { "push-subscribe": { "var": "$vapidPublicKey" } }
-   */
+  static schema: JexsNodeSchema = {
+    "push-subscribe": {
+      type: "string",
+      output: "object",
+      markdownDescription: "Requests notification permission and subscribes to Web Push using the given VAPID public key.\nReturns the `PushSubscription` JSON — send it to your server to enable push delivery.\nRequires a registered service worker with `PushManager` support.",
+      examples: [
+        "{ \"push-subscribe\": { \"var\": \"$vapidPublicKey\" } }",
+      ],
+    },
+    "push-unsubscribe": {
+      output: "boolean",
+      markdownDescription: "Unsubscribes from Web Push. Pass the stored `PushSubscription` JSON object to verify the endpoint.\nReturns `true` on success, `false` if no matching subscription was found.",
+      examples: [
+        "{ \"push-unsubscribe\": { \"var\": \"$session.pushSubscription\" } }",
+      ],
+    },
+  };
+
   ["push-subscribe"](def: Record<string, unknown>, context: Context): NodeValue {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) return null;
     return resolve(def["push-subscribe"], context, async vapidKeyRaw => {
@@ -25,13 +36,6 @@ export class PushNode extends Node {
     });
   }
 
-  /**
-   * Unsubscribes from Web Push. Pass the stored `PushSubscription` JSON object to verify the endpoint.
-   * Returns `true` on success, `false` if no matching subscription was found.
-   * @param {expr} push-unsubscribe Stored `PushSubscription` JSON object (from your server/session).
-   * @example
-   * { "push-unsubscribe": { "var": "$session.pushSubscription" } }
-   */
   ["push-unsubscribe"](def: Record<string, unknown>, context: Context): NodeValue {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) return false;
     return resolve(def["push-unsubscribe"], context, async stored => {

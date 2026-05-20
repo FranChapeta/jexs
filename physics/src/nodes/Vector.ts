@@ -1,4 +1,5 @@
 import { Node, Context, NodeValue, resolve } from "@jexs/core";
+import type { JexsNodeSchema } from "@jexs/core";
 
 export type Vec = { x: number; y: number; z?: number };
 /** @deprecated Use Vec with optional z */
@@ -117,12 +118,67 @@ export const dot3 = dot;
  * - { "v-dot": [a, b] }               -> dot product (scalar)
  */
 export class VectorNode extends Node {
-  /**
-   * Returns the Euclidean distance between two vectors. Pass `[a, b]`.
-   * @param {[2]} v-distance Two-element array of vector objects `[a, b]`.
-   * @example
-   * { "v-distance": [{ "var": "$a" }, { "var": "$b" }] }
-   */
+  static schema: JexsNodeSchema = {
+    "v-distance": {
+      tuple: 2,
+      output: "number",
+      markdownDescription: "Returns the Euclidean distance between two vectors. Pass `[a, b]`.",
+      examples: [
+        "{ \"v-distance\": [{ \"var\": \"$a\" }, { \"var\": \"$b\" }] }",
+      ],
+    },
+    "v-lerp": {
+      tuple: 3,
+      output: "object",
+      markdownDescription: "Linearly interpolates between two vectors. Pass `[a, b, t]` where `t` is 0–1.",
+      examples: [
+        "{ \"v-lerp\": [{ \"var\": \"$from\" }, { \"var\": \"$to\" }, 0.1] }",
+      ],
+    },
+    "v-toward": {
+      tuple: 3,
+      output: "object",
+      markdownDescription: "Moves vector `a` toward `b` by at most `maxDist`. Returns `b` if already within range. Pass `[a, b, maxDist]`.",
+      examples: [
+        "{ \"v-toward\": [{ \"var\": \"$pos\" }, { \"var\": \"$target\" }, 5] }",
+      ],
+    },
+    "v-normalize": {
+      output: "object",
+      markdownDescription: "Returns the unit vector (length 1) in the same direction. Works in 2D and 3D.",
+    },
+    "v-scale": {
+      tuple: 2,
+      output: "object",
+      markdownDescription: "Multiplies a vector by a scalar. Pass `[vector, scalar]`. Works in 2D and 3D.",
+    },
+    "v-add": {
+      tuple: 2,
+      output: "object",
+      markdownDescription: "Adds two vectors component-wise. Pass `[a, b]`. Works in 2D and 3D.",
+    },
+    "v-sub": {
+      tuple: 2,
+      output: "object",
+      markdownDescription: "Subtracts vector `b` from `a`. Pass `[a, b]`. Works in 2D and 3D.",
+    },
+    "v-direction": {
+      tuple: 2,
+      output: "object",
+      markdownDescription: "Returns the unit vector from `a` pointing toward `b`. Pass `[from, to]`.",
+    },
+    "v-cross": {
+      tuple: 2,
+      output: "object",
+      markdownDescription: "Returns the cross product of two vectors as a 3D vector. Pass `[a, b]`.",
+    },
+    "v-dot": {
+      tuple: 2,
+      output: "number",
+      markdownDescription: "Returns the scalar dot product of two vectors. Pass `[a, b]`. Works in 2D and 3D.",
+    },
+  };
+
   ["v-distance"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["v-distance"], context, args => {
       const a = this.toArray(args);
@@ -131,12 +187,6 @@ export class VectorNode extends Node {
     });
   }
 
-  /**
-   * Linearly interpolates between two vectors. Pass `[a, b, t]` where `t` is 0–1.
-   * @param {[3]} v-lerp Three-element array: `[a, b, t]`.
-   * @example
-   * { "v-lerp": [{ "var": "$from" }, { "var": "$to" }, 0.1] }
-   */
   ["v-lerp"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["v-lerp"], context, args => {
       const a = this.toArray(args);
@@ -145,12 +195,6 @@ export class VectorNode extends Node {
     });
   }
 
-  /**
-   * Moves vector `a` toward `b` by at most `maxDist`. Returns `b` if already within range. Pass `[a, b, maxDist]`.
-   * @param {[3]} v-toward Three-element array: `[a, b, maxDist]`.
-   * @example
-   * { "v-toward": [{ "var": "$pos" }, { "var": "$target" }, 5] }
-   */
   ["v-toward"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["v-toward"], context, args => {
       const a = this.toArray(args);
@@ -159,16 +203,10 @@ export class VectorNode extends Node {
     });
   }
 
-  /** Returns the unit vector (length 1) in the same direction. Works in 2D and 3D.
-   * @param {expr} v-normalize Vector object `{x, y}` or `{x, y, z}`.
-   */
   ["v-normalize"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["v-normalize"], context, v => normalize(toVec(v)) as unknown as NodeValue);
   }
 
-  /** Multiplies a vector by a scalar. Pass `[vector, scalar]`. Works in 2D and 3D.
-   * @param {[2]} v-scale Two-element array: `[vector, scalar]`.
-   */
   ["v-scale"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["v-scale"], context, args => {
       const a = this.toArray(args);
@@ -180,9 +218,6 @@ export class VectorNode extends Node {
     });
   }
 
-  /** Adds two vectors component-wise. Pass `[a, b]`. Works in 2D and 3D.
-   * @param {[2]} v-add Two-element array: `[a, b]`.
-   */
   ["v-add"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["v-add"], context, args => {
       const a = this.toArray(args);
@@ -194,9 +229,6 @@ export class VectorNode extends Node {
     });
   }
 
-  /** Subtracts vector `b` from `a`. Pass `[a, b]`. Works in 2D and 3D.
-   * @param {[2]} v-sub Two-element array: `[a, b]`.
-   */
   ["v-sub"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["v-sub"], context, args => {
       const a = this.toArray(args);
@@ -208,9 +240,6 @@ export class VectorNode extends Node {
     });
   }
 
-  /** Returns the unit vector from `a` pointing toward `b`. Pass `[from, to]`.
-   * @param {[2]} v-direction Two-element array: `[from, to]`.
-   */
   ["v-direction"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["v-direction"], context, args => {
       const a = this.toArray(args);
@@ -219,9 +248,6 @@ export class VectorNode extends Node {
     });
   }
 
-  /** Returns the cross product of two vectors as a 3D vector. Pass `[a, b]`.
-   * @param {[2]} v-cross Two-element array: `[a, b]`.
-   */
   ["v-cross"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["v-cross"], context, args => {
       const a = this.toArray(args);
@@ -230,9 +256,6 @@ export class VectorNode extends Node {
     });
   }
 
-  /** Returns the scalar dot product of two vectors. Pass `[a, b]`. Works in 2D and 3D.
-   * @param {[2]} v-dot Two-element array: `[a, b]`.
-   */
   ["v-dot"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["v-dot"], context, args => {
       const a = this.toArray(args);

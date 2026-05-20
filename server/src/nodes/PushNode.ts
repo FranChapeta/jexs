@@ -1,26 +1,66 @@
 import { Node, Context, NodeValue, resolveAll } from "@jexs/core";
 import webpush from "web-push";
+import type { JexsNodeSchema } from "@jexs/core";
 
-export class PushNode extends Node {
-  /**
-   * Sends a Web Push notification to a browser subscription using VAPID.
-   * Requires `"subject"` (a `mailto:` URL), `"publicKey"`, `"privateKey"`, `"to"` (PushSubscription object), and `"title"`.
-   * Optional: `"body"`, `"icon"`, `"badge"`, `"data"`, `"ttl"`, `"urgency"`, `"topic"`.
-   *
-   * @param {string} subject VAPID subject as a `mailto:` URL (e.g. `"mailto:admin@app.com"`).
-   * @param {string} publicKey VAPID public key.
-   * @param {string} privateKey VAPID private key.
-   * @param {expr} to PushSubscription object from the browser.
-   * @param {string} title Notification title.
-   * @param {string} body Notification body text.
-   * @param {string} icon Notification icon URL.
-   * @param {number} ttl Time-to-live in seconds.
-   * @param {"very-low"|"low"|"normal"|"high"} urgency Push urgency level.
-   * @param {string} topic Topic tag to replace earlier notifications with the same topic.
-   * @example
-   * { "push": true, "subject": "mailto:admin@app.com", "publicKey": "...", "privateKey": "...", "to": { "var": "$sub" }, "title": "New message" }
-   */
-  push(def: Record<string, unknown>, context: Context): NodeValue {
+export class WebPushNode extends Node {
+  static schema: JexsNodeSchema = {
+    webpush: {
+      output: "object",
+      markdownDescription: "Sends a Web Push notification to a browser subscription using VAPID.\nRequires `\"subject\"` (a `mailto:` URL), `\"publicKey\"`, `\"privateKey\"`, `\"to\"` (PushSubscription object), and `\"title\"`.\nOptional: `\"body\"`, `\"icon\"`, `\"badge\"`, `\"data\"`, `\"ttl\"`, `\"urgency\"`, `\"topic\"`.",
+      examples: [
+        "{ \"webpush\": true, \"subject\": \"mailto:admin@app.com\", \"publicKey\": \"...\", \"privateKey\": \"...\", \"to\": { \"var\": \"$sub\" }, \"title\": \"New message\" }",
+      ],
+      siblings: {
+        subject: {
+          type: "string",
+          description: "VAPID subject as a `mailto:` URL (e.g. `\"mailto:admin@app.com\"`).",
+        },
+        publicKey: {
+          type: "string",
+          description: "VAPID public key.",
+        },
+        privateKey: {
+          type: "string",
+          description: "VAPID private key.",
+        },
+        to: {
+          description: "PushSubscription object from the browser.",
+        },
+        title: {
+          type: "string",
+          description: "Notification title.",
+        },
+        body: {
+          type: "string",
+          description: "Notification body text.",
+        },
+        icon: {
+          type: "string",
+          description: "Notification icon URL.",
+        },
+        ttl: {
+          type: "number",
+          description: "Time-to-live in seconds.",
+        },
+        urgency: {
+          type: "string",
+          enum: [
+            "very-low",
+            "low",
+            "normal",
+            "high",
+          ],
+          description: "Push urgency level.",
+        },
+        topic: {
+          type: "string",
+          description: "Topic tag to replace earlier notifications with the same topic.",
+        },
+      },
+    },
+  };
+
+  webpush(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll(
       [
         def.subject, def.publicKey, def.privateKey,
@@ -35,13 +75,13 @@ export class PushNode extends Node {
         const publicKey = String(publicKeyRaw ?? "");
         const privateKey = String(privateKeyRaw ?? "");
         if (!subject || !publicKey || !privateKey) {
-          return { success: false, error: "push: subject, publicKey, privateKey are required" };
+          return { success: false, error: "webpush: subject, publicKey, privateKey are required" };
         }
         webpush.setVapidDetails(subject, publicKey, privateKey);
 
         const subscription = subscriptionRaw;
         if (!subscription || typeof subscription !== "object") {
-          return { success: false, error: "push: 'to' must be a PushSubscription object" };
+          return { success: false, error: "webpush: 'to' must be a PushSubscription object" };
         }
 
         const title = String(titleRaw ?? "");

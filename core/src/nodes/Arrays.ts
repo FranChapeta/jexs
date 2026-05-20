@@ -1,19 +1,220 @@
 import { Node, Context } from "./Node.js";
 import { resolve } from "../Resolver.js";
 import { getNestedValue } from "../helpers.js";
+import type { JexsNodeSchema } from "../schema.js";
 
 export class ArrayNode extends Node {
-  /** Returns the first element of an array. @example { "first": { "var": "$items" } } */
+  static schema: JexsNodeSchema = {
+    first: {
+      markdownDescription: "Returns the first element of an array.",
+      examples: [
+        "{ \"first\": { \"var\": \"$items\" } }",
+      ],
+    },
+    last: {
+      markdownDescription: "Returns the last element of an array.",
+      examples: [
+        "{ \"last\": { \"var\": \"$items\" } }",
+      ],
+    },
+    count: {
+      output: "number",
+      markdownDescription: "Returns the length of an array, object (key count), or string.",
+      examples: [
+        "{ \"count\": { \"var\": \"$items\" } }",
+      ],
+    },
+    keys: {
+      output: "array",
+      markdownDescription: "Returns the keys of an object, or string indices of an array.",
+      examples: [
+        "{ \"keys\": { \"var\": \"$obj\" } }",
+      ],
+    },
+    values: {
+      output: "array",
+      markdownDescription: "Returns the values of an object as an array.",
+      examples: [
+        "{ \"values\": { \"var\": \"$obj\" } }",
+      ],
+    },
+    reverse: {
+      output: "array",
+      markdownDescription: "Returns a new array with elements in reverse order.",
+      examples: [
+        "{ \"reverse\": { \"var\": \"$items\" } }",
+      ],
+    },
+    unique: {
+      output: "array",
+      markdownDescription: "Removes duplicate values using strict equality.",
+      examples: [
+        "{ \"unique\": [1, 2, 2, 3] }",
+      ],
+    },
+    flatten: {
+      output: "array",
+      markdownDescription: "Recursively flattens a nested array.",
+      examples: [
+        "{ \"flatten\": [[1, [2, [3]]]] }",
+      ],
+    },
+    sort: {
+      output: "array",
+      markdownDescription: "Sorts an array ascending (numbers numerically, strings lexicographically).",
+      examples: [
+        "{ \"sort\": [3, 1, 2] }",
+      ],
+    },
+    sortDesc: {
+      output: "array",
+      markdownDescription: "Sorts an array descending.",
+      examples: [
+        "{ \"sortDesc\": [3, 1, 2] }",
+      ],
+    },
+    sortBy: {
+      type: "array",
+      output: "array",
+      markdownDescription: "Sorts an array of objects by a key. Direction is `\"asc\"` (default) or `\"desc\"`.",
+      examples: [
+        "{ \"sortBy\": [{ \"var\": \"$users\" }, \"name\", \"desc\"] }",
+      ],
+    },
+    pluck: {
+      tuple: 2,
+      output: "array",
+      markdownDescription: "Extracts the value of a key from each object in an array.",
+      examples: [
+        "{ \"pluck\": [{ \"var\": \"$users\" }, \"name\"] }",
+      ],
+    },
+    slice: {
+      tuple: [
+        2,
+        3,
+      ],
+      output: "array",
+      markdownDescription: "Returns a portion of an array.",
+      examples: [
+        "{ \"slice\": [{ \"var\": \"$items\" }, 0, 5] }",
+      ],
+    },
+    push: {
+      tuple: 2,
+      output: "array",
+      markdownDescription: "Returns a new array with an item appended.",
+      examples: [
+        "{ \"push\": [{ \"var\": \"$items\" }, \"new\"] }",
+      ],
+    },
+    unshift: {
+      tuple: 2,
+      output: "array",
+      markdownDescription: "Returns a new array with an item prepended.",
+      examples: [
+        "{ \"unshift\": [{ \"var\": \"$items\" }, \"first\"] }",
+      ],
+    },
+    merge: {
+      type: "array",
+      markdownDescription: "Merges multiple arrays (concatenation) or multiple objects (shallow merge).",
+      examples: [
+        "{ \"merge\": [{ \"a\": 1 }, { \"b\": 2 }] }",
+      ],
+    },
+    filter: {
+      tuple: 2,
+      output: "array",
+      markdownDescription: "Returns items for which the condition expression is truthy.\nEach iteration exposes `item`, `index`, and `loop` in context.",
+      examples: [
+        "{ \"filter\": [{ \"var\": \"$nums\" }, { \"gt\": [{ \"var\": \"item\" }, 2] }] }",
+      ],
+    },
+    find: {
+      tuple: 2,
+      markdownDescription: "Returns the first item for which the condition is truthy.\nEach iteration exposes `item`, `index`, and `loop` in context.",
+      examples: [
+        "{ \"find\": [{ \"var\": \"$users\" }, { \"eq\": [{ \"var\": \"item.role\" }, \"admin\"] }] }",
+      ],
+    },
+    map: {
+      output: "array",
+      markdownDescription: "Transforms each item by resolving a template.\nEach iteration exposes the named variable (default `item`), `index`, and `loop` in context.\nWhen `do` is an array it is resolved as a literal (all elements), not as sequential steps.",
+      examples: [
+        "{ \"map\": { \"var\": \"$nums\" }, \"as\": \"num\", \"do\": { \"multiply\": [{ \"var\": \"$num\" }, 2] } }",
+      ],
+      siblings: {
+        item: {
+          type: "string",
+          description: "Variable name for the current item (default `\"item\"`).",
+        },
+        do: {
+          description: "Template to resolve for each item.",
+        },
+      },
+    },
+    reduce: {
+      tuple: 3,
+      markdownDescription: "Reduces an array to a single value.\nEach iteration exposes `item`, `index`, `accumulator`, and `loop` in context.",
+      examples: [
+        "{ \"reduce\": [{ \"var\": \"$nums\" }, { \"add\": [{ \"var\": \"accumulator\" }, { \"var\": \"item\" }] }, 0] }",
+      ],
+    },
+    groupBy: {
+      tuple: 2,
+      output: "object",
+      markdownDescription: "Groups an array of objects by a key. Returns an object keyed by group values.",
+      examples: [
+        "{ \"groupBy\": [{ \"var\": \"$users\" }, \"role\"] }",
+      ],
+    },
+    includes: {
+      tuple: [
+        2,
+        3,
+      ],
+      output: "boolean",
+      markdownDescription: "Checks if an array contains a value: `[arr, value]`.\nWith three arguments `[arr, key, value]`, checks if any object has that key-value pair.",
+      examples: [
+        "{ \"includes\": [{ \"var\": \"$roles\" }, \"admin\"] }",
+      ],
+    },
+    index: {
+      tuple: 2,
+      markdownDescription: "Returns the element at a given index.",
+      examples: [
+        "{ \"index\": [{ \"var\": \"$items\" }, 2] }",
+      ],
+    },
+    range: {
+      tuple: [
+        2,
+        3,
+      ],
+      output: "array",
+      markdownDescription: "Generates a numeric sequence. Inclusive on both ends.",
+      examples: [
+        "{ \"range\": [1, 5] }",
+      ],
+    },
+    entries: {
+      output: "array",
+      markdownDescription: "Returns `[{ key, value }]` pairs from an object or array.",
+      examples: [
+        "{ \"entries\": { \"var\": \"$obj\" } }",
+      ],
+    },
+  };
+
   first(def: Record<string, unknown>, c: Context) {
     return resolve(def.first, c, v => this.toArray(v)[0]);
   }
 
-  /** Returns the last element of an array. @example { "last": { "var": "$items" } } */
   last(def: Record<string, unknown>, c: Context) {
     return resolve(def.last, c, v => { const a = this.toArray(v); return a[a.length - 1]; });
   }
 
-  /** Returns the length of an array, object (key count), or string. @example { "count": { "var": "$items" } } */
   count(def: Record<string, unknown>, c: Context) {
     return resolve(def.count, c, value => {
       if (Array.isArray(value)) return value.length;
@@ -23,7 +224,6 @@ export class ArrayNode extends Node {
     });
   }
 
-  /** Returns the keys of an object, or string indices of an array. @example { "keys": { "var": "$obj" } } */
   keys(def: Record<string, unknown>, c: Context) {
     return resolve(def.keys, c, value => {
       if (this.isObject(value)) return Object.keys(value);
@@ -32,7 +232,6 @@ export class ArrayNode extends Node {
     });
   }
 
-  /** Returns the values of an object as an array. @example { "values": { "var": "$obj" } } */
   values(def: Record<string, unknown>, c: Context) {
     return resolve(def.values, c, value => {
       if (this.isObject(value)) return Object.values(value);
@@ -41,38 +240,26 @@ export class ArrayNode extends Node {
     });
   }
 
-  /** Returns a new array with elements in reverse order. @example { "reverse": { "var": "$items" } } */
   reverse(def: Record<string, unknown>, c: Context) {
     return resolve(def.reverse, c, v => [...this.toArray(v)].reverse());
   }
 
-  /** Removes duplicate values using strict equality. @example { "unique": [1, 2, 2, 3] } */
   unique(def: Record<string, unknown>, c: Context) {
     return resolve(def.unique, c, v => [...new Set(this.toArray(v))]);
   }
 
-  /** Recursively flattens a nested array. @example { "flatten": [[1, [2, [3]]]] } */
   flatten(def: Record<string, unknown>, c: Context) {
     return resolve(def.flatten, c, v => this.toArray(v).flat(Infinity));
   }
 
-  /** Sorts an array ascending (numbers numerically, strings lexicographically). @example { "sort": [3, 1, 2] } */
   sort(def: Record<string, unknown>, c: Context) {
     return resolve(def.sort, c, v => doSort(v, false));
   }
 
-  /** Sorts an array descending. @example { "sortDesc": [3, 1, 2] } */
   sortDesc(def: Record<string, unknown>, c: Context) {
     return resolve(def.sortDesc, c, v => doSort(v, true));
   }
 
-  /**
-   * Sorts an array of objects by a key. Direction is `"asc"` (default) or `"desc"`.
-   *
-   * @param {expr[]} sortBy `[array, key, direction?]` — the array to sort, the key to sort by, and optional direction.
-   * @example
-   * { "sortBy": [{ "var": "$users" }, "name", "desc"] }
-   */
   sortBy(def: Record<string, unknown>, c: Context) {
     return resolve(def.sortBy, c, args => {
       const a = this.toArray(args);
@@ -88,13 +275,6 @@ export class ArrayNode extends Node {
     });
   }
 
-  /**
-   * Extracts the value of a key from each object in an array.
-   *
-   * @param {[2]} pluck `[array, key]`.
-   * @example
-   * { "pluck": [{ "var": "$users" }, "name"] }
-   */
   pluck(def: Record<string, unknown>, c: Context) {
     return resolve(def.pluck, c, args => {
       const a = this.toArray(args);
@@ -104,13 +284,6 @@ export class ArrayNode extends Node {
     });
   }
 
-  /**
-   * Returns a portion of an array.
-   *
-   * @param {[2,3]} slice `[array, start, end?]`.
-   * @example
-   * { "slice": [{ "var": "$items" }, 0, 5] }
-   */
   slice(def: Record<string, unknown>, c: Context) {
     return resolve(def.slice, c, args => {
       const a = this.toArray(args);
@@ -121,13 +294,6 @@ export class ArrayNode extends Node {
     });
   }
 
-  /**
-   * Returns a new array with an item appended.
-   *
-   * @param {[2]} push `[array, item]`.
-   * @example
-   * { "push": [{ "var": "$items" }, "new"] }
-   */
   push(def: Record<string, unknown>, c: Context) {
     return resolve(def.push, c, args => {
       const a = this.toArray(args);
@@ -135,13 +301,6 @@ export class ArrayNode extends Node {
     });
   }
 
-  /**
-   * Returns a new array with an item prepended.
-   *
-   * @param {[2]} unshift `[array, item]`.
-   * @example
-   * { "unshift": [{ "var": "$items" }, "first"] }
-   */
   unshift(def: Record<string, unknown>, c: Context) {
     return resolve(def.unshift, c, args => {
       const a = this.toArray(args);
@@ -149,13 +308,6 @@ export class ArrayNode extends Node {
     });
   }
 
-  /**
-   * Merges multiple arrays (concatenation) or multiple objects (shallow merge).
-   *
-   * @param {expr[]} merge Arrays or objects to merge.
-   * @example
-   * { "merge": [{ "a": 1 }, { "b": 2 }] }
-   */
   merge(def: Record<string, unknown>, c: Context) {
     return resolve(def.merge, c, args => {
       const resolved = this.toArray(args);
@@ -168,14 +320,6 @@ export class ArrayNode extends Node {
     });
   }
 
-  /**
-   * Returns items for which the condition expression is truthy.
-   * Each iteration exposes `item`, `index`, and `loop` in context.
-   *
-   * @param {[2]} filter `[array, condition]`.
-   * @example
-   * { "filter": [{ "var": "$nums" }, { "gt": [{ "var": "item" }, 2] }] }
-   */
   filter(def: Record<string, unknown>, context: Context) {
     const args = this.toArray(def.filter);
     return resolve(args[0], context, arr => {
@@ -201,14 +345,6 @@ export class ArrayNode extends Node {
     });
   }
 
-  /**
-   * Returns the first item for which the condition is truthy.
-   * Each iteration exposes `item`, `index`, and `loop` in context.
-   *
-   * @param {[2]} find `[array, condition]`.
-   * @example
-   * { "find": [{ "var": "$users" }, { "eq": [{ "var": "item.role" }, "admin"] }] }
-   */
   find(def: Record<string, unknown>, context: Context) {
     const args = this.toArray(def.find);
     return resolve(args[0], context, arr => {
@@ -233,17 +369,6 @@ export class ArrayNode extends Node {
     });
   }
 
-  /**
-   * Transforms each item by resolving a template.
-   * Each iteration exposes the named variable (default `item`), `index`, and `loop` in context.
-   * When `do` is an array it is resolved as a literal (all elements), not as sequential steps.
-   *
-   * @param {expr} map The array or expression to iterate over.
-   * @param {string} item Variable name for the current item (default `"item"`).
-   * @param {expr|expr[]} do Template to resolve for each item.
-   * @example
-   * { "map": { "var": "$nums" }, "as": "num", "do": { "multiply": [{ "var": "$num" }, 2] } }
-   */
   map(def: Record<string, unknown>, context: Context) {
     const itemName = typeof def.item === "string" ? def.item : "item";
     const template = def.do;
@@ -266,14 +391,6 @@ export class ArrayNode extends Node {
     });
   }
 
-  /**
-   * Reduces an array to a single value.
-   * Each iteration exposes `item`, `index`, `accumulator`, and `loop` in context.
-   *
-   * @param {[3]} reduce `[array, reducer, initial]`.
-   * @example
-   * { "reduce": [{ "var": "$nums" }, { "add": [{ "var": "accumulator" }, { "var": "item" }] }, 0] }
-   */
   reduce(def: Record<string, unknown>, context: Context) {
     const args = this.toArray(def.reduce);
     return resolve(args[0], context, arr => {
@@ -297,13 +414,6 @@ export class ArrayNode extends Node {
     });
   }
 
-  /**
-   * Groups an array of objects by a key. Returns an object keyed by group values.
-   *
-   * @param {[2]} groupBy `[array, key]`.
-   * @example
-   * { "groupBy": [{ "var": "$users" }, "role"] }
-   */
   groupBy(def: Record<string, unknown>, c: Context) {
     return resolve(def.groupBy, c, args => {
       const a = this.toArray(args);
@@ -319,14 +429,6 @@ export class ArrayNode extends Node {
     });
   }
 
-  /**
-   * Checks if an array contains a value: `[arr, value]`.
-   * With three arguments `[arr, key, value]`, checks if any object has that key-value pair.
-   *
-   * @param {[2,3]} includes `[array, value]` or `[array, key, value]`.
-   * @example
-   * { "includes": [{ "var": "$roles" }, "admin"] }
-   */
   includes(def: Record<string, unknown>, c: Context) {
     return resolve(def.includes, c, args => {
       const a = this.toArray(args);
@@ -340,13 +442,6 @@ export class ArrayNode extends Node {
     });
   }
 
-  /**
-   * Returns the element at a given index.
-   *
-   * @param {[2]} index `[array, index]`.
-   * @example
-   * { "index": [{ "var": "$items" }, 2] }
-   */
   index(def: Record<string, unknown>, c: Context) {
     return resolve(def.index, c, args => {
       const a = this.toArray(args);
@@ -354,13 +449,6 @@ export class ArrayNode extends Node {
     });
   }
 
-  /**
-   * Generates a numeric sequence. Inclusive on both ends.
-   *
-   * @param {[2,3]} range `[start, end, step?]`.
-   * @example
-   * { "range": [1, 5] }
-   */
   range(def: Record<string, unknown>, c: Context) {
     return resolve(def.range, c, args => {
       const a = this.toArray(args);
@@ -375,7 +463,6 @@ export class ArrayNode extends Node {
     });
   }
 
-  /** Returns `[{ key, value }]` pairs from an object or array. @example { "entries": { "var": "$obj" } } */
   entries(def: Record<string, unknown>, c: Context) {
     return resolve(def.entries, c, value => {
       if (this.isObject(value)) return Object.entries(value).map(([key, val]) => ({ key, value: val }));

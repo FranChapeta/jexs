@@ -1,6 +1,7 @@
 import nodemailer from "nodemailer";
 import type { Transporter } from "nodemailer";
 import { Node, Context, NodeValue, resolveAll } from "@jexs/core";
+import type { JexsNodeSchema } from "@jexs/core";
 
 // Module-level state
 let transporter: Transporter | null = null;
@@ -15,19 +16,35 @@ let ethereal = false;
  * SMTP config from env: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
  */
 export class EmailNode extends Node {
-  /**
-   * Sends an email via SMTP. Requires `"subject"`. Use `"body"` for plain text or `"html"` for HTML body.
-   * SMTP config from env: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`.
-   * Falls back to Ethereal (fake SMTP with preview URL) in development when `SMTP_HOST` is not set.
-   *
-   * @param {string} email Recipient email address.
-   * @param {string} subject Email subject line.
-   * @param {string} body Plain text body.
-   * @param {string} html HTML body (used instead of `body` when provided).
-   * @param {string} from Sender address (overrides `SMTP_FROM`).
-   * @example
-   * { "email": { "var": "$user.email" }, "subject": "Welcome!", "html": "<p>Hi there</p>" }
-   */
+  static schema: JexsNodeSchema = {
+    email: {
+      type: "string",
+      output: "object",
+      markdownDescription: "Sends an email via SMTP. Requires `\"subject\"`. Use `\"body\"` for plain text or `\"html\"` for HTML body.\nSMTP config from env: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`.\nFalls back to Ethereal (fake SMTP with preview URL) in development when `SMTP_HOST` is not set.",
+      examples: [
+        "{ \"email\": { \"var\": \"$user.email\" }, \"subject\": \"Welcome!\", \"html\": \"<p>Hi there</p>\" }",
+      ],
+      siblings: {
+        subject: {
+          type: "string",
+          description: "Email subject line.",
+        },
+        body: {
+          type: "string",
+          description: "Plain text body.",
+        },
+        html: {
+          type: "string",
+          description: "HTML body (used instead of `body` when provided).",
+        },
+        from: {
+          type: "string",
+          description: "Sender address (overrides `SMTP_FROM`).",
+        },
+      },
+    },
+  };
+
   email(def: Record<string, unknown>, context: Context): NodeValue {
     if (!("subject" in def)) return undefined;
 

@@ -1,5 +1,6 @@
 import { Node, Context, NodeValue } from "@jexs/core";
 import { resolve, resolveAll } from "@jexs/core";
+import type { JexsNodeSchema } from "@jexs/core";
 
 // ─── Audio state per instance ────────────────────────────────────────────────
 
@@ -30,14 +31,72 @@ function getInst(context: Context): AudioInstance | null {
 // ─── AudioNode ───────────────────────────────────────────────────────────────
 
 export class AudioNode extends Node {
+  static schema: JexsNodeSchema = {
+    "audio-load": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Fetches and decodes an audio file, storing it under `name` for later playback with `audio-play`.",
+      examples: [
+        "{ \"audio-load\": \"shoot\", \"url\": \"/audio/shoot.wav\" }",
+      ],
+      siblings: {
+        url: {
+          type: "string",
+          description: "URL of the audio file to load.",
+        },
+      },
+    },
+    "audio-play": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Plays a previously loaded audio buffer. Set `volume` (0–1) and `loop: true` for looping.\nStops any currently playing instance of the same name before starting.",
+      examples: [
+        "{ \"audio-play\": \"shoot\", \"volume\": 0.5, \"loop\": false }",
+      ],
+      siblings: {
+        volume: {
+          type: "number",
+          description: "Playback volume 0–1 (default `1`).",
+        },
+        loop: {
+          type: "boolean",
+          description: "Whether to loop the audio (default `false`).",
+        },
+      },
+    },
+    "audio-stop": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Stops a playing audio buffer by name.",
+      examples: [
+        "{ \"audio-stop\": \"shoot\" }",
+      ],
+    },
+    "audio-volume": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Adjusts the volume of a currently playing audio source without restarting it.",
+      examples: [
+        "{ \"audio-volume\": \"shoot\", \"volume\": 0.3 }",
+      ],
+      siblings: {
+        volume: {
+          type: "number",
+          description: "New gain value 0–1.",
+        },
+      },
+    },
+    "audio-master": {
+      type: "number",
+      output: "null",
+      markdownDescription: "Sets the master gain for all audio output in this context (0–1).",
+      examples: [
+        "{ \"audio-master\": 0.5 }",
+      ],
+    },
+  };
 
-  /**
-   * Fetches and decodes an audio file, storing it under `name` for later playback with `audio-play`.
-   * @param {string} audio-load Name to register the audio buffer under.
-   * @param {string} url URL of the audio file to load.
-   * @example
-   * { "audio-load": "shoot", "url": "/audio/shoot.wav" }
-   */
+
   ["audio-load"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = getInst(context);
     if (!inst) return null;
@@ -56,15 +115,6 @@ export class AudioNode extends Node {
     });
   }
 
-  /**
-   * Plays a previously loaded audio buffer. Set `volume` (0–1) and `loop: true` for looping.
-   * Stops any currently playing instance of the same name before starting.
-   * @param {string} audio-play Name of the buffer to play (must be loaded via `audio-load`).
-   * @param {number} volume Playback volume 0–1 (default `1`).
-   * @param {boolean} loop Whether to loop the audio (default `false`).
-   * @example
-   * { "audio-play": "shoot", "volume": 0.5, "loop": false }
-   */
   ["audio-play"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = getInst(context);
     if (!inst) return null;
@@ -106,12 +156,6 @@ export class AudioNode extends Node {
     );
   }
 
-  /**
-   * Stops a playing audio buffer by name.
-   * @param {string} audio-stop Name of the buffer to stop.
-   * @example
-   * { "audio-stop": "shoot" }
-   */
   ["audio-stop"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = getInst(context);
     if (!inst) return null;
@@ -125,13 +169,6 @@ export class AudioNode extends Node {
     });
   }
 
-  /**
-   * Adjusts the volume of a currently playing audio source without restarting it.
-   * @param {string} audio-volume Name of the buffer to adjust.
-   * @param {number} volume New gain value 0–1.
-   * @example
-   * { "audio-volume": "shoot", "volume": 0.3 }
-   */
   ["audio-volume"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = getInst(context);
     if (!inst) return null;
@@ -142,12 +179,6 @@ export class AudioNode extends Node {
     });
   }
 
-  /**
-   * Sets the master gain for all audio output in this context (0–1).
-   * @param {number} audio-master Master gain value 0–1.
-   * @example
-   * { "audio-master": 0.5 }
-   */
   ["audio-master"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = getInst(context);
     if (!inst) return null;

@@ -1,5 +1,6 @@
 import { Node, Context, NodeValue, resolve, resolveAll, resolveObj } from "@jexs/core";
 import { Cache, CacheConfig } from "../cache/Cache.js";
+import type { JexsNodeSchema } from "@jexs/core";
 
 /**
  * CacheNode - Handles cache connections and operations in JSON.
@@ -20,17 +21,48 @@ import { Cache, CacheConfig } from "../cache/Cache.js";
  * { "cache": "close" }
  */
 export class CacheNode extends Node {
-  /**
-   * Connects to or operates on a cache store.
-   *
-   * @param {"connect"|"get"|"set"|"delete"|"has"|"clear"|"close"|"stats"} cache Operation to perform.
-   * @param {"redis"|"memory"|"memcached"} type Cache driver (used with `"connect"`).
-   * @param {string} key Cache key (used with `"get"`, `"set"`, `"delete"`, `"has"`).
-   * @param {expr} value Value to store (used with `"set"`).
-   * @param {number} ttl Time-to-live in seconds (used with `"set"`).
-   * @example
-   * { "cache": "set", "key": "user:42", "value": { "var": "$user" }, "ttl": 3600 }
-   */
+  static schema: JexsNodeSchema = {
+    cache: {
+      type: "string",
+      enum: [
+        "connect",
+        "get",
+        "set",
+        "delete",
+        "has",
+        "clear",
+        "close",
+        "stats",
+      ],
+      markdownDescription: "Connects to or operates on a cache store.",
+      examples: [
+        "{ \"cache\": \"set\", \"key\": \"user:42\", \"value\": { \"var\": \"$user\" }, \"ttl\": 3600 }",
+      ],
+      siblings: {
+        type: {
+          type: "string",
+          enum: [
+            "redis",
+            "memory",
+            "memcached",
+          ],
+          description: "Cache driver (used with `\"connect\"`).",
+        },
+        key: {
+          type: "string",
+          description: "Cache key (used with `\"get\"`, `\"set\"`, `\"delete\"`, `\"has\"`).",
+        },
+        value: {
+          description: "Value to store (used with `\"set\"`).",
+        },
+        ttl: {
+          type: "number",
+          description: "Time-to-live in seconds (used with `\"set\"`).",
+        },
+      },
+    },
+  };
+
   cache(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.cache, context, operation => {
       switch (String(operation)) {

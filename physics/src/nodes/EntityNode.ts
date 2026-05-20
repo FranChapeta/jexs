@@ -32,6 +32,7 @@ import {
   FLAG_VISIBLE, FLAG_PHYSICS, FLAG_FIXED, FLAG_POOLED, FLAG_TRIGGER, FLAG_CCD,
   DIRTY_TRANSFORM, DIRTY_VISUAL, DIRTY_TEXT, DIRTY_Z,
 } from "../EntityStore.js";
+import type { JexsNodeSchema } from "@jexs/core";
 
 const KNOWN_KEYS = new Set([
   "entity-add", "entity-update", "gl-update", "as", "type",
@@ -112,18 +113,189 @@ function entityToObject(store: EntityStore, slot: number): Record<string, unknow
 }
 
 export class EntityNode extends Node {
+  static schema: JexsNodeSchema = {
+    "entity-init": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Creates a new entity store and sets it as the active context store.\r\nPass `width` and `height` to define the world bounds.",
+      examples: [
+        "{ \"entity-init\": \"world\", \"width\": 800, \"height\": 600 }",
+      ],
+      siblings: {
+        width: {
+          type: "number",
+          description: "World width in pixels (default `800`).",
+        },
+        height: {
+          type: "number",
+          description: "World height in pixels (default `600`).",
+        },
+      },
+    },
+    "entity-add": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Adds an entity to the active store. Pass `id`, `type` (`\"quad\"`, `\"circle\"`, `\"line\"`, `\"polygon\"`, etc.),\r\n`x`, `y`, `w`, `h`, `color`, `group`, and physics properties (`mass`, `restitution`, `friction`, `damping`).\r\nSet `physics: true` to enable simulation and `fixed: true` for immovable bodies.\r\nPass `pooled: true` to reuse a pooled slot for better performance.",
+      examples: [
+        "{ \"entity-add\": \"player\", \"type\": \"quad\", \"x\": 100, \"y\": 100, \"w\": 32, \"h\": 32, \"color\": [1,0,0,1] }",
+      ],
+      siblings: {
+        type: {
+          type: "string",
+          enum: [
+            "quad",
+            "circle",
+            "triangle",
+            "line",
+            "line-strip",
+            "points",
+            "sphere",
+            "cylinder",
+            "cone",
+            "ramp",
+            "light",
+            "pivot",
+          ],
+          description: "Entity type (default `\"quad\"`).",
+        },
+        color: {
+          type: "array",
+          items: {
+            type: "number",
+          },
+          description: "RGBA color array with values from 0 to 1 (default `[1,1,1,1]`).",
+        },
+        group: {
+          type: "string",
+          description: "Collision group name (default `\"default\"`).",
+        },
+        scale: {
+          type: "array",
+          items: {
+            type: "number",
+          },
+          description: "Scale array [sx, sy, sz] (default `[1,1,1]`).",
+        },
+        translation: {
+          type: "array",
+          items: {
+            type: "number",
+          },
+          description: "Translation array [x, y, z] (default `[0,0,0]`).",
+        },
+        rotation: {
+          type: "array",
+          items: {
+            type: "number",
+          },
+          description: "Rotation array [qx, qy, qz, qw] (default `[0,0,0,1]`).",
+        },
+        physics: {
+          type: "boolean",
+          description: "Enable physics simulation.",
+        },
+        fixed: {
+          type: "boolean",
+          description: "Immovable body (kinematic).",
+        },
+        pooled: {
+          type: "boolean",
+          description: "Reuse a pooled slot for this entity.",
+        },
+      },
+    },
+    "entity-remove": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Removes an entity from the store by id. Pass `pooled: true` to release back to the pool instead.",
+      examples: [
+        "{ \"entity-remove\": \"bullet-1\" }",
+      ],
+      siblings: {
+        pooled: {
+          type: "boolean",
+          description: "Release to pool instead of removing (default `false`).",
+        },
+      },
+    },
+    "entity-move": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Updates `x`, `y`, and/or `angle` on an entity. Cheaper than `entity-update` for transform-only changes.",
+      examples: [
+        "{ \"entity-move\": \"player\", \"x\": { \"var\": \"$x\" }, \"y\": { \"var\": \"$y\" } }",
+      ],
+      siblings: {
+        x: {
+          type: "number",
+          description: "New X position.",
+        },
+        y: {
+          type: "number",
+          description: "New Y position.",
+        },
+        angle: {
+          type: "number",
+          description: "New rotation angle in radians.",
+        },
+      },
+    },
+    "entity-update": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Updates any writable fields on an entity by id. Supports all fields from `entity-add`\r\nplus `text` (object with `content`, `font`, `fill`), `vertices`, `shader`, `blend`, etc.",
+      examples: [
+        "{ \"entity-update\": \"player\", \"x\": { \"var\": \"$x\" }, \"color\": [1, 0, 0, 1] }",
+      ],
+    },
+    "entity-clear": {
+      output: "null",
+      markdownDescription: "Removes all entities from the active store and triggers a re-render.",
+    },
+    "entity-list": {
+      type: "string",
+      output: "array",
+      markdownDescription: "Returns all entities in the active store as an array of plain objects.\r\nPass a group name to filter, or `true` to return all groups.",
+      examples: [
+        "{ \"entity-list\": \"enemies\" }",
+      ],
+    },
+    "entity-nearest": {
+      type: "string",
+      output: "object",
+      markdownDescription: "Returns the entity in `group` closest to the given `x`, `y` point, with an added `distance` field.",
+      examples: [
+        "{ \"entity-nearest\": \"enemies\", \"x\": { \"var\": \"$player.x\" }, \"y\": { \"var\": \"$player.y\" } }",
+      ],
+      siblings: {
+        x: {
+          type: "number",
+          description: "Reference X coordinate.",
+        },
+        y: {
+          type: "number",
+          description: "Reference Y coordinate.",
+        },
+      },
+    },
+    "entity-get": {
+      type: "string",
+      markdownDescription: "Gets a single property or the full object for an entity. Pass `id` as the value and `prop` for a single field.\r\nOmit `prop` to get the full entity object. Supports all data fields plus `worldX`, `worldY`, `worldZ`.",
+      examples: [
+        "{ \"entity-get\": \"player\", \"prop\": \"x\" }",
+      ],
+      siblings: {
+        prop: {
+          type: "string",
+          description: "Property name to get (omit to return the full entity object).",
+        },
+      },
+    },
+  };
+
 
   // ── entity-init ──────────────────────────────────────────────────────
 
-  /**
-   * Creates a new entity store and sets it as the active context store.
-   * Pass `width` and `height` to define the world bounds.
-   * @param {string} entity-init Store ID string.
-   * @param {number} width World width in pixels (default `800`).
-   * @param {number} height World height in pixels (default `600`).
-   * @example
-   * { "entity-init": "world", "width": 800, "height": 600 }
-   */
   ["entity-init"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveObj(def, context, r => {
       const id = String(r["entity-init"]);
@@ -141,24 +313,6 @@ export class EntityNode extends Node {
 
   // ── entity-add ───────────────────────────────────────────────────────
 
-  /**
-   * Adds an entity to the active store. Pass `id`, `type` (`"quad"`, `"circle"`, `"line"`, `"polygon"`, etc.),
-   * `x`, `y`, `w`, `h`, `color`, `group`, and physics properties (`mass`, `restitution`, `friction`, `damping`).
-   * Set `physics: true` to enable simulation and `fixed: true` for immovable bodies.
-   * Pass `pooled: true` to reuse a pooled slot for better performance.
-   * @param {string} entity-add Entity ID.
-   * @param {"quad"|"circle"|"triangle"|"line"|"line-strip"|"points"|"sphere"|"cylinder"|"cone"|"ramp"|"light"|"pivot"} type Entity type (default `"quad"`).
-   * @param {number[]} color RGBA color array with values from 0 to 1 (default `[1,1,1,1]`).
-   * @param {string} group Collision group name (default `"default"`).
-   * @param {number[]} scale Scale array [sx, sy, sz] (default `[1,1,1]`).
-   * @param {number[]} translation Translation array [x, y, z] (default `[0,0,0]`).
-   * @param {number[]} rotation Rotation array [qx, qy, qz, qw] (default `[0,0,0,1]`).
-   * @param {boolean} physics Enable physics simulation.
-   * @param {boolean} fixed Immovable body (kinematic).
-   * @param {boolean} pooled Reuse a pooled slot for this entity.
-   * @example
-   * { "entity-add": "player", "type": "quad", "x": 100, "y": 100, "w": 32, "h": 32, "color": [1,0,0,1] }
-   */
   ["entity-add"](def: Record<string, unknown>, context: Context): NodeValue {
     const store = getStore(context);
     if (!store) return null;
@@ -308,13 +462,6 @@ export class EntityNode extends Node {
 
   // ── entity-remove ────────────────────────────────────────────────────
 
-  /**
-   * Removes an entity from the store by id. Pass `pooled: true` to release back to the pool instead.
-   * @param {string} entity-remove Entity ID to remove.
-   * @param {boolean} pooled Release to pool instead of removing (default `false`).
-   * @example
-   * { "entity-remove": "bullet-1" }
-   */
   ["entity-remove"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveObj(def, context, r => {
       const store = getStore(context);
@@ -330,15 +477,6 @@ export class EntityNode extends Node {
 
   // ── entity-move ──────────────────────────────────────────────────────
 
-  /**
-   * Updates `x`, `y`, and/or `angle` on an entity. Cheaper than `entity-update` for transform-only changes.
-   * @param {string} entity-move Entity ID.
-   * @param {number} x New X position.
-   * @param {number} y New Y position.
-   * @param {number} angle New rotation angle in radians.
-   * @example
-   * { "entity-move": "player", "x": { "var": "$x" }, "y": { "var": "$y" } }
-   */
   ["entity-move"](def: Record<string, unknown>, context: Context): NodeValue {
     const store = getStore(context);
     if (!store) return null;
@@ -369,13 +507,6 @@ export class EntityNode extends Node {
 
   // ── entity-update ────────────────────────────────────────────────────
 
-  /**
-   * Updates any writable fields on an entity by id. Supports all fields from `entity-add`
-   * plus `text` (object with `content`, `font`, `fill`), `vertices`, `shader`, `blend`, etc.
-   * @param {string} entity-update Entity ID.
-   * @example
-   * { "entity-update": "player", "x": { "var": "$x" }, "color": [1, 0, 0, 1] }
-   */
   ["entity-update"](def: Record<string, unknown>, context: Context): NodeValue {
     const store = getStore(context);
     if (!store) return null;
@@ -528,7 +659,6 @@ export class EntityNode extends Node {
 
   // ── entity-clear ─────────────────────────────────────────────────────
 
-  /** Removes all entities from the active store and triggers a re-render. */
   ["entity-clear"](_def: Record<string, unknown>, context: Context): NodeValue {
     const store = getStore(context);
     if (!store) return null;
@@ -539,13 +669,6 @@ export class EntityNode extends Node {
 
   // ── entity-list ──────────────────────────────────────────────────────
 
-  /**
-   * Returns all entities in the active store as an array of plain objects.
-   * Pass a group name to filter, or `true` to return all groups.
-   * @param {string} entity-list Group name to filter by, or `true` for all.
-   * @example
-   * { "entity-list": "enemies" }
-   */
   ["entity-list"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["entity-list"], context, val => {
       const store = getStore(context);
@@ -566,14 +689,6 @@ export class EntityNode extends Node {
 
   // ── entity-nearest ───────────────────────────────────────────────────
 
-  /**
-   * Returns the entity in `group` closest to the given `x`, `y` point, with an added `distance` field.
-   * @param {string} entity-nearest Group name to search within.
-   * @param {number} x Reference X coordinate.
-   * @param {number} y Reference Y coordinate.
-   * @example
-   * { "entity-nearest": "enemies", "x": { "var": "$player.x" }, "y": { "var": "$player.y" } }
-   */
   ["entity-nearest"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveObj(def, context, r => {
       const store = getStore(context);
@@ -602,14 +717,6 @@ export class EntityNode extends Node {
 
   // ── entity-get ───────────────────────────────────────────────────────
 
-  /**
-   * Gets a single property or the full object for an entity. Pass `id` as the value and `prop` for a single field.
-   * Omit `prop` to get the full entity object. Supports all data fields plus `worldX`, `worldY`, `worldZ`.
-   * @param {string} entity-get Entity ID.
-   * @param {string} prop Property name to get (omit to return the full entity object).
-   * @example
-   * { "entity-get": "player", "prop": "x" }
-   */
   ["entity-get"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["entity-get"], context, opId => {
       const store = getStore(context);

@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { Node, Context, NodeValue, resolveAll } from "@jexs/core";
 import { Server } from "../Server.js";
 import { defaultSwConfig } from "../sw.js";
+import type { JexsNodeSchema } from "@jexs/core";
 
 /**
  * ListenNode - Starts the HTTP server from JSON.
@@ -17,19 +18,35 @@ import { defaultSwConfig } from "../sw.js";
  * and ElementNode auto-injects the script tag into <head> elements.
  */
 export class ListenNode extends Node {
-  /**
-   * Starts the HTTP server on the given port. Pass per-request steps in `"do"`.
-   * Set `"client": true` (or a path string) to auto-serve the `@jexs/client` browser bundle
-   * and inject the script tag into rendered `<head>` elements.
-   * Set `"sw"` to an object to enable service worker registration.
-   * @param {number} listen Port number to listen on (default `3000`).
-   * @param {steps} do Per-request steps run for each incoming HTTP request.
-   * @param {boolean} client Pass `true` to serve the browser bundle at `/jexs`, or a string path to use a custom route.
-   * @param {number} maxBodySize Maximum request body size in bytes.
-   * @param {object} sw Service worker config object. Pass `{}` to use the default config.
-   * @example
-   * { "listen": 3000, "client": true, "do": [{ "session": "load" }, { "routes": { "var": "$routes" } }] }
-   */
+  static schema: JexsNodeSchema = {
+    listen: {
+      type: "number",
+      output: "null",
+      markdownDescription: "Starts the HTTP server on the given port. Pass per-request steps in `\"do\"`.\nSet `\"client\": true` (or a path string) to auto-serve the `@jexs/client` browser bundle\nand inject the script tag into rendered `<head>` elements.\nSet `\"sw\"` to an object to enable service worker registration.",
+      examples: [
+        "{ \"listen\": 3000, \"client\": true, \"do\": [{ \"session\": \"load\" }, { \"routes\": { \"var\": \"$routes\" } }] }",
+      ],
+      siblings: {
+        do: {
+          steps: true,
+          description: "Per-request steps run for each incoming HTTP request.",
+        },
+        client: {
+          type: "boolean",
+          description: "Pass `true` to serve the browser bundle at `/jexs`, or a string path to use a custom route.",
+        },
+        maxBodySize: {
+          type: "number",
+          description: "Maximum request body size in bytes.",
+        },
+        sw: {
+          type: "object",
+          description: "Service worker config object. Pass `{}` to use the default config.",
+        },
+      },
+    },
+  };
+
   listen(def: Record<string, unknown>, context: Context): NodeValue {
     const steps = def.do;
     if (!Array.isArray(steps)) {

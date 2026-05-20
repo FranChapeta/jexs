@@ -1,4 +1,5 @@
 import { Node, Context, NodeValue, resolve } from "@jexs/core";
+import type { JexsNodeSchema } from "@jexs/core";
 
 let deferIdCounter = 0;
 
@@ -13,17 +14,25 @@ let deferIdCounter = 0;
  *   { "defer": { "file": "table.json", "params": { ... } }, "loader": "Loading..." }
  */
 export class DeferNode extends Node {
-  /**
-   * Renders a placeholder immediately, then streams the resolved content to replace it via a `<script>` tag.
-   * Use `"loader"` for the placeholder expression shown while the content resolves.
-   * Pass `"delay"` (ms) to add an artificial delay before resolving.
-   *
-   * @param {expr} defer Expression to resolve in the background.
-   * @param {expr} loader Placeholder expression shown while the deferred content loads.
-   * @param {number} delay Milliseconds to wait before resolving (for staggered loading effects).
-   * @example
-   * { "defer": { "file": "components/chart.json" }, "loader": { "tag": "div", "class": "skeleton" } }
-   */
+  static schema: JexsNodeSchema = {
+    defer: {
+      output: "string",
+      markdownDescription: "Renders a placeholder immediately, then streams the resolved content to replace it via a `<script>` tag.\nUse `\"loader\"` for the placeholder expression shown while the content resolves.\nPass `\"delay\"` (ms) to add an artificial delay before resolving.",
+      examples: [
+        "{ \"defer\": { \"file\": \"components/chart.json\" }, \"loader\": { \"tag\": \"div\", \"class\": \"skeleton\" } }",
+      ],
+      siblings: {
+        loader: {
+          description: "Placeholder expression shown while the deferred content loads.",
+        },
+        delay: {
+          type: "number",
+          description: "Milliseconds to wait before resolving (for staggered loading effects).",
+        },
+      },
+    },
+  };
+
   defer(def: Record<string, unknown>, context: Context): NodeValue {
     const id = `__jexs_defer_${++deferIdCounter}`;
     const loaderExpr = def.loader !== undefined ? def.loader : null;

@@ -2,6 +2,7 @@ import { Node, Context, NodeValue } from "./Node.js";
 import { resolve, resolveAll, translate } from "../Resolver.js";
 import { hasVariables, interpolate } from "./Variables.js";
 import { escapeHtml, isObject } from "../helpers.js";
+import type { JexsNodeSchema } from "../schema.js";
 
 const RESERVED_KEYS = new Set(["tag", "content", "if", "events"]);
 const SELF_CLOSING = new Set([
@@ -29,17 +30,26 @@ export function resetElementIdCounter(): void {
  * The "if" key conditionally renders the element.
  */
 export class ElementNode extends Node {
-  /**
-   * Renders an HTML element. Attributes are flat keys on the object; `content` holds children.
-   * `class` accepts a string, array, or `{ className: bool }` map. `style` accepts a camelCase object.
-   * Add an `"if"` key to conditionally render. Wire DOM events via an `"events"` object.
-   *
-   * @param {string} tag The HTML tag name (e.g. `"div"`, `"button"`, `"input"`).
-   * @param {string|(string|expr)[]} content Children of the element — a string or mixed array of strings and expressions.
-   * @param {map} events DOM event handlers: `{ "click": { "do": [...] } }`.
-   * @example
-   * { "tag": "button", "class": "btn", "events": { "click": { "do": [...] } }, "content": ["Submit"] }
-   */
+  static schema: JexsNodeSchema = {
+    tag: {
+      type: "string",
+      output: "string",
+      markdownDescription: "Renders an HTML element. Attributes are flat keys on the object; `content` holds children.\r\n`class` accepts a string, array, or `{ className: bool }` map. `style` accepts a camelCase object.\r\nAdd an `\"if\"` key to conditionally render. Wire DOM events via an `\"events\"` object.",
+      examples: [
+        "{ \"tag\": \"button\", \"class\": \"btn\", \"events\": { \"click\": { \"do\": [...] } }, \"content\": [\"Submit\"] }",
+      ],
+      siblings: {
+        content: {
+          description: "Children of the element — a string or mixed array of strings and expressions.",
+        },
+        events: {
+          map: true,
+          description: "DOM event handlers: `{ \"click\": { \"do\": [...] } }`.",
+        },
+      },
+    },
+  };
+
   tag(def: Record<string, unknown>, context: Context): NodeValue {
     if ("if" in def) {
       return resolve(def.if, context, condition => {

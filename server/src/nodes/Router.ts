@@ -1,4 +1,5 @@
 import { Node, Context, NodeValue, resolve, runSteps, createHttpError } from "@jexs/core";
+import type { JexsNodeSchema } from "@jexs/core";
 
 /**
  * Route handler structure
@@ -59,15 +60,16 @@ function getCachedRegex(pattern: string): RegExp {
  * then executes the handler's run steps.
  */
 export class RouterNode extends Node {
-  /**
-   * Matches the incoming request path and method against a route tree, then executes the handler.
-   * Supports exact segments, `*` (single param with optional `paramName`/`paramRegex`),
-   * `**` (catch-all), conditional `"if"` guards per node, param/body validation, and WebSocket upgrade.
-   *
-   * @param {object} routes Route tree object with optional `"children"` map, `"methods"` map, `"if"`, `"paramName"`, `"paramRegex"`.
-   * @example
-   * { "routes": { "children": { "users": { "methods": { "GET": { "file": "pages/users.json" } } } } } }
-   */
+  static schema: JexsNodeSchema = {
+    routes: {
+      type: "object",
+      markdownDescription: "Matches the incoming request path and method against a route tree, then executes the handler.\nSupports exact segments, `*` (single param with optional `paramName`/`paramRegex`),\n`**` (catch-all), conditional `\"if\"` guards per node, param/body validation, and WebSocket upgrade.",
+      examples: [
+        "{ \"routes\": { \"children\": { \"users\": { \"methods\": { \"GET\": { \"file\": \"pages/users.json\" } } } } } }",
+      ],
+    },
+  };
+
   routes(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.routes, context, async rootNode => {
       if (!isObject(rootNode)) {

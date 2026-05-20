@@ -1,17 +1,180 @@
 import { Node, Context, NodeValue } from "./Node.js";
 import { resolve, resolveAll } from "../Resolver.js";
 import { runSteps, resolveSteps } from "../Resolver.js";
+import type { JexsNodeSchema } from "../schema.js";
 
 export class LogicNode extends Node {
-  /**
-   * Resolves `then` when the condition is truthy, otherwise `else`. Both branches are optional.
-   *
-   * @param {expr} if The condition expression to evaluate.
-   * @param {stepsOrExpr} then Value to resolve when condition is truthy.
-   * @param {stepsOrExpr} else Value to resolve when condition is falsy.
-   * @example
-   * { "if": { "var": "$active" }, "then": "yes", "else": "no" }
-   */
+  static schema: JexsNodeSchema = {
+    if: {
+      markdownDescription: "Resolves `then` when the condition is truthy, otherwise `else`. Both branches are optional.",
+      examples: [
+        "{ \"if\": { \"var\": \"$active\" }, \"then\": \"yes\", \"else\": \"no\" }",
+      ],
+      siblings: {
+        then: {
+          description: "Value to resolve when condition is truthy.",
+        },
+        else: {
+          description: "Value to resolve when condition is falsy.",
+        },
+      },
+    },
+    switch: {
+      markdownDescription: "Resolves the value of `switch`, matches it against string keys in `cases`, falls back to `default`.",
+      examples: [
+        "{ \"switch\": { \"var\": \"$role\" }, \"cases\": { \"admin\": \"full\", \"user\": \"limited\" }, \"default\": \"none\" }",
+      ],
+      siblings: {
+        cases: {
+          map: true,
+          description: "Object mapping string keys to result expressions.",
+        },
+        default: {
+          description: "Value to resolve when no case matches.",
+        },
+      },
+    },
+    foreach: {
+      output: "array",
+      markdownDescription: "Iterates over an array, resolving `do` for each item. Use `item` to name the item variable (default `\"item\"`), `key` for the index variable, and `parallel: true` to resolve all iterations concurrently.\nEach iteration receives a `loop` context with `item`, `index`, `first`, `last`, and `length`.",
+      examples: [
+        "{ \"foreach\": { \"var\": \"$users\" }, \"item\": \"user\", \"do\": { \"var\": \"user.name\" } }",
+      ],
+      siblings: {
+        do: {
+          description: "Steps or expression to resolve for each item.",
+        },
+        item: {
+          type: "string",
+          description: "Variable name to expose the current item (default `\"item\"`).",
+        },
+        key: {
+          type: "string",
+          description: "Variable name to expose the current index (default `\"index\"`).",
+        },
+        parallel: {
+          type: "boolean",
+          description: "Resolve all iterations concurrently instead of sequentially.",
+        },
+      },
+    },
+    and: {
+      type: "array",
+      output: "boolean",
+      markdownDescription: "Short-circuit AND — returns `true` only if all conditions are truthy, stops at first falsy value.",
+      examples: [
+        "{ \"and\": [{ \"var\": \"$loggedIn\" }, { \"var\": \"$verified\" }] }",
+      ],
+    },
+    or: {
+      type: "array",
+      output: "boolean",
+      markdownDescription: "Short-circuit OR — returns `true` at the first truthy condition, `false` if all are falsy.",
+      examples: [
+        "{ \"or\": [{ \"var\": \"$isAdmin\" }, { \"var\": \"$isModerator\" }] }",
+      ],
+    },
+    not: {
+      output: "boolean",
+      markdownDescription: "Boolean negation — resolves the value and returns its logical inverse.",
+      examples: [
+        "{ \"not\": { \"var\": \"$active\" } }",
+      ],
+    },
+    eq: {
+      tuple: 2,
+      output: "boolean",
+      markdownDescription: "Strict equality check between two resolved values.",
+      examples: [
+        "{ \"eq\": [{ \"var\": \"$status\" }, \"active\"] }",
+      ],
+    },
+    neq: {
+      tuple: 2,
+      output: "boolean",
+      markdownDescription: "Strict inequality check between two resolved values.",
+      examples: [
+        "{ \"neq\": [{ \"var\": \"$status\" }, \"banned\"] }",
+      ],
+    },
+    gt: {
+      tuple: 2,
+      output: "boolean",
+      markdownDescription: "Greater-than comparison: `a > b`.",
+      examples: [
+        "{ \"gt\": [{ \"var\": \"$age\" }, 18] }",
+      ],
+    },
+    gte: {
+      tuple: 2,
+      output: "boolean",
+      markdownDescription: "Greater-than-or-equal comparison: `a >= b`.",
+      examples: [
+        "{ \"gte\": [{ \"var\": \"$score\" }, 100] }",
+      ],
+    },
+    lt: {
+      tuple: 2,
+      output: "boolean",
+      markdownDescription: "Less-than comparison: `a < b`.",
+      examples: [
+        "{ \"lt\": [{ \"var\": \"$remaining\" }, 10] }",
+      ],
+    },
+    lte: {
+      tuple: 2,
+      output: "boolean",
+      markdownDescription: "Less-than-or-equal comparison: `a <= b`.",
+      examples: [
+        "{ \"lte\": [{ \"var\": \"$quantity\" }, 100] }",
+      ],
+    },
+    in: {
+      tuple: 2,
+      output: "boolean",
+      markdownDescription: "Tests membership: `needle in haystack`. Works with arrays, strings (substring), and object keys.",
+      examples: [
+        "{ \"in\": [\"admin\", { \"var\": \"$roles\" }] }",
+      ],
+    },
+    between: {
+      tuple: 3,
+      output: "boolean",
+      markdownDescription: "Inclusive range check: `min <= value <= max`.",
+      examples: [
+        "{ \"between\": [{ \"var\": \"$age\" }, 18, 65] }",
+      ],
+    },
+    empty: {
+      output: "boolean",
+      markdownDescription: "Returns `true` if the value is `null`, `undefined`, `\"\"`, `[]`, or `{}`.",
+      examples: [
+        "{ \"empty\": { \"var\": \"$items\" } }",
+      ],
+    },
+    notEmpty: {
+      output: "boolean",
+      markdownDescription: "Returns `true` if the value is non-null and non-empty. Inverse of `empty`.",
+      examples: [
+        "{ \"notEmpty\": { \"var\": \"$items\" } }",
+      ],
+    },
+    sleep: {
+      type: "number",
+      output: "null",
+      markdownDescription: "Pauses execution for the given number of milliseconds, then resolves to `null`.",
+      examples: [
+        "{ \"sleep\": 500 }",
+      ],
+    },
+    exec: {
+      markdownDescription: "Resolves its value, then executes the result as a step sequence. Useful for running dynamically resolved step arrays.",
+      examples: [
+        "{ \"exec\": { \"var\": \"$steps\" } }",
+      ],
+    },
+  };
+
   if(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.if, context, condition =>
       this.toBoolean(condition)
@@ -20,15 +183,6 @@ export class LogicNode extends Node {
     );
   }
 
-  /**
-   * Resolves the value of `switch`, matches it against string keys in `cases`, falls back to `default`.
-   *
-   * @param {expr} switch The value to match against case keys.
-   * @param {map} cases Object mapping string keys to result expressions.
-   * @param {stepsOrExpr} default Value to resolve when no case matches.
-   * @example
-   * { "switch": { "var": "$role" }, "cases": { "admin": "full", "user": "limited" }, "default": "none" }
-   */
   switch(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.switch, context, value => {
       const cases = def.cases;
@@ -41,23 +195,11 @@ export class LogicNode extends Node {
     });
   }
 
-  /**
-   * Iterates over an array, resolving `do` for each item. Use `as` to name the item variable (default `"item"`),
-   * `key` for the index variable, and `parallel: true` to resolve all iterations concurrently.
-   * Each iteration receives a `loop` context with `item`, `index`, `first`, `last`, and `length`.
-   *
-   * @param {expr} foreach The array or expression to iterate over.
-   * @param {stepsOrExpr} do Steps or expression to resolve for each item.
-   * @param {string} key Variable name to expose the current index (default `"index"`).
-   * @param {boolean} parallel Resolve all iterations concurrently instead of sequentially.
-   * @example
-   * { "foreach": { "var": "$users" }, "as": "user", "do": { "var": "user.name" } }
-   */
   foreach(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def.foreach, def.parallel], context, ([items, parallel]) => {
+    return resolveAll([def.foreach, def.parallel, def.item, def.key], context, ([items, parallel, itemRaw, keyRaw]) => {
       const arr = this.toArray(items);
-      const itemName = typeof def.item === "string" ? def.item : "item";
-      const keyName = typeof def.key === "string" ? def.key : null;
+      const itemName = typeof itemRaw === "string" ? itemRaw : "item";
+      const keyName = typeof keyRaw === "string" ? keyRaw : null;
       const template = def.do;
 
       if (template === undefined) return [];
@@ -94,13 +236,6 @@ export class LogicNode extends Node {
     });
   }
 
-  /**
-   * Short-circuit AND — returns `true` only if all conditions are truthy, stops at first falsy value.
-   *
-   * @param {expr[]} and Array of conditions to evaluate.
-   * @example
-   * { "and": [{ "var": "$loggedIn" }, { "var": "$verified" }] }
-   */
   and(def: Record<string, unknown>, context: Context): NodeValue {
     const conditions = this.toArray(def.and);
     let i = 0;
@@ -116,13 +251,6 @@ export class LogicNode extends Node {
     return next();
   }
 
-  /**
-   * Short-circuit OR — returns `true` at the first truthy condition, `false` if all are falsy.
-   *
-   * @param {expr[]} or Array of conditions to evaluate.
-   * @example
-   * { "or": [{ "var": "$isAdmin" }, { "var": "$isModerator" }] }
-   */
   or(def: Record<string, unknown>, context: Context): NodeValue {
     const conditions = this.toArray(def.or);
     let i = 0;
@@ -138,24 +266,10 @@ export class LogicNode extends Node {
     return next();
   }
 
-  /**
-   * Boolean negation — resolves the value and returns its logical inverse.
-   *
-   * @param {expr} not The expression to negate.
-   * @example
-   * { "not": { "var": "$active" } }
-   */
   not(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.not, context, v => !this.toBoolean(v));
   }
 
-  /**
-   * Strict equality check between two resolved values.
-   *
-   * @param {[2]} eq Two values to compare: `[a, b]`.
-   * @example
-   * { "eq": [{ "var": "$status" }, "active"] }
-   */
   eq(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.eq, context, ops => {
       const [a, b] = this.toArray(ops);
@@ -163,13 +277,6 @@ export class LogicNode extends Node {
     });
   }
 
-  /**
-   * Strict inequality check between two resolved values.
-   *
-   * @param {[2]} neq Two values to compare: `[a, b]`.
-   * @example
-   * { "neq": [{ "var": "$status" }, "banned"] }
-   */
   neq(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.neq, context, ops => {
       const [a, b] = this.toArray(ops);
@@ -177,13 +284,6 @@ export class LogicNode extends Node {
     });
   }
 
-  /**
-   * Greater-than comparison: `a > b`.
-   *
-   * @param {[2]} gt Two values: `[a, b]`.
-   * @example
-   * { "gt": [{ "var": "$age" }, 18] }
-   */
   gt(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.gt, context, ops => {
       const [a, b] = this.toArray(ops);
@@ -191,13 +291,6 @@ export class LogicNode extends Node {
     });
   }
 
-  /**
-   * Greater-than-or-equal comparison: `a >= b`.
-   *
-   * @param {[2]} gte Two values: `[a, b]`.
-   * @example
-   * { "gte": [{ "var": "$score" }, 100] }
-   */
   gte(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.gte, context, ops => {
       const [a, b] = this.toArray(ops);
@@ -205,13 +298,6 @@ export class LogicNode extends Node {
     });
   }
 
-  /**
-   * Less-than comparison: `a < b`.
-   *
-   * @param {[2]} lt Two values: `[a, b]`.
-   * @example
-   * { "lt": [{ "var": "$remaining" }, 10] }
-   */
   lt(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.lt, context, ops => {
       const [a, b] = this.toArray(ops);
@@ -219,13 +305,6 @@ export class LogicNode extends Node {
     });
   }
 
-  /**
-   * Less-than-or-equal comparison: `a <= b`.
-   *
-   * @param {[2]} lte Two values: `[a, b]`.
-   * @example
-   * { "lte": [{ "var": "$quantity" }, 100] }
-   */
   lte(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.lte, context, ops => {
       const [a, b] = this.toArray(ops);
@@ -233,13 +312,6 @@ export class LogicNode extends Node {
     });
   }
 
-  /**
-   * Tests membership: `needle in haystack`. Works with arrays, strings (substring), and object keys.
-   *
-   * @param {[2]} in Two values: `[needle, haystack]`.
-   * @example
-   * { "in": ["admin", { "var": "$roles" }] }
-   */
   in(def: Record<string, unknown>, context: Context): NodeValue {
     const arr = this.toArray(def.in);
     if (arr.length < 2) return false;
@@ -251,13 +323,6 @@ export class LogicNode extends Node {
     });
   }
 
-  /**
-   * Inclusive range check: `min <= value <= max`.
-   *
-   * @param {[3]} between Three values: `[value, min, max]`.
-   * @example
-   * { "between": [{ "var": "$age" }, 18, 65] }
-   */
   between(def: Record<string, unknown>, context: Context): NodeValue {
     const arr = this.toArray(def.between);
     if (arr.length < 3) return false;
@@ -266,13 +331,6 @@ export class LogicNode extends Node {
     );
   }
 
-  /**
-   * Returns `true` if the value is `null`, `undefined`, `""`, `[]`, or `{}`.
-   *
-   * @param {expr} empty The value to check.
-   * @example
-   * { "empty": { "var": "$items" } }
-   */
   empty(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.empty, context, value => {
       if (value === null || value === undefined) return true;
@@ -283,13 +341,6 @@ export class LogicNode extends Node {
     });
   }
 
-  /**
-   * Returns `true` if the value is non-null and non-empty. Inverse of `empty`.
-   *
-   * @param {expr} notEmpty The value to check.
-   * @example
-   * { "notEmpty": { "var": "$items" } }
-   */
   notEmpty(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.notEmpty, context, value => {
       if (value === null || value === undefined) return false;
@@ -300,13 +351,6 @@ export class LogicNode extends Node {
     });
   }
 
-  /**
-   * Pauses execution for the given number of milliseconds, then resolves to `null`.
-   *
-   * @param {number} sleep Duration in milliseconds.
-   * @example
-   * { "sleep": 500 }
-   */
   sleep(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.sleep, context, ms => {
       const delay = this.toNumber(ms);
@@ -315,13 +359,6 @@ export class LogicNode extends Node {
     });
   }
 
-  /**
-   * Resolves its value, then executes the result as a step sequence. Useful for running dynamically resolved step arrays.
-   *
-   * @param {expr} exec The expression or step array to execute.
-   * @example
-   * { "exec": { "var": "$steps" } }
-   */
   exec(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.exec, context, value => resolveSteps(value, context));
   }

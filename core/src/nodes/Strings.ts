@@ -1,31 +1,209 @@
 import { Node, Context } from "./Node.js";
 import { resolve } from "../Resolver.js";
+import type { JexsNodeSchema } from "../schema.js";
 
 export class StringNode extends Node {
-  /**
-   * Joins an array of values into a single string.
-   *
-   * @param {(string|expr)[]} concat Values to concatenate.
-   * @example
-   * { "concat": ["Hello, ", { "var": "$name" }, "!"] }
-   */
+  static schema: JexsNodeSchema = {
+    concat: {
+      type: "array",
+      items: {
+        type: "string",
+      },
+      output: "string",
+      markdownDescription: "Joins an array of values into a single string.",
+      examples: [
+        "{ \"concat\": [\"Hello, \", { \"var\": \"$name\" }, \"!\"] }",
+      ],
+    },
+    upper: {
+      output: "string",
+      markdownDescription: "Converts a string to uppercase.",
+      examples: [
+        "{ \"upper\": { \"var\": \"$name\" } }",
+      ],
+    },
+    lower: {
+      output: "string",
+      markdownDescription: "Converts a string to lowercase.",
+      examples: [
+        "{ \"lower\": { \"var\": \"$name\" } }",
+      ],
+    },
+    capitalize: {
+      output: "string",
+      markdownDescription: "Uppercases the first character, lowercases the rest.",
+      examples: [
+        "{ \"capitalize\": \"hELLO\" }",
+      ],
+    },
+    trim: {
+      output: "string",
+      markdownDescription: "Removes leading and trailing whitespace.",
+      examples: [
+        "{ \"trim\": \"  hello  \" }",
+      ],
+    },
+    trimStart: {
+      output: "string",
+      markdownDescription: "Removes leading whitespace.",
+      examples: [
+        "{ \"trimStart\": \"  hello\" }",
+      ],
+    },
+    trimEnd: {
+      output: "string",
+      markdownDescription: "Removes trailing whitespace.",
+      examples: [
+        "{ \"trimEnd\": \"hello  \" }",
+      ],
+    },
+    length: {
+      output: "number",
+      markdownDescription: "Returns the character count of a string.",
+      examples: [
+        "{ \"length\": { \"var\": \"$name\" } }",
+      ],
+    },
+    slug: {
+      output: "string",
+      markdownDescription: "Converts a string to a URL-safe lowercase slug, stripping accents and special characters.",
+      examples: [
+        "{ \"slug\": \"Hello World!\" }",
+      ],
+    },
+    parseJSON: {
+      markdownDescription: "Parses a JSON string; returns `null` on invalid input.",
+      examples: [
+        "{ \"parseJSON\": { \"var\": \"$raw\" } }",
+      ],
+    },
+    stringify: {
+      tuple: [
+        1,
+        2,
+      ],
+      output: "string",
+      markdownDescription: "Serializes a value to a JSON string. Pass `[value, indent]` to pretty-print.",
+      examples: [
+        "{ \"stringify\": [{ \"var\": \"$obj\" }, 2] }",
+      ],
+    },
+    substring: {
+      tuple: [
+        2,
+        3,
+      ],
+      output: "string",
+      markdownDescription: "Extracts a substring.",
+      examples: [
+        "{ \"substring\": [\"hello world\", 6] }",
+      ],
+    },
+    replace: {
+      tuple: 3,
+      output: "string",
+      markdownDescription: "Replaces all occurrences of a substring.",
+      examples: [
+        "{ \"replace\": [\"foo foo\", \"foo\", \"bar\"] }",
+      ],
+    },
+    replaceFirst: {
+      tuple: 3,
+      output: "string",
+      markdownDescription: "Replaces only the first occurrence of a substring.",
+      examples: [
+        "{ \"replaceFirst\": [\"foo foo\", \"foo\", \"bar\"] }",
+      ],
+    },
+    split: {
+      tuple: 2,
+      output: "array",
+      markdownDescription: "Splits a string into an array.",
+      examples: [
+        "{ \"split\": [\"a,b,c\", \",\"] }",
+      ],
+    },
+    join: {
+      tuple: [
+        1,
+        2,
+      ],
+      output: "string",
+      markdownDescription: "Joins an array into a string with a separator (default `\",\"`).",
+      examples: [
+        "{ \"join\": [[\"a\", \"b\", \"c\"], \" - \"] }",
+      ],
+    },
+    padStart: {
+      tuple: [
+        2,
+        3,
+      ],
+      output: "string",
+      markdownDescription: "Pads the start of a string to a target length.",
+      examples: [
+        "{ \"padStart\": [\"5\", 3, \"0\"] }",
+      ],
+    },
+    padEnd: {
+      tuple: [
+        2,
+        3,
+      ],
+      output: "string",
+      markdownDescription: "Pads the end of a string to a target length.",
+      examples: [
+        "{ \"padEnd\": [\"hi\", 5, \".\"] }",
+      ],
+    },
+    repeat: {
+      tuple: 2,
+      output: "string",
+      markdownDescription: "Repeats a string N times.",
+      examples: [
+        "{ \"repeat\": [\"ab\", 3] }",
+      ],
+    },
+    startsWith: {
+      tuple: 2,
+      output: "boolean",
+      markdownDescription: "Returns `true` if a string starts with the given prefix.",
+      examples: [
+        "{ \"startsWith\": [\"hello world\", \"hello\"] }",
+      ],
+    },
+    endsWith: {
+      tuple: 2,
+      output: "boolean",
+      markdownDescription: "Returns `true` if a string ends with the given suffix.",
+      examples: [
+        "{ \"endsWith\": [\"hello world\", \"world\"] }",
+      ],
+    },
+    contains: {
+      tuple: 2,
+      output: "boolean",
+      markdownDescription: "Returns `true` if a string contains the given substring.",
+      examples: [
+        "{ \"contains\": [\"hello world\", \"world\"] }",
+      ],
+    },
+  };
+
   concat(def: Record<string, unknown>, c: Context) {
     return resolve(def.concat, c, parts =>
       this.toArray(parts).map(p => this.toString(p)).join("")
     );
   }
 
-  /** Converts a string to uppercase. @example { "upper": { "var": "$name" } } */
   upper(d: Record<string, unknown>, c: Context) {
     return resolve(d.upper, c, v => this.toString(v).toUpperCase());
   }
 
-  /** Converts a string to lowercase. @example { "lower": { "var": "$name" } } */
   lower(d: Record<string, unknown>, c: Context) {
     return resolve(d.lower, c, v => this.toString(v).toLowerCase());
   }
 
-  /** Uppercases the first character, lowercases the rest. @example { "capitalize": "hELLO" } */
   capitalize(def: Record<string, unknown>, c: Context) {
     return resolve(def.capitalize, c, v => {
       const s = this.toString(v);
@@ -33,39 +211,22 @@ export class StringNode extends Node {
     });
   }
 
-  /** Capitalizes the first letter of each word. @example { "title": "hello world" } */
-  title(def: Record<string, unknown>, c: Context) {
-    return resolve(def.title, c, v =>
-      this.toString(v).replace(/\w\S*/g, txt => txt.charAt(0).toUpperCase() + txt.slice(1).toLowerCase())
-    );
-  }
-
-  /** Removes leading and trailing whitespace. @example { "trim": "  hello  " } */
   trim(d: Record<string, unknown>, c: Context) {
     return resolve(d.trim, c, v => this.toString(v).trim());
   }
 
-  /** Removes leading whitespace. @example { "trimStart": "  hello" } */
   trimStart(d: Record<string, unknown>, c: Context) {
     return resolve(d.trimStart, c, v => this.toString(v).trimStart());
   }
 
-  /** Removes trailing whitespace. @example { "trimEnd": "hello  " } */
   trimEnd(d: Record<string, unknown>, c: Context) {
     return resolve(d.trimEnd, c, v => this.toString(v).trimEnd());
   }
 
-  /** Returns the character count of a string. @example { "length": { "var": "$name" } } */
   length(d: Record<string, unknown>, c: Context) {
     return resolve(d.length, c, v => this.toString(v).length);
   }
 
-  /**
-   * Converts a string to a URL-safe lowercase slug, stripping accents and special characters.
-   *
-   * @example
-   * { "slug": "Hello World!" }
-   */
   slug(def: Record<string, unknown>, c: Context) {
     return resolve(def.slug, c, v =>
       this.toString(v)
@@ -79,20 +240,12 @@ export class StringNode extends Node {
     );
   }
 
-  /** Parses a JSON string; returns `null` on invalid input. @example { "parseJSON": { "var": "$raw" } } */
   parseJSON(d: Record<string, unknown>, c: Context) {
     return resolve(d.parseJSON, c, v => {
       try { return JSON.parse(this.toString(v)); } catch { return null; }
     });
   }
 
-  /**
-   * Serializes a value to a JSON string. Pass `[value, indent]` to pretty-print.
-   *
-   * @param {[1,2]} stringify `[value, indent?]` — value to serialize and optional indent spaces.
-   * @example
-   * { "stringify": [{ "var": "$obj" }, 2] }
-   */
   stringify(def: Record<string, unknown>, c: Context) {
     return resolve(def.stringify, c, args => {
       if (Array.isArray(args)) {
@@ -104,13 +257,6 @@ export class StringNode extends Node {
     });
   }
 
-  /**
-   * Extracts a substring.
-   *
-   * @param {[2,3]} substring `[string, start, end?]`.
-   * @example
-   * { "substring": ["hello world", 6] }
-   */
   substring(def: Record<string, unknown>, c: Context) {
     return resolve(def.substring, c, args => {
       const a = this.toArray(args);
@@ -121,35 +267,14 @@ export class StringNode extends Node {
     });
   }
 
-  /**
-   * Replaces all occurrences of a substring.
-   *
-   * @param {[3]} replace `[string, search, replacement]`.
-   * @example
-   * { "replace": ["foo foo", "foo", "bar"] }
-   */
   replace(def: Record<string, unknown>, c: Context) {
     return resolve(def.replace, c, args => doReplace(args, true));
   }
 
-  /**
-   * Replaces only the first occurrence of a substring.
-   *
-   * @param {[3]} replaceFirst `[string, search, replacement]`.
-   * @example
-   * { "replaceFirst": ["foo foo", "foo", "bar"] }
-   */
   replaceFirst(def: Record<string, unknown>, c: Context) {
     return resolve(def.replaceFirst, c, args => doReplace(args, false));
   }
 
-  /**
-   * Splits a string into an array.
-   *
-   * @param {[2]} split `[string, separator]`.
-   * @example
-   * { "split": ["a,b,c", ","] }
-   */
   split(def: Record<string, unknown>, c: Context) {
     return resolve(def.split, c, args => {
       const a = this.toArray(args);
@@ -157,13 +282,6 @@ export class StringNode extends Node {
     });
   }
 
-  /**
-   * Joins an array into a string with a separator (default `","`).
-   *
-   * @param {[1,2]} join `[array, separator?]`.
-   * @example
-   * { "join": [["a", "b", "c"], " - "] }
-   */
   join(def: Record<string, unknown>, c: Context) {
     return resolve(def.join, c, args => {
       const a = this.toArray(args);
@@ -171,35 +289,14 @@ export class StringNode extends Node {
     });
   }
 
-  /**
-   * Pads the start of a string to a target length.
-   *
-   * @param {[2,3]} padStart `[string, length, padChar?]`.
-   * @example
-   * { "padStart": ["5", 3, "0"] }
-   */
   padStart(def: Record<string, unknown>, c: Context) {
     return resolve(def.padStart, c, args => doPad(args, "start"));
   }
 
-  /**
-   * Pads the end of a string to a target length.
-   *
-   * @param {[2,3]} padEnd `[string, length, padChar?]`.
-   * @example
-   * { "padEnd": ["hi", 5, "."] }
-   */
   padEnd(def: Record<string, unknown>, c: Context) {
     return resolve(def.padEnd, c, args => doPad(args, "end"));
   }
 
-  /**
-   * Repeats a string N times.
-   *
-   * @param {[2]} repeat `[string, count]`.
-   * @example
-   * { "repeat": ["ab", 3] }
-   */
   repeat(def: Record<string, unknown>, c: Context) {
     return resolve(def.repeat, c, args => {
       const a = this.toArray(args);
@@ -207,13 +304,6 @@ export class StringNode extends Node {
     });
   }
 
-  /**
-   * Returns `true` if a string starts with the given prefix.
-   *
-   * @param {[2]} startsWith `[string, prefix]`.
-   * @example
-   * { "startsWith": ["hello world", "hello"] }
-   */
   startsWith(def: Record<string, unknown>, c: Context) {
     return resolve(def.startsWith, c, args => {
       const a = this.toArray(args);
@@ -221,13 +311,6 @@ export class StringNode extends Node {
     });
   }
 
-  /**
-   * Returns `true` if a string ends with the given suffix.
-   *
-   * @param {[2]} endsWith `[string, suffix]`.
-   * @example
-   * { "endsWith": ["hello world", "world"] }
-   */
   endsWith(def: Record<string, unknown>, c: Context) {
     return resolve(def.endsWith, c, args => {
       const a = this.toArray(args);
@@ -235,13 +318,6 @@ export class StringNode extends Node {
     });
   }
 
-  /**
-   * Returns `true` if a string contains the given substring.
-   *
-   * @param {[2]} contains `[string, substring]`.
-   * @example
-   * { "contains": ["hello world", "world"] }
-   */
   contains(def: Record<string, unknown>, c: Context) {
     return resolve(def.contains, c, args => {
       const a = this.toArray(args);

@@ -21,6 +21,7 @@ import { computeBounds } from "../Bvh.js";
 import type {
   MeshData, MeshEntry, MeshMaterial, NodeData, Scene, Bounds,
 } from "../Mesh.js";
+import type { JexsNodeSchema } from "@jexs/core";
 
 // ─── glTF accessor constants ─────────────────────────────────────────────────
 
@@ -547,15 +548,64 @@ function randomName(): string {
 }
 
 export class MeshNode extends Node {
-  /**
-   * Parses a binary GLB buffer. Returns a `Scene` descriptor with deduped meshes
-   * and a flat node list. Pass `name` for stable, human-readable mesh ids.
-   *
-   * @param {expr} parseGLB ArrayBuffer / Uint8Array / Buffer holding the GLB bytes.
-   * @param {string} name Optional id prefix (default random).
-   * @example
-   * { "parseGLB": { "var": "buf" }, "name": "duck", "as": "scene" }
-   */
+  static schema: JexsNodeSchema = {
+    parseGLB: {
+      output: "object",
+      markdownDescription: "Parses a binary GLB buffer. Returns a `Scene` descriptor with deduped meshes\r\nand a flat node list. Pass `name` for stable, human-readable mesh ids.",
+      examples: [
+        "{ \"parseGLB\": { \"var\": \"buf\" }, \"name\": \"duck\", \"as\": \"scene\" }",
+      ],
+      siblings: {
+        name: {
+          type: "string",
+          description: "Optional id prefix (default random).",
+        },
+      },
+    },
+    parseGLTF: {
+      type: "object",
+      output: "object",
+      markdownDescription: "Parses pre-loaded glTF JSON + sibling buffers. Pass `buffers` as an array\r\n(matching `gltf.buffers[i]` order) or an object keyed by URI.",
+      examples: [
+        "{ \"parseGLTF\": { \"json\": { \"var\": \"json\" }, \"buffers\": [{ \"var\": \"bin\" }] }, \"name\": \"duck\", \"as\": \"scene\" }",
+      ],
+      siblings: {
+        name: {
+          type: "string",
+          description: "Optional id prefix (default random).",
+        },
+      },
+    },
+      "register-mesh": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Registers a parsed mesh in the active EntityStore's `meshes` map. Idempotent —\nre-registering the same id is a no-op. GL extends this via `gl-register-mesh`,\nwhich additionally uploads the geometry to the GPU.",
+      examples: [
+        "{ \"foreach\": { \"var\": \"scene.meshes\" }, \"item\": \"m\", \"do\": {\n    \"register-mesh\": { \"var\": \"m.id\" },\n    \"bounds\":    { \"var\": \"m.bounds\" },\n    \"positions\": { \"var\": \"m.positions\" },\n    \"normals\":   { \"var\": \"m.normals\" },\n    \"uvs\":       { \"var\": \"m.uvs\" },\n    \"indices\":   { \"var\": \"m.indices\" },\n    \"material\":  { \"var\": \"m.material\" }\n} }",
+      ],
+      siblings: {
+        bounds: {
+          description: "AABB bounds object { min, max }.",
+        },
+        positions: {
+          description: "Float32Array of XYZ vertex positions.",
+        },
+        normals: {
+          description: "Float32Array of per-vertex normals (optional).",
+        },
+        uvs: {
+          description: "Float32Array of per-vertex UVs (optional).",
+        },
+        indices: {
+          description: "Uint16Array / Uint32Array of triangle indices (optional).",
+        },
+        material: {
+          description: "Material URI map (optional).",
+        },
+      },
+    },
+  };
+
   parseGLB(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll([def.parseGLB, def.name], context, ([bufRaw, nameRaw]) => {
       const bytes = toUint8(bufRaw);
@@ -565,15 +615,6 @@ export class MeshNode extends Node {
     });
   }
 
-  /**
-   * Parses pre-loaded glTF JSON + sibling buffers. Pass `buffers` as an array
-   * (matching `gltf.buffers[i]` order) or an object keyed by URI.
-   *
-   * @param {object} parseGLTF { json, buffers }
-   * @param {string} name Optional id prefix (default random).
-   * @example
-   * { "parseGLTF": { "json": { "var": "json" }, "buffers": [{ "var": "bin" }] }, "name": "duck", "as": "scene" }
-   */
   parseGLTF(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveObj(def, context, r => {
       const arg = r["parseGLTF"] as Record<string, unknown> | undefined;
@@ -587,29 +628,6 @@ export class MeshNode extends Node {
     });
   }
 
-  /**
-   * Registers a parsed mesh in the active EntityStore's `meshes` map. Idempotent —
-   * re-registering the same id is a no-op. GL extends this via `gl-register-mesh`,
-   * which additionally uploads the geometry to the GPU.
-   *
-   * @param {string} register-mesh Mesh id.
-   * @param {expr} bounds AABB bounds object { min, max }.
-   * @param {expr} positions Float32Array of XYZ vertex positions.
-   * @param {expr} normals Float32Array of per-vertex normals (optional).
-   * @param {expr} uvs Float32Array of per-vertex UVs (optional).
-   * @param {expr} indices Uint16Array / Uint32Array of triangle indices (optional).
-   * @param {expr} material Material URI map (optional).
-   * @example
-   * { "foreach": { "var": "scene.meshes" }, "item": "m", "do": {
-   *     "register-mesh": { "var": "m.id" },
-   *     "bounds":    { "var": "m.bounds" },
-   *     "positions": { "var": "m.positions" },
-   *     "normals":   { "var": "m.normals" },
-   *     "uvs":       { "var": "m.uvs" },
-   *     "indices":   { "var": "m.indices" },
-   *     "material":  { "var": "m.material" }
-   * } }
-   */
   ["register-mesh"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveObj(def, context, r => {
       const store = getStore(context);

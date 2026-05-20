@@ -2,6 +2,7 @@ import { Knex as KnexType } from "knex";
 import { Node, Context, NodeValue, resolve, resolveAll, runSteps } from "@jexs/core";
 import { DatabaseNode } from "./Database.js";
 import { SchemaNode } from "./Schema.js";
+import type { JexsNodeSchema } from "@jexs/core";
 
 const VALID_QUERY_TYPES = new Set(["select","insert","upsert","update","delete","count","create","drop","alter"]);
 const WHERE_OPS = new Set(["eq","neq","ne","!=","gt",">","gte",">=","lt","<","lte","<=","like","notLike","in","notIn","between","notBetween","null"]);
@@ -204,17 +205,41 @@ function isObject(value: unknown): value is Record<string, unknown> {
  * { "query": { "type": "drop", "table": "users" } }
  */
 export class QueryNode extends Node {
-  /**
-   * Executes a SQL query. The operation type is the primary key value; all other query fields are siblings.
-   * Column names in `where`/`data` are protected from resolver key collisions.
-   *
-   * @param {"select"|"insert"|"upsert"|"update"|"delete"|"count"|"create"|"drop"|"alter"} query Operation type.
-   * @param {string} table Table name.
-   * @param {boolean} first Return a single row instead of an array.
-   * @param {string} connection Named database connection to use (default connection if omitted).
-   * @example
-   * { "query": "select", "table": "users", "where": { "id": { "var": "$id" } }, "first": true }
-   */
+  static schema: JexsNodeSchema = {
+    query: {
+      type: "string",
+      enum: [
+        "select",
+        "insert",
+        "upsert",
+        "update",
+        "delete",
+        "count",
+        "create",
+        "drop",
+        "alter",
+      ],
+      markdownDescription: "Executes a SQL query. The operation type is the primary key value; all other query fields are siblings.\nColumn names in `where`/`data` are protected from resolver key collisions.",
+      examples: [
+        "{ \"query\": \"select\", \"table\": \"users\", \"where\": { \"id\": { \"var\": \"$id\" } }, \"first\": true }",
+      ],
+      siblings: {
+        table: {
+          type: "string",
+          description: "Table name.",
+        },
+        first: {
+          type: "boolean",
+          description: "Return a single row instead of an array.",
+        },
+        connection: {
+          type: "string",
+          description: "Named database connection to use (default connection if omitted).",
+        },
+      },
+    },
+  };
+
   async query(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
     const connRaw = await resolve(def.connection ?? null, context);
     const connectionName = connRaw

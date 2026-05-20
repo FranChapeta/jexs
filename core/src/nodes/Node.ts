@@ -6,6 +6,8 @@
  * into actual values.
  */
 
+import type { JexsNodeSchema } from "../schema.js";
+
 export interface Context {
   [key: string]: unknown;
   /** HTTP request data */
@@ -34,6 +36,14 @@ export interface Context {
 export type NodeValue = unknown;
 
 export abstract class Node {
+  /**
+   * JSON schema describing this Node's handler methods. Subclasses override with
+   * a literal map of methodKey → JexsMethodSchema. The `JexsNodeSchema` type is
+   * inherited via subclass static field assignment — subclasses can write
+   * `static schema = { ... };` without re-annotating.
+   */
+  static schema: JexsNodeSchema = {};
+
   /**
    * Keys this node handles for key-based dispatch in the resolver.
    * Default: auto-discovers own prototype methods not on Node.prototype.

@@ -3,6 +3,7 @@ import path from "path";
 import { Node, Context, NodeValue, resolve } from "@jexs/core";
 import { TableSchema, ColumnDef } from "./Query.js";
 import { sha256 } from "./Crypto.js";
+import type { JexsNodeSchema } from "@jexs/core";
 
 /**
  * SchemaNode - Manages table schema registration and data validation.
@@ -17,6 +18,36 @@ import { sha256 } from "./Crypto.js";
  * to validate and enrich data on insert/update.
  */
 export class SchemaNode extends Node {
+  static schema: JexsNodeSchema = {
+    schema: {
+      type: "string",
+      enum: [
+        "register",
+        "get",
+        "list",
+        "validator",
+      ],
+      markdownDescription: "Registers table schemas for use by QueryNode.",
+      examples: [
+        "{ \"schema\": \"register\", \"path\": \"db/tables\" }",
+      ],
+      siblings: {
+        path: {
+          type: "string",
+          description: "Directory path to load JSON schema files from (used with `\"register\"`).",
+        },
+        table: {
+          type: "string",
+          description: "Table name to retrieve or register inline (used with `\"get\"` and `\"register\"`).",
+        },
+        run: {
+          steps: true,
+          description: "Step sequence to run as a schema validator (used with `\"validator\"`).",
+        },
+      },
+    },
+  };
+
   private static schemas: Map<string, TableSchema> = new Map();
   static globalValidator: unknown[] | null = null;
 
@@ -30,7 +61,6 @@ export class SchemaNode extends Node {
     created_at: { type: "timestamp", default: "CURRENT_TIMESTAMP" },
   };
 
-  /** Inject common columns into a schema (skips if column already exists) */
   static injectCommonColumns(schema: TableSchema): void {
     if (!schema.columns) return;
     for (const [name, col] of Object.entries(this.COMMON_COLUMNS)) {
@@ -40,16 +70,6 @@ export class SchemaNode extends Node {
     }
   }
 
-  /**
-   * Registers table schemas for use by QueryNode.
-   *
-   * @param {"register"|"get"|"list"|"validator"} schema Operation to perform.
-   * @param {string} path Directory path to load JSON schema files from (used with `"register"`).
-   * @param {string} table Table name to retrieve or register inline (used with `"get"` and `"register"`).
-   * @param {steps} run Step sequence to run as a schema validator (used with `"validator"`).
-   * @example
-   * { "schema": "register", "path": "db/tables" }
-   */
   schema(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.schema, context, op => {
       if (op === "get") {
@@ -72,24 +92,18 @@ export class SchemaNode extends Node {
   // Static API (used by QueryNode)
   // ============================================
 
-  /** Register a schema directly (e.g., from create query) */
   static register(schema: TableSchema): void {
     this.schemas.set(schema.table, schema);
   }
 
-  /** Get all registered schemas */
   static getAll(): TableSchema[] {
     return Array.from(this.schemas.values());
   }
 
-  /** Get a registered schema */
   static get(tableName: string): TableSchema | undefined {
     return this.schemas.get(tableName);
   }
 
-  /**
-   * Validate and enrich data for insert.
-   */
   static validateInsert(tableName: string, data: unknown): unknown {
     const schema = this.schemas.get(tableName);
     if (!schema?.columns) return data;
@@ -144,9 +158,6 @@ export class SchemaNode extends Node {
     return result;
   }
 
-  /**
-   * Validate and filter data for update.
-   */
   static validateUpdate(
     tableName: string,
     data: Record<string, unknown>,

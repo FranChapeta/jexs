@@ -2,6 +2,7 @@ import fs from "fs/promises";
 import { statfsSync } from "fs";
 import path from "path";
 import { Node, Context, NodeValue, resolve, resolveAll, resolveObj, runSteps } from "@jexs/core";
+import type { JexsNodeSchema } from "@jexs/core";
 
 function toBoolean(value: unknown): boolean {
   if (typeof value === "boolean") return value;
@@ -28,6 +29,57 @@ function isObject(value: unknown): value is Record<string, unknown> {
  * All property values are resolved dynamically (can use variables, joins, etc.)
  */
 export class FileNode extends Node {
+  static schema: JexsNodeSchema = {
+    file: {
+      type: "string",
+      markdownDescription: "Loads and resolves a JSON file relative to the `app/` directory.\nArrays are executed as step sequences; objects are resolved as expressions.\nPass `\"raw\": true` for raw string content, `\"data\": true` to skip resolution,\n`\"params\"` to provide scoped variables, or `\"write\"` to write data to the file.",
+      examples: [
+        "{ \"file\": \"pages/home.json\", \"params\": { \"title\": \"Home\" } }",
+      ],
+      siblings: {
+        raw: {
+          type: "boolean",
+          description: "Return raw string content without parsing.",
+        },
+        data: {
+          type: "boolean",
+          description: "Parse JSON but skip expression resolution.",
+        },
+        params: {
+          map: true,
+          description: "Scoped variables passed into the loaded file's context.",
+        },
+        write: {
+          description: "Data to write to the file (triggers write mode).",
+        },
+      },
+    },
+    directory: {
+      type: "string",
+      output: "array",
+      markdownDescription: "Lists directory contents relative to `app/`. Returns `[{ name, path, size, modified }]`.",
+      examples: [
+        "{ \"directory\": \"data/posts\", \"extension\": \"json\", \"recursive\": true }",
+      ],
+      siblings: {
+        recursive: {
+          type: "boolean",
+          description: "Traverse subdirectories recursively.",
+        },
+        extension: {
+          description: "Filter by file extension(s), e.g. `\"json\"`.",
+        },
+      },
+    },
+    disk: {
+      output: "object",
+      markdownDescription: "Returns disk usage stats for a path: `{ total, free, used }` in bytes.\nPass a path string or `true` to use the current working directory.",
+      examples: [
+        "{ \"disk\": true }",
+      ],
+    },
+  };
+
   private appDir: string;
 
   constructor(appDir: string = "app") {
@@ -36,35 +88,12 @@ export class FileNode extends Node {
     this.appDir = appDir;
   }
 
-  /**
-   * Loads and resolves a JSON file relative to the `app/` directory.
-   * Arrays are executed as step sequences; objects are resolved as expressions.
-   * Pass `"raw": true` for raw string content, `"data": true` to skip resolution,
-   * `"params"` to provide scoped variables, or `"write"` to write data to the file.
-   *
-   * @param {string} file Path to the file, relative to `app/`.
-   * @param {boolean} raw Return raw string content without parsing.
-   * @param {boolean} data Parse JSON but skip expression resolution.
-   * @param {map} params Scoped variables passed into the loaded file's context.
-   * @param {expr} write Data to write to the file (triggers write mode).
-   * @example
-   * { "file": "pages/home.json", "params": { "title": "Home" } }
-   */
   file(def: Record<string, unknown>, context: Context): NodeValue {
     return "write" in def
       ? writeFile(def, context, this.appDir)
       : loadFile(def, context, this.appDir);
   }
 
-  /**
-   * Lists directory contents relative to `app/`. Returns `[{ name, path, size, modified }]`.
-   *
-   * @param {string} directory Path to the directory, relative to `app/`.
-   * @param {boolean} recursive Traverse subdirectories recursively.
-   * @param {string|string[]} extension Filter by file extension(s), e.g. `"json"`.
-   * @example
-   * { "directory": "data/posts", "extension": "json", "recursive": true }
-   */
   directory(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll(
       [def.directory, def.recursive ?? null, def.extension ?? null],
@@ -98,13 +127,6 @@ export class FileNode extends Node {
     );
   }
 
-  /**
-   * Returns disk usage stats for a path: `{ total, free, used }` in bytes.
-   * Pass a path string or `true` to use the current working directory.
-   *
-   * @example
-   * { "disk": true }
-   */
   disk(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.disk, context, diskPath => {
       const target = diskPath && diskPath !== true ? String(diskPath) : process.cwd();

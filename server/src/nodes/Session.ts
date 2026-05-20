@@ -1,6 +1,7 @@
 import { randomUUID, randomBytes } from "crypto";
 import { Node, Context, NodeValue, resolveObj } from "@jexs/core";
 import { Cache } from "../cache/Cache.js";
+import type { JexsNodeSchema } from "@jexs/core";
 
 /**
  * Session data stored in cache
@@ -30,14 +31,23 @@ const COOKIE_NAME = "sid";
  * Sessions are stored in cache with prefix "session:"
  */
 export class SessionNode extends Node {
-  /**
-   * Manages request sessions stored in cache. Pass an object to set session values. Read values with `{ "var": "$session.key" }`.
-   * Session ID is stored in a `sid` HTTP-only cookie with a 24-hour TTL.
-   *
-   * @param {"load"|"create"|"destroy"|"regenerate"|object} session Operation or object of key-value pairs to set on the session.
-   * @example
-   * { "session": { "user_id": { "var": "$user.id" }, "role": { "var": "$user.role" } } }
-   */
+  static schema: JexsNodeSchema = {
+    session: {
+      type: "string",
+      enum: [
+        "load",
+        "create",
+        "destroy",
+        "regenerate",
+        "object",
+      ],
+      markdownDescription: "Manages request sessions stored in cache. Pass an object to set session values. Read values with `{ \"var\": \"$session.key\" }`.\r\nSession ID is stored in a `sid` HTTP-only cookie with a 24-hour TTL.",
+      examples: [
+        "{ \"session\": { \"user_id\": { \"var\": \"$user.id\" }, \"role\": { \"var\": \"$user.role\" } } }",
+      ],
+    },
+  };
+
   session(def: Record<string, unknown>, context: Context): NodeValue {
     const sessionOp = def.session;
 

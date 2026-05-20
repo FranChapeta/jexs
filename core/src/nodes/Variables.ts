@@ -1,14 +1,32 @@
 import { Node, Context, NodeValue } from "./Node.js";
 import { resolve } from "../Resolver.js";
 import { getNestedValue } from "../helpers.js";
+import type { JexsNodeSchema } from "../schema.js";
 
 export class VariablesNode extends Node {
-  /**
-   * Reads a value from the current context by dot-path. Prefix the path with `$`.
-   *
-   * @example
-   * { "var": "$user.name" }
-   */
+  static schema: JexsNodeSchema = {
+    var: {
+      markdownDescription: "Reads a value from the current context by dot-path. Prefix the path with `$`.",
+      examples: [
+        "{ \"var\": \"$user.name\" }",
+      ],
+    },
+    setVars: {
+      map: true,
+      output: "null",
+      markdownDescription: "Resolves each value in the map and writes the result back into the context.\nPass `\"raw\": true` to skip resolving values.",
+      examples: [
+        "{ \"setVars\": { \"count\": 0, \"name\": { \"var\": \"$user.name\" } } }",
+      ],
+      siblings: {
+        raw: {
+          type: "boolean",
+          description: "Skip resolving values and write them directly.",
+        },
+      },
+    },
+  };
+
   var(def: Record<string, unknown>, context: Context): NodeValue {
     const varPath = def.var;
     if (typeof varPath === "string") return resolveVariable(varPath, context);
@@ -18,15 +36,6 @@ export class VariablesNode extends Node {
     });
   }
 
-  /**
-   * Resolves each value in the map and writes the result back into the context.
-   * Pass `"raw": true` to skip resolving values.
-   *
-   * @param {map} setVars Map of variable names to expressions or values.
-   * @param {boolean} raw Skip resolving values and write them directly.
-   * @example
-   * { "setVars": { "count": 0, "name": { "var": "$user.name" } } }
-   */
   setVars(def: Record<string, unknown>, context: Context): NodeValue {
     const vars = def.setVars;
     if (!vars || typeof vars !== "object" || Array.isArray(vars)) return null;

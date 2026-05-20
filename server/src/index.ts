@@ -9,7 +9,7 @@ import { CacheNode } from "./nodes/Cache.js";
 import { TailwindNode } from "./nodes/Tailwind.js";
 import { OAuthNode } from "./nodes/OAuth.js";
 import { EmailNode } from "./nodes/Email.js";
-import { PushNode } from "./nodes/PushNode.js";
+import { WebPushNode } from "./nodes/PushNode.js";
 import { ListenNode } from "./nodes/Listen.js";
 import { SchemaNode } from "./nodes/Schema.js";
 import { TranslationNode } from "./nodes/Translation.js";
@@ -30,7 +30,7 @@ export const serverNodes: Node[] = [
   new TailwindNode(),
   new OAuthNode(),
   new EmailNode(),
-  new PushNode(),
+  new WebPushNode(),
   new ListenNode(),
   new TranslationNode(),
   new SchemaNode(),
@@ -50,7 +50,7 @@ export { FileNode } from "./nodes/File.js";
 export { RouterNode } from "./nodes/Router.js";
 export { OAuthNode } from "./nodes/OAuth.js";
 export { EmailNode } from "./nodes/Email.js";
-export { PushNode } from "./nodes/PushNode.js";
+export { WebPushNode } from "./nodes/PushNode.js";
 export { ListenNode } from "./nodes/Listen.js";
 export { TailwindNode } from "./nodes/Tailwind.js";
 export { DeferNode } from "./nodes/Defer.js";

@@ -1,6 +1,18 @@
 // ── Node system ──
 export { Node, type Context, type NodeValue } from "./nodes/Node.js";
 
+// ── Schema types ──
+export type {
+  JexsType, JexsOutput, JexsPropertySchema, JexsMethodSchema, JexsNodeSchema,
+} from "./schema.js";
+
+// ── Schema generation (build-time only; not used by the runtime resolver) ──
+export {
+  buildPackageSchema, mergePackageSchemas, expandProperty,
+  type PackageSchema, type CombinedSchema, type EmittedSchema,
+  type EmittedMethodSchema, type EmittedNodeSchema,
+} from "./schema-gen.js";
+
 // ── Resolver ──
 export {
   createResolver, resolve, resolveAll, resolveObj, registerNode, registerLazy,

@@ -3,6 +3,7 @@ import { randomBytes, createHash, createCipheriv, createDecipheriv } from "node:
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { Node, Context, resolve, resolveAll } from "@jexs/core";
+import type { JexsNodeSchema } from "@jexs/core";
 
 /** Reusable SHA-256 helper (used by SchemaNode and QueryNode) */
 export function sha256(input: string): string {
@@ -68,47 +69,75 @@ export function decrypt(ciphertext: string): string {
  * - { "decrypt": "ciphertext" }         -> decrypted plaintext
  */
 export class CryptoNode extends Node {
-  /**
-   * Returns the SHA-256 hex digest of a string.
-   *
-   * @param {string} sha256 The input string to hash.
-   * @example
-   * { "sha256": { "var": "$token" } }
-   */
+  static schema: JexsNodeSchema = {
+    sha256: {
+      type: "string",
+      output: "string",
+      markdownDescription: "Returns the SHA-256 hex digest of a string.",
+      examples: [
+        "{ \"sha256\": { \"var\": \"$token\" } }",
+      ],
+    },
+    encrypt: {
+      type: "string",
+      output: "string",
+      markdownDescription: "Encrypts a string with AES-256-GCM using the app secret key. Returns `\"iv:authTag:ciphertext\"` (hex).",
+      examples: [
+        "{ \"encrypt\": { \"var\": \"$token\" } }",
+      ],
+    },
+    decrypt: {
+      type: "string",
+      output: "string",
+      markdownDescription: "Decrypts a string previously encrypted by `encrypt`. Expects `\"iv:authTag:ciphertext\"` (hex).",
+      examples: [
+        "{ \"decrypt\": { \"var\": \"$stored\" } }",
+      ],
+    },
+    hash: {
+      type: "string",
+      output: "string",
+      markdownDescription: "Hashes a password with bcrypt. Pass `\"rounds\"` for cost factor (default 10).",
+      examples: [
+        "{ \"hash\": { \"var\": \"$body.password\" }, \"rounds\": 12 }",
+      ],
+      siblings: {
+        rounds: {
+          type: "number",
+          description: "Bcrypt cost factor (default `10`).",
+        },
+      },
+    },
+    verify: {
+      tuple: 2,
+      output: "boolean",
+      markdownDescription: "Compares a plaintext password against a bcrypt hash. Returns `true` or `false`.",
+      examples: [
+        "{ \"verify\": [{ \"var\": \"$body.password\" }, { \"var\": \"$user.password_hash\" }] }",
+      ],
+    },
+    randomHex: {
+      type: "number",
+      output: "string",
+      markdownDescription: "Returns a cryptographically random hex string of N bytes (default 32).",
+      examples: [
+        "{ \"randomHex\": 16 }",
+      ],
+    },
+  };
+
   sha256(def: Record<string, unknown>, context: Context) {
     return resolve(def.sha256, context, v => sha256(this.toString(v)));
   }
 
-  /**
-   * Encrypts a string with AES-256-GCM using the app secret key. Returns `"iv:authTag:ciphertext"` (hex).
-   *
-   * @param {string} encrypt The plaintext string to encrypt.
-   * @example
-   * { "encrypt": { "var": "$token" } }
-   */
   encrypt(def: Record<string, unknown>, context: Context) {
     return resolve(def.encrypt, context, v => encrypt(this.toString(v)));
   }
 
-  /**
-   * Decrypts a string previously encrypted by `encrypt`. Expects `"iv:authTag:ciphertext"` (hex).
-   *
-   * @param {string} decrypt The encrypted string to decrypt.
-   * @example
-   * { "decrypt": { "var": "$stored" } }
-   */
   decrypt(def: Record<string, unknown>, context: Context) {
     return resolve(def.decrypt, context, v => decrypt(this.toString(v)));
   }
 
-  /**
-   * Hashes a password with bcrypt. Pass `"rounds"` for cost factor (default 10).
-   *
-   * @param {string} hash The plaintext password to hash.
-   * @param {number} rounds Bcrypt cost factor (default `10`).
-   * @example
-   * { "hash": { "var": "$body.password" }, "rounds": 12 }
-   */
   hash(def: Record<string, unknown>, context: Context) {
     return resolve(def.hash, context, v => {
       const str = this.toString(v);
@@ -117,13 +146,6 @@ export class CryptoNode extends Node {
     });
   }
 
-  /**
-   * Compares a plaintext password against a bcrypt hash. Returns `true` or `false`.
-   *
-   * @param {[2]} verify `[plaintext, hash]`.
-   * @example
-   * { "verify": [{ "var": "$body.password" }, { "var": "$user.password_hash" }] }
-   */
   verify(def: Record<string, unknown>, context: Context) {
     const args = this.toArray(def.verify);
     if (args.length < 2) return false;
@@ -132,13 +154,6 @@ export class CryptoNode extends Node {
     );
   }
 
-  /**
-   * Returns a cryptographically random hex string of N bytes (default 32).
-   *
-   * @param {number} randomHex Number of random bytes (output length is double this).
-   * @example
-   * { "randomHex": 16 }
-   */
   randomHex(def: Record<string, unknown>, context: Context) {
     return resolve(def.randomHex, context, v => {
       const bytes = this.toNumber(v) || 32;

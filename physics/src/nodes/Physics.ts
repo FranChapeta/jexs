@@ -22,6 +22,7 @@ import { raycastStore } from "../Raycast.js";
 import { detectCollision, resolveCollision, wakeBody, isRotated, usesMeshCollision } from "../collision.js";
 import { solveConstraints, type Constraint, type ConstraintType } from "../constraints.js";
 import { SpatialGrid } from "../SpatialGrid.js";
+import type { JexsNodeSchema } from "@jexs/core";
 
 // Re-export types and functions that the barrel (index.ts) needs from submodules
 export { wakeBody } from "../collision.js";
@@ -606,22 +607,49 @@ export function applyImpulse(store: EntityStore, slot: number, ix: number, iy: n
 // ─── PhysicsNode — JMS integration ──────────────────────────────────────────
 
 export class PhysicsNode extends Node {
+  static schema: JexsNodeSchema = {
+      "physics-init": {
+      type: "boolean",
+      output: "null",
+      markdownDescription: "Initializes the physics simulation loop for the active entity store.\nMust be called after `entity-init`. Restarts any existing loop.",
+      examples: [
+        "{ \"physics-init\": true, \"gravity\": [0, 980], \"damping\": 0.01 }",
+      ],
+      siblings: {
+        gravity: {
+          type: "array",
+          items: {
+            type: "number",
+          },
+          description: "Gravity vector `[gx, gy]` or `[gx, gy, gz]` (default `[0, 980]`).",
+        },
+        damping: {
+          type: "number",
+          description: "Linear velocity damping factor 0–1 (default `0.01`).",
+        },
+        bounds: {
+          description: "World boundary object `{x, y, w, h}` or `\"canvas\"`, or `null` for unbounded.",
+        },
+      },
+    },
+    "physics-step": {
+      type: "boolean",
+      output: "null",
+      markdownDescription: "Run a single physics step without managing a loop.\nFor use inside a tick loop for server-side authoritative simulation.",
+      siblings: {
+        dt: {
+          type: "number",
+          description: "Delta time in seconds (default `1/60`).",
+        },
+      },
+    },
+  };
 
-  /** Get selector from context._glSelector */
+
   static sel(context: Context): string {
     return (context._glSelector as string) || "";
   }
 
-  /**
-   * Initializes the physics simulation loop for the active entity store.
-   * Must be called after `entity-init`. Restarts any existing loop.
-   * @param {boolean} physics-init Pass `true` to initialize.
-   * @param {number[]} gravity Gravity vector `[gx, gy]` or `[gx, gy, gz]` (default `[0, 980]`).
-   * @param {number} damping Linear velocity damping factor 0–1 (default `0.01`).
-   * @param {expr} bounds World boundary object `{x, y, w, h}` or `"canvas"`, or `null` for unbounded.
-   * @example
-   * { "physics-init": true, "gravity": [0, 980], "damping": 0.01 }
-   */
   ["physics-init"](def: Record<string, unknown>, context: Context): NodeValue {
     const selector = PhysicsNode.sel(context);
     if (!selector) { console.error("[Physics] No _glSelector on context"); return null; }
@@ -702,12 +730,6 @@ export class PhysicsNode extends Node {
     });
   }
 
-  /**
-   * Run a single physics step without managing a loop.
-   * For use inside a tick loop for server-side authoritative simulation.
-   * @param {boolean} physics-step Pass `true` to step.
-   * @param {number} dt Delta time in seconds (default `1/60`).
-   */
   ["physics-step"](def: Record<string, unknown>, context: Context): NodeValue {
     const selector = PhysicsNode.sel(context);
     const world = worlds.get(selector);
@@ -754,17 +776,32 @@ export class PhysicsNode extends Node {
 // ─── CollisionNode ───────────────────────────────────────────────────────────
 
 export class CollisionNode extends Node {
+  static schema: JexsNodeSchema = {
+    "collision-on": {
+      type: "boolean",
+      output: "string",
+      markdownDescription: "Registers a collision handler that runs `do` steps when entities from two groups collide.\r\n`$collisionA`, `$collisionB`, `$collisionNx/Ny/Nz` are set in context during the steps.",
+      examples: [
+        "{ \"collision-on\": true, \"groups\": [\"player\", \"enemy\"], \"do\": [{ \"var\": \"$collisionA\" }] }",
+      ],
+      siblings: {
+        groups: {
+          tuple: 2,
+          description: "Two-element array of group names: `[groupA, groupB]`.",
+        },
+        id: {
+          type: "string",
+          description: "Optional handler ID (auto-generated if omitted).",
+        },
+        do: {
+          type: "array",
+          description: "Steps to run on collision.",
+        },
+      },
+    },
+  };
 
-  /**
-   * Registers a collision handler that runs `do` steps when entities from two groups collide.
-   * `$collisionA`, `$collisionB`, `$collisionNx/Ny/Nz` are set in context during the steps.
-   * @param {boolean} collision-on Pass `true` to register the handler.
-   * @param {[2]} groups Two-element array of group names: `[groupA, groupB]`.
-   * @param {string} id Optional handler ID (auto-generated if omitted).
-   * @param {expr[]} do Steps to run on collision.
-   * @example
-   * { "collision-on": true, "groups": ["player", "enemy"], "do": [{ "var": "$collisionA" }] }
-   */
+
   ["collision-on"](def: Record<string, unknown>, context: Context): NodeValue {
     const w = worlds.get(PhysicsNode.sel(context));
     if (!w) return null;
@@ -792,19 +829,53 @@ export class CollisionNode extends Node {
 // ─── JointNode — constraint management via JMS templates ─────────────────────
 
 export class JointNode extends Node {
+  static schema: JexsNodeSchema = {
+    "joint-add": {
+      type: "string",
+      output: "string",
+      markdownDescription: "Create a constraint between two entities.",
+      examples: [
+        "{ \"joint-add\": \"rope\", \"type\": \"spring\", \"a\": \"anchor\", \"b\": \"ball\", \"restLength\": 100 }",
+      ],
+      siblings: {
+        type: {
+          type: "string",
+          enum: [
+            "distance",
+            "spring",
+            "hinge",
+          ],
+          description: "Constraint type (default `\"distance\"`).",
+        },
+        a: {
+          type: "string",
+          description: "ID of first entity.",
+        },
+        b: {
+          type: "string",
+          description: "ID of second entity.",
+        },
+        restLength: {
+          type: "number",
+          description: "Rest length (default: current distance between entities).",
+        },
+        stiffness: {
+          type: "number",
+          description: "Constraint stiffness 0–1 (default `0.5`).",
+        },
+        damping: {
+          type: "number",
+          description: "Constraint damping 0–1 (default `0.1`).",
+        },
+      },
+    },
+    "joint-remove": {
+      output: "null",
+      markdownDescription: "Remove a constraint by ID. { \"joint-remove\": \"myJoint\" }",
+    },
+  };
 
-  /**
-   * Create a constraint between two entities.
-   * @param {string} joint-add Constraint ID.
-   * @param {"distance"|"spring"|"hinge"} type Constraint type (default `"distance"`).
-   * @param {string} a ID of first entity.
-   * @param {string} b ID of second entity.
-   * @param {number} restLength Rest length (default: current distance between entities).
-   * @param {number} stiffness Constraint stiffness 0–1 (default `0.5`).
-   * @param {number} damping Constraint damping 0–1 (default `0.1`).
-   * @example
-   * { "joint-add": "rope", "type": "spring", "a": "anchor", "b": "ball", "restLength": 100 }
-   */
+
   ["joint-add"](def: Record<string, unknown>, context: Context): NodeValue {
     const w = worlds.get(PhysicsNode.sel(context));
     if (!w) return null;
@@ -870,7 +941,6 @@ export class JointNode extends Node {
     );
   }
 
-  /** Remove a constraint by ID. { "joint-remove": "myJoint" } */
   ["joint-remove"](def: Record<string, unknown>, context: Context): NodeValue {
     const w = worlds.get(PhysicsNode.sel(context));
     if (!w) return null;

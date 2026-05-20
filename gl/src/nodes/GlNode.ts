@@ -53,6 +53,7 @@ import {
 } from "../gl/math.js";
 import { raycastStore, type MeshEntry, type Bounds } from "@jexs/physics";
 import type { GpuMesh } from "../gl/types.js";
+import type { JexsNodeSchema } from "@jexs/core";
 
 // ─── Module-level scratch buffers ────────────────────────────────────────────
 
@@ -101,23 +102,403 @@ function writePreTransformed(
 // ─── GlNode ─────────────────────────────────────────────────────────────────
 
 export class GlNode extends Node {
+  static schema: JexsNodeSchema = {
+      "gl-init": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Initializes a WebGL canvas (WebGL2 with WebGL1 fallback). Pass the canvas CSS selector as `gl-init`.\nUse `width`/`height` to set logical size, `clear` for background color, `depth: true` for 3D depth test.\nPass `on-frame` steps to run every animation frame — receives `$dt` (delta seconds) and `$time` in context.",
+      examples: [
+        "{ \"gl-init\": \"#canvas\", \"width\": 800, \"height\": 600, \"clear\": [0, 0, 0, 1], \"on-frame\": [] }",
+      ],
+      siblings: {
+        width: {
+          type: "number",
+          description: "Logical canvas width in pixels.",
+        },
+        height: {
+          type: "number",
+          description: "Logical canvas height in pixels.",
+        },
+        clear: {
+          type: "array",
+          items: {
+            type: "number",
+          },
+          description: "Background clear color as `[r, g, b, a]` (default `[0,0,0,1]`).",
+        },
+        depth: {
+          type: "boolean",
+          description: "Enable depth testing for 3D rendering.",
+        },
+        "on-frame": {
+          type: "array",
+          description: "Steps to run each animation frame (`$dt`, `$time` available).",
+        },
+      },
+    },
+    "gl-destroy": {
+      output: "null",
+      markdownDescription: "Destroys the active WebGL instance and releases GPU resources, textures, and the entity store.",
+    },
+    "gl-hit": {
+      type: "boolean",
+      output: "string",
+      markdownDescription: "Hit-tests a point against all visible entities (front-to-back). Returns the topmost entity id or `null`.\nSupports 2D (AABB/circle) and 3D (ray-AABB) automatically based on the current render mode.",
+      examples: [
+        "{ \"gl-hit\": true, \"x\": { \"var\": \"$event.clientX\" }, \"y\": { \"var\": \"$event.clientY\" } }",
+      ],
+      siblings: {
+        x: {
+          type: "number",
+          description: "Screen X coordinate.",
+        },
+        y: {
+          type: "number",
+          description: "Screen Y coordinate.",
+        },
+      },
+    },
+    "gl-camera": {
+      type: "boolean",
+      output: "null",
+      markdownDescription: "Controls the camera. In 2D: `x`, `y`, `zoom`, `rotation`, `follow` (entity id).\nShake: `shake` (intensity), `shakeDuration`, `shakeDecay`. Trauma: `trauma` (0–1 accumulated).\nIn 3D: `z`, `fov`, `near`, `far`, `lookAt` ([x,y,z]), `up` ([x,y,z]).",
+      examples: [
+        "{ \"gl-camera\": true, \"follow\": \"player\", \"zoom\": 1.5 }",
+      ],
+      siblings: {
+        x: {
+          type: "number",
+          description: "Camera X position.",
+        },
+        y: {
+          type: "number",
+          description: "Camera Y position.",
+        },
+        zoom: {
+          type: "number",
+          description: "Camera zoom factor.",
+        },
+        follow: {
+          type: "string",
+          description: "Entity ID to follow.",
+        },
+        shake: {
+          type: "number",
+          description: "Shake intensity.",
+        },
+      },
+    },
+    "gl-texture": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Loads an image from `src` and registers it as a named texture. Assign to entities via `texture: \"name\"`.",
+      examples: [
+        "{ \"gl-texture\": \"ship\", \"src\": \"/assets/ship.png\" }",
+      ],
+      siblings: {
+        src: {
+          type: "string",
+          description: "URL of the image to load.",
+        },
+      },
+    },
+    "gl-register-mesh": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Uploads an imported mesh's geometry to the GPU and stores the handle on\n`MeshEntry.gpu` (interleaved layout: pos3 + normal3 + uv2 = 32 bytes/vert).\nIdempotent — re-uploading the same id is a no-op.\n\nAuto-registers in the physics EntityStore if not yet present (so callers\ncan skip the separate `register-mesh` step). If a baseColor texture URI is\npresent on the material, a texture load is also kicked off.",
+      examples: [
+        "{ \"foreach\": { \"var\": \"scene.meshes\" }, \"item\": \"m\", \"do\": {\n    \"gl-register-mesh\": { \"var\": \"m.id\" },\n    \"bounds\":    { \"var\": \"m.bounds\" },\n    \"positions\": { \"var\": \"m.positions\" },\n    \"normals\":   { \"var\": \"m.normals\" },\n    \"uvs\":       { \"var\": \"m.uvs\" },\n    \"indices\":   { \"var\": \"m.indices\" },\n    \"material\":  { \"var\": \"m.material\" }\n} }",
+      ],
+      siblings: {
+        bounds: {
+          description: "AABB bounds object { min, max }.",
+        },
+        positions: {
+          description: "Float32Array of XYZ vertex positions.",
+        },
+        normals: {
+          description: "Float32Array of per-vertex normals (optional).",
+        },
+        uvs: {
+          description: "Float32Array of per-vertex UVs (optional).",
+        },
+        indices: {
+          description: "Uint16Array / Uint32Array of triangle indices (optional).",
+        },
+        material: {
+          description: "Material URI map (optional).",
+        },
+      },
+    },
+    "gl-atlas": {
+      type: "string",
+      output: "number",
+      markdownDescription: "Loads a spritesheet and pre-computes UV rects for each frame. Pass `cols` and `rows` to define the grid.\nReturns the total frame count. Use frame indices with `gl-animate` or `gl-frame`.",
+      examples: [
+        "{ \"gl-atlas\": \"tiles\", \"src\": \"/assets/tiles.png\", \"cols\": 8, \"rows\": 4 }",
+      ],
+      siblings: {
+        src: {
+          type: "string",
+          description: "URL of the spritesheet image.",
+        },
+        cols: {
+          type: "number",
+          description: "Number of columns in the grid.",
+        },
+        rows: {
+          type: "number",
+          description: "Number of rows in the grid.",
+        },
+      },
+    },
+    "gl-animate": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Starts a frame animation on an entity from an atlas. Pass `atlas`, `frames` (array of frame indices),\n`fps`, and `loop`. Set `stop: true` to cancel the current animation.",
+      examples: [
+        "{ \"gl-animate\": \"player\", \"atlas\": \"sprites\", \"frames\": [0, 1, 2, 3], \"fps\": 12, \"loop\": true }",
+      ],
+      siblings: {
+        atlas: {
+          type: "string",
+          description: "Atlas name (registered via `gl-atlas`).",
+        },
+        frames: {
+          type: "array",
+          items: {
+            type: "number",
+          },
+          description: "Array of frame indices from the atlas.",
+        },
+        fps: {
+          type: "number",
+          description: "Frames per second for the animation.",
+        },
+        loop: {
+          type: "boolean",
+          description: "Whether to loop the animation.",
+        },
+        stop: {
+          type: "boolean",
+          description: "Pass `true` to stop the current animation.",
+        },
+      },
+    },
+    "gl-frame": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Sets a static atlas frame on an entity (no animation). Pass entity id, `atlas`, and `frame` index.",
+      examples: [
+        "{ \"gl-frame\": \"player\", \"atlas\": \"sprites\", \"frame\": 5 }",
+      ],
+      siblings: {
+        atlas: {
+          type: "string",
+          description: "Atlas name (registered via `gl-atlas`).",
+        },
+        frame: {
+          type: "number",
+          description: "Frame index within the atlas.",
+        },
+      },
+    },
+    "gl-tilemap": {
+      type: "string",
+      output: "number",
+      markdownDescription: "Builds an efficient GPU tilemap VBO from a 2D array of atlas frame indices.\nPass `atlas`, `data` (rows of frame indices), `tileWidth`, `tileHeight`, and optional `z`.\nReturns the rendered tile count.",
+      examples: [
+        "{ \"gl-tilemap\": \"level1\", \"atlas\": \"tiles\", \"data\": [[1,0,2],[3,1,0]], \"tileWidth\": 32, \"tileHeight\": 32 }",
+      ],
+      siblings: {
+        atlas: {
+          type: "string",
+          description: "Atlas name (registered via `gl-atlas`).",
+        },
+        data: {
+          type: "array",
+          items: {
+            type: "array",
+            items: {
+              type: "number",
+            },
+          },
+          description: "2D array of atlas frame indices (rows × columns).",
+        },
+        tileWidth: {
+          type: "number",
+          description: "Width of each tile in pixels (default `32`).",
+        },
+        tileHeight: {
+          type: "number",
+          description: "Height of each tile in pixels (default `32`).",
+        },
+      },
+    },
+    "gl-trail": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Attaches a motion trail to an entity. The trail follows the entity's position each frame.\nPass entity id, `length` (max trail points), `width`, and `color`.",
+      examples: [
+        "{ \"gl-trail\": \"player\", \"length\": 20, \"width\": 3, \"color\": [1, 0.5, 0, 0.8] }",
+      ],
+      siblings: {
+        length: {
+          type: "number",
+          description: "Maximum number of trail points (default `20`).",
+        },
+        width: {
+          type: "number",
+          description: "Trail line width in pixels (default `2`).",
+        },
+        color: {
+          type: "array",
+          items: {
+            type: "number",
+          },
+          description: "Trail color as `[r, g, b, a]`.",
+        },
+      },
+    },
+    "gl-trail-remove": {
+      output: "null",
+      markdownDescription: "Removes the motion trail from an entity.",
+    },
+    "gl-raycast": {
+      type: "boolean",
+      output: "array",
+      markdownDescription: "Casts a ray from `from` in direction `dir` and returns all hit entities sorted by distance.\nPass `mask` (array of group names) to restrict which entities are tested.",
+      examples: [
+        "{ \"gl-raycast\": true, \"from\": { \"x\": 0, \"y\": 0, \"z\": 0 }, \"dir\": { \"x\": 1, \"y\": 0, \"z\": 0 }, \"mask\": [\"enemies\"] }",
+      ],
+      siblings: {
+        from: {
+          description: "Origin vector `{x, y, z?}`.",
+        },
+        dir: {
+          description: "Direction vector `{x, y, z?}`.",
+        },
+        mask: {
+          type: "array",
+          items: {
+            type: "string",
+          },
+          description: "Group names to test against (default: all groups).",
+        },
+      },
+    },
+    "gl-text": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Renders text onto a canvas texture and assigns it to an entity. Creates the entity if it doesn't exist.\nPass entity id, `text`, `font` (CSS font string), `fill` (color), and position `x`, `y`, `z`.",
+      examples: [
+        "{ \"gl-text\": \"score-label\", \"text\": { \"var\": \"$score\" }, \"font\": \"24px Arial\", \"fill\": \"#fff\", \"x\": 10, \"y\": 10 }",
+      ],
+      siblings: {
+        text: {
+          type: "string",
+          description: "Text content to render.",
+        },
+        font: {
+          type: "string",
+          description: "CSS font string (e.g. `\"24px Arial\"`).",
+        },
+        fill: {
+          type: "string",
+          description: "CSS color string for the text fill.",
+        },
+      },
+    },
+    "gl-shader": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Compiles and registers a custom GLSL shader program. Pass `name`, `vert` (vertex source), and `frag` (fragment source).\nAssign to entities with `shader: \"name\"`. Standard uniforms (`u_transform`, `u_texture`, `u_time`, etc.) are auto-bound.",
+      examples: [
+        "{ \"gl-shader\": \"glow\", \"vert\": \"...\", \"frag\": \"...\" }",
+      ],
+      siblings: {
+        vert: {
+          type: "string",
+          description: "GLSL vertex shader source.",
+        },
+        frag: {
+          type: "string",
+          description: "GLSL fragment shader source.",
+        },
+      },
+    },
+    "gl-blur": {
+      type: "number",
+      output: "null",
+      markdownDescription: "Applies a full-screen Gaussian blur post-process effect. Pass the blur radius in pixels; `0` disables it.",
+      examples: [
+        "{ \"gl-blur\": 4 }",
+      ],
+    },
+    "gl-transition": {
+      type: "boolean",
+      output: "null",
+      markdownDescription: "Plays a fade transition overlay. Pass `duration` in seconds (default 0.5).",
+      examples: [
+        "{ \"gl-transition\": true, \"duration\": 0.8 }",
+      ],
+      siblings: {
+        duration: {
+          type: "number",
+          description: "Transition duration in seconds (default `0.5`).",
+        },
+      },
+    },
+    "gl-tween": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Animates numeric entity properties over time. Pass entity id, target values (`x`, `y`, `w`, `h`, `angle`, `opacity`, `color`, etc.),\n`duration` (seconds), and `easing` (e.g. `\"easeOutQuad\"`, `\"linear\"`). Pass `then` steps to run on completion.",
+      examples: [
+        "{ \"gl-tween\": \"player\", \"x\": 400, \"y\": 300, \"duration\": 0.5, \"easing\": \"easeInOutCubic\" }",
+      ],
+      siblings: {
+        duration: {
+          type: "number",
+          description: "Animation duration in seconds (default `0.3`).",
+        },
+        easing: {
+          type: "string",
+          enum: [
+            "linear",
+            "easeOutQuad",
+            "easeInOutCubic",
+            "easeInOutQuad",
+            "easeOutBounce",
+            "easeOutElastic",
+          ],
+          description: "Easing function name.",
+        },
+        then: {
+          type: "array",
+          description: "Steps to run when the tween completes.",
+        },
+      },
+    },
+    "gl-ssao": {
+      output: "null",
+      markdownDescription: "Enables screen-space ambient occlusion (SSAO) for 3D scenes. Pass `radius`, `bias`, and `intensity`.\nSet `gl-ssao: false` to disable.",
+      examples: [
+        "{ \"gl-ssao\": true, \"radius\": 0.5, \"bias\": 0.025, \"intensity\": 1.5 }",
+      ],
+    },
+    "gl-particle": {
+      output: "null",
+      markdownDescription: "GPU-accelerated particle system. Pass `true` for a one-shot burst, or use operations:\n- `\"create\"` — register a named emitter (`id`, `max`, `life`, `speed`, `continuous`, `rate`)\n- `\"emit\"` — burst from a named emitter (`id`, `x`, `y`, `z`, `count`)\n- `\"destroy\"` — remove a named emitter\nAll modes support `color`, `colorEnd`, `size`, `sizeEnd`, `life`, `speed`.",
+      examples: [
+        "{ \"gl-particle\": true, \"x\": 100, \"y\": 200, \"count\": 30, \"speed\": 5, \"life\": 1, \"color\": [1,0.5,0,1] }",
+      ],
+    },
+  };
+
   static instances = new Map<string, GlInstance>();
 
   // ── gl-init ─────────────────────────────────────────────────────────────
 
-  /**
-   * Initializes a WebGL canvas (WebGL2 with WebGL1 fallback). Pass the canvas CSS selector as `gl-init`.
-   * Use `width`/`height` to set logical size, `clear` for background color, `depth: true` for 3D depth test.
-   * Pass `on-frame` steps to run every animation frame — receives `$dt` (delta seconds) and `$time` in context.
-   * @param {string} gl-init CSS selector for the canvas element.
-   * @param {number} width Logical canvas width in pixels.
-   * @param {number} height Logical canvas height in pixels.
-   * @param {number[]} clear Background clear color as `[r, g, b, a]` (default `[0,0,0,1]`).
-   * @param {boolean} depth Enable depth testing for 3D rendering.
-   * @param {expr[]} on-frame Steps to run each animation frame (`$dt`, `$time` available).
-   * @example
-   * { "gl-init": "#canvas", "width": 800, "height": 600, "clear": [0, 0, 0, 1], "on-frame": [] }
-   */
   ["gl-init"](def: Record<string, unknown>, context: Context): NodeValue {
     // "on-frame" is a lazy step template — exclude from resolution
     const onFrame = Array.isArray(def["on-frame"]) ? def["on-frame"] as unknown[] : null;
@@ -386,7 +767,6 @@ export class GlNode extends Node {
 
   // ── gl-destroy ──────────────────────────────────────────────────────────
 
-  /** Destroys the active WebGL instance and releases GPU resources, textures, and the entity store. */
   ["gl-destroy"](_def: Record<string, unknown>, context: Context): NodeValue {
     const selector = context._glSelector as string;
     if (!selector) return null;
@@ -401,15 +781,6 @@ export class GlNode extends Node {
 
   // ── gl-hit ──────────────────────────────────────────────────────────────
 
-  /**
-   * Hit-tests a point against all visible entities (front-to-back). Returns the topmost entity id or `null`.
-   * Supports 2D (AABB/circle) and 3D (ray-AABB) automatically based on the current render mode.
-   * @param {boolean} gl-hit Pass `true` to perform the hit test.
-   * @param {number} x Screen X coordinate.
-   * @param {number} y Screen Y coordinate.
-   * @example
-   * { "gl-hit": true, "x": { "var": "$event.clientX" }, "y": { "var": "$event.clientY" } }
-   */
   ["gl-hit"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
@@ -493,19 +864,6 @@ export class GlNode extends Node {
 
   // ── gl-camera ───────────────────────────────────────────────────────────
 
-  /**
-   * Controls the camera. In 2D: `x`, `y`, `zoom`, `rotation`, `follow` (entity id).
-   * Shake: `shake` (intensity), `shakeDuration`, `shakeDecay`. Trauma: `trauma` (0–1 accumulated).
-   * In 3D: `z`, `fov`, `near`, `far`, `lookAt` ([x,y,z]), `up` ([x,y,z]).
-   * @param {boolean} gl-camera Pass `true` to update the camera.
-   * @param {number} x Camera X position.
-   * @param {number} y Camera Y position.
-   * @param {number} zoom Camera zoom factor.
-   * @param {string} follow Entity ID to follow.
-   * @param {number} shake Shake intensity.
-   * @example
-   * { "gl-camera": true, "follow": "player", "zoom": 1.5 }
-   */
   ["gl-camera"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
@@ -581,13 +939,6 @@ export class GlNode extends Node {
 
   // ── gl-texture ──────────────────────────────────────────────────────────
 
-  /**
-   * Loads an image from `src` and registers it as a named texture. Assign to entities via `texture: "name"`.
-   * @param {string} gl-texture Texture name.
-   * @param {string} src URL of the image to load.
-   * @example
-   * { "gl-texture": "ship", "src": "/assets/ship.png" }
-   */
   ["gl-texture"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
@@ -615,33 +966,6 @@ export class GlNode extends Node {
 
   // ── gl-register-mesh ───────────────────────────────────────────────────
 
-  /**
-   * Uploads an imported mesh's geometry to the GPU and stores the handle on
-   * `MeshEntry.gpu` (interleaved layout: pos3 + normal3 + uv2 = 32 bytes/vert).
-   * Idempotent — re-uploading the same id is a no-op.
-   *
-   * Auto-registers in the physics EntityStore if not yet present (so callers
-   * can skip the separate `register-mesh` step). If a baseColor texture URI is
-   * present on the material, a texture load is also kicked off.
-   *
-   * @param {string} gl-register-mesh Mesh id.
-   * @param {expr} bounds AABB bounds object { min, max }.
-   * @param {expr} positions Float32Array of XYZ vertex positions.
-   * @param {expr} normals Float32Array of per-vertex normals (optional).
-   * @param {expr} uvs Float32Array of per-vertex UVs (optional).
-   * @param {expr} indices Uint16Array / Uint32Array of triangle indices (optional).
-   * @param {expr} material Material URI map (optional).
-   * @example
-   * { "foreach": { "var": "scene.meshes" }, "item": "m", "do": {
-   *     "gl-register-mesh": { "var": "m.id" },
-   *     "bounds":    { "var": "m.bounds" },
-   *     "positions": { "var": "m.positions" },
-   *     "normals":   { "var": "m.normals" },
-   *     "uvs":       { "var": "m.uvs" },
-   *     "indices":   { "var": "m.indices" },
-   *     "material":  { "var": "m.material" }
-   * } }
-   */
   ["gl-register-mesh"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
@@ -745,16 +1069,6 @@ export class GlNode extends Node {
   // ── gl-atlas ───────────────────────────────────────────────────────────
   // Pre-compute UV rects for a spritesheet: { "gl-atlas": "name", "src": "sheet.png", "cols": 8, "rows": 4 }
 
-  /**
-   * Loads a spritesheet and pre-computes UV rects for each frame. Pass `cols` and `rows` to define the grid.
-   * Returns the total frame count. Use frame indices with `gl-animate` or `gl-frame`.
-   * @param {string} gl-atlas Atlas name.
-   * @param {string} src URL of the spritesheet image.
-   * @param {number} cols Number of columns in the grid.
-   * @param {number} rows Number of rows in the grid.
-   * @example
-   * { "gl-atlas": "tiles", "src": "/assets/tiles.png", "cols": 8, "rows": 4 }
-   */
   ["gl-atlas"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
@@ -792,18 +1106,6 @@ export class GlNode extends Node {
 
   // ── gl-animate ──────────────────────────────────────────────────────────
 
-  /**
-   * Starts a frame animation on an entity from an atlas. Pass `atlas`, `frames` (array of frame indices),
-   * `fps`, and `loop`. Set `stop: true` to cancel the current animation.
-   * @param {string} gl-animate Entity ID to animate.
-   * @param {string} atlas Atlas name (registered via `gl-atlas`).
-   * @param {number[]} frames Array of frame indices from the atlas.
-   * @param {number} fps Frames per second for the animation.
-   * @param {boolean} loop Whether to loop the animation.
-   * @param {boolean} stop Pass `true` to stop the current animation.
-   * @example
-   * { "gl-animate": "player", "atlas": "sprites", "frames": [0, 1, 2, 3], "fps": 12, "loop": true }
-   */
   ["gl-animate"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
@@ -842,14 +1144,6 @@ export class GlNode extends Node {
   // ── gl-frame — set entity UV from atlas frame index ─────────────────────
   // { "gl-frame": "entityId", "atlas": "name", "frame": 5 }
 
-  /**
-   * Sets a static atlas frame on an entity (no animation). Pass entity id, `atlas`, and `frame` index.
-   * @param {string} gl-frame Entity ID.
-   * @param {string} atlas Atlas name (registered via `gl-atlas`).
-   * @param {number} frame Frame index within the atlas.
-   * @example
-   * { "gl-frame": "player", "atlas": "sprites", "frame": 5 }
-   */
   ["gl-frame"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
@@ -879,18 +1173,6 @@ export class GlNode extends Node {
   // ── gl-tilemap — efficient grid rendering using atlas ──────────────────
   // { "gl-tilemap": "level1", "atlas": "tiles", "data": [[1,0,2],[3,1,0]], "tileWidth": 32, "tileHeight": 32 }
 
-  /**
-   * Builds an efficient GPU tilemap VBO from a 2D array of atlas frame indices.
-   * Pass `atlas`, `data` (rows of frame indices), `tileWidth`, `tileHeight`, and optional `z`.
-   * Returns the rendered tile count.
-   * @param {string} gl-tilemap Tilemap entity ID.
-   * @param {string} atlas Atlas name (registered via `gl-atlas`).
-   * @param {number[][]} data 2D array of atlas frame indices (rows × columns).
-   * @param {number} tileWidth Width of each tile in pixels (default `32`).
-   * @param {number} tileHeight Height of each tile in pixels (default `32`).
-   * @example
-   * { "gl-tilemap": "level1", "atlas": "tiles", "data": [[1,0,2],[3,1,0]], "tileWidth": 32, "tileHeight": 32 }
-   */
   ["gl-tilemap"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
@@ -945,7 +1227,6 @@ export class GlNode extends Node {
     });
   }
 
-  /** Build tilemap vertex data in batch format: (x,y, r,g,b,a, u,v, useTex) per vertex, 6 verts per tile. */
   private static buildTilemapVBO(data: number[][], tileW: number, tileH: number, frames: [number, number, number, number][]): { vertData: Float32Array; vertCount: number } {
     // Count non-empty tiles
     let count = 0;
@@ -996,16 +1277,6 @@ export class GlNode extends Node {
   // ── gl-trail — attach a trail to an entity ─────────────────────────────
   // { "gl-trail": "player", "length": 20, "width": 2, "color": [1,0,0,1] }
 
-  /**
-   * Attaches a motion trail to an entity. The trail follows the entity's position each frame.
-   * Pass entity id, `length` (max trail points), `width`, and `color`.
-   * @param {string} gl-trail Entity ID to attach trail to.
-   * @param {number} length Maximum number of trail points (default `20`).
-   * @param {number} width Trail line width in pixels (default `2`).
-   * @param {number[]} color Trail color as `[r, g, b, a]`.
-   * @example
-   * { "gl-trail": "player", "length": 20, "width": 3, "color": [1, 0.5, 0, 0.8] }
-   */
   ["gl-trail"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
@@ -1021,7 +1292,6 @@ export class GlNode extends Node {
   }
 
   // { "gl-trail-remove": "player" }
-  /** Removes the motion trail from an entity. */
   ["gl-trail-remove"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
@@ -1031,16 +1301,6 @@ export class GlNode extends Node {
   // ── gl-raycast — cast a ray and return sorted hits ─────────────────────
   // { "gl-raycast": true, "from": {"x":0,"y":0,"z":0}, "dir": {"x":1,"y":0,"z":0}, "mask": ["enemy"] }
 
-  /**
-   * Casts a ray from `from` in direction `dir` and returns all hit entities sorted by distance.
-   * Pass `mask` (array of group names) to restrict which entities are tested.
-   * @param {boolean} gl-raycast Pass `true` to cast.
-   * @param {expr} from Origin vector `{x, y, z?}`.
-   * @param {expr} dir Direction vector `{x, y, z?}`.
-   * @param {string[]} mask Group names to test against (default: all groups).
-   * @example
-   * { "gl-raycast": true, "from": { "x": 0, "y": 0, "z": 0 }, "dir": { "x": 1, "y": 0, "z": 0 }, "mask": ["enemies"] }
-   */
   ["gl-raycast"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
@@ -1056,16 +1316,6 @@ export class GlNode extends Node {
 
   // ── gl-text ─────────────────────────────────────────────────────────────
 
-  /**
-   * Renders text onto a canvas texture and assigns it to an entity. Creates the entity if it doesn't exist.
-   * Pass entity id, `text`, `font` (CSS font string), `fill` (color), and position `x`, `y`, `z`.
-   * @param {string} gl-text Entity ID.
-   * @param {string} text Text content to render.
-   * @param {string} font CSS font string (e.g. `"24px Arial"`).
-   * @param {string} fill CSS color string for the text fill.
-   * @example
-   * { "gl-text": "score-label", "text": { "var": "$score" }, "font": "24px Arial", "fill": "#fff", "x": 10, "y": 10 }
-   */
   ["gl-text"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
@@ -1104,15 +1354,6 @@ export class GlNode extends Node {
 
   // ── gl-shader ───────────────────────────────────────────────────────────
 
-  /**
-   * Compiles and registers a custom GLSL shader program. Pass `name`, `vert` (vertex source), and `frag` (fragment source).
-   * Assign to entities with `shader: "name"`. Standard uniforms (`u_transform`, `u_texture`, `u_time`, etc.) are auto-bound.
-   * @param {string} gl-shader Shader name.
-   * @param {string} vert GLSL vertex shader source.
-   * @param {string} frag GLSL fragment shader source.
-   * @example
-   * { "gl-shader": "glow", "vert": "...", "frag": "..." }
-   */
   ["gl-shader"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
@@ -1144,12 +1385,6 @@ export class GlNode extends Node {
 
   // ── gl-blur ─────────────────────────────────────────────────────────────
 
-  /**
-   * Applies a full-screen Gaussian blur post-process effect. Pass the blur radius in pixels; `0` disables it.
-   * @param {number} gl-blur Blur radius in pixels (`0` to disable).
-   * @example
-   * { "gl-blur": 4 }
-   */
   ["gl-blur"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
@@ -1164,13 +1399,6 @@ export class GlNode extends Node {
 
   // ── gl-transition ──────────────────────────────────────────────────────
 
-  /**
-   * Plays a fade transition overlay. Pass `duration` in seconds (default 0.5).
-   * @param {boolean} gl-transition Pass `true` to trigger.
-   * @param {number} duration Transition duration in seconds (default `0.5`).
-   * @example
-   * { "gl-transition": true, "duration": 0.8 }
-   */
   ["gl-transition"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
@@ -1185,16 +1413,6 @@ export class GlNode extends Node {
 
   // ── gl-tween ────────────────────────────────────────────────────────────
 
-  /**
-   * Animates numeric entity properties over time. Pass entity id, target values (`x`, `y`, `w`, `h`, `angle`, `opacity`, `color`, etc.),
-   * `duration` (seconds), and `easing` (e.g. `"easeOutQuad"`, `"linear"`). Pass `then` steps to run on completion.
-   * @param {string} gl-tween Entity ID.
-   * @param {number} duration Animation duration in seconds (default `0.3`).
-   * @param {"linear"|"easeOutQuad"|"easeInOutCubic"|"easeInOutQuad"|"easeOutBounce"|"easeOutElastic"} easing Easing function name.
-   * @param {expr[]} then Steps to run when the tween completes.
-   * @example
-   * { "gl-tween": "player", "x": 400, "y": 300, "duration": 0.5, "easing": "easeInOutCubic" }
-   */
   ["gl-tween"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
@@ -1241,12 +1459,6 @@ export class GlNode extends Node {
   // ── gl-ssao (screen-space ambient occlusion) ────────────────────────────
   // Usage: { "gl-ssao": true, "radius": 0.5, "bias": 0.025, "intensity": 1.5 }
   //        { "gl-ssao": false } to disable
-  /**
-   * Enables screen-space ambient occlusion (SSAO) for 3D scenes. Pass `radius`, `bias`, and `intensity`.
-   * Set `gl-ssao: false` to disable.
-   * @example
-   * { "gl-ssao": true, "radius": 0.5, "bias": 0.025, "intensity": 1.5 }
-   */
   ["gl-ssao"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
@@ -1274,15 +1486,6 @@ export class GlNode extends Node {
   //                         "life": 1.5, "speed": 3, "continuous": true, "rate": 500 }
   // Emit burst: { "gl-particle": "emit", "id": "fire", "x": 0, "y": 0, "z": 0, "count": 100 }
   // Destroy: { "gl-particle": "destroy", "id": "fire" }
-  /**
-   * GPU-accelerated particle system. Pass `true` for a one-shot burst, or use operations:
-   * - `"create"` — register a named emitter (`id`, `max`, `life`, `speed`, `continuous`, `rate`)
-   * - `"emit"` — burst from a named emitter (`id`, `x`, `y`, `z`, `count`)
-   * - `"destroy"` — remove a named emitter
-   * All modes support `color`, `colorEnd`, `size`, `sizeEnd`, `life`, `speed`.
-   * @example
-   * { "gl-particle": true, "x": 100, "y": 200, "count": 30, "speed": 5, "life": 1, "color": [1,0.5,0,1] }
-   */
   ["gl-particle"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;

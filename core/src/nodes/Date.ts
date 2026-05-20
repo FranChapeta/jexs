@@ -1,29 +1,65 @@
 import { Node, Context, NodeValue } from "./Node.js";
 import { resolve } from "../Resolver.js";
 import { parseInterval } from "./Timer.js";
+import type { JexsNodeSchema } from "../schema.js";
 
 export class DateNode extends Node {
-  /**
-   * Returns the current timestamp.
-   *
-   * @param {"ms"|"iso"|"datetime"} dateNow Output format: `"ms"` for Unix milliseconds, `"iso"` for ISO 8601, `"datetime"` for UTC `YYYY-MM-DD HH:MM:SS` (default).
-   * @example
-   * { "dateNow": "iso" }
-   */
+  static schema: JexsNodeSchema = {
+    dateNow: {
+      type: ["string", "boolean"],
+      enum: [
+        "ms",
+        "iso",
+        "datetime",
+      ],
+      markdownDescription: "Returns the current timestamp. Pass a format string (`\"ms\"`, `\"iso\"`, `\"datetime\"`) or `true` (shorthand for `\"ms\"`).",
+      examples: [
+        "{ \"dateNow\": \"iso\" }",
+      ],
+    },
+    dateAdd: {
+      tuple: 2,
+      markdownDescription: "Adds a duration to a Unix-ms timestamp. Interval formats: `\"500ms\"`, `\"30s\"`, `\"5m\"`, `\"1h\"`, `\"7d\"`.",
+      examples: [
+        "{ \"dateAdd\": [{ \"dateNow\": \"ms\" }, \"7d\"], \"format\": \"iso\" }",
+      ],
+      siblings: {
+        format: {
+          type: "string",
+          enum: [
+            "ms",
+            "iso",
+            "datetime",
+          ],
+          description: "Output format (default `\"ms\"`).",
+        },
+      },
+    },
+    dateFormat: {
+      markdownDescription: "Formats a Unix-ms timestamp.",
+      examples: [
+        "{ \"dateFormat\": { \"var\": \"$createdAt\" }, \"format\": \"iso\" }",
+      ],
+      siblings: {
+        format: {
+          type: "string",
+          enum: [
+            "ms",
+            "iso",
+            "datetime",
+          ],
+          description: "Output format (default `\"datetime\"`).",
+        },
+      },
+    },
+  };
+
   dateNow(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.dateNow, context, fmt =>
       formatDate(Date.now(), fmt === true ? "ms" : String(fmt))
     );
   }
 
-  /**
-   * Adds a duration to a Unix-ms timestamp. Interval formats: `"500ms"`, `"30s"`, `"5m"`, `"1h"`, `"7d"`.
-   *
-   * @param {[2]} dateAdd `[timestamp, interval]`.
-   * @param {"ms"|"iso"|"datetime"} format Output format (default `"ms"`).
-   * @example
-   * { "dateAdd": [{ "dateNow": "ms" }, "7d"], "format": "iso" }
-   */
   dateAdd(def: Record<string, unknown>, context: Context): NodeValue {
     const args = this.toArray(def.dateAdd);
     if (args.length < 2) return null;
@@ -37,14 +73,6 @@ export class DateNode extends Node {
     });
   }
 
-  /**
-   * Formats a Unix-ms timestamp.
-   *
-   * @param {expr} dateFormat The Unix-ms timestamp to format.
-   * @param {"ms"|"iso"|"datetime"} format Output format (default `"datetime"`).
-   * @example
-   * { "dateFormat": { "var": "$createdAt" }, "format": "iso" }
-   */
   dateFormat(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.dateFormat, context, ms => {
       if (!def.format) return formatDate(this.toNumber(ms), "datetime");

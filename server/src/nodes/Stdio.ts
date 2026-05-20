@@ -1,4 +1,5 @@
 import { Node, Context, NodeValue, runSteps } from "@jexs/core";
+import type { JexsNodeSchema } from "@jexs/core";
 
 /**
  * StdioNode - Reads newline-delimited JSON from stdin, runs steps, writes results to stdout.
@@ -13,17 +14,27 @@ import { Node, Context, NodeValue, runSteps } from "@jexs/core";
  * to keep stdout clean for protocol data.
  */
 export class StdioNode extends Node {
-  /**
-   * Starts a newline-delimited JSON (NDJSON) listener on stdin. Each line is parsed as JSON,
-   * set as `$message` in context, and `on-message` steps are run. Non-null results are written to stdout.
-   * `console.log` is redirected to stderr to keep stdout clean for protocol data.
-   *
-   * @param {boolean} stdio Set to `true` to start the listener.
-   * @param {steps} on-message Steps run per NDJSON line with `$message` in context.
-   * @param {steps} on-close Optional steps run when stdin closes.
-   * @example
-   * { "stdio": true, "on-message": [{ "var": "$message" }], "on-close": [] }
-   */
+  static schema: JexsNodeSchema = {
+    stdio: {
+      type: "boolean",
+      output: "null",
+      markdownDescription: "Starts a newline-delimited JSON (NDJSON) listener on stdin. Each line is parsed as JSON,\r\nset as `$message` in context, and `on-message` steps are run. Non-null results are written to stdout.\r\n`console.log` is redirected to stderr to keep stdout clean for protocol data.",
+      examples: [
+        "{ \"stdio\": true, \"on-message\": [{ \"var\": \"$message\" }], \"on-close\": [] }",
+      ],
+      siblings: {
+        "on-message": {
+          steps: true,
+          description: "Steps run per NDJSON line with `$message` in context.",
+        },
+        "on-close": {
+          steps: true,
+          description: "Optional steps run when stdin closes.",
+        },
+      },
+    },
+  };
+
   async stdio(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
     if (!Array.isArray(def["on-message"])) {
       console.error('[StdioNode] "on-message" must be an array of steps');

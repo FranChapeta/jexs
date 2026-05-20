@@ -1,6 +1,7 @@
 import { Node, Context, NodeValue, resolve, resolveAll, runSteps } from "@jexs/core";
 import crypto from "node:crypto";
 import WebSocket from "ws";
+import type { JexsNodeSchema } from "@jexs/core";
 
 // Module-level state
 // Room name → set of connections
@@ -30,18 +31,39 @@ const meta: WeakMap<WebSocket, Record<string, unknown>> = new WeakMap();
  * - { "ws": "count", "room": "name" }
  */
 export class WebSocketNode extends Node {
-  /**
-   * Server-side WebSocket operations. Operations: `"send"`, `"send-to"`, `"broadcast"`,
-   * `"join"`, `"leave"`, `"close"`, `"count"`, `"list"`.
-   * `"broadcast"` without `"room"` sends to all connections on the same route path.
-   *
-   * @param {"send"|"send-to"|"broadcast"|"join"|"leave"|"close"|"count"|"list"} ws Operation to perform.
-   * @param {expr} data Data to send (used with `"send"`, `"send-to"`, `"broadcast"`).
-   * @param {string} id Peer connection ID (used with `"send-to"`).
-   * @param {string} room Room name (used with `"join"`, `"leave"`, `"broadcast"`, `"count"`, `"list"`).
-   * @example
-   * { "ws": "broadcast", "data": { "type": "update", "payload": { "var": "$data" } }, "room": "general" }
-   */
+  static schema: JexsNodeSchema = {
+    ws: {
+      type: "string",
+      enum: [
+        "send",
+        "send-to",
+        "broadcast",
+        "join",
+        "leave",
+        "close",
+        "count",
+        "list",
+      ],
+      markdownDescription: "Server-side WebSocket operations. Operations: `\"send\"`, `\"send-to\"`, `\"broadcast\"`,\n`\"join\"`, `\"leave\"`, `\"close\"`, `\"count\"`, `\"list\"`.\n`\"broadcast\"` without `\"room\"` sends to all connections on the same route path.",
+      examples: [
+        "{ \"ws\": \"broadcast\", \"data\": { \"type\": \"update\", \"payload\": { \"var\": \"$data\" } }, \"room\": \"general\" }",
+      ],
+      siblings: {
+        data: {
+          description: "Data to send (used with `\"send\"`, `\"send-to\"`, `\"broadcast\"`).",
+        },
+        id: {
+          type: "string",
+          description: "Peer connection ID (used with `\"send-to\"`).",
+        },
+        room: {
+          type: "string",
+          description: "Room name (used with `\"join\"`, `\"leave\"`, `\"broadcast\"`, `\"count\"`, `\"list\"`).",
+        },
+      },
+    },
+  };
+
   ws(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.ws, context, operation => {
       switch (String(operation)) {
@@ -68,10 +90,6 @@ export class WebSocketNode extends Node {
     });
   }
 
-  /**
-   * Called by Server after WebSocket upgrade completes.
-   * Sets up message/close listeners and runs on-connect steps.
-   */
   static handleConnection(
     ws: WebSocket,
     handler: Record<string, unknown>,
@@ -167,9 +185,6 @@ export class WebSocketNode extends Node {
     });
   }
 
-  /**
-   * Close all connections (for server shutdown).
-   */
   static closeAll(): void {
     for (const pathClients of paths.values()) {
       for (const ws of pathClients) {

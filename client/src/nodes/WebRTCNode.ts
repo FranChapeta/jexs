@@ -1,6 +1,7 @@
 import { Node, Context, NodeValue, runSteps } from "@jexs/core";
 import { resolve, resolveAll } from "@jexs/core";
 import { WsNode } from "./WsNode.js";
+import type { JexsNodeSchema } from "@jexs/core";
 
 // Module-level state
 const peers: Map<string, RTCPeerConnection> = new Map();
@@ -31,18 +32,48 @@ const FAST_COALESCE_FLUSH_MS = 16;
  * - { "rtc": "on-message", "do": [...] }                 — register handler for incoming data channel messages
  */
 export class WebRTCNode extends Node {
-  /**
-   * Manages WebRTC peer connections. Signaling is done over the active `WsNode` WebSocket connection.
-   * Operations: `"connect"`, `"answer"`, `"accept"`, `"ice"`, `"send"`, `"broadcast"`, `"close"`, `"close-all"`, `"on-message"`.
-   * Use `"channel": "fast"` for unreliable (low-latency) delivery; default channel is reliable.
-   * @param {"connect"|"answer"|"accept"|"ice"|"send"|"broadcast"|"close"|"close-all"|"on-message"} rtc Operation to perform.
-   * @param {string} id Peer connection ID (used with `"connect"`, `"send"`, `"close"`).
-   * @param {expr} data Data to send (used with `"send"`, `"broadcast"`).
-   * @param {"data"|"fast"} channel Data channel: `"data"` (reliable) or `"fast"` (unreliable, low-latency).
-   * @param {steps} do Steps to run on incoming messages, with `$rtcMessage` and `$rtcPeerId` in context (used with `"on-message"`).
-   * @example
-   * { "rtc": "connect", "id": { "var": "$peerId" } }
-   */
+  static schema: JexsNodeSchema = {
+    rtc: {
+      type: "string",
+      enum: [
+        "connect",
+        "answer",
+        "accept",
+        "ice",
+        "send",
+        "broadcast",
+        "close",
+        "close-all",
+        "on-message",
+      ],
+      markdownDescription: "Manages WebRTC peer connections. Signaling is done over the active `WsNode` WebSocket connection.\r\nOperations: `\"connect\"`, `\"answer\"`, `\"accept\"`, `\"ice\"`, `\"send\"`, `\"broadcast\"`, `\"close\"`, `\"close-all\"`, `\"on-message\"`.\r\nUse `\"channel\": \"fast\"` for unreliable (low-latency) delivery; default channel is reliable.",
+      examples: [
+        "{ \"rtc\": \"connect\", \"id\": { \"var\": \"$peerId\" } }",
+      ],
+      siblings: {
+        id: {
+          type: "string",
+          description: "Peer connection ID (used with `\"connect\"`, `\"send\"`, `\"close\"`).",
+        },
+        data: {
+          description: "Data to send (used with `\"send\"`, `\"broadcast\"`).",
+        },
+        channel: {
+          type: "string",
+          enum: [
+            "data",
+            "fast",
+          ],
+          description: "Data channel: `\"data\"` (reliable) or `\"fast\"` (unreliable, low-latency).",
+        },
+        do: {
+          steps: true,
+          description: "Steps to run on incoming messages, with `$rtcMessage` and `$rtcPeerId` in context (used with `\"on-message\"`).",
+        },
+      },
+    },
+  };
+
   rtc(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.rtc, context, operation => {
       switch (operation) {

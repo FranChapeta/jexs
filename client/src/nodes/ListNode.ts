@@ -1,5 +1,6 @@
 import { Node, Context, NodeValue } from "@jexs/core";
 import { resolve, resolveObj } from "@jexs/core";
+import type { JexsNodeSchema } from "@jexs/core";
 
 let initEventsFn: ((root: HTMLElement) => void) | null = null;
 
@@ -18,14 +19,92 @@ export function setInitEvents(fn: (root: HTMLElement) => void): void {
  * - { "list-serialize": { "list": "#listId", "to": "#hiddenId", "fields": ["value", "label"] } }
  */
 export class ListNode extends Node {
-  /**
-   * Clones a `<template>` element and appends the clone to a list container.
-   * Wires up event handlers on the new element via `initEventsFn`. Returns the cloned element.
-   * @param {string} list-add CSS selector of the list container.
-   * @param {string} template CSS selector of the `<template>` element to clone.
-   * @example
-   * { "list-add": "#items", "template": "#item-template" }
-   */
+  static schema: JexsNodeSchema = {
+    "list-add": {
+      type: "string",
+      output: "object",
+      markdownDescription: "Clones a `<template>` element and appends the clone to a list container.\nWires up event handlers on the new element via `initEventsFn`. Returns the cloned element.",
+      examples: [
+        "{ \"list-add\": \"#items\", \"template\": \"#item-template\" }",
+      ],
+      siblings: {
+        template: {
+          type: "string",
+          description: "CSS selector of the `<template>` element to clone.",
+        },
+      },
+    },
+    "list-remove": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Removes the closest `[data-list-item]` ancestor of the target element or selector.",
+    },
+    "list-move-up": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Moves the closest `[data-list-item]` ancestor one position up by swapping with its previous sibling.",
+    },
+    "list-move-down": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Moves the closest `[data-list-item]` ancestor one position down by swapping with its next sibling.",
+    },
+    "list-init": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Pre-populates a list from JSON stored in a hidden input. Reads `list` (selector), `template`,\n`from` (hidden input selector), and `fields` (array of `data-field` names to fill per row).",
+      examples: [
+        "{ \"list-init\": \"#items\", \"template\": \"#item-tpl\", \"from\": \"#hidden-input\", \"fields\": [\"value\", \"label\"] }",
+      ],
+      siblings: {
+        template: {
+          type: "string",
+          description: "CSS selector of the `<template>` element to clone.",
+        },
+        from: {
+          type: "string",
+          description: "CSS selector of the hidden input containing serialized JSON.",
+        },
+        fields: {
+          type: "array",
+          items: {
+            type: "string",
+          },
+          description: "Array of `data-field` names to populate per row.",
+        },
+      },
+    },
+    "list-sortable": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Enables drag-and-drop reordering on a list container. Items must have `[data-list-item]`;\nadd `[data-drag-handle]` on the drag handle element within each item.",
+      examples: [
+        "{ \"list-sortable\": \"#items\" }",
+      ],
+    },
+    "list-serialize": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Serializes all `[data-list-item]` rows into a JSON array and writes it to a hidden input.\nPass `list-serialize` (selector), `to` (hidden input selector), and `fields` (data-field names to collect).",
+      examples: [
+        "{ \"list-serialize\": \"#items\", \"to\": \"#hidden-input\", \"fields\": [\"value\", \"label\"] }",
+      ],
+      siblings: {
+        to: {
+          type: "string",
+          description: "CSS selector of the hidden input to write to.",
+        },
+        fields: {
+          type: "array",
+          items: {
+            type: "string",
+          },
+          description: "Array of `data-field` names to collect per row.",
+        },
+      },
+    },
+  };
+
   ["list-add"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveObj(def, context, r => {
       const list = document.querySelector(String(r["list-add"]));
@@ -40,9 +119,6 @@ export class ListNode extends Node {
       return null;
     });
   }
-  /** Removes the closest `[data-list-item]` ancestor of the target element or selector.
-   * @param {string} list-remove CSS selector or element reference.
-   */
   ["list-remove"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["list-remove"], context, ref => {
       const el = getElement(ref);
@@ -54,9 +130,6 @@ export class ListNode extends Node {
       return false;
     });
   }
-  /** Moves the closest `[data-list-item]` ancestor one position up by swapping with its previous sibling.
-   * @param {string} list-move-up CSS selector or element reference.
-   */
   ["list-move-up"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["list-move-up"], context, ref => {
       const el = getElement(ref);
@@ -70,9 +143,6 @@ export class ListNode extends Node {
       return false;
     });
   }
-  /** Moves the closest `[data-list-item]` ancestor one position down by swapping with its next sibling.
-   * @param {string} list-move-down CSS selector or element reference.
-   */
   ["list-move-down"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["list-move-down"], context, ref => {
       const el = getElement(ref);
@@ -86,16 +156,6 @@ export class ListNode extends Node {
       return false;
     });
   }
-  /**
-   * Pre-populates a list from JSON stored in a hidden input. Reads `list` (selector), `template`,
-   * `from` (hidden input selector), and `fields` (array of `data-field` names to fill per row).
-   * @param {string} list-init CSS selector of the list container.
-   * @param {string} template CSS selector of the `<template>` element to clone.
-   * @param {string} from CSS selector of the hidden input containing serialized JSON.
-   * @param {string[]} fields Array of `data-field` names to populate per row.
-   * @example
-   * { "list-init": "#items", "template": "#item-tpl", "from": "#hidden-input", "fields": ["value", "label"] }
-   */
   ["list-init"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveObj(def, context, r => {
       const listSel = String(r["list-init"]);
@@ -144,13 +204,6 @@ export class ListNode extends Node {
       return items;
     });
   }
-  /**
-   * Enables drag-and-drop reordering on a list container. Items must have `[data-list-item]`;
-   * add `[data-drag-handle]` on the drag handle element within each item.
-   * @param {string} list-sortable CSS selector of the list container.
-   * @example
-   * { "list-sortable": "#items" }
-   */
   ["list-sortable"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["list-sortable"], context, listSelRaw => {
       const list = document.querySelector(String(listSelRaw)) as HTMLElement;
@@ -202,15 +255,6 @@ export class ListNode extends Node {
       return null;
     });
   }
-  /**
-   * Serializes all `[data-list-item]` rows into a JSON array and writes it to a hidden input.
-   * Pass `list-serialize` (selector), `to` (hidden input selector), and `fields` (data-field names to collect).
-   * @param {string} list-serialize CSS selector of the list container.
-   * @param {string} to CSS selector of the hidden input to write to.
-   * @param {string[]} fields Array of `data-field` names to collect per row.
-   * @example
-   * { "list-serialize": "#items", "to": "#hidden-input", "fields": ["value", "label"] }
-   */
   ["list-serialize"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveObj(def, context, r => {
       const listSel = String(r["list-serialize"]);

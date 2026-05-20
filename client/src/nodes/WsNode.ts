@@ -1,5 +1,6 @@
 import { Node, Context, NodeValue, runSteps } from "@jexs/core";
 import { resolve } from "@jexs/core";
+import type { JexsNodeSchema } from "@jexs/core";
 
 /**
  * WsNode — Client-side WebSocket operations.
@@ -10,6 +11,39 @@ import { resolve } from "@jexs/core";
  * - { "ws-close": true }
  */
 export class WsNode extends Node {
+  static schema: JexsNodeSchema = {
+    "ws-connect": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Opens a WebSocket connection. Relative URLs are auto-prefixed with `ws://` or `wss://`.\nPass `on-open`, `on-message`, and `on-close` step arrays. Reconnects automatically with exponential backoff.\nEach message sets `$wsMessage` (parsed data) and `$wsId` (server-assigned client ID) in context.",
+      examples: [
+        "{ \"ws-connect\": \"/ws\", \"on-message\": [{ \"var\": \"$wsMessage\" }] }",
+      ],
+      siblings: {
+        "on-open": {
+          steps: true,
+          description: "Steps to run when the connection opens.",
+        },
+        "on-message": {
+          steps: true,
+          description: "Steps to run on each incoming message (`$wsMessage`, `$wsId` available).",
+        },
+        "on-close": {
+          steps: true,
+          description: "Steps to run when the connection closes.",
+        },
+      },
+    },
+    "ws-send": {
+      output: "null",
+      markdownDescription: "Sends data over the active WebSocket. Objects are JSON-serialized automatically.",
+    },
+    "ws-close": {
+      output: "null",
+      markdownDescription: "Closes the WebSocket connection and disables automatic reconnection.",
+    },
+  };
+
   private static connection: WebSocket | null = null;
   private static localId: string | null = null;
   private static intentionalClose = false;
@@ -19,17 +53,6 @@ export class WsNode extends Node {
   private static lastConnectContext: Context | null = null;
   private static lastConnectUrl: string | null = null;
 
-  /**
-   * Opens a WebSocket connection. Relative URLs are auto-prefixed with `ws://` or `wss://`.
-   * Pass `on-open`, `on-message`, and `on-close` step arrays. Reconnects automatically with exponential backoff.
-   * Each message sets `$wsMessage` (parsed data) and `$wsId` (server-assigned client ID) in context.
-   * @param {string} ws-connect WebSocket URL (relative or absolute).
-   * @param {steps} on-open Steps to run when the connection opens.
-   * @param {steps} on-message Steps to run on each incoming message (`$wsMessage`, `$wsId` available).
-   * @param {steps} on-close Steps to run when the connection closes.
-   * @example
-   * { "ws-connect": "/ws", "on-message": [{ "var": "$wsMessage" }] }
-   */
   ["ws-connect"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["ws-connect"], context, urlRaw => {
       const url = String(urlRaw);
@@ -57,9 +80,6 @@ export class WsNode extends Node {
     });
   }
 
-  /** Sends data over the active WebSocket. Objects are JSON-serialized automatically.
-   * @param {expr} ws-send Data to send (strings sent as-is, objects JSON-serialized).
-   */
   ["ws-send"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["ws-send"], context, data => {
       if (!WsNode.connection || WsNode.connection.readyState !== WebSocket.OPEN) return null;
@@ -68,7 +88,6 @@ export class WsNode extends Node {
     });
   }
 
-  /** Closes the WebSocket connection and disables automatic reconnection. */
   ["ws-close"](_def: Record<string, unknown>, _context: Context): NodeValue {
     WsNode.intentionalClose = true;
     if (WsNode.reconnectTimer) {
@@ -86,6 +105,10 @@ export class WsNode extends Node {
   }
 
   private static openConnection(fullUrl: string, def: Record<string, unknown>, baseContext: Context): void {
+    // Lazy-init the visibility handler on first connect (idempotent — safe to call repeatedly).
+    // Done here rather than at module top level so the module can be imported in Node.js
+    // (e.g. by the schema generator) without touching `document`.
+    WsNode.initVisibilityHandler();
     const ws = new WebSocket(fullUrl);
     WsNode.connection = ws;
 
@@ -195,5 +218,3 @@ export class WsNode extends Node {
     document.addEventListener("visibilitychange", WsNode.visibilityHandler);
   }
 }
-
-WsNode.initVisibilityHandler();

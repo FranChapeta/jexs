@@ -1,5 +1,6 @@
 import { Node, Context, NodeValue } from "@jexs/core";
 import { resolveAll } from "@jexs/core";
+import type { JexsNodeSchema } from "@jexs/core";
 
 const TEXT_EXT = new Set([
   "txt", "html", "htm", "css", "svg", "md", "js", "ts", "tsx", "jsx",
@@ -30,22 +31,32 @@ function classifyUrlExt(url: string): "json" | "text" | "binary" | "unknown" {
  * - { "fetch": "/api/endpoint" }      // defaults to GET
  */
 export class FetchNode extends Node {
-  /**
-   * Makes an HTTP request to the URL in `fetch`. Defaults to GET; pass `method` and `body` for writes.
-   *
-   * Response decoding picks one of three modes:
-   * 1. URL extension: `.json`/`.gltf` → JSON, text-like extensions → string,
-   *    known binary extensions (`.glb`, `.bin`, `.png`, etc.) → ArrayBuffer.
-   * 2. Fallback to response Content-Type: `application/json` → JSON, `text/*` → string,
-   *    everything else → ArrayBuffer.
-   *
-   * @param {string} fetch URL to request.
-   * @param {"GET"|"POST"|"PUT"|"PATCH"|"DELETE"} method HTTP method (default `"GET"`).
-   * @param {expr} body Request body (JSON-serialized for non-GET requests).
-   * @example
-   * { "fetch": "/api/users", "method": "POST", "body": { "name": { "var": "$name" } } }
-   * { "fetch": "/models/Duck.glb", "as": "buf" }
-   */
+  static schema: JexsNodeSchema = {
+    fetch: {
+      type: "string",
+      markdownDescription: "Makes an HTTP request to the URL in `fetch`. Defaults to GET; pass `method` and `body` for writes.\n\nResponse decoding picks one of three modes:\n1. URL extension: `.json`/`.gltf` → JSON, text-like extensions → string,\n   known binary extensions (`.glb`, `.bin`, `.png`, etc.) → ArrayBuffer.\n2. Fallback to response Content-Type: `application/json` → JSON, `text/*` → string,\n   everything else → ArrayBuffer.",
+      examples: [
+        "{ \"fetch\": \"/api/users\", \"method\": \"POST\", \"body\": { \"name\": { \"var\": \"$name\" } } }\n{ \"fetch\": \"/models/Duck.glb\", \"as\": \"buf\" }",
+      ],
+      siblings: {
+        method: {
+          type: "string",
+          enum: [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE",
+          ],
+          description: "HTTP method (default `\"GET\"`).",
+        },
+        body: {
+          description: "Request body (JSON-serialized for non-GET requests).",
+        },
+      },
+    },
+  };
+
   fetch(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll([def.fetch, def.method ?? "GET", def.body ?? null], context, async ([urlRaw, methodRaw, bodyRaw]) => {
       const url = String(urlRaw);
