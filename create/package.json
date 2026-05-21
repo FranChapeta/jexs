@@ -13,7 +13,7 @@
   "bugs": "https://github.com/FranChapeta/jexs/issues",
   "type": "module",
   "bin": {
-    "create-jexs": "./dist/index.js"
+    "create-jexs": "dist/index.js"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

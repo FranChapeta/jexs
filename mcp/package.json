@@ -18,7 +18,7 @@
     ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts" }
   },
   "bin": {
-    "jexs-mcp": "./dist/index.js"
+    "jexs-mcp": "dist/index.js"
   },
   "files": ["dist"],
   "peerDependencies": {
