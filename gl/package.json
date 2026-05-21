@@ -9,7 +9,7 @@
   },
   "files": ["dist"],
   "peerDependencies": {
-    "@jexs/core": "^0.6.0",
-    "@jexs/physics": "^0.6.0"
+    "@jexs/core": "^0.7.0",
+    "@jexs/physics": "^0.4.0"
+    }
   }
-}
