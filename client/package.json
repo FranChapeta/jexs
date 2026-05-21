@@ -1,6 +1,16 @@
 {
   "name": "@jexs/client",
   "version": "0.6.0",
+  "license": "MIT",
+  "description": "Browser runtime for Jexs — DOM, fetch, audio, WebSocket, push, and WebRTC nodes",
+  "keywords": ["jexs", "json", "browser", "client", "dom", "declarative", "ui", "websocket", "fetch"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FranChapeta/jexs.git",
+    "directory": "client"
+  },
+  "homepage": "https://github.com/FranChapeta/jexs#readme",
+  "bugs": "https://github.com/FranChapeta/jexs/issues",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

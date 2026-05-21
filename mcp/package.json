@@ -1,6 +1,16 @@
 {
   "name": "@jexs/mcp",
   "version": "0.5.0",
+  "license": "MIT",
+  "description": "MCP server exposing Jexs node introspection and expression evaluation to Claude Code and Claude Desktop",
+  "keywords": ["jexs", "mcp", "model-context-protocol", "claude", "claude-code", "ai", "llm"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FranChapeta/jexs.git",
+    "directory": "mcp"
+  },
+  "homepage": "https://github.com/FranChapeta/jexs#readme",
+  "bugs": "https://github.com/FranChapeta/jexs/issues",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

@@ -1,6 +1,16 @@
 {
   "name": "@jexs/physics",
   "version": "0.4.0",
+  "license": "MIT",
+  "description": "Entity store, physics simulation, collision detection, raycasting, vectors, and GLB/GLTF mesh loading for Jexs",
+  "keywords": ["jexs", "physics", "collision", "raycast", "entity-component-system", "bvh", "glb", "gltf", "vector", "simulation"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FranChapeta/jexs.git",
+    "directory": "physics"
+  },
+  "homepage": "https://github.com/FranChapeta/jexs#readme",
+  "bugs": "https://github.com/FranChapeta/jexs/issues",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

@@ -1,7 +1,16 @@
 {
   "name": "@jexs/create",
   "version": "0.6.0",
+  "license": "MIT",
   "description": "Scaffold a new Jexs project",
+  "keywords": ["jexs", "scaffold", "starter", "create", "cli", "generator"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FranChapeta/jexs.git",
+    "directory": "create"
+  },
+  "homepage": "https://github.com/FranChapeta/jexs#readme",
+  "bugs": "https://github.com/FranChapeta/jexs/issues",
   "type": "module",
   "bin": {
     "create-jexs": "./dist/index.js"
