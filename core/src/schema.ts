@@ -29,6 +29,8 @@ export interface JexsPropertySchema {
   description?: string;
   markdownDescription?: string;
   examples?: unknown[];
+  /** Direct JSON Pointer ref into the combined schema's $defs (e.g. `"#/$defs/_routeNode"`). */
+  $ref?: string;
 
   // Markers — resolved by the generator, never emitted verbatim.
   /** Strict literal. Opt out of implicit type-or-expression wrapping. */

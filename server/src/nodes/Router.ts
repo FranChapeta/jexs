@@ -62,11 +62,56 @@ function getCachedRegex(pattern: string): RegExp {
 export class RouterNode extends Node {
   static schema: JexsNodeSchema = {
     routes: {
-      type: "object",
-      markdownDescription: "Matches the incoming request path and method against a route tree, then executes the handler.\nSupports exact segments, `*` (single param with optional `paramName`/`paramRegex`),\n`**` (catch-all), conditional `\"if\"` guards per node, param/body validation, and WebSocket upgrade.",
+      $ref: "#/$defs/routeNode",
+      markdownDescription: "Matches the incoming request path and method against a route tree, then executes the handler.\nSupports exact segments, `*` (single param with optional `paramName`/`paramRegex`),\n`**` (catch-all), conditional `\"if\"` guards per node, param/body validation, and WebSocket upgrade.\n\nStep expressions inside `run` / `on-connect` / `on-message` / `on-close` are validated as Jexs expressions.",
       examples: [
         "{ \"routes\": { \"children\": { \"users\": { \"methods\": { \"GET\": { \"file\": \"pages/users.json\" } } } } } }",
       ],
+    },
+  };
+
+  /**
+   * Recursive route-tree shape. Any unknown key is treated as a route segment
+   * (recurses into another routeNode). Step expressions inside `run` and WS
+   * `on-*` arrays get full Jexs expression validation via `#/$defs/steps`.
+   *
+   * `routeNode` (no underscore) is auto-added to the combined schema's top-level
+   * `anyOf` per the schemaDefs underscore convention — so bare routes-tree files
+   * validate without false positives from segment names that happen to collide
+   * with handler keys (e.g. a route named `verify`).
+   */
+  static schemaDefs = {
+    routeNode: {
+      type: "object",
+      properties: {
+        paramName:  { type: "string" },
+        paramRegex: { type: "string" },
+        methods:    { $ref: "#/$defs/_routeMethods" },
+        children:   { type: "object", additionalProperties: { $ref: "#/$defs/routeNode" } },
+        if:    {},
+        else:  {},
+      },
+      additionalProperties: { $ref: "#/$defs/routeNode" },
+    },
+    _routeMethods: {
+      type: "object",
+      patternProperties: {
+        "^(GET|POST|PUT|DELETE|PATCH|WS|HEAD|OPTIONS)$": { $ref: "#/$defs/_routeHandler" },
+      },
+      additionalProperties: false,
+    },
+    _routeHandler: {
+      type: "object",
+      properties: {
+        file:    { type: "string" },
+        run:     { $ref: "#/$defs/steps" },
+        params:  { type: "object" },
+        body:    { type: "object" },
+        options: { type: "object" },
+        "on-connect": { $ref: "#/$defs/steps" },
+        "on-message": { $ref: "#/$defs/steps" },
+        "on-close":   { $ref: "#/$defs/steps" },
+      },
     },
   };
 

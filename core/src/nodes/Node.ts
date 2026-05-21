@@ -6,7 +6,7 @@
  * into actual values.
  */
 
-import type { JexsNodeSchema } from "../schema.js";
+import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
 
 export interface Context {
   [key: string]: unknown;
@@ -43,6 +43,28 @@ export abstract class Node {
    * `static schema = { ... };` without re-annotating.
    */
   static schema: JexsNodeSchema = {};
+
+  /**
+   * Optional raw JSON Schema fragments this Node contributes to the combined
+   * schema's `$defs`. Use for structures that don't fit JexsPropertySchema —
+   * e.g. recursive trees, patternProperties. Schema author refs them via
+   * `{ $ref: "#/$defs/<name>" }` on a property.
+   *
+   * Naming convention: entries whose names start with `_` are internal helpers.
+   * Entries whose names DON'T start with `_` are also added to the combined
+   * schema's top-level `anyOf` as root-matchable branches (e.g. `routeNode`
+   * lets a bare routes-tree file validate at the file root).
+   */
+  static schemaDefs?: Record<string, Record<string, unknown>>;
+
+  /**
+   * Siblings shared across every method declared by this Node. The framework
+   * auto-creates a `_<NodeName>Siblings` $defs entry from this map and refs
+   * it from every byKey entry — so the sibling block is stored once, not
+   * duplicated per method. Each method's own `siblings` field can still add
+   * method-specific entries on top.
+   */
+  static commonSiblings?: Record<string, JexsPropertySchema>;
 
   /**
    * Keys this node handles for key-based dispatch in the resolver.

@@ -182,76 +182,113 @@ function isObject(value: unknown): value is Record<string, unknown> {
 /**
  * QueryNode - Handles JSON query definitions.
  *
- * SELECT:
- * { "query": { "type": "select", "table": "users", "columns": ["id", "name"] } }
- * { "query": { "type": "select", "table": "users", "where": { "id": 1 } }, "first": true }
- *
- * INSERT:
- * { "query": { "type": "insert", "table": "users", "data": { "name": "John" } } }
- *
- * UPDATE:
- * { "query": { "type": "update", "table": "users", "data": { "name": "Jane" }, "where": { "id": 1 } } }
- *
- * DELETE:
- * { "query": { "type": "delete", "table": "users", "where": { "id": 1 } } }
- *
- * COUNT:
- * { "query": { "type": "count", "table": "users" } }
- *
- * CREATE TABLE:
- * { "query": { "type": "create", "schema": "schema/tables" } }
- *
- * DROP TABLE:
- * { "query": { "type": "drop", "table": "users" } }
  */
 export class QueryNode extends Node {
   static schema: JexsNodeSchema = {
-    query: {
-      type: "string",
-      enum: [
-        "select",
-        "insert",
-        "upsert",
-        "update",
-        "delete",
-        "count",
-        "create",
-        "drop",
-        "alter",
-      ],
-      markdownDescription: "Executes a SQL query. The operation type is the primary key value; all other query fields are siblings.\nColumn names in `where`/`data` are protected from resolver key collisions.",
-      examples: [
-        "{ \"query\": \"select\", \"table\": \"users\", \"where\": { \"id\": { \"var\": \"$id\" } }, \"first\": true }",
-      ],
-      siblings: {
-        table: {
-          type: "string",
-          description: "Table name.",
-        },
-        first: {
-          type: "boolean",
-          description: "Return a single row instead of an array.",
-        },
-        connection: {
-          type: "string",
-          description: "Named database connection to use (default connection if omitted).",
-        },
-      },
-    },
+    "query-select": queryMethod(
+      "Executes a SELECT query on the given table. Primary value is the table name.\nReturns rows (array) or a single row (with `query-first: true`).",
+      "{ \"query-select\": \"users\", \"where\": { \"id\": { \"var\": \"$id\" } }, \"query-first\": true }",
+      "any",
+    ),
+    "query-insert": queryMethod(
+      "Inserts data into the given table. Provide `data` as a row object or an array of rows.",
+      "{ \"query-insert\": \"users\", \"data\": { \"name\": \"John\" } }",
+    ),
+    "query-upsert": queryMethod(
+      "Inserts or updates a row. Use `conflict` to specify the target columns.",
+      "{ \"query-upsert\": \"users\", \"data\": { \"id\": 1, \"name\": \"John\" }, \"conflict\": [\"id\"] }",
+    ),
+    "query-update": queryMethod(
+      "Updates rows in the given table matching `where`.",
+      "{ \"query-update\": \"users\", \"data\": { \"name\": \"Jane\" }, \"where\": { \"id\": 1 } }",
+    ),
+    "query-delete": queryMethod(
+      "Deletes rows from the given table matching `where`.",
+      "{ \"query-delete\": \"users\", \"where\": { \"id\": 1 } }",
+    ),
+    "query-count": queryMethod(
+      "Counts rows in the given table.",
+      "{ \"query-count\": \"users\", \"where\": { \"active\": true } }",
+      "number",
+    ),
+    "query-create": queryMethod(
+      "Creates a table from a registered schema (`query-schema`) or inline column definitions.",
+      "{ \"query-create\": \"users\", \"query-schema\": \"schema/users\" }",
+      "null",
+    ),
+    "query-drop": queryMethod(
+      "Drops the given table.",
+      "{ \"query-drop\": \"users\" }",
+      "null",
+    ),
+    "query-alter": queryMethod(
+      "Alters the given table: add columns via `addColumns`.",
+      "{ \"query-alter\": \"users\", \"addColumns\": { \"age\": { \"type\": \"integer\" } } }",
+      "null",
+    ),
   };
 
-  async query(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const connRaw = await resolve(def.connection ?? null, context);
+  /** Shared siblings across every `query-*` method. Framework auto-creates
+   *  `_QueryNodeSiblings` in $defs and $ref's it from each method's byKey
+   *  entry — sibling block stored once, not duplicated 9 times. */
+  static commonSiblings = {
+    table:           { type: "string"  as const, description: "Table name (overrides the primary value)." },
+    "query-first":   { type: "boolean" as const, description: "Return a single row instead of an array." },
+    connection:      { type: "string"  as const, description: "Named DB connection (default if omitted)." },
+    where:           { description: "WHERE clause: `{ column: value }` or nested `or`/`and`." },
+    data:            { description: "Row data for `insert`/`upsert`/`update`." },
+    orderBy:         { description: "ORDER BY: `{ column: 'asc' | 'desc' }`." },
+    "query-groupBy": { description: "GROUP BY column name or array of names." },
+    "query-schema":  { description: "Table schema reference (used by `query-create`)." },
+    group_concat:    { description: "GROUP_CONCAT aggregate." },
+    conflict:        { type: "array"   as const, description: "Conflict target columns for `upsert`." },
+    addColumns:      { description: "Columns to add (used by `query-alter`)." },
+    columns:         { type: "array"   as const, description: "Columns to select." },
+    limit:           { type: "number"  as const, description: "LIMIT N." },
+    offset:          { type: "number"  as const, description: "OFFSET N." },
+    distinct:        { type: "boolean" as const, description: "SELECT DISTINCT." },
+    innerJoin:       { description: "INNER JOIN clauses." },
+    leftJoin:        { description: "LEFT JOIN clauses." },
+    rightJoin:       { description: "RIGHT JOIN clauses." },
+    system:          { type: "boolean" as const, description: "Skip schema validator." },
+  };
+
+  ["query-select"](def: Record<string, unknown>, context: Context): Promise<NodeValue> { return this.execQuery("select", def, context); }
+  ["query-insert"](def: Record<string, unknown>, context: Context): Promise<NodeValue> { return this.execQuery("insert", def, context); }
+  ["query-upsert"](def: Record<string, unknown>, context: Context): Promise<NodeValue> { return this.execQuery("upsert", def, context); }
+  ["query-update"](def: Record<string, unknown>, context: Context): Promise<NodeValue> { return this.execQuery("update", def, context); }
+  ["query-delete"](def: Record<string, unknown>, context: Context): Promise<NodeValue> { return this.execQuery("delete", def, context); }
+  ["query-count"](def: Record<string, unknown>, context: Context): Promise<NodeValue>  { return this.execQuery("count",  def, context); }
+  ["query-create"](def: Record<string, unknown>, context: Context): Promise<NodeValue> { return this.execQuery("create", def, context); }
+  ["query-drop"](def: Record<string, unknown>, context: Context): Promise<NodeValue>   { return this.execQuery("drop",   def, context); }
+  ["query-alter"](def: Record<string, unknown>, context: Context): Promise<NodeValue>  { return this.execQuery("alter",  def, context); }
+
+  private async execQuery(
+    op: "select" | "insert" | "upsert" | "update" | "delete" | "count" | "create" | "drop" | "alter",
+    def: Record<string, unknown>,
+    context: Context,
+  ): Promise<NodeValue> {
+    // The dispatching key (e.g. "query-select") carries the table name as its
+    // value when not explicitly set via the `table` sibling.
+    const dispatchKey = `query-${op}`;
+    const tableFromDispatch = def[dispatchKey];
+    const adjustedDef: Record<string, unknown> = {
+      ...def,
+      query: op,
+      table: def.table ?? tableFromDispatch,
+    };
+
+    const connRaw = await resolve(adjustedDef.connection ?? null, context);
     const connectionName = connRaw
       ? String(connRaw)
       : (DatabaseNode.getDefaultConnection() ?? "default");
     const knex = DatabaseNode.getKnex(connectionName);
 
-    const resolvedQuery = await resolveQueryDef(def, context);
+    const resolvedQuery = await resolveQueryDef(adjustedDef, context);
 
-    if (!def.system) await runValidator(resolvedQuery, context);
+    if (!adjustedDef.system) await runValidator(resolvedQuery, context);
 
-    const first = def.first === true || resolvedQuery.first === true;
+    const first = adjustedDef["query-first"] === true || resolvedQuery.first === true;
 
     switch (resolvedQuery.type) {
       case "select":  return executeSelect(knex, resolvedQuery, first) as Promise<NodeValue>;
@@ -266,6 +303,21 @@ export class QueryNode extends Node {
       default: throw new Error(`Unknown query type: ${resolvedQuery.type}`);
     }
   }
+}
+
+/** Helper for the schema literal — keeps the 9 method entries terse.
+ *  Common siblings come from `QueryNode.commonSiblings` (framework auto-wires). */
+function queryMethod(
+  markdown: string,
+  example: string,
+  output?: "string" | "number" | "boolean" | "array" | "object" | "null" | "any",
+): import("@jexs/core").JexsMethodSchema {
+  return {
+    type: "string",
+    output,
+    markdownDescription: markdown,
+    examples: [example],
+  };
 }
 
 /**
@@ -305,8 +357,15 @@ async function resolveQueryDef(
   def: Record<string, unknown>,
   context: Context,
 ): Promise<QueryDefinition> {
-  const { where, data, orderBy, groupBy, schema, addColumns, group_concat, conflict,
-          connection, system, first, as: _as, query: queryType, ...rest } = def;
+  const {
+    where, data, orderBy, addColumns, group_concat, conflict,
+    connection, system, as: _as, query: queryType,
+    // Renamed siblings (avoid resolver-key collisions with other Nodes' primaries):
+    "query-groupBy": groupBy,
+    "query-first":   first,
+    "query-schema":  schema,
+    ...rest
+  } = def;
 
   const query = validateQuery({ ...rest, query: queryType });
 

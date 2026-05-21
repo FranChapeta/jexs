@@ -122,6 +122,14 @@ function typeOrExprRef(t: JexsType): EmittedSchema {
  * fragment. Markers like `tuple`, `map`, `steps`, `literal` are resolved away.
  */
 export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
+  // Direct $ref: emit the ref with metadata. $ref siblings are evaluated in
+  // JSON Schema 2020-12, so markdownDescription stays accessible for hover.
+  if (prop.$ref) {
+    const out: EmittedSchema = { $ref: prop.$ref };
+    liftMetadata(prop, out);
+    return out;
+  }
+
   if (prop.tuple !== undefined) {
     const [min, max] = typeof prop.tuple === "number"
       ? [prop.tuple, prop.tuple]
@@ -229,6 +237,10 @@ export interface PackageSchema {
   packageName?: string;
   byKey: Record<string, EmittedMethodSchema>;
   byNode: Record<string, EmittedNodeSchema>;
+  /** Raw $defs entries contributed by individual Nodes. Names starting with `_`
+   *  are internal helpers; non-underscored names are added to the combined
+   *  schema's top-level `anyOf` as root-matchable branches. */
+  extraDefs?: Record<string, EmittedSchema>;
 }
 
 export interface EmittedMethodSchema {
@@ -283,6 +295,9 @@ export function buildPackageSchema(
 ): PackageSchema {
   const compiled: Record<string, CompiledMethod> = {};
   const collisions: string[] = [];
+  const extraDefs: Record<string, EmittedSchema> = {};
+  /** Per-Node $defs ref to a shared siblings block (built from `commonSiblings`). */
+  const nodeSiblingsRef: Record<string, string> = {};
 
   for (const n of nodes) {
     // Resolve to the class (constructor) — works for both instances and classes.
@@ -290,6 +305,21 @@ export function buildPackageSchema(
     const schema = (cls as unknown as { schema?: JexsNodeSchema }).schema;
     if (!schema) continue;
     const nodeClass = cls.name;
+
+    // If the Node declares commonSiblings, auto-create a `_<NodeName>Siblings`
+    // $defs entry from it. byKey emission below picks it up via nodeSiblingsRef.
+    const nodeCommonSiblings = (cls as unknown as {
+      commonSiblings?: Record<string, JexsPropertySchema>;
+    }).commonSiblings;
+    if (nodeCommonSiblings && Object.keys(nodeCommonSiblings).length > 0) {
+      const siblingsDefName = `_${nodeClass}Siblings`;
+      const expandedProps: Record<string, EmittedSchema> = {};
+      for (const [k, v] of Object.entries(nodeCommonSiblings)) {
+        expandedProps[k] = expandProperty(v);
+      }
+      extraDefs[siblingsDefName] = { properties: expandedProps };
+      nodeSiblingsRef[nodeClass] = `#/$defs/${siblingsDefName}`;
+    }
 
     for (const [methodKey, method] of Object.entries(schema)) {
       const prior = compiled[methodKey];
@@ -301,15 +331,26 @@ export function buildPackageSchema(
       }
       compiled[methodKey] = compileMethod(methodKey, method, nodeClass);
     }
+
+    // Per-Node $defs contributions (e.g. RouterNode's routeNode tree shape).
+    const nodeDefs = (cls as unknown as { schemaDefs?: Record<string, EmittedSchema> }).schemaDefs;
+    if (nodeDefs) {
+      for (const [defName, defSchema] of Object.entries(nodeDefs)) {
+        if (defName in extraDefs) {
+          collisions.push(`$defs name "${defName}" contributed by multiple Nodes.`);
+          continue;
+        }
+        extraDefs[defName] = defSchema;
+      }
+    }
   }
 
   if (collisions.length > 0) {
     throw new Error(
-      `Found ${collisions.length} handler-key collision(s):\n  ${collisions.join("\n  ")}`,
+      `Found ${collisions.length} schema-collision(s):\n  ${collisions.join("\n  ")}`,
     );
   }
 
-  // byNode entries reference back to byKey via $ref to avoid duplicating each
   // byKey is the canonical store; byNode is a compact index of method names per
   // Node class. Consumers wanting a full per-Node dispatch schema construct it
   // on the fly via `{ type: "object", dependentSchemas: byNode[name].map(...) }`.
@@ -318,6 +359,10 @@ export function buildPackageSchema(
   for (const [methodKey, m] of Object.entries(compiled)) {
     const entry: EmittedMethodSchema = { properties: m.properties };
     if (m.output !== undefined) entry.output = m.output;
+    // 2020-12 evaluates $ref siblings, so the local `properties` (primary key)
+    // applies in addition to the shared siblings block from the ref'd schema.
+    const ref = nodeSiblingsRef[m.ownerNode];
+    if (ref) (entry as unknown as Record<string, unknown>).$ref = ref;
     byKey[methodKey] = entry;
     (byNode[m.ownerNode] ??= []).push(methodKey);
   }
@@ -328,6 +373,7 @@ export function buildPackageSchema(
     byNode,
   };
   if (packageName) out.packageName = packageName;
+  if (Object.keys(extraDefs).length > 0) out.extraDefs = extraDefs;
   return out;
 }
 
@@ -404,6 +450,7 @@ export interface CombinedSchema {
 export function mergePackageSchemas(packages: PackageSchema[]): CombinedSchema {
   const byKey: Record<string, EmittedMethodSchema> = {};
   const byNode: Record<string, EmittedNodeSchema> = {};
+  const extraDefs: Record<string, EmittedSchema> = {};
   const collisions: string[] = [];
 
   for (const pkg of packages) {
@@ -421,10 +468,19 @@ export function mergePackageSchemas(packages: PackageSchema[]): CombinedSchema {
       }
       byNode[n] = v;
     }
+    for (const [defName, defSchema] of Object.entries(pkg.extraDefs ?? {})) {
+      if (defName in extraDefs) {
+        collisions.push(`$defs name "${defName}" appears in multiple packages.`);
+        continue;
+      }
+      extraDefs[defName] = defSchema;
+    }
   }
   if (collisions.length > 0) {
     throw new Error(`Schema merge collisions:\n  ${collisions.join("\n  ")}`);
   }
+  // Underscore convention: non-underscored extraDefs entries are root-matchable.
+  const rootMatches = Object.keys(extraDefs).filter(name => !name.startsWith("_"));
 
   // Two canonical stores at the schema root:
   //   - byKey/<k> = method-dispatch schema (sibling constraints), used by
@@ -570,6 +626,7 @@ export function mergePackageSchemas(packages: PackageSchema[]): CombinedSchema {
     $defs: {
       ...sharedDefs,
       _addProps: additionalPropertiesDef,
+      ...extraDefs,
       ...dedupDefs,
       exprFlat,
       ...filteredVariants,
@@ -577,6 +634,10 @@ export function mergePackageSchemas(packages: PackageSchema[]): CombinedSchema {
     vp,
     byKey,
     byNode,
-    anyOf: [{ ...REF.steps }, { ...REF.exprFlat }],
+    anyOf: [
+      { ...REF.steps },
+      { ...REF.exprFlat },
+      ...rootMatches.map(name => ({ $ref: `#/$defs/${name}` })),
+    ],
   };
 }
