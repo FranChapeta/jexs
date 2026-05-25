@@ -35,8 +35,7 @@ export class LogicNode extends Node {
       },
     },
     foreach: {
-      output: "array",
-      markdownDescription: "Iterates over an array, resolving `do` for each item. Use `item` to name the item variable (default `\"item\"`), `key` for the index variable, and `parallel: true` to resolve all iterations concurrently.\nEach iteration receives a `loop` context with `item`, `index`, `first`, `last`, and `length`.",
+      markdownDescription: "Iterates over an array, resolving `do` for each item. Returns the **last** item's value — use `map` if you need an array of every result. Use `item` to name the item variable (default `\"item\"`), `key` for the index variable, and `parallel: true` to resolve all iterations concurrently.\nEach iteration receives a `loop` context with `item`, `index`, `first`, `last`, and `length`.",
       examples: [
         "{ \"foreach\": { \"var\": \"$users\" }, \"item\": \"user\", \"do\": { \"var\": \"user.name\" } }",
       ],

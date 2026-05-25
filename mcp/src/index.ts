@@ -18,10 +18,70 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import * as z from "zod/v4";
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 interface NodeLike {
   handlerKeys?: readonly string[] | null;
   constructor: { name: string };
+}
+
+// Resolve @jexs/* packages from the user's project (process.cwd()), not from
+// wherever this MCP server was installed. When launched via `npx -y @jexs/mcp`,
+// the npx cache only contains @jexs/mcp itself; default ESM resolution would
+// never reach the project's node_modules. We walk node_modules ourselves
+// because the jexs packages publish "exports" with only an "import" condition,
+// which createRequire().resolve() rejects under CJS semantics.
+const importErrors: Record<string, string> = {};
+
+function findPackageRoot(spec: string, fromDir: string): string | null {
+  let dir = path.resolve(fromDir);
+  while (true) {
+    const candidate = path.join(dir, "node_modules", ...spec.split("/"));
+    if (fs.existsSync(path.join(candidate, "package.json"))) return candidate;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+interface PkgJson {
+  main?: string;
+  exports?: string | Record<string, unknown>;
+}
+
+function resolveEntry(pkg: PkgJson): string | null {
+  const exp = pkg.exports;
+  if (typeof exp === "string") return exp;
+  if (exp && typeof exp === "object") {
+    const dot = (exp as Record<string, unknown>)["."];
+    if (typeof dot === "string") return dot;
+    if (dot && typeof dot === "object") {
+      const conds = dot as Record<string, unknown>;
+      for (const key of ["import", "node", "default"]) {
+        const v = conds[key];
+        if (typeof v === "string") return v;
+      }
+    }
+  }
+  return pkg.main ?? null;
+}
+
+async function importJexs<T = unknown>(spec: string): Promise<T> {
+  const root = findPackageRoot(spec, process.cwd());
+  if (!root) {
+    const err = new Error(`${spec} not found under ${process.cwd()}/node_modules`);
+    importErrors[spec] = err.message;
+    throw err;
+  }
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf-8")) as PkgJson;
+    const entry = resolveEntry(pkg);
+    if (!entry) throw new Error(`no entry point declared in ${root}/package.json`);
+    return (await import(pathToFileURL(path.join(root, entry)).href)) as T;
+  } catch (err) {
+    importErrors[spec] = err instanceof Error ? err.message : String(err);
+    throw err;
+  }
 }
 
 // Discover installed Jexs packages and collect nodes
@@ -30,13 +90,13 @@ const packages: string[] = [];
 
 // Try @jexs/server first (includes core nodes)
 try {
-  const server = await import("@jexs/server");
+  const server = await importJexs<typeof import("@jexs/server")>("@jexs/server");
   nodes.push(...server.serverNodes);
   packages.push("@jexs/server");
 } catch {
   // Try @jexs/core alone
   try {
-    const core = await import("@jexs/core");
+    const core = await importJexs<typeof import("@jexs/core")>("@jexs/core");
     nodes.push(...core.coreNodes);
     packages.push("@jexs/core");
   } catch { /* not installed */ }
@@ -44,14 +104,14 @@ try {
 
 // Try @jexs/client
 try {
-  const client = await import("@jexs/client");
+  const client = await importJexs<typeof import("@jexs/client")>("@jexs/client");
   nodes.push(...client.clientNodes);
   packages.push("@jexs/client");
 } catch { /* not installed */ }
 
 // Try @jexs/physics
 try {
-  const physics = await import("@jexs/physics");
+  const physics = await importJexs<typeof import("@jexs/physics")>("@jexs/physics");
   if (physics.EntityNode) nodes.push(new physics.EntityNode());
   if (physics.PhysicsNode) nodes.push(new physics.PhysicsNode());
   if (physics.CollisionNode) nodes.push(new physics.CollisionNode());
@@ -62,7 +122,7 @@ try {
 
 // Try @jexs/gl
 try {
-  const gl = await import("@jexs/gl");
+  const gl = await importJexs<typeof import("@jexs/gl")>("@jexs/gl");
   if (gl.GlNode) nodes.push(new gl.GlNode());
   packages.push("@jexs/gl");
 } catch { /* not installed */ }
@@ -70,9 +130,17 @@ try {
 // Set up resolver if core is available
 let resolve: ((value: unknown, context: Record<string, unknown>) => unknown) | null = null;
 try {
-  const core = await import("@jexs/core");
-  resolve = core.createResolver(nodes as any);
+  const core = await importJexs<typeof import("@jexs/core")>("@jexs/core");
+  resolve = core.createResolver(nodes as never);
 } catch { /* core not available */ }
+
+if (nodes.length === 0) {
+  // Surface why nothing was found so the user can debug from Claude Code's MCP log.
+  process.stderr.write(`[@jexs/mcp] No packages discovered from cwd=${process.cwd()}\n`);
+  for (const [spec, err] of Object.entries(importErrors)) {
+    process.stderr.write(`[@jexs/mcp]   ${spec}: ${err}\n`);
+  }
+}
 
 const mcpServer = new McpServer({
   name: "jexs-dev",

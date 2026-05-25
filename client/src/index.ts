@@ -3,6 +3,20 @@ import { Client } from "./Client.js";
 
 export { Client, clientNodes } from "./Client.js";
 
+// Re-export every node class so tools that want the full set of schemas
+// (docs sites, validators, MCP introspection) can pull them without depending
+// on internal paths. `clientNodes` stays as the eager subset the runtime
+// registers immediately; the rest are lazy-loaded in the browser branch below.
+export { DomNode } from "./nodes/DomNode.js";
+export { FetchNode } from "./nodes/FetchNode.js";
+export { AudioNode } from "./nodes/AudioNode.js";
+export { TreeNode } from "./nodes/TreeNode.js";
+export { ListNode } from "./nodes/ListNode.js";
+export { WsNode } from "./nodes/WsNode.js";
+export { PushNode } from "./nodes/PushNode.js";
+export { WebRTCNode } from "./nodes/WebRTCNode.js";
+export { ServiceWorkerNode } from "./nodes/ServiceWorkerNode.js";
+
 // Browser: expose globally and auto-init on DOMContentLoaded
 if (typeof window !== "undefined") {
   (window as unknown as Record<string, unknown>).Jexs = Client;

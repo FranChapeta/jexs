@@ -32,7 +32,7 @@ export class FileNode extends Node {
   static schema: JexsNodeSchema = {
     file: {
       type: "string",
-      markdownDescription: "Loads and resolves a JSON file relative to the `app/` directory.\nArrays are executed as step sequences; objects are resolved as expressions.\nPass `\"raw\": true` for raw string content, `\"data\": true` to skip resolution,\n`\"params\"` to provide scoped variables, or `\"write\"` to write data to the file.",
+      markdownDescription: "Loads a JSON file relative to the `app/` directory and resolves it as a Jexs expression.\nArrays are executed as step sequences; objects are resolved as a single expression.\nPass `\"data\": true` to skip resolution and get the raw parsed JSON (use for data files, route trees, and anywhere you want the resolver to leave the file alone).\nPass `\"raw\": true` for the raw string content with no JSON parse.\nPass `\"params\"` to merge scoped variables into the file's resolution context, or `\"write\"` to write data to the file.",
       examples: [
         "{ \"file\": \"pages/home.json\", \"params\": { \"title\": \"Home\" } }",
       ],
@@ -214,12 +214,12 @@ function loadFile(
         return result ?? null;
       }
 
-      // Single object: resolve with file context if params were provided
-      if (fileContext !== context) {
-        return resolve(parsed, fileContext);
-      }
-
-      return parsed;
+      // Single object: always resolve (with file context if params were provided,
+      // else the caller's context). Use `data: true` to short-circuit resolution
+      // and get the raw parsed JSON back — that's the explicit knob for pure data
+      // and for definition trees (e.g. routes) that should be walked, not eagerly
+      // evaluated by the resolver.
+      return resolve(parsed, fileContext);
     } catch (error) {
       const e = error as Error;
       console.error(`[FileNode] Error loading file ${filePath}:`, e.message);
