@@ -379,6 +379,18 @@ async function main(): Promise<void> {
     ".jexs-schema.json\nnode_modules/\ndist/\n" + (useTailwind ? "public/styles.css\n" : ""),
   );
 
+  // .gitattributes — GitHub Linguist treats JSON as a "data" language by default
+  // and hides it from the repo language stats. In a Jexs project the JSON files
+  // under app/ (or src/ for client-only) are the actual source code, so we mark
+  // them detectable and reclassify them as JSON source. Config JSON at the root
+  // (package.json, tsconfig.json, etc.) is intentionally left alone.
+  const templateDir = useServer ? "app" : "src";
+  writeFileSync(
+    join(dir, ".gitattributes"),
+    `${templateDir}/**/*.json linguist-detectable=true\n` +
+    `${templateDir}/**/*.json linguist-language=JSON\n`,
+  );
+
   // .mcp.json — registers @jexs/mcp so MCP-compatible AI clients (Claude Code,
   // Claude Desktop, etc.) can introspect this project's Jexs node registry.
   writeFileSync(
@@ -487,6 +499,7 @@ async function main(): Promise<void> {
   console.log(`  .prettierrc.json`);
   console.log(`  .mcp.json`);
   console.log(`  .gitignore`);
+  console.log(`  .gitattributes`);
   console.log(`  CLAUDE.md`);
   if (useServer) {
     console.log(`  tsconfig.json`);
