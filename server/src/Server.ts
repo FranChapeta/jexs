@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
-import { Context, ResolverFn, TimerNode } from "@jexs/core";
+import { Context, ResolverFn, TimerNode, isHttpError } from "@jexs/core";
 import { WebSocketNode } from "./nodes/WebSocket.js";
 
 export class Server {
@@ -259,13 +259,22 @@ export class Server {
       // Remove startup-only keys from request context
       delete context._server;
 
-      // Execute per-request steps sequentially
+      // Execute per-request steps sequentially. Two stop signals:
+      //   - a step that resolves to `{ return: X }` yields X and halts
+      //   - a step that resolves to a response object halts
       let result: unknown = null;
       if (this.requestSteps) {
         for (const step of this.requestSteps) {
           const stepResult = await Promise.resolve(
             this.resolve(step, context),
           );
+          if (
+            stepResult && typeof stepResult === "object" && !Array.isArray(stepResult) &&
+            "return" in (stepResult as Record<string, unknown>)
+          ) {
+            result = (stepResult as Record<string, unknown>).return ?? null;
+            break;
+          }
           if (this.isResponse(stepResult)) {
             result = stepResult;
             break;
@@ -274,9 +283,9 @@ export class Server {
         }
       }
 
-      // Wrap string results as HTML responses
+      // Wrap string results as HTML responses (responseType inferred from string)
       if (typeof result === "string") {
-        result = { type: "html", content: result };
+        result = { response: result };
       }
 
       // Apply pending cookies (set by session operations via context)
@@ -292,9 +301,8 @@ export class Server {
         | undefined;
       if (
         deferred?.length &&
-        result &&
-        typeof result === "object" &&
-        (result as Record<string, unknown>).type === "html"
+        this.isResponse(result) &&
+        this.isHtmlResponse(result as Record<string, unknown>)
       ) {
         await this.sendStreamingResponse(
           res,
@@ -308,30 +316,51 @@ export class Server {
     } catch (error) {
       if (error instanceof Error && error.message === "Body too large") {
         this.sendResponse(res, {
-          type: "error",
-          status: 413,
-          content: "Request body too large",
+          response: "Request body too large",
+          responseStatus: 413,
+        });
+        return;
+      }
+      if (isHttpError(error)) {
+        this.sendResponse(res, {
+          response: error.message || `HTTP ${error.status}`,
+          responseStatus: error.status,
         });
         return;
       }
       console.error("Request error:", error);
       this.sendResponse(res, {
-        type: "error",
-        status: 500,
-        content: "Internal Server Error",
+        response: "Internal Server Error",
+        responseStatus: 500,
       });
     }
   }
 
   private isResponse(value: unknown): boolean {
-    if (!value || typeof value !== "object") return false;
-    const r = value as Record<string, unknown>;
-    return (
-      typeof r.type === "string" &&
-      ["html", "json", "redirect", "error", "notFound"].includes(
-        r.type as string,
-      )
-    );
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    return "response" in (value as Record<string, unknown>);
+  }
+
+  /** Whether the response body is HTML (explicit or inferred from string content). */
+  private isHtmlResponse(r: Record<string, unknown>): boolean {
+    if (typeof r.responseType === "string") return r.responseType === "html";
+    return typeof r.response === "string";
+  }
+
+  /** Map responseType (or content shape) to a Content-Type header value. */
+  private resolveContentType(explicit: string | null, content: unknown): string {
+    if (explicit) {
+      switch (explicit) {
+        case "html": return "text/html; charset=utf-8";
+        case "json": return "application/json";
+        case "text": return "text/plain; charset=utf-8";
+      }
+      // Literal MIME (e.g. "image/png", "application/xml")
+      if (explicit.includes("/")) return explicit;
+      // Unknown keyword falls back to plain text
+      return "text/plain; charset=utf-8";
+    }
+    return typeof content === "string" ? "text/html; charset=utf-8" : "application/json";
   }
 
   private async parseBody(req: http.IncomingMessage): Promise<unknown> {
@@ -493,23 +522,24 @@ export class Server {
     result: Record<string, unknown>,
     deferred: { id: string; promise: Promise<unknown> }[],
   ): Promise<void> {
-    // Apply custom headers
-    if (result.headers && typeof result.headers === "object") {
-      for (const [key, value] of Object.entries(
-        result.headers as Record<string, string>,
-      )) {
-        res.setHeader(key, value);
+    // Apply custom headers (responseHeaders plural + responseHeader singular alias)
+    for (const key of ["responseHeaders", "responseHeader"] as const) {
+      const h = result[key];
+      if (h && typeof h === "object" && !Array.isArray(h)) {
+        for (const [k, v] of Object.entries(h as Record<string, string>)) {
+          res.setHeader(k, v);
+        }
       }
     }
 
     const status =
-      typeof result.status === "number" ? result.status : 200;
+      typeof result.responseStatus === "number" ? result.responseStatus : 200;
     res.writeHead(status, {
       "Content-Type": "text/html; charset=utf-8",
     });
 
     // Send initial HTML with placeholders
-    res.write(String(result.content ?? ""));
+    res.write(String(result.response ?? ""));
 
     // Inline helper script (runs once, defines the replacement function)
     res.write(
@@ -553,57 +583,52 @@ export class Server {
   }
 
   private sendResponse(res: http.ServerResponse, result: unknown): void {
-    if (!result || typeof result !== "object") {
-      res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
-      res.end("<h1>404 Not Found</h1>");
+    if (!this.isResponse(result)) {
+      if (typeof result === "string") {
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(result);
+      } else if (result == null) {
+        res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
+        res.end("<h1>404 Not Found</h1>");
+      } else {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+      }
       return;
     }
 
     const r = result as Record<string, unknown>;
+    const content = r.response;
 
-    if (r.headers && typeof r.headers === "object") {
-      for (const [key, value] of Object.entries(
-        r.headers as Record<string, string>,
-      )) {
-        res.setHeader(key, value);
+    // Merge headers: plural first, singular overrides on collision
+    const headers: Record<string, string> = {};
+    for (const key of ["responseHeaders", "responseHeader"] as const) {
+      const h = r[key];
+      if (h && typeof h === "object" && !Array.isArray(h)) {
+        Object.assign(headers, h as Record<string, string>);
       }
     }
 
-    const status = typeof r.status === "number" ? r.status : undefined;
+    const explicitType = typeof r.responseType === "string" ? r.responseType : null;
+    const status = typeof r.responseStatus === "number" ? r.responseStatus : null;
 
-    switch (r.type) {
-      case "html":
-        res.writeHead(status ?? 200, {
-          "Content-Type": "text/html; charset=utf-8",
-        });
-        res.end(String(r.content ?? ""));
-        break;
+    // Redirect is the one type that meaningfully changes the response shape:
+    // `response` is the target URL placed in Location, body is empty.
+    if (explicitType === "redirect") {
+      res.writeHead(status ?? 302, { Location: String(content ?? "/"), ...headers });
+      res.end();
+      return;
+    }
 
-      case "json":
-        res.writeHead(status ?? 200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(r.data));
-        break;
+    const contentType = this.resolveContentType(explicitType, content);
+    res.writeHead(status ?? 200, { "Content-Type": contentType, ...headers });
 
-      case "redirect":
-        res.writeHead(status ?? 302, { Location: String(r.url ?? "/") });
-        res.end();
-        break;
-
-      case "notFound":
-        res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
-        res.end(String(r.content ?? "<h1>404 Not Found</h1>"));
-        break;
-
-      case "error":
-        res.writeHead(status ?? 500, {
-          "Content-Type": "text/html; charset=utf-8",
-        });
-        res.end(String(r.content ?? "<h1>Internal Server Error</h1>"));
-        break;
-
-      default:
-        res.writeHead(status ?? 200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(result));
+    const serializeAsJson =
+      explicitType === "json" || (!explicitType && typeof content !== "string");
+    if (serializeAsJson) {
+      res.end(JSON.stringify(content ?? null));
+    } else {
+      res.end(content == null ? "" : String(content));
     }
   }
 

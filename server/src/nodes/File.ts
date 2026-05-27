@@ -176,55 +176,59 @@ function loadFile(
     const data = toBoolean(dataRaw);
     const filePath = resolvePath(filePathValue, appDir);
     const kind = classifyExt(filePath);
+    const wantBuffer = kind === "binary" && !raw;
 
+    // Narrow try: only catch file I/O failures here. Errors thrown by the
+    // loaded file's own steps (e.g. HttpError from a 404 route) must
+    // propagate to the caller, not be swallowed as a "file load error".
+    let content: string | Buffer;
     try {
-      // Binary files: return Buffer (no text decoding, no JSON parse).
-      // `raw: true` overrides to force string decoding even for binary extensions.
-      if (kind === "binary" && !raw) {
-        return await fs.readFile(filePath);
-      }
-
-      const content = await fs.readFile(filePath, "utf-8");
-
-      if (raw) return content;
-
-      // Text files (non-JSON): return string content directly.
-      if (kind === "text") return content;
-
-      const parsed = JSON.parse(content);
-
-      if (data) return parsed;
-
-      // Scoped context: if params provided, clone context and merge resolved params
-      let fileContext = context;
-      if ("params" in def && isObject(def.params)) {
-        const params = def.params;
-        const pResolved = resolveObj(params, context, r => r);
-        const resolved = (pResolved instanceof Promise ? await pResolved : pResolved) as Record<string, unknown>;
-        fileContext = { ...context, ...resolved };
-      }
-
-      // Array -> execute steps in sequence
-      if (Array.isArray(parsed)) {
-        const result = await Promise.resolve(runSteps(parsed, fileContext));
-        if (result && typeof result === "object" && !Array.isArray(result) &&
-            (result as Record<string, unknown>).type === "return") {
-          return (result as Record<string, unknown>).value ?? null;
-        }
-        return result ?? null;
-      }
-
-      // Single object: always resolve (with file context if params were provided,
-      // else the caller's context). Use `data: true` to short-circuit resolution
-      // and get the raw parsed JSON back — that's the explicit knob for pure data
-      // and for definition trees (e.g. routes) that should be walked, not eagerly
-      // evaluated by the resolver.
-      return resolve(parsed, fileContext);
+      content = wantBuffer
+        ? await fs.readFile(filePath)
+        : await fs.readFile(filePath, "utf-8");
     } catch (error) {
-      const e = error as Error;
-      console.error(`[FileNode] Error loading file ${filePath}:`, e.message);
+      console.error(`[FileNode] Error loading file ${filePath}:`, (error as Error).message);
       return null;
     }
+
+    if (wantBuffer) return content;
+    if (raw) return content;
+    if (kind === "text") return content;
+
+    // JSON parse is also FileNode's concern — narrow catch so a malformed file
+    // doesn't surface as a 500 from somewhere downstream.
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(content as string);
+    } catch (error) {
+      console.error(`[FileNode] Error parsing JSON in ${filePath}:`, (error as Error).message);
+      return null;
+    }
+
+    if (data) return parsed;
+
+    // Scoped context: if params provided, clone context and merge resolved params
+    let fileContext = context;
+    if ("params" in def && isObject(def.params)) {
+      const params = def.params;
+      const pResolved = resolveObj(params, context, r => r);
+      const resolved = (pResolved instanceof Promise ? await pResolved : pResolved) as Record<string, unknown>;
+      fileContext = { ...context, ...resolved };
+    }
+
+    // From here, anything that throws is application code — let it propagate.
+    // Array -> execute steps in sequence
+    if (Array.isArray(parsed)) {
+      const result = await Promise.resolve(runSteps(parsed, fileContext));
+      return result ?? null;
+    }
+
+    // Single object: always resolve (with file context if params were provided,
+    // else the caller's context). Use `data: true` to short-circuit resolution
+    // and get the raw parsed JSON back — that's the explicit knob for pure data
+    // and for definition trees (e.g. routes) that should be walked, not eagerly
+    // evaluated by the resolver.
+    return resolve(parsed, fileContext);
   });
 }
 

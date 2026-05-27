@@ -148,7 +148,9 @@ export function resolveAll(values: unknown[], context: Context, then: (args: unk
 /**
  * Run an array of steps sequentially, sync-first. Returns the last step's value.
  * Handles the `"as"` global property on each step (stores result in context).
- * Stops early if a step returns `{ type: "return" }` (file-template early exit).
+ * A step that resolves to `{ return: X }` stops the sequence and yields `X`.
+ * The wrapper does not propagate to enclosing sequences — to escape multiple
+ * levels, nest the wrapper (e.g. `{ return: { return: X } }`).
  */
 export function runSteps(steps: unknown[], context: Context): unknown {
   let i = 0;
@@ -158,8 +160,8 @@ export function runSteps(steps: unknown[], context: Context): unknown {
     const isLast = i >= steps.length;
     return resolve(step, context, v => {
       storeAs(step, v, context);
+      if (isObject(v) && "return" in v) return v.return;
       if (isLast) return v;
-      if (isObject(v) && v.type === "return") return v;
       return next();
     });
   }

@@ -35,6 +35,21 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/**
+ * True when `value` is shaped like a route tree (has structural route-tree keys
+ * at the top level). Used to bypass `resolve()` for literal trees — otherwise
+ * the resolver would walk into them and eagerly evaluate `{ "file": "..." }`
+ * leaves into rendered HTML before the matcher ever sees them.
+ *
+ * Expression values (e.g. `{ "var": "$routes" }`, `{ "file": "...", "data": true }`)
+ * don't have these markers and still flow through `resolve()` below.
+ */
+function isRouteTreeShape(value: unknown): value is RouteNode {
+  if (!isObject(value)) return false;
+  return "methods" in value || "children" in value
+      || "paramName" in value || "paramRegex" in value;
+}
+
 const regexCache = new Map<string, RegExp>();
 function getCachedRegex(pattern: string): RegExp {
   let re = regexCache.get(pattern);
@@ -116,31 +131,31 @@ export class RouterNode extends Node {
   };
 
   routes(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.routes, context, async rootNode => {
+    const dispatch = async (rootNode: unknown): Promise<NodeValue> => {
       if (!isObject(rootNode)) {
         console.error("[RouterNode] Invalid routes definition");
         return null;
       }
-
-      // Get request info from context
       const method = context.request?.method?.toUpperCase() ?? "GET";
       const path = context.request?.path ?? "/";
-
-      // Match route (conditions evaluated during traversal, params set on context)
       const handler = await matchRoute(
         rootNode as RouteNode,
         path,
         method,
         context,
       );
-
-      if (!handler) {
-        return { type: "notFound" };
-      }
-
-      // Execute handler
+      if (!handler) throw createHttpError(404, "Not Found");
       return executeHandler(handler, context);
-    });
+    };
+
+    // Fast path: the value is already a literal route tree. Skip resolve() —
+    // otherwise it would walk in and turn { "file": "..." } handler leaves
+    // into rendered HTML before the matcher ever runs.
+    if (isRouteTreeShape(def.routes)) {
+      return dispatch(def.routes);
+    }
+    // Expression path: e.g. { "var": "$routes" } or { "file": "routes.json", "data": true }.
+    return resolve(def.routes, context, dispatch);
   }
 }
 
@@ -327,14 +342,14 @@ async function executeHandler(
   if (handler.file) {
     const rendered = await resolve(handler, context);
     if (typeof rendered === "string") {
-      return { type: "html", content: rendered };
+      return { response: rendered };
     }
     return rendered;
   }
 
   // If run steps produced a string, wrap as HTML response
   if (typeof lastResult === "string") {
-    return { type: "html", content: lastResult };
+    return { response: lastResult };
   }
 
   return lastResult;
@@ -378,11 +393,5 @@ function validateSchema(
  */
 function isResponse(value: unknown): boolean {
   if (!isObject(value)) return false;
-  const obj = value as Record<string, unknown>;
-  return (
-    "type" in obj &&
-    ["html", "json", "redirect", "error", "notFound"].includes(
-      String(obj.type),
-    )
-  );
+  return "response" in (value as Record<string, unknown>);
 }

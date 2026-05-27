@@ -1,6 +1,6 @@
 {
   "name": "@jexs/mcp",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "license": "MIT",
   "description": "MCP server exposing Jexs node introspection and expression evaluation to Claude Code and Claude Desktop",
   "keywords": ["jexs", "mcp", "model-context-protocol", "claude", "claude-code", "ai", "llm"],
@@ -23,7 +23,7 @@
   "files": ["dist"],
   "peerDependencies": {
     "@jexs/core": "^0.7.0",
-    "@jexs/server": "^0.6.2",
+    "@jexs/server": "^0.6.4",
     "@jexs/client": "^0.6.2",
     "@jexs/physics": "^0.4.0",
     "@jexs/gl": "^0.4.0"
