@@ -19,7 +19,7 @@
   },
   "files": ["dist"],
   "peerDependencies": {
-    "@jexs/core": "^0.7.0"
+    "@jexs/core": "^0.7.3"
   },
   "dependencies": {
     "bcrypt": "^5.1.0",

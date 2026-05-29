@@ -23,7 +23,7 @@
     "prepublishOnly": "npm run build:browser"
   },
   "peerDependencies": {
-    "@jexs/core": "^0.7.0"
+    "@jexs/core": "^0.7.3"
   },
   "peerDependenciesMeta": {
     "@jexs/physics": { "optional": true },
