@@ -1,26 +1,20 @@
-import { Node, Context, NodeValue, runSteps } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, runSteps } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
-/**
- * StdioNode - Reads newline-delimited JSON from stdin, runs steps, writes results to stdout.
- *
- * Usage:
- * { "stdio": true, "on-message": [ ...steps... ], "on-close": [ ...steps... ] }
- *
- * Each line from stdin is parsed as JSON and set as $message on a child context.
- * The result of the last step (if not null/undefined) is written as JSON + newline to stdout.
- *
- * This is a long-running listener (like ListenNode). Console.log is redirected to stderr
- * to keep stdout clean for protocol data.
- */
+let stdinAttached = false;
+
+function encode(value: unknown): string {
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
 export class StdioNode extends Node {
   static schema: JexsNodeSchema = {
-    stdio: {
+    "stdio-listen": {
       type: "boolean",
       output: "null",
-      markdownDescription: "Starts a newline-delimited JSON (NDJSON) listener on stdin. Each line is parsed as JSON,\r\nset as `$message` in context, and `on-message` steps are run. Non-null results are written to stdout.\r\n`console.log` is redirected to stderr to keep stdout clean for protocol data.",
+      markdownDescription: "Starts a newline-delimited JSON (NDJSON) listener on stdin. Each line is parsed as JSON, set as `$message` in context, and `on-message` steps are run. `console.log` is redirected to stderr to keep stdout clean for protocol data. Use `stdio-write` inside the steps to send output.",
       examples: [
-        "{ \"stdio\": true, \"on-message\": [{ \"var\": \"$message\" }], \"on-close\": [] }",
+        "{ \"stdio-listen\": true, \"on-message\": [{ \"stdio-write\": { \"var\": \"$message\" } }] }",
       ],
       siblings: {
         "on-message": {
@@ -33,18 +27,31 @@ export class StdioNode extends Node {
         },
       },
     },
+    "stdio-write": {
+      output: "null",
+      markdownDescription: "Writes a value to stdout followed by a newline. Strings pass through unchanged; everything else is JSON-encoded.",
+      examples: [
+        "{ \"stdio-write\": { \"ok\": true } }",
+        "{ \"stdio-write\": \"hello\" }",
+      ],
+    },
   };
 
-  async stdio(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  ["stdio-listen"](def: Record<string, unknown>, context: Context): NodeValue {
     if (!Array.isArray(def["on-message"])) {
       console.error('[StdioNode] "on-message" must be an array of steps');
       return null;
     }
 
+    if (stdinAttached) {
+      console.error("[StdioNode] stdio-listen already attached; ignoring duplicate call");
+      return null;
+    }
+    stdinAttached = true;
+
     const steps = def["on-message"] as unknown[];
     const closeSteps = Array.isArray(def["on-close"]) ? def["on-close"] as unknown[] : null;
 
-    // Redirect console.log to stderr so stdout stays clean for protocol data
     console.log = (...args: unknown[]) => {
       process.stderr.write(args.map(String).join(" ") + "\n");
     };
@@ -71,12 +78,7 @@ export class StdioNode extends Node {
         }
 
         const childContext: Context = { ...context, message };
-        Promise.resolve(runSteps(steps, childContext)).then((result) => {
-          if (result !== null && result !== undefined) {
-            const output = typeof result === "string" ? result : JSON.stringify(result);
-            process.stdout.write(output + "\n");
-          }
-        }).catch((err: unknown) => {
+        Promise.resolve(runSteps(steps, childContext)).catch((err: unknown) => {
           process.stderr.write(`[StdioNode] Error: ${err}\n`);
         });
       }
@@ -91,7 +93,13 @@ export class StdioNode extends Node {
     });
 
     process.stdin.resume();
+    return null;
+  }
 
-    return { type: "stdio" };
+  ["stdio-write"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["stdio-write"], context, value => {
+      process.stdout.write(encode(value) + "\n");
+      return null;
+    });
   }
 }

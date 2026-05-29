@@ -3,12 +3,14 @@ import { Context, Node } from "@jexs/core";
 import { DomNode } from "./nodes/DomNode.js";
 import { FetchNode } from "./nodes/FetchNode.js";
 import { AudioNode } from "./nodes/AudioNode.js";
+import { StorageNode } from "./nodes/StorageNode.js";
 
 /** Client-specific nodes. The Client class combines these with coreNodes internally. */
 export const clientNodes: Node[] = [
   new DomNode(),
   new FetchNode(),
   new AudioNode(),
+  new StorageNode(),
 ];
 
 /**

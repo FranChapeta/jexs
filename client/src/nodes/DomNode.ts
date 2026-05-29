@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue } from "@jexs/core";
-import { resolve } from "@jexs/core";
+import { resolve, resolveAll } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
 /**
@@ -19,6 +19,8 @@ import type { JexsNodeSchema } from "@jexs/core";
  * - { "querySelector": "selector" }
  * - { "querySelectorAll": "selector" }
  * - { "closest": [element, "selector"] }
+ * - { "scrollTo": "#selector" }                                   — scroll element to its bottom
+ * - { "scrollIntoView": "#selector", "block": "center" }          — scroll element into view
  * - { "pointerLock": "#selector" }   — request pointer lock on element
  * - { "pointerUnlock": true }         — exit pointer lock
  */
@@ -136,6 +138,24 @@ export class DomNode extends Node {
     scrollTo: {
       output: "null",
       markdownDescription: "Scrolls an element to its bottom by setting `scrollTop = scrollHeight`. Useful for chat containers.",
+    },
+    scrollIntoView: {
+      output: "object",
+      markdownDescription: "Scrolls an element into view via `Element.scrollIntoView`. Accepts a CSS selector or HTMLElement.\nOptional siblings: `block` (`\"start\"` | `\"center\"` | `\"end\"` | `\"nearest\"`, default `\"center\"`) for vertical alignment, and `behavior` (`\"auto\"` | `\"smooth\"`, default `\"auto\"`) for animation.",
+      examples: [
+        "{ \"scrollIntoView\": \"#active\" }",
+        "{ \"scrollIntoView\": \"#row-42\", \"block\": \"start\", \"behavior\": \"smooth\" }",
+      ],
+      siblings: {
+        block: {
+          type: "string",
+          description: "Vertical alignment: \"start\", \"center\", \"end\", or \"nearest\". Defaults to \"center\".",
+        },
+        behavior: {
+          type: "string",
+          description: "Scroll behavior: \"auto\" (instant) or \"smooth\". Defaults to \"auto\".",
+        },
+      },
     },
     pointerLock: {
       output: "null",
@@ -329,6 +349,16 @@ export class DomNode extends Node {
     return resolve(def.scrollTo, context, v => {
       const el = getElement(v);
       if (el) el.scrollTop = el.scrollHeight;
+      return el;
+    });
+  }
+  scrollIntoView(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def.scrollIntoView, def.block ?? null, def.behavior ?? null], context, ([target, blockRaw, behaviorRaw]) => {
+      const el = getElement(target);
+      if (!el) return null;
+      const block = (typeof blockRaw === "string" ? blockRaw : "center") as ScrollLogicalPosition;
+      const behavior = (typeof behaviorRaw === "string" ? behaviorRaw : "auto") as ScrollBehavior;
+      el.scrollIntoView({ block, behavior });
       return el;
     });
   }

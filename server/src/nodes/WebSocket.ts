@@ -1,187 +1,305 @@
-import { Node, Context, NodeValue, resolve, resolveAll, runSteps } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll, runSteps, createHttpError } from "@jexs/core";
 import crypto from "node:crypto";
-import WebSocket from "ws";
+import type { Duplex } from "node:stream";
+import type { IncomingMessage } from "node:http";
+import WebSocket, { WebSocketServer } from "ws";
 import type { JexsNodeSchema } from "@jexs/core";
 
-// Module-level state
-// Room name → set of connections
 const rooms: Map<string, Set<WebSocket>> = new Map();
-// Connection → set of room names (reverse lookup for cleanup)
 const clients: Map<WebSocket, Set<string>> = new Map();
-// Route path → set of connections (for path-level broadcast)
 const paths: Map<string, Set<WebSocket>> = new Map();
-// Connection ID → WebSocket (for targeted messaging)
 const ids: Map<string, WebSocket> = new Map();
-// WebSocket → connection ID (reverse lookup)
 const wsToId: Map<WebSocket, string> = new Map();
-// Connection metadata (user name, etc.)
 const meta: WeakMap<WebSocket, Record<string, unknown>> = new WeakMap();
 
-/**
- * WebSocketNode — Server-side WebSocket operations.
- *
- * Operations:
- * - { "ws": "send", "data": {...} }
- * - { "ws": "send-to", "id": "peer-id", "data": {...} }
- * - { "ws": "broadcast", "data": {...}, "room": "name" }
- * - { "ws": "broadcast", "data": {...} }
- * - { "ws": "join", "room": "name" }
- * - { "ws": "leave", "room": "name" }
- * - { "ws": "close" }
- * - { "ws": "count", "room": "name" }
- */
+interface UpgradeContext {
+  req: IncomingMessage;
+  socket: Duplex;
+  head: Buffer;
+  wss: WebSocketServer;
+  accepted: boolean;
+}
+
+function getUpgrade(context: Context): UpgradeContext {
+  const upgrade = context._upgrade as UpgradeContext | undefined;
+  if (!upgrade) {
+    throw createHttpError(500, "socket-accept must be called from an upgrade pipeline");
+  }
+  return upgrade;
+}
+
+function currentSocket(context: Context): WebSocket | null {
+  return (context._ws as WebSocket | undefined) ?? null;
+}
+
+function currentPath(context: Context): string {
+  return (context._wsPath as string | undefined) ?? "/";
+}
+
+function encodePayload(data: unknown): string {
+  return typeof data === "string" ? data : JSON.stringify(data);
+}
+
 export class WebSocketNode extends Node {
   static schema: JexsNodeSchema = {
-    ws: {
-      type: "string",
-      enum: [
-        "send",
-        "send-to",
-        "broadcast",
-        "join",
-        "leave",
-        "close",
-        "count",
-        "list",
-      ],
-      markdownDescription: "Server-side WebSocket operations. Operations: `\"send\"`, `\"send-to\"`, `\"broadcast\"`,\n`\"join\"`, `\"leave\"`, `\"close\"`, `\"count\"`, `\"list\"`.\n`\"broadcast\"` without `\"room\"` sends to all connections on the same route path.",
+    "socket-accept": {
+      type: "boolean",
+      output: "null",
+      markdownDescription: "Completes the WebSocket upgrade for the current request and binds per-connection step arrays. Must be called from an upgrade pipeline (where `_upgrade` is in context — populated by `Server.handleUpgrade`).",
       examples: [
-        "{ \"ws\": \"broadcast\", \"data\": { \"type\": \"update\", \"payload\": { \"var\": \"$data\" } }, \"room\": \"general\" }",
+        "{ \"socket-accept\": true, \"on-message\": [{ \"socket-broadcast\": { \"var\": \"$message\" } }] }",
       ],
       siblings: {
-        data: {
-          description: "Data to send (used with `\"send\"`, `\"send-to\"`, `\"broadcast\"`).",
+        "on-connect": {
+          steps: true,
+          description: "Steps run once after the upgrade completes. `_ws`, `_wsPath`, `wsId` available in context.",
         },
-        id: {
-          type: "string",
-          description: "Peer connection ID (used with `\"send-to\"`).",
+        "on-message": {
+          steps: true,
+          description: "Steps run on each incoming message. `$message` is the parsed JSON payload.",
         },
-        room: {
-          type: "string",
-          description: "Room name (used with `\"join\"`, `\"leave\"`, `\"broadcast\"`, `\"count\"`, `\"list\"`).",
+        "on-close": {
+          steps: true,
+          description: "Steps run once when the connection closes.",
         },
       },
     },
+    "socket-send": {
+      output: "null",
+      markdownDescription: "Sends a message on the current connection (`_ws` in context). Objects are JSON-encoded.",
+      examples: [
+        "{ \"socket-send\": { \"type\": \"pong\" } }",
+      ],
+    },
+    "socket-send-to": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Sends `data` to the peer identified by the connection ID. Objects are JSON-encoded.",
+      examples: [
+        "{ \"socket-send-to\": { \"var\": \"$peerId\" }, \"data\": { \"hello\": true } }",
+      ],
+      siblings: {
+        data: { description: "Payload to send to the target peer." },
+      },
+    },
+    "socket-broadcast": {
+      output: "null",
+      markdownDescription: "Broadcasts the payload to all peers. With `room`, sends to room members; without `room`, sends to every connection on the same route path. The sender is excluded.",
+      examples: [
+        "{ \"socket-broadcast\": { \"var\": \"$message\" }, \"room\": \"lobby\" }",
+      ],
+      siblings: {
+        room: { type: "string", description: "Restrict broadcast to a named room." },
+      },
+    },
+    "socket-join": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Adds the current connection to the named room.",
+      examples: [
+        "{ \"socket-join\": \"lobby\" }",
+      ],
+    },
+    "socket-leave": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Removes the current connection from the named room.",
+    },
+    "socket-close": {
+      type: "boolean",
+      output: "null",
+      markdownDescription: "Closes the current connection.",
+    },
+    "socket-count": {
+      output: "number",
+      markdownDescription: "Returns the number of connections in a room (string) or on the current route path (`true`).",
+      examples: [
+        "{ \"socket-count\": \"lobby\" }",
+        "{ \"socket-count\": true }",
+      ],
+    },
+    "socket-list": {
+      type: "string",
+      output: "array",
+      markdownDescription: "Returns `{ id, ...meta }` for every connection in the named room.",
+      examples: [
+        "{ \"socket-list\": \"lobby\" }",
+      ],
+    },
   };
 
-  ws(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.ws, context, operation => {
-      switch (String(operation)) {
-        case "send":
-          return doSend(def, context);
-        case "send-to":
-          return doSendTo(def, context);
-        case "broadcast":
-          return doBroadcast(def, context);
-        case "join":
-          return doJoin(def, context);
-        case "leave":
-          return doLeave(def, context);
-        case "close":
-          return doClose(def, context);
-        case "count":
-          return doCount(def, context);
-        case "list":
-          return doList(def, context);
-        default:
-          console.error(`[WebSocket] Unknown operation: ${operation}`);
-          return null;
+  ["socket-accept"](def: Record<string, unknown>, context: Context): NodeValue {
+    const upgrade = getUpgrade(context);
+    if (upgrade.accepted) return null;
+    upgrade.accepted = true;
+
+    const onConnect = Array.isArray(def["on-connect"]) ? def["on-connect"] as unknown[] : null;
+    const onMessage = Array.isArray(def["on-message"]) ? def["on-message"] as unknown[] : null;
+    const onClose   = Array.isArray(def["on-close"])   ? def["on-close"]   as unknown[] : null;
+
+    upgrade.wss.handleUpgrade(upgrade.req, upgrade.socket, upgrade.head, (ws) => {
+      const path = (context.request as Record<string, unknown>)?.path as string || "/";
+      const id = crypto.randomUUID();
+
+      if (!paths.has(path)) paths.set(path, new Set());
+      paths.get(path)!.add(ws);
+      clients.set(ws, new Set());
+      ids.set(id, ws);
+      wsToId.set(ws, id);
+      const session = context.session as Record<string, unknown> | undefined;
+      meta.set(ws, { name: session?.user_name ?? "Anonymous" });
+
+      const wsContext: Context = {
+        ...context,
+        _ws: ws,
+        _wsPath: path,
+        wsId: id,
+      };
+      delete wsContext._upgrade;
+
+      if (onConnect) {
+        Promise.resolve(runSteps(onConnect, { ...wsContext }))
+          .catch(err => console.error("[WebSocket] on-connect error:", err));
       }
+
+      ws.on("message", (raw: WebSocket.RawData) => {
+        if (!onMessage) return;
+        const rawStr = raw.toString();
+
+        if (rawStr.length > 65_536) {
+          ws.send(JSON.stringify({ type: "error", message: "Message too large" }));
+          return;
+        }
+
+        let messageData: unknown;
+        try {
+          messageData = JSON.parse(rawStr);
+        } catch {
+          ws.send(JSON.stringify({ type: "error", message: "Invalid JSON" }));
+          return;
+        }
+
+        if (typeof messageData !== "object" || messageData === null || Array.isArray(messageData)) {
+          ws.send(JSON.stringify({ type: "error", message: "Expected JSON object" }));
+          return;
+        }
+
+        Promise.resolve(runSteps(onMessage, { ...wsContext, message: messageData }))
+          .catch(err => console.error("[WebSocket] on-message error:", err));
+      });
+
+      ws.on("close", () => {
+        if (onClose) {
+          Promise.resolve(runSteps(onClose, { ...wsContext }))
+            .catch(err => console.error("[WebSocket] on-close error:", err));
+        }
+
+        paths.get(path)?.delete(ws);
+        if (paths.get(path)?.size === 0) paths.delete(path);
+
+        const memberRooms = clients.get(ws);
+        if (memberRooms) {
+          for (const room of memberRooms) {
+            rooms.get(room)?.delete(ws);
+            if (rooms.get(room)?.size === 0) rooms.delete(room);
+          }
+        }
+        clients.delete(ws);
+
+        const wsId = wsToId.get(ws);
+        if (wsId) ids.delete(wsId);
+        wsToId.delete(ws);
+      });
+    });
+
+    return null;
+  }
+
+  ["socket-send"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["socket-send"], context, data => {
+      const ws = currentSocket(context);
+      if (!ws || ws.readyState !== WebSocket.OPEN) return null;
+      ws.send(encodePayload(data));
+      return null;
     });
   }
 
-  static handleConnection(
-    ws: WebSocket,
-    handler: Record<string, unknown>,
-    context: Context,
-  ): void {
-    const path = (context.request as Record<string, unknown>)?.path as string || "/";
-    const id = crypto.randomUUID();
-
-    // Track connection
-    if (!paths.has(path)) {
-      paths.set(path, new Set());
-    }
-    paths.get(path)!.add(ws);
-    clients.set(ws, new Set());
-    ids.set(id, ws);
-    wsToId.set(ws, id);
-    const session = context.session as Record<string, unknown> | undefined;
-    meta.set(ws, { name: session?.user_name ?? "Anonymous" });
-
-    const wsContext: Context = {
-      ...context,
-      _ws: ws,
-      _wsPath: path,
-      wsId: id,
-    };
-
-    // Run on-connect steps
-    if (Array.isArray(handler["on-connect"])) {
-      runSteps(handler["on-connect"], { ...wsContext });
-    }
-
-    // Handle messages
-    ws.on("message", (raw: WebSocket.RawData) => {
-      if (!Array.isArray(handler["on-message"])) return;
-
-      const rawStr = raw.toString();
-
-      // Size limit: 64 KB per message
-      if (rawStr.length > 65_536) {
-        ws.send(JSON.stringify({ type: "error", message: "Message too large" }));
-        return;
-      }
-
-      // Require valid JSON
-      let messageData: unknown;
-      try {
-        messageData = JSON.parse(rawStr);
-      } catch {
-        ws.send(JSON.stringify({ type: "error", message: "Invalid JSON" }));
-        return;
-      }
-
-      // Must be an object
-      if (typeof messageData !== "object" || messageData === null || Array.isArray(messageData)) {
-        ws.send(JSON.stringify({ type: "error", message: "Expected JSON object" }));
-        return;
-      }
-
-      runSteps(
-        handler["on-message"] as unknown[],
-        { ...wsContext, message: messageData },
-      );
+  ["socket-send-to"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def["socket-send-to"], def.data], context, ([idRaw, data]) => {
+      const target = ids.get(String(idRaw));
+      if (!target || target.readyState !== WebSocket.OPEN) return null;
+      target.send(encodePayload(data));
+      return null;
     });
+  }
 
-    // Handle close
-    ws.on("close", () => {
-      if (Array.isArray(handler["on-close"])) {
-        runSteps(handler["on-close"], { ...wsContext });
-      }
+  ["socket-broadcast"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def["socket-broadcast"], def.room ?? null], context, ([data, roomRaw]) => {
+      const payload = encodePayload(data);
+      const sender = currentSocket(context);
 
-      // Clean up path tracking
-      paths.get(path)?.delete(ws);
-      if (paths.get(path)?.size === 0) {
-        paths.delete(path);
-      }
+      const recipients: Set<WebSocket> | undefined = def.room && roomRaw != null
+        ? rooms.get(String(roomRaw))
+        : paths.get(currentPath(context));
 
-      // Clean up room memberships
-      const memberRooms = clients.get(ws);
-      if (memberRooms) {
-        for (const room of memberRooms) {
-          rooms.get(room)?.delete(ws);
-          if (rooms.get(room)?.size === 0) {
-            rooms.delete(room);
-          }
+      if (!recipients) return null;
+      for (const peer of recipients) {
+        if (peer !== sender && peer.readyState === WebSocket.OPEN) {
+          peer.send(payload);
         }
       }
-      clients.delete(ws);
+      return null;
+    });
+  }
 
-      // Clean up ID tracking
-      const wsId = wsToId.get(ws);
-      if (wsId) ids.delete(wsId);
-      wsToId.delete(ws);
+  ["socket-join"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["socket-join"], context, roomRaw => {
+      const ws = currentSocket(context);
+      if (!ws) return null;
+      const room = String(roomRaw);
+      if (!rooms.has(room)) rooms.set(room, new Set());
+      rooms.get(room)!.add(ws);
+      clients.get(ws)?.add(room);
+      return null;
+    });
+  }
+
+  ["socket-leave"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["socket-leave"], context, roomRaw => {
+      const ws = currentSocket(context);
+      if (!ws) return null;
+      const room = String(roomRaw);
+      rooms.get(room)?.delete(ws);
+      if (rooms.get(room)?.size === 0) rooms.delete(room);
+      clients.get(ws)?.delete(room);
+      return null;
+    });
+  }
+
+  ["socket-close"](_def: Record<string, unknown>, context: Context): NodeValue {
+    const ws = currentSocket(context);
+    if (ws) ws.close();
+    return null;
+  }
+
+  ["socket-count"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["socket-count"], context, target => {
+      if (target === true) return paths.get(currentPath(context))?.size ?? 0;
+      return rooms.get(String(target))?.size ?? 0;
+    });
+  }
+
+  ["socket-list"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["socket-list"], context, roomRaw => {
+      const room = String(roomRaw);
+      const roomClients = rooms.get(room);
+      if (!roomClients) return [];
+      const result: Record<string, unknown>[] = [];
+      for (const ws of roomClients) {
+        const id = wsToId.get(ws);
+        if (id) result.push({ id, ...meta.get(ws) });
+      }
+      return result;
     });
   }
 
@@ -197,109 +315,4 @@ export class WebSocketNode extends Node {
     ids.clear();
     wsToId.clear();
   }
-}
-
-function doSend(def: Record<string, unknown>, context: Context): NodeValue {
-  return resolve(def.data, context, data => {
-    const ws = context._ws as WebSocket;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return null;
-    ws.send(typeof data === "string" ? data : JSON.stringify(data));
-    return null;
-  });
-}
-
-function doSendTo(def: Record<string, unknown>, context: Context): NodeValue {
-  return resolveAll([def.id, def.data], context, ([idRaw, data]) => {
-    const target = ids.get(String(idRaw));
-    if (!target || target.readyState !== WebSocket.OPEN) return null;
-    target.send(typeof data === "string" ? data : JSON.stringify(data));
-    return null;
-  });
-}
-
-function doBroadcast(def: Record<string, unknown>, context: Context): NodeValue {
-  return resolveAll([def.data, def.room ?? null], context, ([data, roomRaw]) => {
-    const payload = typeof data === "string" ? data : JSON.stringify(data);
-    const currentWs = context._ws as WebSocket;
-
-    if (def.room && roomRaw != null) {
-      const room = String(roomRaw);
-      const roomClients = rooms.get(room);
-      if (roomClients) {
-        for (const client of roomClients) {
-          if (client !== currentWs && client.readyState === WebSocket.OPEN) {
-            client.send(payload);
-          }
-        }
-      }
-    } else {
-      const wsPath = context._wsPath as string;
-      const pathClients = paths.get(wsPath);
-      if (pathClients) {
-        for (const client of pathClients) {
-          if (client !== currentWs && client.readyState === WebSocket.OPEN) {
-            client.send(payload);
-          }
-        }
-      }
-    }
-    return null;
-  });
-}
-
-function doJoin(def: Record<string, unknown>, context: Context): NodeValue {
-  return resolve(def.room, context, roomRaw => {
-    const room = String(roomRaw);
-    const ws = context._ws as WebSocket;
-    if (!ws) return null;
-    if (!rooms.has(room)) rooms.set(room, new Set());
-    rooms.get(room)!.add(ws);
-    clients.get(ws)?.add(room);
-    return null;
-  });
-}
-
-function doLeave(def: Record<string, unknown>, context: Context): NodeValue {
-  return resolve(def.room, context, roomRaw => {
-    const room = String(roomRaw);
-    const ws = context._ws as WebSocket;
-    if (!ws) return null;
-    rooms.get(room)?.delete(ws);
-    if (rooms.get(room)?.size === 0) rooms.delete(room);
-    clients.get(ws)?.delete(room);
-    return null;
-  });
-}
-
-function doClose(def: Record<string, unknown>, context: Context): NodeValue {
-  return resolveAll([def.code ?? null, def.reason ?? null], context, ([codeRaw, reasonRaw]) => {
-    const ws = context._ws as WebSocket;
-    if (!ws) return null;
-    const code = def.code ? Number(codeRaw) : 1000;
-    const reason = def.reason ? String(reasonRaw) : "";
-    ws.close(code, reason);
-    return null;
-  });
-}
-
-function doCount(def: Record<string, unknown>, context: Context): NodeValue {
-  if (!def.room) {
-    const wsPath = context._wsPath as string;
-    return paths.get(wsPath)?.size ?? 0;
-  }
-  return resolve(def.room, context, roomRaw => rooms.get(String(roomRaw))?.size ?? 0);
-}
-
-function doList(def: Record<string, unknown>, context: Context): NodeValue {
-  return resolve(def.room, context, roomRaw => {
-    const room = String(roomRaw);
-    const roomClients = rooms.get(room);
-    if (!roomClients) return [];
-    const result: Record<string, unknown>[] = [];
-    for (const ws of roomClients) {
-      const id = wsToId.get(ws);
-      if (id) result.push({ id, ...meta.get(ws) });
-    }
-    return result;
-  });
 }

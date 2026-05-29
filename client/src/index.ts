@@ -16,6 +16,7 @@ export { WsNode } from "./nodes/WsNode.js";
 export { PushNode } from "./nodes/PushNode.js";
 export { WebRTCNode } from "./nodes/WebRTCNode.js";
 export { ServiceWorkerNode } from "./nodes/ServiceWorkerNode.js";
+export { StorageNode } from "./nodes/StorageNode.js";
 
 // Browser: expose globally and auto-init on DOMContentLoaded
 if (typeof window !== "undefined") {

@@ -4,13 +4,6 @@ import { Cache } from "../cache/Cache.js";
 import { sha256 } from "./Crypto.js";
 import type { JexsNodeSchema } from "@jexs/core";
 
-/**
- * TranslationNode - Configures automatic string translation per request.
- *
- * { "translate": { "to": "es", "table": "translations" } }
- *
- * Sets context._translate so the resolver auto-translates strings.
- */
 export class TranslationNode extends Node {
   static schema: JexsNodeSchema = {
     translate: {

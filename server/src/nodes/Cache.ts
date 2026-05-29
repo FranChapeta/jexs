@@ -1,171 +1,161 @@
-import { Node, Context, NodeValue, resolve, resolveAll, resolveObj } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll, resolveObj, createHttpError } from "@jexs/core";
 import { Cache, CacheConfig } from "../cache/Cache.js";
-import type { JexsNodeSchema } from "@jexs/core";
+import type { JexsNodeSchema, JexsPropertySchema } from "@jexs/core";
 
-/**
- * CacheNode - Handles cache connections and operations in JSON.
- *
- * Connect:
- * { "cache": "connect", "type": "redis", "host": "localhost", "port": 6379 }
- * { "cache": "connect", "type": "memory" }
- * { "cache": "connect", "type": "memcached", "servers": ["localhost:11211"] }
- *
- * Operations:
- * { "cache": "get", "key": "mykey" }
- * { "cache": "set", "key": "mykey", "value": {...}, "ttl": 3600 }
- * { "cache": "delete", "key": "mykey" }
- * { "cache": "has", "key": "mykey" }
- * { "cache": "clear" }
- *
- * Close:
- * { "cache": "close" }
- */
 export class CacheNode extends Node {
   static schema: JexsNodeSchema = {
-    cache: {
+    "cache-connect": {
       type: "string",
-      enum: [
-        "connect",
-        "get",
-        "set",
-        "delete",
-        "has",
-        "clear",
-        "close",
-        "stats",
-      ],
-      markdownDescription: "Connects to or operates on a cache store.",
+      enum: ["redis", "memory", "memcached"],
+      markdownDescription: "Initializes the cache singleton. The value selects the driver; connection details are siblings.",
       examples: [
-        "{ \"cache\": \"set\", \"key\": \"user:42\", \"value\": { \"var\": \"$user\" }, \"ttl\": 3600 }",
+        "{ \"cache-connect\": \"memory\" }",
+        "{ \"cache-connect\": \"redis\", \"host\": \"localhost\", \"port\": 6379 }",
+        "{ \"cache-connect\": \"memcached\", \"servers\": [\"localhost:11211\"] }",
       ],
       siblings: {
-        type: {
-          type: "string",
-          enum: [
-            "redis",
-            "memory",
-            "memcached",
-          ],
-          description: "Cache driver (used with `\"connect\"`).",
-        },
-        key: {
-          type: "string",
-          description: "Cache key (used with `\"get\"`, `\"set\"`, `\"delete\"`, `\"has\"`).",
-        },
-        value: {
-          description: "Value to store (used with `\"set\"`).",
-        },
-        ttl: {
-          type: "number",
-          description: "Time-to-live in seconds (used with `\"set\"`).",
-        },
+        host:         { type: "string", description: "Hostname (redis, memcached fallback)." },
+        port:         { type: "number", description: "Port number." },
+        password:     { type: "string", description: "Auth password (redis)." },
+        db:           { type: "number", description: "Database index (redis)." },
+        servers:      { type: "array",  description: "Server list as `host:port` strings (memcached)." },
+        maxSize:      { type: "number", description: "Maximum entry count (memory)." },
+        checkPeriod:  { type: "number", description: "Expiry sweep interval in seconds (memory)." },
+        prefix:       { type: "string", description: "Key prefix applied to every operation." },
+        defaultTtl:   { type: "number", description: "Default TTL in seconds when `ttl` is omitted on set." },
       },
+    },
+    "cache-close": {
+      type: "boolean",
+      output: "null",
+      markdownDescription: "Closes the cache connection. Pass `true` to trigger.",
+    },
+    "cache-get": {
+      type: "string",
+      markdownDescription: "Reads the value stored under `key`. Returns the value or `null` if absent.",
+      examples: [
+        "{ \"cache-get\": \"user:42\" }",
+      ],
+    },
+    "cache-set": {
+      type: "string",
+      markdownDescription: "Writes the `value` sibling under the given key. Optional `ttl` sibling sets expiry in seconds.",
+      examples: [
+        "{ \"cache-set\": \"user:42\", \"value\": { \"var\": \"$user\" }, \"ttl\": 3600 }",
+      ],
+      siblings: {
+        value: { description: "Value to store." },
+        ttl:   { type: "number", description: "Time-to-live in seconds." },
+      },
+    },
+    "cache-delete": {
+      type: "string",
+      output: "boolean",
+      markdownDescription: "Removes the entry under `key`. Returns `true` if the key existed.",
+      examples: [
+        "{ \"cache-delete\": \"user:42\" }",
+      ],
+    },
+    "cache-has": {
+      type: "string",
+      output: "boolean",
+      markdownDescription: "Checks whether `key` is present in the cache.",
+      examples: [
+        "{ \"cache-has\": \"user:42\" }",
+      ],
+    },
+    "cache-clear": {
+      type: "boolean",
+      output: "null",
+      markdownDescription: "Removes every entry. Pass `true` to trigger.",
+    },
+    "cache-stats": {
+      type: "boolean",
+      output: "object",
+      markdownDescription: "Returns driver-reported statistics (hit/miss counts, size, etc.).",
+    },
+    "cache-dump": {
+      type: "boolean",
+      output: "object",
+      markdownDescription: "Returns a snapshot of the cache contents. Memory driver only; other drivers return an error.",
     },
   };
 
-  cache(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.cache, context, operation => {
-      switch (String(operation)) {
-        case "connect":
-          return doConnect(def, context);
-        case "close":
-          return doClose();
-        case "get":
-          return doGet(def, context);
-        case "set":
-          return doSet(def, context);
-        case "delete":
-          return doDelete(def, context);
-        case "has":
-          return doHas(def, context);
-        case "clear":
-          return doClear();
-        case "stats":
-          return Cache.getInstance().stats();
-        case "dump": {
-          const instance = Cache.getInstance() as unknown as Record<string, unknown>;
-          if (typeof instance.dump === "function") return instance.dump();
-          return { error: "dump only supported for memory cache" };
-        }
-        default:
-          console.error(`[CacheNode] Unknown operation: ${operation}`);
-          return null;
+  static commonSiblings: Record<string, JexsPropertySchema> = {};
+
+  ["cache-connect"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveObj(def, context, r => {
+      const type = String(r["cache-connect"] ?? "memory") as CacheConfig["type"];
+      const config: CacheConfig = { type };
+
+      if (r.prefix) config.prefix = String(r.prefix);
+      if (r.defaultTtl) config.defaultTtl = Number(r.defaultTtl);
+
+      if (type === "redis") {
+        config.redis = {};
+        if (r.host) config.redis.host = String(r.host);
+        if (r.port) config.redis.port = Number(r.port);
+        if (r.password) config.redis.password = String(r.password);
+        if (r.db) config.redis.db = Number(r.db);
       }
+
+      if (type === "memcached") {
+        config.memcached = {};
+        if (r.servers && Array.isArray(r.servers)) {
+          config.memcached.servers = r.servers.map((s) => String(s));
+        } else if (r.host) {
+          const p = r.port ? Number(r.port) : 11211;
+          config.memcached.servers = [`${r.host}:${p}`];
+        }
+      }
+
+      if (type === "memory") {
+        config.memory = {};
+        if (r.maxSize) config.memory.maxSize = Number(r.maxSize);
+        if (r.checkPeriod) config.memory.checkPeriod = Number(r.checkPeriod);
+      }
+
+      Cache.init(config);
+      console.log(`[CacheNode] Connected to cache (${type})`);
+      return type;
     });
   }
-}
 
-function doConnect(def: Record<string, unknown>, context: Context): unknown {
-  return resolveObj(def, context, r => {
-    const type = String(r.type ?? "memory") as CacheConfig["type"];
-    const config: CacheConfig = { type };
+  ["cache-close"](_def: Record<string, unknown>, _context: Context): NodeValue {
+    return Cache.close();
+  }
 
-    if (r.prefix) config.prefix = String(r.prefix);
-    if (r.defaultTtl) config.defaultTtl = Number(r.defaultTtl);
+  ["cache-get"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["cache-get"], context, async key => Cache.getInstance().get(String(key)));
+  }
 
-    if (type === "redis") {
-      config.redis = {};
-      if (r.host) config.redis.host = String(r.host);
-      if (r.port) config.redis.port = Number(r.port);
-      if (r.password) config.redis.password = String(r.password);
-      if (r.db) config.redis.db = Number(r.db);
-    }
+  ["cache-set"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def["cache-set"], def.value ?? null, def.ttl ?? null], context, async ([keyRaw, value, ttlRaw]) => {
+      const key = String(keyRaw);
+      const ttl = ttlRaw != null ? Number(ttlRaw) : undefined;
+      return Cache.getInstance().set(key, value, ttl);
+    });
+  }
 
-    if (type === "memcached") {
-      config.memcached = {};
-      if (r.servers && Array.isArray(r.servers)) {
-        config.memcached.servers = r.servers.map((s) => String(s));
-      } else if (r.host) {
-        const p = r.port ? Number(r.port) : 11211;
-        config.memcached.servers = [`${r.host}:${p}`];
-      }
-    }
+  ["cache-delete"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["cache-delete"], context, async keyRaw => Cache.getInstance().delete(String(keyRaw)));
+  }
 
-    if (type === "memory") {
-      config.memory = {};
-      if (r.maxSize) config.memory.maxSize = Number(r.maxSize);
-      if (r.checkPeriod) config.memory.checkPeriod = Number(r.checkPeriod);
-    }
+  ["cache-has"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["cache-has"], context, async keyRaw => Cache.getInstance().has(String(keyRaw)));
+  }
 
-    Cache.init(config);
-    console.log(`[CacheNode] Connected to cache (${type})`);
+  ["cache-clear"](_def: Record<string, unknown>, _context: Context): NodeValue {
+    return Cache.getInstance().clear();
+  }
 
-    return { type: "cache", action: "connect", cacheType: type };
-  });
-}
+  ["cache-stats"](_def: Record<string, unknown>, _context: Context): NodeValue {
+    return Cache.getInstance().stats();
+  }
 
-async function doClose(): Promise<unknown> {
-  await Cache.close();
-  console.log("[CacheNode] Cache connection closed");
-  return { type: "cache", action: "close" };
-}
-
-function doGet(def: Record<string, unknown>, context: Context): unknown {
-  return resolve(def.key, context, async key => Cache.getInstance().get(String(key)));
-}
-
-function doSet(def: Record<string, unknown>, context: Context): unknown {
-  return resolveAll([def.key, def.value, def.ttl ?? null], context, async ([keyRaw, value, ttlRaw]) => {
-    const key = String(keyRaw);
-    const ttl = ttlRaw != null ? Number(ttlRaw) : undefined;
-    await Cache.getInstance().set(key, value, ttl);
-    return { type: "cache", action: "set", key };
-  });
-}
-
-function doDelete(def: Record<string, unknown>, context: Context): unknown {
-  return resolve(def.key, context, async keyRaw => {
-    const key = String(keyRaw);
-    const deleted = await Cache.getInstance().delete(key);
-    return { type: "cache", action: "delete", key, deleted };
-  });
-}
-
-function doHas(def: Record<string, unknown>, context: Context): unknown {
-  return resolve(def.key, context, async keyRaw => Cache.getInstance().has(String(keyRaw)));
-}
-
-async function doClear(): Promise<unknown> {
-  await Cache.getInstance().clear();
-  return { type: "cache", action: "clear" };
+  ["cache-dump"](_def: Record<string, unknown>, _context: Context): NodeValue {
+    const instance = Cache.getInstance() as unknown as Record<string, unknown>;
+    if (typeof instance.dump === "function") return instance.dump();
+    throw createHttpError(501, "cache-dump is only supported by the memory driver");
+  }
 }

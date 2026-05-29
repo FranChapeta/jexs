@@ -121,63 +121,38 @@ export class Server {
     socket: Duplex,
     head: Buffer,
   ): Promise<void> {
+    const upgrade = { req, socket, head, wss: this.wss, accepted: false };
     try {
       const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
-      const query = Object.fromEntries(url.searchParams);
-      const cookies = this.parseCookies(req);
-
       const context: Context = {
         ...this.startupContext,
         request: {
           method: "WS",
           path: url.pathname,
           body: {},
-          query,
+          query: Object.fromEntries(url.searchParams),
           headers: req.headers,
-          cookies,
+          cookies: this.parseCookies(req),
         },
         _cookies: [],
+        _upgrade: upgrade,
       };
       delete context._server;
 
-      // Run per-request steps (session load, route match, etc.)
-      let result: unknown = null;
-      if (this.requestSteps) {
-        for (const step of this.requestSteps) {
-          const stepResult = await Promise.resolve(this.resolve(step, context));
-          if (this.isWsHandler(stepResult)) {
-            result = stepResult;
-            break;
-          }
-          if (this.isResponse(stepResult)) {
-            socket.destroy();
-            return;
-          }
-          result = stepResult;
+      for (const step of this.requestSteps ?? []) {
+        const stepResult = await this.resolve(step, context);
+        if (upgrade.accepted) return;
+        if (this.isResponse(stepResult)) {
+          socket.destroy();
+          return;
         }
       }
 
-      if (!result || !this.isWsHandler(result)) {
-        socket.destroy();
-        return;
-      }
-
-      const wsResult = result as Record<string, unknown>;
-      const handler = wsResult.handler as Record<string, unknown>;
-      const wsContext = wsResult.context as Context;
-
-      this.wss.handleUpgrade(req, socket, head, (ws) => {
-        WebSocketNode.handleConnection(ws, handler, wsContext);
-      });
+      if (!upgrade.accepted) socket.destroy();
     } catch (error) {
       console.error("WebSocket upgrade error:", error);
-      socket.destroy();
+      if (!upgrade.accepted) socket.destroy();
     }
-  }
-
-  private isWsHandler(value: unknown): boolean {
-    if (!value || typeof value !== "object") return false;
-    return (value as Record<string, unknown>).type === "ws";
   }
 
   private async handleRequest(
@@ -263,24 +238,13 @@ export class Server {
       //   - a step that resolves to `{ return: X }` yields X and halts
       //   - a step that resolves to a response object halts
       let result: unknown = null;
-      if (this.requestSteps) {
-        for (const step of this.requestSteps) {
-          const stepResult = await Promise.resolve(
-            this.resolve(step, context),
-          );
-          if (
-            stepResult && typeof stepResult === "object" && !Array.isArray(stepResult) &&
-            "return" in (stepResult as Record<string, unknown>)
-          ) {
-            result = (stepResult as Record<string, unknown>).return ?? null;
-            break;
-          }
-          if (this.isResponse(stepResult)) {
-            result = stepResult;
-            break;
-          }
-          result = stepResult;
+      for (const step of this.requestSteps ?? []) {
+        result = await this.resolve(step, context);
+        if (this.isReturn(result)) {
+          result = (result as Record<string, unknown>).return ?? null;
+          break;
         }
+        if (this.isResponse(result)) break;
       }
 
       // Wrap string results as HTML responses (responseType inferred from string)
@@ -339,6 +303,11 @@ export class Server {
   private isResponse(value: unknown): boolean {
     if (!value || typeof value !== "object" || Array.isArray(value)) return false;
     return "response" in (value as Record<string, unknown>);
+  }
+
+  private isReturn(value: unknown): boolean {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    return "return" in (value as Record<string, unknown>);
   }
 
   /** Whether the response body is HTML (explicit or inferred from string content). */
@@ -463,7 +432,10 @@ export class Server {
           if (!stat.isFile()) continue;
 
           const content = await fs.promises.readFile(filePath);
-          const headers: Record<string, string> = { "Content-Type": this.getMimeType(ext) };
+          const headers: Record<string, string> = {
+            "Content-Type": this.getMimeType(ext),
+            "Cache-Control": cacheControlFor(requestPath, filePath),
+          };
           if (path.basename(filePath) === "sw.js") headers["Service-Worker-Allowed"] = "/";
           res.writeHead(200, headers);
           res.end(content);
@@ -487,7 +459,10 @@ export class Server {
 
       const content = await fs.promises.readFile(filePath);
       const mimeType = this.getMimeType(ext);
-      const headers: Record<string, string> = { "Content-Type": mimeType };
+      const headers: Record<string, string> = {
+        "Content-Type": mimeType,
+        "Cache-Control": cacheControlFor(requestPath, filePath),
+      };
       if (path.basename(filePath) === "sw.js") headers["Service-Worker-Allowed"] = "/";
       res.writeHead(200, headers);
       res.end(content);
@@ -644,4 +619,16 @@ export class Server {
       });
     });
   }
+}
+
+// Pick a sensible Cache-Control for a static asset.
+// - sw.js: must always be re-checked (service worker spec); short max-age.
+// - Content-hashed bundles (esbuild emits them under /chunks/ with a hash in
+//   the filename) are immutable — long max-age + immutable saves revalidation.
+// - Everything else: 1h. Long enough to help repeat-visit performance, short
+//   enough that an unhashed CSS or image update propagates within an hour.
+function cacheControlFor(requestPath: string, filePath: string): string {
+  if (path.basename(filePath) === "sw.js") return "public, max-age=0, must-revalidate";
+  if (requestPath.includes("/chunks/")) return "public, max-age=31536000, immutable";
+  return "public, max-age=3600";
 }

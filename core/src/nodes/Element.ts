@@ -64,14 +64,22 @@ export class ElementNode extends Node {
 function renderElement(def: Record<string, unknown>, context: Context): unknown {
   return resolve(def.tag, context, tagRaw => {
     const tag = String(tagRaw);
+    const isSelfClosing = SELF_CLOSING.has(tag);
     const eventsAttr = buildEventsAttr(def);
-    const attrsResult = renderAttrs(def, context);
+    // Self-closing tags can't have children — for them, `content` is the real
+    // HTML attribute (e.g. `<meta name="description" content="...">`), not a
+    // reserved children key. Pass that hint to renderAttrs.
+    const attrsResult = renderAttrs(def, context, isSelfClosing);
+    // HTML5 doctype on the root <html> tag — otherwise the browser falls into
+    // quirks mode (and Lighthouse flags it). Only the root html tag triggers
+    // this; nested htmls (if anyone ever has them) get the same prefix harmlessly.
+    const prefix = tag === "html" ? "<!DOCTYPE html>" : "";
 
-    if (SELF_CLOSING.has(tag)) {
+    if (isSelfClosing) {
       if (attrsResult instanceof Promise) {
-        return attrsResult.then(attrs => `<${tag}${attrs}${eventsAttr}>`);
+        return attrsResult.then(attrs => `${prefix}<${tag}${attrs}${eventsAttr}>`);
       }
-      return `<${tag}${attrsResult}${eventsAttr}>`;
+      return `${prefix}<${tag}${attrsResult}${eventsAttr}>`;
     }
 
     const injected = buildInjections(tag, def, context);
@@ -82,11 +90,11 @@ function renderElement(def: Record<string, unknown>, context: Context): unknown 
         attrsResult instanceof Promise ? attrsResult : Promise.resolve(attrsResult),
         contentResult instanceof Promise ? contentResult : Promise.resolve(contentResult as string),
       ]).then(([attrs, content]) =>
-        `<${tag}${attrs}${eventsAttr}>${injected}${content}</${tag}>`
+        `${prefix}<${tag}${attrs}${eventsAttr}>${injected}${content}</${tag}>`
       );
     }
 
-    return `<${tag}${attrsResult}${eventsAttr}>${injected}${contentResult as string}</${tag}>`;
+    return `${prefix}<${tag}${attrsResult}${eventsAttr}>${injected}${contentResult as string}</${tag}>`;
   });
 }
 
@@ -144,8 +152,15 @@ function buildInjections(tag: string, def: Record<string, unknown>, context: Con
   return result;
 }
 
-function renderAttrs(def: Record<string, unknown>, context: Context): string | Promise<string> {
-  const entries = Object.entries(def).filter(([k]) => !RESERVED_KEYS.has(k));
+function renderAttrs(
+  def: Record<string, unknown>,
+  context: Context,
+  allowContent = false,
+): string | Promise<string> {
+  const entries = Object.entries(def).filter(([k]) => {
+    if (allowContent && k === "content") return true;
+    return !RESERVED_KEYS.has(k);
+  });
   if (entries.length === 0) return "";
 
   const r = resolveAll(entries.map(([, v]) => v), context, resolved => {

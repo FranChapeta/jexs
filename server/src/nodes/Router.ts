@@ -78,7 +78,7 @@ export class RouterNode extends Node {
   static schema: JexsNodeSchema = {
     routes: {
       $ref: "#/$defs/routeNode",
-      markdownDescription: "Matches the incoming request path and method against a route tree, then executes the handler.\nSupports exact segments, `*` (single param with optional `paramName`/`paramRegex`),\n`**` (catch-all), conditional `\"if\"` guards per node, param/body validation, and WebSocket upgrade.\n\nStep expressions inside `run` / `on-connect` / `on-message` / `on-close` are validated as Jexs expressions.",
+      markdownDescription: "Matches the incoming request path and method against a route tree, then executes the handler.\nSupports exact segments, `*` (single param with optional `paramName`/`paramRegex`),\n`**` (catch-all), conditional `\"if\"` guards per node, and param/body validation.\n\nA `WS` method handler that calls `socket-accept` completes a WebSocket upgrade.\nStep expressions inside `run` are validated as Jexs expressions; any other key on a handler is treated as a Jexs expression and evaluated directly.",
       examples: [
         "{ \"routes\": { \"children\": { \"users\": { \"methods\": { \"GET\": { \"file\": \"pages/users.json\" } } } } } }",
       ],
@@ -123,9 +123,6 @@ export class RouterNode extends Node {
         params:  { type: "object" },
         body:    { type: "object" },
         options: { type: "object" },
-        "on-connect": { $ref: "#/$defs/steps" },
-        "on-message": { $ref: "#/$defs/steps" },
-        "on-close":   { $ref: "#/$defs/steps" },
       },
     },
   };
@@ -302,11 +299,6 @@ async function executeHandler(
   handler: RouteHandler,
   context: Context,
 ): Promise<unknown> {
-  // WebSocket handler: return definition for Server to complete the upgrade
-  if ("on-connect" in handler || "on-message" in handler || "on-close" in handler) {
-    return { type: "ws", handler, context };
-  }
-
   // CSRF validation for state-changing methods (only when session exists)
   const CSRF_SAFE_METHODS = ["GET", "HEAD", "OPTIONS", "WS"];
   const reqMethod = context.request?.method?.toUpperCase() ?? "GET";
@@ -345,6 +337,16 @@ async function executeHandler(
       return { response: rendered };
     }
     return rendered;
+  }
+
+  // Expression handler: anything beyond the structured route-config keys is
+  // treated as a Jexs expression. Enables WS routes (socket-accept) and other
+  // bare-expression handlers without requiring a `run` wrapper.
+  if (handler.run === undefined && handler.file === undefined) {
+    const { params: _p, body: _b, options: _o, ...expr } = handler as Record<string, unknown>;
+    if (Object.keys(expr).length > 0) {
+      lastResult = await Promise.resolve(resolve(expr, context));
+    }
   }
 
   // If run steps produced a string, wrap as HTML response

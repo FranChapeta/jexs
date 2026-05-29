@@ -165,7 +165,7 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean): string {
   if (useServer) {
     lines.push(`- \`app/\` — JSON templates the resolver loads. FileNode's default base directory.`);
     lines.push(`- \`public/\` — static assets (CSS, images, favicons, fonts). Auto-served by the HTTP server for any GET on a static-extension URL.`);
-    lines.push(`- \`index.ts\` — bootstrap: \`createResolver([...coreNodes, ...serverNodes])\` then \`new Server(resolve).start()\`.`);
+    lines.push(`- \`index.js\` — bootstrap: \`createResolver([...coreNodes, ...serverNodes])\` then \`new Server(resolve).start()\`.`);
     if (useTailwind) {
       lines.push(`- \`input.css\` — Tailwind entry. Add custom styles here (\`@layer base { ... }\`, \`@apply\`, etc.).`);
       lines.push(`- \`tailwind.config.js\` — scans \`./app/**/*.json\` for class names.`);
@@ -178,9 +178,11 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean): string {
   if (useServer) {
     lines.push(`## Scripts`);
     lines.push(``);
-    lines.push(`- \`npm run dev\` — \`tsx watch index.ts\`${useTailwind ? ` + \`tailwindcss --watch\` in parallel via \`concurrently\`` : ``}.`);
-    lines.push(`- \`npm run build\` — ${useTailwind ? `compiles Tailwind (minified), then ` : ``}runs \`tsc\` and copies \`app/\` and \`public/\` into \`dist/\`.`);
-    lines.push(`- \`npm start\` — runs the BUILT output (\`cd dist && node index.js\`). Run from the project root.`);
+    lines.push(`- \`npm run dev\` — \`node --watch index.js\`${useTailwind ? ` + \`tailwindcss --watch\` in parallel via \`concurrently\`` : ``}.`);
+    if (useTailwind) {
+      lines.push(`- \`npm run build\` — compiles Tailwind (minified). The JS bootstrap is plain ESM and runs as-is, so there's no transpile step.`);
+    }
+    lines.push(`- \`npm start\` — \`node index.js --prod\`. Run from the project root so FileNode and the static server find \`app/\` and \`public/\`. The \`--prod\` flag sets \`process.env.prod = "1"\`, so JSON templates can branch on \`{ "var": "$env.prod" }\` (e.g. picking port 80 in prod vs 3000 in dev).`);
     lines.push(`- \`npm run format\` — Prettier sweep over JSON templates.`);
     lines.push(``);
   }
@@ -281,15 +283,7 @@ async function main(): Promise<void> {
   if (usePhysics) { deps["@jexs/physics"] = "latest"; deps["@jexs/gl"] = "latest"; }
 
   const devDeps: Record<string, string> = { "@jexs/create": "latest" };
-  if (useServer) {
-    devDeps["@types/node"] = "^20.0.0";
-    devDeps.prettier      = "^3.4.0";
-    devDeps.tsx           = "^4.7.0";
-    devDeps.typescript    = "^5.4.0";
-  } else {
-    // Client-only projects still benefit from JSON formatting.
-    devDeps.prettier      = "^3.4.0";
-  }
+  devDeps.prettier = "^3.4.0";
   if (useTailwind) {
     devDeps.tailwindcss  = "^3.4.0";
     devDeps.concurrently = "^8.2.0";
@@ -297,28 +291,26 @@ async function main(): Promise<void> {
 
   const scripts: Record<string, string> = {};
   if (useServer) {
-    // dev: runs the source `index.ts` via tsx with cwd = project root.
-    //      FileNode and the static-file server both use cwd-relative paths,
-    //      so they read the live source app/ and public/ directly.
-    //      When tailwind is enabled, also runs the CSS compiler in --watch in
-    //      parallel via concurrently, so edits to JSON pick up new class names.
-    // build: compiles CSS (if tailwind), then tsc → dist/index.js, then copies
-    //        app/ and public/ alongside so dist/ is a self-contained deployable.
-    // start: runs the BUILT output from inside dist/, mirroring how a real
-    //        deployment runs (cwd = dist/, FileNode finds dist/app/).
+    // The bootstrap is plain ESM JavaScript (`index.js`), so there's no
+    // transpile step. Node runs it as-is.
+    // dev: `node --watch index.js` re-runs on file change. With tailwind, the
+    //      CSS compiler runs in --watch alongside it via concurrently, so JSON
+    //      edits that introduce new class names produce updated CSS.
+    // build: only the CSS step (when tailwind is on). No JS build — `index.js`
+    //        ships as source. The data file glob under app/ and the static
+    //        assets under public/ are read at runtime from the project root.
+    // start: `node index.js --prod`. cwd = project root, so FileNode and the
+    //        static server find app/ and public/ where they live.
     // format: prettier sweep over the JSON templates — the bulk of a Jexs app.
-    const tailwindWatch = "tailwindcss -i input.css -o public/styles.css --watch";
+    const tailwindWatch = "tailwindcss -i input.css -o public/styles.css --watch --minify";
     const tailwindBuild = "tailwindcss -i input.css -o public/styles.css --minify";
-    const tsxWatch      = "tsx watch index.ts";
-    const cpAssets      = "node -e \"const fs=require('fs');fs.cpSync('app','dist/app',{recursive:true});if(fs.existsSync('public'))fs.cpSync('public','dist/public',{recursive:true})\"";
+    const nodeWatch     = "node --watch index.js";
 
-    scripts.dev   = useTailwind
-      ? `concurrently -k -n css,app -c blue,green "${tailwindWatch}" "${tsxWatch}"`
-      : tsxWatch;
-    scripts.build = useTailwind
-      ? `${tailwindBuild} && tsc && ${cpAssets}`
-      : `tsc && ${cpAssets}`;
-    scripts.start  = "cd dist && node index.js";
+    scripts.dev = useTailwind
+      ? `concurrently -k -n css,app -c blue,green "${tailwindWatch}" "${nodeWatch}"`
+      : nodeWatch;
+    if (useTailwind) scripts.build = tailwindBuild;
+    scripts.start  = "node index.js --prod";
     scripts.format = "prettier --write \"app/**/*.json\"";
   } else {
     scripts.format = "prettier --write \"src/**/*.json\"";
@@ -376,14 +368,14 @@ async function main(): Promise<void> {
   // .gitignore — public/styles.css is a build artifact (tailwind output).
   writeFileSync(
     join(dir, ".gitignore"),
-    ".jexs-schema.json\nnode_modules/\ndist/\n" + (useTailwind ? "public/styles.css\n" : ""),
+    ".jexs-schema.json\nnode_modules/\n" + (useTailwind ? "public/styles.css\n" : ""),
   );
 
   // .gitattributes — GitHub Linguist treats JSON as a "data" language by default
   // and hides it from the repo language stats. In a Jexs project the JSON files
   // under app/ (or src/ for client-only) are the actual source code, so we mark
   // them detectable and reclassify them as JSON source. Config JSON at the root
-  // (package.json, tsconfig.json, etc.) is intentionally left alone.
+  // (package.json, etc.) is intentionally left alone.
   const templateDir = useServer ? "app" : "src";
   writeFileSync(
     join(dir, ".gitattributes"),
@@ -412,33 +404,14 @@ async function main(): Promise<void> {
   );
 
   if (useServer) {
-    // tsconfig.json — index.ts at the root, plus any future TS under app/.
-    writeFileSync(
-      join(dir, "tsconfig.json"),
-      JSON.stringify({
-        compilerOptions: {
-          target: "ES2022",
-          module: "NodeNext",
-          moduleResolution: "NodeNext",
-          outDir: "./dist",
-          rootDir: ".",
-          strict: true,
-          esModuleInterop: true,
-          skipLibCheck: true,
-          resolveJsonModule: true,
-        },
-        include: ["index.ts", "app/**/*.ts"],
-        exclude: ["node_modules", "dist"],
-      }, null, 2) + "\n",
-    );
-
-    // index.ts — bootstrap at the project root. Wires the resolver and starts
+    // index.js — bootstrap at the project root. Wires the resolver and starts
     // the server. Server.start() resolves app/index.json by default (FileNode's
-    // base directory is "app").
+    // base directory is "app"). Plain ESM — Node runs it without a build step.
     writeFileSync(
-      join(dir, "index.ts"),
+      join(dir, "index.js"),
       `import { createResolver, coreNodes } from "@jexs/core";\n` +
       `import { serverNodes, Server } from "@jexs/server";\n\n` +
+      `if (process.argv.includes("--prod")) process.env.prod = "1";\n\n` +
       `const resolve = createResolver([...coreNodes, ...serverNodes]);\n` +
       `new Server(resolve).start();\n`,
     );
@@ -448,7 +421,7 @@ async function main(): Promise<void> {
       join(dir, "app", "index.json"),
       JSON.stringify([
         {
-          listen: 3000,
+          listen: { "if": { var: "$env.prod" }, then: 80, else: 3000 },
           client: true,
           do: [
             { var: "$request.query.name" },
@@ -472,12 +445,12 @@ async function main(): Promise<void> {
       );
 
       // tailwind.config.js — ESM (package.json has "type":"module"). Scans the
-      // JSON templates the resolver renders, plus the bootstrap TS.
+      // JSON templates the resolver renders, plus the bootstrap JS.
       writeFileSync(
         join(dir, "tailwind.config.js"),
         `/** @type {import('tailwindcss').Config} */\n` +
         `export default {\n` +
-        `  content: ["./app/**/*.json", "./index.ts"],\n` +
+        `  content: ["./app/**/*.json", "./index.js"],\n` +
         `  darkMode: "class",\n` +
         `  theme: { extend: {} },\n` +
         `  plugins: [],\n` +
@@ -502,8 +475,7 @@ async function main(): Promise<void> {
   console.log(`  .gitattributes`);
   console.log(`  CLAUDE.md`);
   if (useServer) {
-    console.log(`  tsconfig.json`);
-    console.log(`  index.ts`);
+    console.log(`  index.js`);
     console.log(`  app/index.json`);
     console.log(`  public/.gitkeep`);
     if (useTailwind) {
