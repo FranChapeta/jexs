@@ -21,8 +21,10 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 interface NodeLike {
-  handlerKeys?: readonly string[] | null;
-  constructor: { name: string };
+  constructor: {
+    name: string;
+    schema?: Record<string, Record<string, unknown>>;
+  };
 }
 
 // Resolve @jexs/* packages from the user's project (process.cwd()), not from
@@ -160,12 +162,13 @@ mcpServer.registerTool(
     const entries: string[] = [`Packages: ${packages.join(", ")}`, ""];
     const seen = new Set<string>();
     for (const node of nodes) {
-      const keys = node.handlerKeys;
       const name = node.constructor.name;
-      if (keys && !seen.has(name)) {
-        seen.add(name);
-        entries.push(`${name}: ${keys.join(", ")}`);
-      }
+      const schema = node.constructor.schema;
+      if (!schema || seen.has(name)) continue;
+      const keys = Object.keys(schema);
+      if (keys.length === 0) continue;
+      seen.add(name);
+      entries.push(`${name}: ${keys.join(", ")}`);
     }
     return {
       content: [{ type: "text", text: entries.join("\n") }],
@@ -224,10 +227,8 @@ mcpServer.registerTool(
 
       const allKeys = new Set<string>();
       for (const node of nodes) {
-        const keys = node.handlerKeys;
-        if (keys) {
-          for (const key of keys) allKeys.add(key);
-        }
+        const schema = node.constructor.schema;
+        if (schema) for (const key of Object.keys(schema)) allKeys.add(key);
       }
 
       const usedKeys = new Set<string>();
@@ -251,6 +252,34 @@ mcpServer.registerTool(
         isError: true,
       };
     }
+  },
+);
+
+// Tool: describe_op
+mcpServer.registerTool(
+  "describe_op",
+  {
+    description: "Show the static schema entry for a Jexs node operation (description, examples, siblings)",
+    inputSchema: {
+      op: z.string().describe("Operation key, e.g. \"if\", \"foreach\", \"tag\""),
+    },
+  },
+  async ({ op }) => {
+    for (const node of nodes) {
+      const schema = node.constructor.schema;
+      if (schema && op in schema) {
+        return {
+          content: [{
+            type: "text",
+            text: `${node.constructor.name}.${op}\n\n${JSON.stringify(schema[op], null, 2)}`,
+          }],
+        };
+      }
+    }
+    return {
+      content: [{ type: "text", text: `Unknown op: ${op}` }],
+      isError: true,
+    };
   },
 );
 

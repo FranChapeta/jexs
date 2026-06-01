@@ -49,7 +49,8 @@ Add to `claude_desktop_config.json` (path varies per OS — see Claude Desktop d
 
 ## Exposed tools
 
-- `list_nodes` — list every node (and its handler keys) from the installed `@jexs/*` packages.
+- `list_nodes` — list every node (and its operation keys) from the installed `@jexs/*` packages, read from each node class's `static schema`.
+- `describe_op` — return the `static schema` entry for a given operation (description, examples, siblings).
 - `inspect_file` — load a `.json` template from the project and parse-check it.
 - `resolve_expression` — evaluate a JSON expression against a context and return the result. Useful for verifying behavior without spinning up a full server.
 
