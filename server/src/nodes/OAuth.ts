@@ -104,6 +104,7 @@ export class OAuthNode extends Node {
         "providers",
       ],
       markdownDescription: "OAuth 2.0 flow helpers. Operations: `\"configure\"`, `\"authUrl\"`, `\"exchange\"`, `\"refresh\"`, `\"userInfo\"`, `\"state\"`, `\"providers\"`.\nBuilt-in providers: `google`, `github`, `facebook`, `discord`, `twitter`, `microsoft`.",
+      outputDescription: "Varies by op: `authUrl` → the provider authorization URL (string); `state` → a random CSRF state string; `exchange`/`refresh` → a token object (`access_token`, etc.); `userInfo` → the normalized user-profile object; `providers` → an array of configured provider names; `configure` → a status object.",
       examples: [
         "{ \"oauth\": \"authUrl\", \"provider\": \"google\", \"redirectUri\": { \"var\": \"$redirectUri\" } }",
       ],

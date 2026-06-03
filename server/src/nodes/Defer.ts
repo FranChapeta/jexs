@@ -18,6 +18,7 @@ export class DeferNode extends Node {
     defer: {
       output: "string",
       markdownDescription: "Renders a placeholder immediately, then streams the resolved content to replace it via a `<script>` tag.\nUse `\"loader\"` for the placeholder expression shown while the content resolves.\nPass `\"delay\"` (ms) to add an artificial delay before resolving.",
+      outputDescription: "A `<div>` wrapper **string** containing the loader, returned right away. The real content resolves in the background and is streamed in to replace it (requires the response to be sent as a streaming HTML response).",
       examples: [
         "{ \"defer\": { \"file\": \"components/chart.json\" }, \"loader\": { \"tag\": \"div\", \"class\": \"skeleton\" } }",
       ],

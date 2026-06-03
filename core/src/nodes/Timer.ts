@@ -56,6 +56,7 @@ export class TimerNode extends Node {
         "resume",
       ],
       markdownDescription: "Drift-compensating fixed-rate loop. Steps receive `tick.count`, `tick.dt`, `tick.elapsed` in context.",
+      outputDescription: "The timer `id` (string) on `start`; `null` for `stop`/`pause`/`resume` (and for unknown ops). The loop runs in the background — the `do` steps' values are not returned here.",
       examples: [
         "{ \"tick\": \"start\", \"id\": \"game\", \"rate\": 60, \"detach\": true, \"do\": [{ \"var\": \"tick.dt\" }] }",
       ],
@@ -87,6 +88,7 @@ export class TimerNode extends Node {
         "resume",
       ],
       markdownDescription: "Interval-based scheduled task. Steps receive `cron.runCount`, `cron.lastRun`, `cron.elapsed` in context.\r\nInterval formats: `\"500ms\"`, `\"30s\"`, `\"5m\"`, `\"1h\"`, `\"1d\"`.",
+      outputDescription: "The timer `id` (string) on `start`; `null` for `stop`/`pause`/`resume`. Scheduled `do` steps run in the background — their values are not returned here.",
       examples: [
         "{ \"cron\": \"start\", \"id\": \"poll\", \"every\": \"30s\", \"do\": [{ \"fetch\": \"/api/status\" }] }",
       ],

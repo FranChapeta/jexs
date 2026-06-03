@@ -246,6 +246,7 @@ export interface PackageSchema {
 export interface EmittedMethodSchema {
   properties: Record<string, EmittedSchema>;
   output?: string;
+  outputDescription?: string;
 }
 
 /**
@@ -264,6 +265,7 @@ export type EmittedNodeSchema = string[];
 interface CompiledMethod {
   properties: Record<string, EmittedSchema>;
   output?: string;
+  outputDescription?: string;
   ownerNode: string;
 }
 
@@ -272,14 +274,14 @@ function compileMethod(
   method: JexsMethodSchema,
   ownerNode: string,
 ): CompiledMethod {
-  const { output, siblings, ...primary } = method;
+  const { output, outputDescription, siblings, ...primary } = method;
   const properties: Record<string, EmittedSchema> = {
     [methodKey]: expandProperty(primary),
   };
   for (const [k, v] of Object.entries(siblings ?? {})) {
     properties[k] = expandProperty(v);
   }
-  return { properties, output, ownerNode };
+  return { properties, output, outputDescription, ownerNode };
 }
 
 /**
@@ -359,6 +361,7 @@ export function buildPackageSchema(
   for (const [methodKey, m] of Object.entries(compiled)) {
     const entry: EmittedMethodSchema = { properties: m.properties };
     if (m.output !== undefined) entry.output = m.output;
+    if (m.outputDescription !== undefined) entry.outputDescription = m.outputDescription;
     // 2020-12 evaluates $ref siblings, so the local `properties` (primary key)
     // applies in addition to the shared siblings block from the ref'd schema.
     const ref = nodeSiblingsRef[m.ownerNode];
@@ -406,6 +409,10 @@ function buildRichMarkdown(methodKey: string, m: EmittedMethodSchema): string {
     });
   if (siblings.length > 0) {
     md = (md ? md + "\n\n" : "") + "**Properties:**\n" + siblings.join("\n");
+  }
+
+  if (m.outputDescription) {
+    md = (md ? md + "\n\n" : "") + "**Returns:** " + m.outputDescription;
   }
 
   // The example string is preserved on the emitted schema's `examples` array.
@@ -614,10 +621,13 @@ export function mergePackageSchemas(packages: PackageSchema[]): CombinedSchema {
     };
   }
 
-  // Strip `output` from emitted byKey entries — used only at build time
-  // for filter-variant routing above; nothing reads it at runtime.
+  // Strip build-only fields from emitted byKey entries: `output` drives the
+  // filter-variant routing above, and `outputDescription` has already been
+  // folded into the primary key's rich markdown — nothing reads either at
+  // runtime.
   for (const m of Object.values(byKey)) {
     delete (m as { output?: unknown }).output;
+    delete (m as { outputDescription?: unknown }).outputDescription;
   }
 
   return {

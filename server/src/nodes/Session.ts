@@ -42,6 +42,7 @@ export class SessionNode extends Node {
         "object",
       ],
       markdownDescription: "Manages request sessions stored in cache. Pass an object to set session values. Read values with `{ \"var\": \"$session.key\" }`.\r\nSession ID is stored in a `sid` HTTP-only cookie with a 24-hour TTL.",
+      outputDescription: "`load` returns `null` — it populates `$session` for reading. `create`/`regenerate`/`destroy`/setting values return a small status object (`{ type: \"session\", action, sessionId?, cookie }`). The `sid` cookie is queued onto the response for you; you don't return it yourself.",
       examples: [
         "{ \"session\": { \"user_id\": { \"var\": \"$user.id\" }, \"role\": { \"var\": \"$user.role\" } } }",
       ],

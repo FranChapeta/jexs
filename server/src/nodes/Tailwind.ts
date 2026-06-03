@@ -63,6 +63,7 @@ export class TailwindNode extends Node {
         "classes",
       ],
       markdownDescription: "Extracts Tailwind class names from JSON templates and compiles CSS.\nOperations: `\"extract\"`, `\"add\"`, `\"compile\"`, `\"build\"`, `\"clear\"`, `\"classes\"`.",
+      outputDescription: "Varies by op: `classes` returns the registered class names (array); `clear` returns `{ cleared: true }`; `compile`/`build` return the generated CSS (string); `extract`/`add` register classes and return their result. `null` for unknown ops.",
       examples: [
         "{ \"tailwind\": \"build\", \"data\": { \"var\": \"$template\" } }",
       ],

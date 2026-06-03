@@ -73,7 +73,8 @@ export class CryptoNode extends Node {
     sha256: {
       type: "string",
       output: "string",
-      markdownDescription: "Returns the SHA-256 hex digest of a string.",
+      markdownDescription: "Computes the SHA-256 digest of a string.",
+      outputDescription: "A 64-character lowercase hex string.",
       examples: [
         "{ \"sha256\": { \"var\": \"$token\" } }",
       ],
@@ -81,7 +82,8 @@ export class CryptoNode extends Node {
     encrypt: {
       type: "string",
       output: "string",
-      markdownDescription: "Encrypts a string with AES-256-GCM using the app secret key. Returns `\"iv:authTag:ciphertext\"` (hex).",
+      markdownDescription: "Encrypts a string with AES-256-GCM using the app secret key (`APP_SECRET` env or an auto-generated `app/secret.key`).",
+      outputDescription: "A string `\"iv:authTag:ciphertext\"` (all hex) — pass it back to `decrypt` to recover the plaintext.",
       examples: [
         "{ \"encrypt\": { \"var\": \"$token\" } }",
       ],
@@ -89,7 +91,8 @@ export class CryptoNode extends Node {
     decrypt: {
       type: "string",
       output: "string",
-      markdownDescription: "Decrypts a string previously encrypted by `encrypt`. Expects `\"iv:authTag:ciphertext\"` (hex).",
+      markdownDescription: "Decrypts a string previously produced by `encrypt` (expects `\"iv:authTag:ciphertext\"`, all hex).",
+      outputDescription: "The original plaintext string. Throws if the format is malformed or the GCM auth tag fails to verify.",
       examples: [
         "{ \"decrypt\": { \"var\": \"$stored\" } }",
       ],
@@ -97,7 +100,8 @@ export class CryptoNode extends Node {
     hash: {
       type: "string",
       output: "string",
-      markdownDescription: "Hashes a password with bcrypt. Pass `\"rounds\"` for cost factor (default 10).",
+      markdownDescription: "Hashes a password with bcrypt. Pass `\"rounds\"` for the cost factor (default 10).",
+      outputDescription: "A bcrypt hash string (e.g. `$2b$10$…`), safe to store. Check it later with `verify`.",
       examples: [
         "{ \"hash\": { \"var\": \"$body.password\" }, \"rounds\": 12 }",
       ],
@@ -111,7 +115,8 @@ export class CryptoNode extends Node {
     verify: {
       tuple: 2,
       output: "boolean",
-      markdownDescription: "Compares a plaintext password against a bcrypt hash. Returns `true` or `false`.",
+      markdownDescription: "Compares a plaintext password against a bcrypt hash.",
+      outputDescription: "`true` if the password matches the hash, otherwise `false` (also `false` if fewer than two args are given).",
       examples: [
         "{ \"verify\": [{ \"var\": \"$body.password\" }, { \"var\": \"$user.password_hash\" }] }",
       ],
@@ -119,7 +124,8 @@ export class CryptoNode extends Node {
     randomHex: {
       type: "number",
       output: "string",
-      markdownDescription: "Returns a cryptographically random hex string of N bytes (default 32).",
+      markdownDescription: "Generates cryptographically random bytes (default 32).",
+      outputDescription: "A hex string `2 × bytes` characters long.",
       examples: [
         "{ \"randomHex\": 16 }",
       ],

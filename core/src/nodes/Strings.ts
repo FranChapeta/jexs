@@ -73,6 +73,7 @@ export class StringNode extends Node {
     },
     parseJSON: {
       markdownDescription: "Parses a JSON string; returns `null` on invalid input.",
+      outputDescription: "The parsed value — any JSON type (object, array, number, string, boolean, or `null`). Returns `null` if the input isn't valid JSON, so it's indistinguishable from a literal `null`.",
       examples: [
         "{ \"parseJSON\": { \"var\": \"$raw\" } }",
       ],

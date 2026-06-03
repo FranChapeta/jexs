@@ -50,22 +50,32 @@ npm install @jexs/server @jexs/core
     { "session": "load" },
 
     { "routes": {
-      "/": { "file": "pages/home.json" },
+      "methods": { "GET": { "file": "pages/home.json" } },
+      "children": {
+        "api": { "children": {
+          "users": { "methods": {
+            "GET": { "query-select": "users", "orderBy": { "id": "desc" }, "limit": 50 },
+            "POST": {
+              "body": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" } } },
+              "query-insert": "users", "data": { "var": "$request.body" }
+            }
+          } }
+        } },
 
-      "/api/users": {
-        "if": { "eq": [{ "var": "$request.method" }, "POST"] },
-        "then": { "query-insert": "users", "data": { "var": "$request.body" } },
-        "else": { "query-select": "users", "orderBy": { "id": "desc" }, "limit": 50 }
-      },
-
-      "/users/:id": {
-        "file": "pages/user.json",
-        "params": { "id": { "var": "$request.params.id" } }
+        "users": { "children": {
+          "*": {
+            "paramName": "id",
+            "paramRegex": "\\d+",
+            "methods": { "GET": { "file": "pages/user.json" } }
+          }
+        } }
       }
     } }
   ] }
 ]
 ```
+
+Routes are a tree, not flat path strings: `methods` handles the current path (keyed by HTTP verb), `children` nests path segments, `*` captures a single segment under `paramName` (constrained by an optional `paramRegex`), and `**` captures the remainder. A captured param is exposed to the handler as a top-level context var (`$id` above), the query string as `$request.query`, and the parsed body as `$request.body`. A handler may declare `query` and/or `body` JSON Schemas — validated against `$request.query` / `$request.body`, returning a 400 on failure.
 
 Run with `tsx src/index.ts` (or whatever entry boots `Server`):
 

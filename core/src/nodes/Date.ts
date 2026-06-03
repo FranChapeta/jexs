@@ -13,6 +13,7 @@ export class DateNode extends Node {
         "datetime",
       ],
       markdownDescription: "Returns the current timestamp. Pass a format string (`\"ms\"`, `\"iso\"`, `\"datetime\"`) or `true` (shorthand for `\"ms\"`).",
+      outputDescription: "A **number** (Unix milliseconds) for `ms`/`true`; otherwise a **string** — `iso` → ISO-8601, `datetime` → `YYYY-MM-DD HH:MM:SS` in UTC.",
       examples: [
         "{ \"dateNow\": \"iso\" }",
       ],
@@ -20,6 +21,7 @@ export class DateNode extends Node {
     dateAdd: {
       tuple: 2,
       markdownDescription: "Adds a duration to a Unix-ms timestamp. Interval formats: `\"500ms\"`, `\"30s\"`, `\"5m\"`, `\"1h\"`, `\"7d\"`.",
+      outputDescription: "The shifted timestamp in the `format` (default `ms`): a **number** for `ms`, else a formatted **string**. `null` if fewer than two args are given.",
       examples: [
         "{ \"dateAdd\": [{ \"dateNow\": \"ms\" }, \"7d\"], \"format\": \"iso\" }",
       ],
@@ -37,6 +39,7 @@ export class DateNode extends Node {
     },
     dateFormat: {
       markdownDescription: "Formats a Unix-ms timestamp.",
+      outputDescription: "The timestamp in the `format` (default `datetime`): a **number** for `ms`, otherwise a formatted **string** (`iso` or `datetime` UTC).",
       examples: [
         "{ \"dateFormat\": { \"var\": \"$createdAt\" }, \"format\": \"iso\" }",
       ],

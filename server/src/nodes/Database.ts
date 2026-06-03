@@ -56,6 +56,7 @@ export class DatabaseNode extends Node {
         "info",
       ],
       markdownDescription: "Manages database connections. Supports SQLite (`better-sqlite3`), MySQL (`mysql2`), and PostgreSQL (`pg`) via Knex.",
+      outputDescription: "Varies by op: `connect`/`close`/`dropTable` return a small status object (or `null` when there's nothing to do); `raw` returns the driver result for the SQL (a rows array on SQLite, the first result set otherwise); `tableExists` returns a boolean; `info` returns a connection-info object (or `null` if unknown).",
       examples: [
         "{ \"database\": \"connect\", \"name\": \"main\", \"type\": \"sqlite\", \"filename\": \"app/data.db\" }",
       ],

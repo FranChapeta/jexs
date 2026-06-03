@@ -7,6 +7,7 @@ export class LogicNode extends Node {
   static schema: JexsNodeSchema = {
     if: {
       markdownDescription: "Resolves `then` when the condition is truthy, otherwise `else`. Both branches are optional.",
+      outputDescription: "The resolved value of the taken branch. A branch that is an **array** is run as a step sequence and yields only its LAST value — wrap multiple elements in one container if you need them all. With no `then` a truthy condition yields `true`; with no `else` a falsy condition yields `undefined`.",
       examples: [
         "{ \"if\": { \"var\": \"$active\" }, \"then\": \"yes\", \"else\": \"no\" }",
       ],
@@ -21,6 +22,7 @@ export class LogicNode extends Node {
     },
     switch: {
       markdownDescription: "Resolves the value of `switch`, matches it against string keys in `cases`, falls back to `default`.",
+      outputDescription: "The matched case's value, or `default` if no case matches (and `undefined` when neither matches nor a `default` is given). A case/`default` that is an **array** is run as steps and yields only its LAST value.",
       examples: [
         "{ \"switch\": { \"var\": \"$role\" }, \"cases\": { \"admin\": \"full\", \"user\": \"limited\" }, \"default\": \"none\" }",
       ],
@@ -35,9 +37,10 @@ export class LogicNode extends Node {
       },
     },
     foreach: {
-      markdownDescription: "Iterates over an array, resolving `do` for each item. Returns the **last** item's value — use `map` if you need an array of every result. Use `item` to name the item variable (default `\"item\"`), `key` for the index variable, and `parallel: true` to resolve all iterations concurrently.\nEach iteration receives a `loop` context with `item`, `index`, `first`, `last`, and `length`.",
+      markdownDescription: "Iterates over an array, resolving `do` for each item — for side-effects or accumulation. Use `item` to name the item variable (default `\"item\"`), `key` for the index variable, and `parallel: true` to resolve all iterations concurrently.\nEach iteration receives a `loop` context with `item`, `index`, `first`, `last`, and `length`.",
+      outputDescription: "The **last** iteration's resolved value, not an array (an empty/absent input yields `null`). For an array `do`, that is the last step of the last iteration. Reach for `map` when you need a result per item — e.g. rendering N elements from a collection.",
       examples: [
-        "{ \"foreach\": { \"var\": \"$users\" }, \"item\": \"user\", \"do\": { \"var\": \"user.name\" } }",
+        "{ \"foreach\": { \"var\": \"$users\" }, \"item\": \"user\", \"do\": { \"setVars\": { \"seen\": { \"add\": [{ \"var\": \"$seen\" }, 1] } } } }",
       ],
       siblings: {
         do: {
@@ -60,7 +63,8 @@ export class LogicNode extends Node {
     and: {
       type: "array",
       output: "boolean",
-      markdownDescription: "Short-circuit AND — returns `true` only if all conditions are truthy, stops at first falsy value.",
+      markdownDescription: "Short-circuit AND — evaluates conditions left to right, stopping at the first falsy one.",
+      outputDescription: "`true` if every condition is truthy, otherwise `false` (an empty array is `true`).",
       examples: [
         "{ \"and\": [{ \"var\": \"$loggedIn\" }, { \"var\": \"$verified\" }] }",
       ],
@@ -68,14 +72,16 @@ export class LogicNode extends Node {
     or: {
       type: "array",
       output: "boolean",
-      markdownDescription: "Short-circuit OR — returns `true` at the first truthy condition, `false` if all are falsy.",
+      markdownDescription: "Short-circuit OR — evaluates conditions left to right, stopping at the first truthy one.",
+      outputDescription: "`true` at the first truthy condition, otherwise `false` (an empty array is `false`).",
       examples: [
         "{ \"or\": [{ \"var\": \"$isAdmin\" }, { \"var\": \"$isModerator\" }] }",
       ],
     },
     not: {
       output: "boolean",
-      markdownDescription: "Boolean negation — resolves the value and returns its logical inverse.",
+      markdownDescription: "Boolean negation of the resolved value's truthiness.",
+      outputDescription: "`true` when the value is falsy, otherwise `false`.",
       examples: [
         "{ \"not\": { \"var\": \"$active\" } }",
       ],
@@ -146,14 +152,16 @@ export class LogicNode extends Node {
     },
     empty: {
       output: "boolean",
-      markdownDescription: "Returns `true` if the value is `null`, `undefined`, `\"\"`, `[]`, or `{}`.",
+      markdownDescription: "Tests whether the resolved value is empty.",
+      outputDescription: "`true` for `null`, `undefined`, `\"\"`, `[]`, or `{}`; otherwise `false`.",
       examples: [
         "{ \"empty\": { \"var\": \"$items\" } }",
       ],
     },
     notEmpty: {
       output: "boolean",
-      markdownDescription: "Returns `true` if the value is non-null and non-empty. Inverse of `empty`.",
+      markdownDescription: "Tests whether the resolved value is non-empty. Inverse of `empty`.",
+      outputDescription: "`true` when the value is non-null and non-empty; otherwise `false`.",
       examples: [
         "{ \"notEmpty\": { \"var\": \"$items\" } }",
       ],
@@ -161,13 +169,16 @@ export class LogicNode extends Node {
     sleep: {
       type: "number",
       output: "null",
-      markdownDescription: "Pauses execution for the given number of milliseconds, then resolves to `null`.",
+      markdownDescription: "Pauses execution for the given number of milliseconds.",
+      outputDescription: "Always `null`, after the delay elapses (a value ≤ 0 resolves immediately).",
       examples: [
         "{ \"sleep\": 500 }",
       ],
     },
+
     exec: {
       markdownDescription: "Resolves its value, then executes the result as a step sequence. Useful for running dynamically resolved step arrays.",
+      outputDescription: "The value of the executed steps — the last step when the resolved value is an array, otherwise the resolved value itself.",
       examples: [
         "{ \"exec\": { \"var\": \"$steps\" } }",
       ],
@@ -201,7 +212,10 @@ export class LogicNode extends Node {
       const keyName = typeof keyRaw === "string" ? keyRaw : null;
       const template = def.do;
 
-      if (template === undefined) return [];
+      // foreach iterates for effect/accumulation and yields the LAST iteration's
+      // value (empty input → null). Use `map` when you need an array of every
+      // result (e.g. rendering N elements from a collection).
+      if (template === undefined || arr.length === 0) return null;
 
       const buildContext = (item: unknown, i: number): Context => ({
         ...context,
@@ -218,17 +232,18 @@ export class LogicNode extends Node {
         : (ctx: Context) => resolve(template, ctx);
 
       if (this.toBoolean(parallel)) {
-        return Promise.all(arr.map((item, i) => run(buildContext(item, i))));
+        return Promise.all(arr.map((item, i) => run(buildContext(item, i))))
+          .then(results => results.length ? results[results.length - 1] : null);
       }
 
-      const results: unknown[] = [];
+      let last: unknown = null;
       let i = 0;
       function next(): unknown {
-        if (i >= arr.length) return results;
+        if (i >= arr.length) return last;
         const idx = i++;
         const r = run(buildContext(arr[idx], idx));
-        if (r instanceof Promise) return r.then(v => { results.push(v); return next(); });
-        results.push(r);
+        if (r instanceof Promise) return r.then(v => { last = v; return next(); });
+        last = r;
         return next();
       }
       return next();

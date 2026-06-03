@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
-import { Context, ResolverFn, TimerNode, isHttpError } from "@jexs/core";
+import { Context, Node, ResolverFn, TimerNode, isHttpError } from "@jexs/core";
 import { WebSocketNode } from "./nodes/WebSocket.js";
 
 export class Server {
@@ -141,6 +141,7 @@ export class Server {
 
       for (const step of this.requestSteps ?? []) {
         const stepResult = await this.resolve(step, context);
+        this.storeStepAs(step, stepResult, context);
         if (upgrade.accepted) return;
         if (this.isResponse(stepResult)) {
           socket.destroy();
@@ -240,6 +241,7 @@ export class Server {
       let result: unknown = null;
       for (const step of this.requestSteps ?? []) {
         result = await this.resolve(step, context);
+        this.storeStepAs(step, result, context);
         if (this.isReturn(result)) {
           result = (result as Record<string, unknown>).return ?? null;
           break;
@@ -297,6 +299,20 @@ export class Server {
         response: "Internal Server Error",
         responseStatus: 500,
       });
+    }
+  }
+
+  /**
+   * Honor the universal `"as"` key on a per-request step, mirroring core
+   * `runSteps`. The request loop drives steps itself (to watch for response/
+   * return stop-signals) rather than going through `runSteps`, so without this
+   * `{ "file": "routes.json", "as": "page" }` in a `listen.do` would resolve
+   * but never store `page`. Writes into the shared request context so later
+   * steps can read `{ "var": "$page" }`.
+   */
+  private storeStepAs(step: unknown, value: unknown, context: Context): void {
+    if (step && typeof step === "object" && !Array.isArray(step) && "as" in step) {
+      Node.setContextValue(context, String((step as Record<string, unknown>).as), value);
     }
   }
 

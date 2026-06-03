@@ -67,38 +67,51 @@ export interface QueryDefinition {
   first?: boolean;
   distinct?: boolean;
   // Schema operations
-  schema?: string | TableSchema;
+  schema?: string | TableJsonSchema;
   // Aggregate
   group_concat?: Record<string, string | [string, string]>;
   conflict?: string[];
   // Alter operations
-  addColumns?: Record<string, ColumnDef>;
+  addColumns?: Record<string, ColumnSchema>;
 }
 
 /**
- * Column definition in schema
+ * SQL/DDL metadata for a column, attached under the `x-db` annotation key so the
+ * containing document stays valid JSON Schema (Ajv ignores unknown keywords).
  */
-export interface ColumnDef {
-  type: string;
+export interface ColumnDbMeta {
+  /** SQL column type for DDL (e.g. `varchar`, `biginteger`, `timestamp`).
+   *  Falls back to a mapping from the JSON Schema `type` when omitted. */
+  sqlType?: string;
   length?: number;
   precision?: number;
   scale?: number;
   primaryKey?: boolean;
   autoIncrement?: boolean;
-  notNull?: boolean;
   unique?: boolean;
-  default?: string | number | boolean | null;
-  onUpdate?: string;
   unsigned?: boolean;
+  onUpdate?: string;
+  default?: string | number | boolean | null;
   comment?: string;
-  tailwind?: boolean; // For template fields
-  computed?: Record<string, string>; // e.g., { "sha256": "original_text" }
-  secret?: boolean; // Column value should be masked in output
-  // Form metadata
-  inputType?: string;
-  label?: string;
+  /** Derive this column from another on insert, e.g. `{ "sha256": "password" }`. */
+  computed?: Record<string, string>;
+  /** Mask the value in output. */
+  secret?: boolean;
+}
+
+/**
+ * A column definition: a standard JSON Schema property (`type`, `maxLength`,
+ * `enum`, `pattern`, `format`, ...) plus optional `x-db` DDL metadata.
+ */
+export interface ColumnSchema {
+  type?: string | string[];
+  maxLength?: number;
+  enum?: unknown[];
   pattern?: string;
-  options?: Array<{ value: unknown; label: string }>;
+  format?: string;
+  default?: unknown;
+  "x-db"?: ColumnDbMeta;
+  [key: string]: unknown;
 }
 
 /**
@@ -123,11 +136,10 @@ export interface ForeignKeyDef {
 }
 
 /**
- * Table schema definition
+ * Table-level SQL/DDL metadata, under the `x-db` annotation key.
  */
-export interface TableSchema {
+export interface TableDbMeta {
   table: string;
-  columns: Record<string, ColumnDef>;
   indexes?: Record<string, IndexDef>;
   primaryKey?: string[];
   foreignKeys?: Record<string, ForeignKeyDef>;
@@ -136,14 +148,40 @@ export interface TableSchema {
     charset?: string;
     collate?: string;
   };
+  /** Per-table step validator run by QueryNode before queries. `false` opts out. */
   validator?: unknown[] | false;
-  // Entity metadata
+}
+
+/**
+ * UI/entity metadata, under the `x-entity` annotation key. Not used by the
+ * server runtime; consumed by admin/listing templates.
+ */
+export interface TableEntityMeta {
   label?: string;
   singular?: string;
   icon?: Record<string, unknown>;
   listColumns?: string[];
   orderBy?: { column: string; direction: string };
   color?: string;
+}
+
+/**
+ * A table schema authored as a JSON Schema (draft 2020-12) document. The
+ * `properties` map defines columns; DDL/runtime metadata live under `x-db`, and
+ * UI metadata under `x-entity`, so the document validates as plain JSON Schema.
+ */
+export interface TableJsonSchema {
+  type?: "object";
+  required?: string[];
+  properties: Record<string, ColumnSchema>;
+  "x-db": TableDbMeta;
+  "x-entity"?: TableEntityMeta;
+  [key: string]: unknown;
+}
+
+/** The table name a schema document declares. */
+export function tableNameOf(schema: TableJsonSchema): string {
+  return schema["x-db"].table;
 }
 
 export interface JoinDefinition {
@@ -186,45 +224,58 @@ function isObject(value: unknown): value is Record<string, unknown> {
 export class QueryNode extends Node {
   static schema: JexsNodeSchema = {
     "query-select": queryMethod(
-      "Executes a SELECT query on the given table. Primary value is the table name.\nReturns rows (array) or a single row (with `query-first: true`).",
+      "Executes a SELECT query on the given table. Primary value is the table name.",
       "{ \"query-select\": \"users\", \"where\": { \"id\": { \"var\": \"$id\" } }, \"query-first\": true }",
       "any",
+      "An array of row objects (each a `{ column: value }` map). With `query-first: true`, the single matching row object or `null`.",
     ),
     "query-insert": queryMethod(
       "Inserts data into the given table. Provide `data` as a row object or an array of rows.",
       "{ \"query-insert\": \"users\", \"data\": { \"name\": \"John\" } }",
+      "any",
+      "The inserted row's primary key (DB-dependent), or an array of keys when `data` is an array of rows.",
     ),
     "query-upsert": queryMethod(
       "Inserts or updates a row. Use `conflict` to specify the target columns.",
       "{ \"query-upsert\": \"users\", \"data\": { \"id\": 1, \"name\": \"John\" }, \"conflict\": [\"id\"] }",
+      "any",
+      "The affected row's primary key, or an array of keys when `data` is an array of rows.",
     ),
     "query-update": queryMethod(
       "Updates rows in the given table matching `where`.",
       "{ \"query-update\": \"users\", \"data\": { \"name\": \"Jane\" }, \"where\": { \"id\": 1 } }",
+      "number",
+      "The number of rows updated.",
     ),
     "query-delete": queryMethod(
       "Deletes rows from the given table matching `where`.",
       "{ \"query-delete\": \"users\", \"where\": { \"id\": 1 } }",
+      "number",
+      "The number of rows deleted.",
     ),
     "query-count": queryMethod(
       "Counts rows in the given table.",
       "{ \"query-count\": \"users\", \"where\": { \"active\": true } }",
       "number",
+      "The matching row count as a number.",
     ),
     "query-create": queryMethod(
       "Creates a table from a registered schema (`query-schema`) or inline column definitions.",
       "{ \"query-create\": \"users\", \"query-schema\": \"schema/users\" }",
       "null",
+      "`null` on success; throws on SQL error.",
     ),
     "query-drop": queryMethod(
       "Drops the given table.",
       "{ \"query-drop\": \"users\" }",
       "null",
+      "`null` on success; throws on SQL error.",
     ),
     "query-alter": queryMethod(
       "Alters the given table: add columns via `addColumns`.",
       "{ \"query-alter\": \"users\", \"addColumns\": { \"age\": { \"type\": \"integer\" } } }",
       "null",
+      "`null` on success; throws on SQL error.",
     ),
   };
 
@@ -311,10 +362,12 @@ function queryMethod(
   markdown: string,
   example: string,
   output?: "string" | "number" | "boolean" | "array" | "object" | "null" | "any",
+  outputDescription?: string,
 ): import("@jexs/core").JexsMethodSchema {
   return {
     type: "string",
     output,
+    outputDescription,
     markdownDescription: markdown,
     examples: [example],
   };
@@ -333,14 +386,15 @@ async function runValidator(
   }
 
   const tableSchema = SchemaNode.get(query.table);
-  const validator = tableSchema?.validator !== undefined ? tableSchema.validator : SchemaNode.globalValidator;
+  const tableValidator = tableSchema?.["x-db"]?.validator;
+  const validator = tableValidator !== undefined ? tableValidator : SchemaNode.globalValidator;
 
   if (!validator || !Array.isArray(validator)) return;
 
   const validatorContext: Context = {
     ...context,
     $validating: true,
-    schema: tableSchema ?? { table: query.table },
+    schema: tableSchema ?? { "x-db": { table: query.table }, properties: {} },
     operation: query.type === "count" ? "select" : query.type,
   };
 
@@ -370,8 +424,8 @@ async function resolveQueryDef(
   const query = validateQuery({ ...rest, query: queryType });
 
   const tableSchema = query.table ? SchemaNode.get(query.table) : undefined;
-  const columns = tableSchema?.columns
-    ? new Set(Object.keys(tableSchema.columns))
+  const columns = tableSchema?.properties
+    ? new Set(Object.keys(tableSchema.properties))
     : undefined;
 
   const rd = async (d: unknown) => await resolveColumnValues(d, columns, context) as Record<string, unknown>;
@@ -390,7 +444,7 @@ async function resolveQueryDef(
       ([rOrderBy, rGroupBy, rSchema, rGroupConcat, rConflict]) => {
         if (rOrderBy     !== null) query.orderBy      = rOrderBy     as QueryDefinition["orderBy"];
         if (rGroupBy     !== null) query.groupBy      = rGroupBy     as QueryDefinition["groupBy"];
-        if (rSchema      !== null) query.schema       = rSchema      as string | TableSchema;
+        if (rSchema      !== null) query.schema       = rSchema      as string | TableJsonSchema;
         if (rGroupConcat !== null) query.group_concat = rGroupConcat as QueryDefinition["group_concat"];
         if (rConflict    !== null) query.conflict     = rConflict    as string[];
         return null;
@@ -398,7 +452,7 @@ async function resolveQueryDef(
     )),
   ]);
 
-  if (addColumns) query.addColumns = addColumns as Record<string, ColumnDef>;
+  if (addColumns) query.addColumns = addColumns as Record<string, ColumnSchema>;
 
   return query;
 }
@@ -664,37 +718,40 @@ async function executeCreate(
   for (const schema of schemas) {
     // Register schema for validation/computed columns
     SchemaNode.register(schema);
+    const tableName = tableNameOf(schema);
+    const db = schema["x-db"];
 
     try {
       // Check if table exists
-      const exists = await knex.schema.hasTable(schema.table);
+      const exists = await knex.schema.hasTable(tableName);
       if (exists) {
         // Auto-detect and add missing columns
         const added = await syncMissingColumns(knex, schema);
         if (added.length > 0) {
-          console.log(`[QueryNode] Table ${schema.table}: added columns [${added.join(", ")}]`);
+          console.log(`[QueryNode] Table ${tableName}: added columns [${added.join(", ")}]`);
         }
-        results.push({ table: schema.table, created: false });
+        results.push({ table: tableName, created: false });
         continue;
       }
 
       // Create table
-      await knex.schema.createTable(schema.table, (table) => {
-        buildColumns(table, schema.columns, knex);
-        if (schema.indexes) buildIndexes(table, schema.indexes);
-        if (schema.foreignKeys)
-          buildForeignKeys(table, schema.foreignKeys);
+      const required = new Set(schema.required ?? []);
+      await knex.schema.createTable(tableName, (table) => {
+        buildColumns(table, schema.properties, required, knex);
+        if (db.indexes) buildIndexes(table, db.indexes);
+        if (db.foreignKeys)
+          buildForeignKeys(table, db.foreignKeys);
       });
 
-      console.log(`[QueryNode] Created table: ${schema.table}`);
-      results.push({ table: schema.table, created: true });
+      console.log(`[QueryNode] Created table: ${tableName}`);
+      results.push({ table: tableName, created: true });
     } catch (error) {
       const e = error as Error;
       console.error(
-        `[QueryNode] Error creating table ${schema.table}:`,
+        `[QueryNode] Error creating table ${tableName}:`,
         e.message,
       );
-      results.push({ table: schema.table, created: false, error: e.message });
+      results.push({ table: tableName, created: false, error: e.message });
     }
   }
 
@@ -729,28 +786,34 @@ async function executeDrop(
  */
 async function syncMissingColumns(
   knex: KnexType,
-  schema: TableSchema,
+  schema: TableJsonSchema,
 ): Promise<string[]> {
-  const existingCols = await knex(schema.table).columnInfo();
+  const tableName = tableNameOf(schema);
+  const existingCols = await knex(tableName).columnInfo();
   const existingNames = new Set(Object.keys(existingCols));
-  const missing: [string, ColumnDef][] = [];
+  const missing: [string, ColumnSchema][] = [];
 
-  for (const [name, col] of Object.entries(schema.columns)) {
+  for (const [name, col] of Object.entries(schema.properties)) {
     if (!existingNames.has(name)) {
-      // Strip notNull for existing tables — rows already have NULL
-      // Strip non-constant defaults (e.g. CURRENT_TIMESTAMP) — SQLite rejects these on ALTER TABLE
-      const { notNull, ...safeDef } = col;
+      // Strip non-constant defaults (e.g. CURRENT_TIMESTAMP) — SQLite rejects
+      // these on ALTER TABLE. notNull is not applied (empty required set below),
+      // since existing rows already have NULL.
+      const safeDef: ColumnSchema = { ...col, "x-db": { ...col["x-db"] } };
+      const db = safeDef["x-db"]!;
+      if (typeof db.default === "string" && /current_timestamp/i.test(db.default)) {
+        delete db.default;
+      }
       if (typeof safeDef.default === "string" && /current_timestamp/i.test(safeDef.default)) {
         delete safeDef.default;
       }
-      missing.push([name, safeDef as ColumnDef]);
+      missing.push([name, safeDef]);
     }
   }
 
   if (missing.length === 0) return [];
 
-  await knex.schema.alterTable(schema.table, (table) => {
-    buildColumns(table, Object.fromEntries(missing), knex);
+  await knex.schema.alterTable(tableName, (table) => {
+    buildColumns(table, Object.fromEntries(missing), new Set(), knex);
   });
 
   return missing.map(([name]) => name);
@@ -773,7 +836,7 @@ async function executeAlter(
   // Get existing columns to skip ones that already exist
   const existingCols = await knex(tableName).columnInfo();
   const existingNames = new Set(Object.keys(existingCols));
-  const toAdd: Record<string, ColumnDef> = {};
+  const toAdd: Record<string, ColumnSchema> = {};
 
   for (const [name, col] of Object.entries(addColumns)) {
     if (!existingNames.has(name)) {
@@ -787,7 +850,7 @@ async function executeAlter(
   }
 
   await knex.schema.alterTable(tableName, (table) => {
-    buildColumns(table, toAdd, knex);
+    buildColumns(table, toAdd, new Set(), knex);
   });
 
   const added = Object.keys(toAdd);
@@ -799,8 +862,8 @@ async function executeAlter(
  * Resolve schema(s) from the registry: "*" for all, or a table name for one.
  */
 function resolveSchemas(
-  schema: string | TableSchema | undefined,
-): TableSchema[] {
+  schema: string | TableJsonSchema | undefined,
+): TableJsonSchema[] {
   if (!schema) {
     throw new Error("CREATE query requires schema");
   }
@@ -823,26 +886,51 @@ function resolveSchemas(
 }
 
 /**
- * Build columns from schema
+ * Map a JSON Schema `type` to a SQL column type, used as a fallback when a
+ * column omits `x-db.sqlType`. JSON Schema's type vocabulary is coarser than
+ * SQL's, so authors needing precise types (varchar vs text, bigint, timestamp)
+ * should set `x-db.sqlType`.
+ */
+function jsonTypeToSql(type: string | string[] | undefined): string {
+  const t = Array.isArray(type) ? type.find((x) => x !== "null") : type;
+  switch (t) {
+    case "integer": return "integer";
+    case "number":  return "float";
+    case "boolean": return "boolean";
+    case "object":
+    case "array":   return "json";
+    case "string":  return "varchar";
+    default:        return "text";
+  }
+}
+
+/**
+ * Build columns from a JSON Schema `properties` map. Reads JSON Schema keywords
+ * (`type`, `maxLength`) plus `x-db` DDL metadata. NOT NULL is derived from
+ * membership in `required`.
  */
 function buildColumns(
   table: KnexType.CreateTableBuilder,
-  columns: Record<string, ColumnDef>,
+  properties: Record<string, ColumnSchema>,
+  required: Set<string>,
   knex: KnexType,
 ): void {
-  for (const [name, col] of Object.entries(columns)) {
+  for (const [name, col] of Object.entries(properties)) {
+    const db = col["x-db"] ?? {};
+    const sqlType = (db.sqlType ?? jsonTypeToSql(col.type)).toLowerCase();
+    const length = col.maxLength ?? db.length ?? 255;
     let column: KnexType.ColumnBuilder;
 
-    switch (col.type.toLowerCase()) {
+    switch (sqlType) {
       case "integer":
       case "int":
-        column = col.autoIncrement
+        column = db.autoIncrement
           ? table.increments(name)
           : table.integer(name);
         break;
       case "biginteger":
       case "bigint":
-        column = col.autoIncrement
+        column = db.autoIncrement
           ? table.bigIncrements(name)
           : table.bigInteger(name);
         break;
@@ -853,17 +941,17 @@ function buildColumns(
         column = table.tinyint(name);
         break;
       case "float":
-        column = table.float(name, col.precision, col.scale);
+        column = table.float(name, db.precision, db.scale);
         break;
       case "double":
-        column = table.double(name, col.precision, col.scale);
+        column = table.double(name, db.precision, db.scale);
         break;
       case "decimal":
-        column = table.decimal(name, col.precision ?? 8, col.scale ?? 2);
+        column = table.decimal(name, db.precision ?? 8, db.scale ?? 2);
         break;
       case "varchar":
       case "string":
-        column = table.string(name, col.length ?? 255);
+        column = table.string(name, length);
         break;
       case "text":
       case "template":
@@ -906,26 +994,27 @@ function buildColumns(
         break;
       default:
         console.warn(
-          `[QueryNode] Unknown column type: ${col.type}, using string`,
+          `[QueryNode] Unknown column type: ${sqlType}, using string`,
         );
-        column = table.string(name, col.length ?? 255);
+        column = table.string(name, length);
     }
 
     // Apply modifiers
-    if (!col.autoIncrement) {
-      if (col.primaryKey) column.primary();
-      if (col.unsigned) column.unsigned();
+    if (!db.autoIncrement) {
+      if (db.primaryKey) column.primary();
+      if (db.unsigned) column.unsigned();
     }
-    if (col.notNull) column.notNullable();
-    if (col.unique && !col.primaryKey) column.unique();
-    if (col.default !== undefined) {
-      if (col.default === "CURRENT_TIMESTAMP") {
+    if (required.has(name)) column.notNullable();
+    if (db.unique && !db.primaryKey) column.unique();
+    const defaultValue = db.default ?? (col.default as string | number | boolean | null | undefined);
+    if (defaultValue !== undefined) {
+      if (defaultValue === "CURRENT_TIMESTAMP") {
         column.defaultTo(knex.raw("CURRENT_TIMESTAMP"));
       } else {
-        column.defaultTo(col.default);
+        column.defaultTo(defaultValue);
       }
     }
-    if (col.comment) column.comment(col.comment);
+    if (db.comment) column.comment(db.comment);
   }
 }
 

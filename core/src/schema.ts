@@ -54,6 +54,13 @@ export interface JexsPropertySchema {
  */
 export interface JexsMethodSchema extends JexsPropertySchema {
   output?: JexsOutput;
+  /**
+   * Human-readable description of what this method resolves to. Surfaced in
+   * the primary key's hover (as a "Returns:" line) and by the MCP `describe_op`
+   * tool. Use it for non-obvious return shapes — e.g. a node that returns a
+   * `{ response, responseStatus }` envelope rather than a plain value.
+   */
+  outputDescription?: string;
   siblings?: Record<string, JexsPropertySchema>;
 }
 

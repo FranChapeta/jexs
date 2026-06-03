@@ -7,7 +7,9 @@ export class CacheNode extends Node {
     "cache-connect": {
       type: "string",
       enum: ["redis", "memory", "memcached"],
+      output: "string",
       markdownDescription: "Initializes the cache singleton. The value selects the driver; connection details are siblings.",
+      outputDescription: "The connected driver name (`\"memory\"`, `\"redis\"`, or `\"memcached\"`).",
       examples: [
         "{ \"cache-connect\": \"memory\" }",
         "{ \"cache-connect\": \"redis\", \"host\": \"localhost\", \"port\": 6379 }",
@@ -32,7 +34,8 @@ export class CacheNode extends Node {
     },
     "cache-get": {
       type: "string",
-      markdownDescription: "Reads the value stored under `key`. Returns the value or `null` if absent.",
+      markdownDescription: "Reads the value stored under `key`.",
+      outputDescription: "The stored value (any JSON type), or `null` if the key is absent or expired.",
       examples: [
         "{ \"cache-get\": \"user:42\" }",
       ],
@@ -40,6 +43,7 @@ export class CacheNode extends Node {
     "cache-set": {
       type: "string",
       markdownDescription: "Writes the `value` sibling under the given key. Optional `ttl` sibling sets expiry in seconds.",
+      outputDescription: "The driver's write result, resolved once the value is stored (truthy on success).",
       examples: [
         "{ \"cache-set\": \"user:42\", \"value\": { \"var\": \"$user\" }, \"ttl\": 3600 }",
       ],
@@ -51,7 +55,8 @@ export class CacheNode extends Node {
     "cache-delete": {
       type: "string",
       output: "boolean",
-      markdownDescription: "Removes the entry under `key`. Returns `true` if the key existed.",
+      markdownDescription: "Removes the entry under `key`.",
+      outputDescription: "`true` if the key existed and was removed, otherwise `false`.",
       examples: [
         "{ \"cache-delete\": \"user:42\" }",
       ],
@@ -60,6 +65,7 @@ export class CacheNode extends Node {
       type: "string",
       output: "boolean",
       markdownDescription: "Checks whether `key` is present in the cache.",
+      outputDescription: "`true` if the key is present (and unexpired), otherwise `false`.",
       examples: [
         "{ \"cache-has\": \"user:42\" }",
       ],
@@ -68,16 +74,19 @@ export class CacheNode extends Node {
       type: "boolean",
       output: "null",
       markdownDescription: "Removes every entry. Pass `true` to trigger.",
+      outputDescription: "Always `null`.",
     },
     "cache-stats": {
       type: "boolean",
       output: "object",
-      markdownDescription: "Returns driver-reported statistics (hit/miss counts, size, etc.).",
+      markdownDescription: "Reports driver statistics.",
+      outputDescription: "A stats object (hit/miss counts, entry count/size, etc.) — exact fields depend on the driver.",
     },
     "cache-dump": {
       type: "boolean",
       output: "object",
-      markdownDescription: "Returns a snapshot of the cache contents. Memory driver only; other drivers return an error.",
+      markdownDescription: "Snapshots the cache contents (memory driver only).",
+      outputDescription: "An object snapshot of all entries. Memory driver only — other drivers return an error object.",
     },
   };
 

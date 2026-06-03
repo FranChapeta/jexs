@@ -112,7 +112,8 @@ export class WebSocketNode extends Node {
     },
     "socket-count": {
       output: "number",
-      markdownDescription: "Returns the number of connections in a room (string) or on the current route path (`true`).",
+      markdownDescription: "Counts connections in a room (pass the room name) or on the current route path (pass `true`).",
+      outputDescription: "The connection count as a number.",
       examples: [
         "{ \"socket-count\": \"lobby\" }",
         "{ \"socket-count\": true }",
@@ -121,7 +122,8 @@ export class WebSocketNode extends Node {
     "socket-list": {
       type: "string",
       output: "array",
-      markdownDescription: "Returns `{ id, ...meta }` for every connection in the named room.",
+      markdownDescription: "Lists the connections in the named room.",
+      outputDescription: "An array of `{ id, ...meta }` objects, one per connection in the room.",
       examples: [
         "{ \"socket-list\": \"lobby\" }",
       ],

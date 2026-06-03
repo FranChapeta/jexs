@@ -21,6 +21,7 @@ export class EmailNode extends Node {
       type: "string",
       output: "object",
       markdownDescription: "Sends an email via SMTP. Requires `\"subject\"`. Use `\"body\"` for plain text or `\"html\"` for HTML body.\nSMTP config from env: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`.\nFalls back to Ethereal (fake SMTP with preview URL) in development when `SMTP_HOST` is not set.",
+      outputDescription: "A result object with the sent message id (and a `previewUrl` when using the dev Ethereal transport). Throws if SMTP delivery fails.",
       examples: [
         "{ \"email\": { \"var\": \"$user.email\" }, \"subject\": \"Welcome!\", \"html\": \"<p>Hi there</p>\" }",
       ],

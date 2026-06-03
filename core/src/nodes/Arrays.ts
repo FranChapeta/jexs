@@ -7,12 +7,14 @@ export class ArrayNode extends Node {
   static schema: JexsNodeSchema = {
     first: {
       markdownDescription: "Returns the first element of an array.",
+      outputDescription: "The first element (any type), or `undefined` if the array is empty.",
       examples: [
         "{ \"first\": { \"var\": \"$items\" } }",
       ],
     },
     last: {
       markdownDescription: "Returns the last element of an array.",
+      outputDescription: "The last element (any type), or `undefined` if the array is empty.",
       examples: [
         "{ \"last\": { \"var\": \"$items\" } }",
       ],
@@ -84,7 +86,8 @@ export class ArrayNode extends Node {
     pluck: {
       tuple: 2,
       output: "array",
-      markdownDescription: "Extracts the value of a key from each object in an array.",
+      markdownDescription: "Extracts the value of a key (dot-path) from each object in an array.",
+      outputDescription: "An array of each object's value at the key — `undefined` in slots where the object lacks it.",
       examples: [
         "{ \"pluck\": [{ \"var\": \"$users\" }, \"name\"] }",
       ],
@@ -119,6 +122,7 @@ export class ArrayNode extends Node {
     merge: {
       type: "array",
       markdownDescription: "Merges multiple arrays (concatenation) or multiple objects (shallow merge).",
+      outputDescription: "A single shallow-merged **object** when every input is a plain object (later keys win); otherwise all inputs concatenated into one **array**.",
       examples: [
         "{ \"merge\": [{ \"a\": 1 }, { \"b\": 2 }] }",
       ],
@@ -134,6 +138,7 @@ export class ArrayNode extends Node {
     find: {
       tuple: 2,
       markdownDescription: "Returns the first item for which the condition is truthy.\nEach iteration exposes `item`, `index`, and `loop` in context.",
+      outputDescription: "The first matching item (any type), or `undefined` if none match.",
       examples: [
         "{ \"find\": [{ \"var\": \"$users\" }, { \"eq\": [{ \"var\": \"item.role\" }, \"admin\"] }] }",
       ],
@@ -157,6 +162,7 @@ export class ArrayNode extends Node {
     reduce: {
       tuple: 3,
       markdownDescription: "Reduces an array to a single value.\nEach iteration exposes `item`, `index`, `accumulator`, and `loop` in context.",
+      outputDescription: "The final accumulator value — its type follows the reducer/initial value (the initial value is returned as-is for an empty array).",
       examples: [
         "{ \"reduce\": [{ \"var\": \"$nums\" }, { \"add\": [{ \"var\": \"accumulator\" }, { \"var\": \"item\" }] }, 0] }",
       ],
@@ -165,6 +171,7 @@ export class ArrayNode extends Node {
       tuple: 2,
       output: "object",
       markdownDescription: "Groups an array of objects by a key. Returns an object keyed by group values.",
+      outputDescription: "An object mapping each distinct group-key (stringified) to the **array** of items in that group.",
       examples: [
         "{ \"groupBy\": [{ \"var\": \"$users\" }, \"role\"] }",
       ],
@@ -183,6 +190,7 @@ export class ArrayNode extends Node {
     index: {
       tuple: 2,
       markdownDescription: "Returns the element at a given index.",
+      outputDescription: "The element at the index (any type), or `undefined` if out of range.",
       examples: [
         "{ \"index\": [{ \"var\": \"$items\" }, 2] }",
       ],

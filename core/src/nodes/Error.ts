@@ -8,6 +8,7 @@ export class ErrorNode extends Node {
     error: {
       type: "number",
       markdownDescription: "Throws an HTTP error, aborting the current step sequence.\nCaught by any ancestor step with a `\"catch\"` array, or converted to an HTTP error response by the server.",
+      outputDescription: "Never resolves to a value — it always throws. Control jumps to the nearest enclosing `catch` (which receives `$error: { status, message }`), or the server turns it into an HTTP error response with that status.",
       examples: [
         "{ \"error\": 403, \"message\": \"Permission denied\" }",
       ],

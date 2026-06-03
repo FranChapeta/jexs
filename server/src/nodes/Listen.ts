@@ -22,14 +22,15 @@ export class ListenNode extends Node {
     listen: {
       type: "number",
       output: "null",
-      markdownDescription: "Starts the HTTP server on the given port. Pass per-request steps in `\"do\"`.\nSet `\"client\": true` (or a path string) to auto-serve the `@jexs/client` browser bundle\nand inject the script tag into rendered `<head>` elements.\nSet `\"sw\"` to an object to enable service worker registration.",
+      markdownDescription: "Starts the HTTP server on the given port. Pass per-request steps in `\"do\"`.\nSet `\"client\": true` (or a path string) to auto-serve the `@jexs/client` browser bundle\nand inject the script tag into rendered `<head>` elements.\nSet `\"sw\"` to an object to enable service worker registration.\n\n**Per-request `do` execution.** The steps run in order against a fresh per-request context. The universal `\"as\"` key is honored (stored into the context for later steps), as is `setVars`. Two stop-signals halt the loop early: a step that resolves to `{ \"return\": X }` (yields `X`) or to a **response object** (a value with a `response` key).\n\n**Response object.** The final value becomes the HTTP response. A bare string is sent as `text/html`; any other bare value is sent as JSON. For full control return an object:\n- `response` — the body (string, or any JSON value for `responseType: \"json\"`). For `responseType: \"redirect\"` it is the `Location` URL.\n- `responseStatus` — HTTP status code (default `200`).\n- `responseType` — `\"html\"` | `\"json\"` | `\"text\"` | `\"redirect\"` | a literal MIME string (e.g. `\"image/png\"`). When omitted it is inferred: string → `html`, otherwise `json`.\n- `responseHeaders` / `responseHeader` — extra response headers (singular overrides plural on collision).",
       examples: [
         "{ \"listen\": 3000, \"client\": true, \"do\": [{ \"session\": \"load\" }, { \"routes\": { \"var\": \"$routes\" } }] }",
+        "{ \"response\": \"{\\\"ok\\\":true}\", \"responseType\": \"json\", \"responseStatus\": 201 }",
       ],
       siblings: {
         do: {
           steps: true,
-          description: "Per-request steps run for each incoming HTTP request.",
+          description: "Per-request steps run for each incoming HTTP request. `\"as\"` and `setVars` write into the shared request context; a step resolving to `{ response }` or `{ return }` ends the loop.",
         },
         client: {
           type: "boolean",

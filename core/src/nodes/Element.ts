@@ -35,6 +35,7 @@ export class ElementNode extends Node {
       type: "string",
       output: "string",
       markdownDescription: "Renders an HTML element. Attributes are flat keys on the object; `content` holds children.\r\n`class` accepts a string, array, or `{ className: bool }` map. `style` accepts a camelCase object.\r\nAdd an `\"if\"` key to conditionally render. Wire DOM events via an `\"events\"` object.",
+      outputDescription: "An HTML **string**. When an `\"if\"` key is present and falsy, renders to an empty string `\"\"`. String content has `$identifier` tokens interpolated — wrap literal `$` content in `{ \"raw\": \"…\" }`.",
       examples: [
         "{ \"tag\": \"button\", \"class\": \"btn\", \"events\": { \"click\": { \"do\": [...] } }, \"content\": [\"Submit\"] }",
       ],

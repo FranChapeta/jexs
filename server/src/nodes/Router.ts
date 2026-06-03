@@ -1,13 +1,19 @@
 import { Node, Context, NodeValue, resolve, runSteps, createHttpError } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
+import { validate } from "../validate.js";
 
 /**
- * Route handler structure
+ * Route handler structure.
+ *
+ * `query` and `body` are standard JSON Schema (draft 2020-12) objects, validated
+ * by the shared Ajv validator against the request's query string / parsed body.
+ * URL path params are matched and constrained structurally via `paramName` /
+ * `paramRegex` at each route node, not by a handler schema.
  */
 interface RouteHandler {
   file?: string;
   run?: unknown[];
-  params?: Record<string, unknown>;
+  query?: Record<string, unknown>;
   body?: Record<string, unknown>;
   options?: Record<string, unknown>;
 }
@@ -78,7 +84,8 @@ export class RouterNode extends Node {
   static schema: JexsNodeSchema = {
     routes: {
       $ref: "#/$defs/routeNode",
-      markdownDescription: "Matches the incoming request path and method against a route tree, then executes the handler.\nSupports exact segments, `*` (single param with optional `paramName`/`paramRegex`),\n`**` (catch-all), conditional `\"if\"` guards per node, and param/body validation.\n\nA `WS` method handler that calls `socket-accept` completes a WebSocket upgrade.\nStep expressions inside `run` are validated as Jexs expressions; any other key on a handler is treated as a Jexs expression and evaluated directly.",
+      markdownDescription: "Matches the incoming request path and method against a route tree, then executes the handler.\nSupports exact segments, `*` (single param with optional `paramName`/`paramRegex`),\n`**` (catch-all), conditional `\"if\"` guards per node, and query/body validation.\n\nA `WS` method handler that calls `socket-accept` completes a WebSocket upgrade.\nStep expressions inside `run` are validated as Jexs expressions; any other key on a handler is treated as a Jexs expression and evaluated directly.",
+      outputDescription: "The matched handler's result. A `file`/`run` step that renders to a string is wrapped as `{ response: <html> }`; a handler that returns an object passes it through unchanged — either a response envelope (`{ response, responseStatus, responseType, responseHeaders }`) or a bare JSON value. Throws a 404 HTTP error when no route matches, so use a catch-all route (`**`) or wrap calls in `catch` to handle not-found.",
       examples: [
         "{ \"routes\": { \"children\": { \"users\": { \"methods\": { \"GET\": { \"file\": \"pages/users.json\" } } } } } }",
       ],
@@ -120,11 +127,15 @@ export class RouterNode extends Node {
       properties: {
         file:    { type: "string" },
         run:     { $ref: "#/$defs/steps" },
-        params:  { type: "object" },
-        body:    { type: "object" },
+        // `query`/`body` values are themselves JSON Schemas — describe them with
+        // the 2020-12 meta-schema so editors give full JSON-Schema autocomplete
+        // inside them (NOT exprFlat: these are static author-time schemas).
+        query:   { $ref: "#/$defs/_jsonSchema" },
+        body:    { $ref: "#/$defs/_jsonSchema" },
         options: { type: "object" },
       },
     },
+    _jsonSchema: { $ref: "https://json-schema.org/draft/2020-12/schema" },
   };
 
   routes(def: Record<string, unknown>, context: Context): NodeValue {
@@ -238,10 +249,17 @@ async function tryCatchAll(
 ): Promise<RouteHandler | null> {
   if ("**" in children) {
     const node = children["**"];
+    const rest = segments.slice(index).join("/");
+
+    // Validate against paramRegex before capturing — a non-matching rest-path
+    // means this catch-all does not apply (mirrors the `*` single-param check).
+    if (node.paramRegex && !getCachedRegex(node.paramRegex).test(rest)) {
+      return null;
+    }
 
     // Capture rest of path
     if (node.paramName) {
-      context[node.paramName] = segments.slice(index).join("/");
+      context[node.paramName] = rest;
     }
 
     if (await checkConditionFails(node, context)) return null;
@@ -312,14 +330,14 @@ async function executeHandler(
     }
   }
 
-  // Validate URL params
-  if (handler.params) {
-    validateSchema(handler.params, context as unknown as Record<string, unknown>, "param");
+  // Validate query string
+  if (handler.query) {
+    validateAgainstSchema(handler.query, context.request?.query as Record<string, unknown> ?? {}, "query");
   }
 
   // Validate body parameters
   if (handler.body) {
-    validateSchema(handler.body, context.request?.body as Record<string, unknown> ?? {}, "field");
+    validateAgainstSchema(handler.body, context.request?.body as Record<string, unknown> ?? {}, "body");
   }
 
   // Execute run steps
@@ -343,7 +361,7 @@ async function executeHandler(
   // treated as a Jexs expression. Enables WS routes (socket-accept) and other
   // bare-expression handlers without requiring a `run` wrapper.
   if (handler.run === undefined && handler.file === undefined) {
-    const { params: _p, body: _b, options: _o, ...expr } = handler as Record<string, unknown>;
+    const { query: _q, body: _b, options: _o, ...expr } = handler as Record<string, unknown>;
     if (Object.keys(expr).length > 0) {
       lastResult = await Promise.resolve(resolve(expr, context));
     }
@@ -358,35 +376,18 @@ async function executeHandler(
 }
 
 /**
- * Validate values against a schema (used for both params and body).
- * Throws an HTTP error if validation fails.
+ * Validate a value against a JSON Schema (draft 2020-12) using the shared Ajv
+ * validator. Used for both `params` and `body`. Throws a 400 HTTP error listing
+ * the validation failures.
  */
-function validateSchema(
+function validateAgainstSchema(
   schema: Record<string, unknown>,
   source: Record<string, unknown>,
   label: string,
 ): void {
-  for (const [field, def] of Object.entries(schema)) {
-    const fieldDef = isObject(def)
-      ? (def as Record<string, unknown>)
-      : { type: "string" };
-    const raw = source[field];
-
-    // Required check
-    if (
-      fieldDef.required &&
-      (raw === undefined || raw === null || raw === "")
-    ) {
-      throw createHttpError(400, `Missing required ${label}: ${field}`);
-    }
-
-    // Type check (only if value is present)
-    if (raw !== undefined && raw !== null && raw !== "") {
-      const expectedType = String(fieldDef.type ?? "string");
-      if (expectedType === "number" && isNaN(Number(raw))) {
-        throw createHttpError(400, `${label} ${field} must be a number`);
-      }
-    }
+  const { valid, errors } = validate(schema, source);
+  if (!valid) {
+    throw createHttpError(400, `Invalid ${label}: ${errors.join("; ")}`);
   }
 }
 

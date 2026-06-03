@@ -38,12 +38,22 @@ Top-level arrays are step lists run sequentially. Each step can store its result
   { "listen": 3000, "client": true, "do": [
     { "session": "load" },
     { "routes": {
-      "/":            { "file": "pages/home.json" },
-      "/users/:id":   { "file": "pages/user.json", "params": { "id": { "var": "$request.params.id" } } }
+      "methods": { "GET": { "file": "pages/home.json" } },
+      "children": {
+        "users": { "children": {
+          "*": {
+            "paramName": "id",
+            "paramRegex": "\\d+",
+            "methods": { "GET": { "file": "pages/user.json" } }
+          }
+        } }
+      }
     } }
   ] }
 ]
 ```
+
+Routes are a tree: `methods` handles the current path, `children` nests segments, and `*` captures a single param under `paramName` (here available to the page as `$id`), optionally constrained by `paramRegex`.
 
 Setting `"client": true` makes the server serve the `@jexs/client` browser bundle and auto-inject the script tag into rendered `<head>` elements.
 

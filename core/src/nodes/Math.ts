@@ -222,7 +222,8 @@ export class MathNode extends Node {
         2,
       ],
       output: "number",
-      markdownDescription: "Returns a random number. No args → float `[0, 1)`. One arg → integer `[0, n]`. Two args → integer `[min, max]`.\nUses the seeded RNG if `randomSeed` has been called.",
+      markdownDescription: "Generates a random number, using the seeded RNG when `randomSeed` has been set, otherwise `Math.random`.",
+      outputDescription: "No args → a float in `[0, 1)`. One arg `n` → an integer in `[0, n]`. Two args → an integer in `[min, max]` (both inclusive).",
       examples: [
         "{ \"random\": [1, 6] }",
       ],
@@ -367,8 +368,9 @@ export class MathNode extends Node {
       const arr = this.toArray(values);
       const rng = _seed !== null ? seededRandom : Math.random;
       if (arr.length === 0) return rng();
-      const min = this.toNumber(arr[0]);
-      const max = arr.length > 1 ? this.toNumber(arr[1]) : min;
+      // One arg n → integer in [0, n]; two args → integer in [min, max].
+      const min = arr.length > 1 ? this.toNumber(arr[0]) : 0;
+      const max = arr.length > 1 ? this.toNumber(arr[1]) : this.toNumber(arr[0]);
       return Math.floor(rng() * (max - min + 1)) + min;
     });
   }

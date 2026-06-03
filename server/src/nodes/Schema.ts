@@ -1,21 +1,24 @@
 import fs from "fs/promises";
 import path from "path";
 import { Node, Context, NodeValue, resolve } from "@jexs/core";
-import { TableSchema, ColumnDef } from "./Query.js";
+import { TableJsonSchema, ColumnSchema, ColumnDbMeta, tableNameOf } from "./Query.js";
 import { sha256 } from "./Crypto.js";
+import { validate, getValidator } from "../validate.js";
 import type { JexsNodeSchema } from "@jexs/core";
 
 /**
  * SchemaNode - Manages table schema registration and data validation.
  *
+ * Table schemas are authored as JSON Schema (draft 2020-12) documents: the
+ * `properties` map defines columns, with DDL metadata under `x-db`. Insert/
+ * update data is validated against the document by the shared Ajv validator
+ * (see ../validate.ts), after coercion + computed-column enrichment.
+ *
  * Register from directory:
  * { "schema": "register", "path": "db/tables" }
  *
  * Register inline:
- * { "schema": "register", "table": { "table": "migrations", "columns": { ... } } }
- *
- * Schemas are stored in a static registry and used by QueryNode
- * to validate and enrich data on insert/update.
+ * { "schema": "register", "table": { "x-db": { "table": "migrations" }, "properties": { ... } } }
  */
 export class SchemaNode extends Node {
   static schema: JexsNodeSchema = {
@@ -38,7 +41,7 @@ export class SchemaNode extends Node {
         },
         table: {
           type: "string",
-          description: "Table name to retrieve or register inline (used with `\"get\"` and `\"register\"`).",
+          description: "Table name to retrieve (used with `\"get\"`), or a table JSON Schema document to register inline (used with `\"register\"`).",
         },
         run: {
           steps: true,
@@ -48,24 +51,27 @@ export class SchemaNode extends Node {
     },
   };
 
-  private static schemas: Map<string, TableSchema> = new Map();
+  private static schemas: Map<string, TableJsonSchema> = new Map();
   static globalValidator: unknown[] | null = null;
+
+  /** Cache of `required`-stripped clones used to validate partial updates. */
+  private static updateSchemas: WeakMap<TableJsonSchema, object> = new WeakMap();
 
   private static computeFns: Record<string, (value: string) => string> = {
     sha256,
   };
 
-  /** Columns automatically added to every table schema */
-  private static readonly COMMON_COLUMNS: Record<string, ColumnDef> = {
-    system: { type: "boolean", default: 0 },
-    created_at: { type: "timestamp", default: "CURRENT_TIMESTAMP" },
+  /** Columns automatically added to every table schema. */
+  private static readonly COMMON_COLUMNS: Record<string, ColumnSchema> = {
+    system:     { type: "integer", default: 0, "x-db": { sqlType: "boolean", default: 0 } },
+    created_at: { type: "string", "x-db": { sqlType: "timestamp", default: "CURRENT_TIMESTAMP" } },
   };
 
-  static injectCommonColumns(schema: TableSchema): void {
-    if (!schema.columns) return;
+  static injectCommonColumns(schema: TableJsonSchema): void {
+    if (!schema.properties) return;
     for (const [name, col] of Object.entries(this.COMMON_COLUMNS)) {
-      if (!(name in schema.columns)) {
-        schema.columns[name] = { ...col };
+      if (!(name in schema.properties)) {
+        schema.properties[name] = { ...col, "x-db": { ...col["x-db"] } };
       }
     }
   }
@@ -92,21 +98,24 @@ export class SchemaNode extends Node {
   // Static API (used by QueryNode)
   // ============================================
 
-  static register(schema: TableSchema): void {
-    this.schemas.set(schema.table, schema);
+  static register(schema: TableJsonSchema): void {
+    // Compile eagerly so a malformed schema throws at registration, not on the
+    // first insert.
+    getValidator(schema);
+    this.schemas.set(tableNameOf(schema), schema);
   }
 
-  static getAll(): TableSchema[] {
+  static getAll(): TableJsonSchema[] {
     return Array.from(this.schemas.values());
   }
 
-  static get(tableName: string): TableSchema | undefined {
+  static get(tableName: string): TableJsonSchema | undefined {
     return this.schemas.get(tableName);
   }
 
   static validateInsert(tableName: string, data: unknown): unknown {
     const schema = this.schemas.get(tableName);
-    if (!schema?.columns) return data;
+    if (!schema?.properties) return data;
 
     if (Array.isArray(data)) {
       return data.map((row) =>
@@ -116,45 +125,40 @@ export class SchemaNode extends Node {
     return this.validateRow(schema, data as Record<string, unknown>);
   }
 
+  /**
+   * Enrich (strip unknown columns, fill computed, drop auto-increment, coerce
+   * types) then validate the resulting row against the table's JSON Schema.
+   */
   private static validateRow(
-    schema: TableSchema,
+    schema: TableJsonSchema,
     row: Record<string, unknown>,
   ): Record<string, unknown> {
+    const props = schema.properties;
     const result: Record<string, unknown> = {};
     for (const key of Object.keys(row)) {
-      if (key in schema.columns) {
-        result[key] = row[key];
-      }
+      if (key in props) result[key] = row[key];
     }
 
-    for (const [colName, col] of Object.entries(schema.columns)) {
-      if (col.computed && result[colName] === undefined) {
-        this.fillComputed(result, colName, col);
+    for (const [colName, col] of Object.entries(props)) {
+      const db = col["x-db"] ?? {};
+
+      if (db.computed && result[colName] === undefined) {
+        // Read source values from the original row: a computed column's source
+        // (e.g. a plaintext password) is often not itself a stored column.
+        this.fillComputed(result, row, colName, db.computed);
       }
 
-      if (col.autoIncrement) {
+      if (db.autoIncrement) {
         delete result[colName];
         continue;
       }
 
-      if (col.default !== undefined || col.computed) continue;
-
-      if (col.notNull && result[colName] === undefined) {
-        throw new Error(
-          `[Schema] Missing required column "${colName}" for table "${schema.table}"`,
-        );
-      }
-
       if (result[colName] !== undefined) {
-        result[colName] = this.coerceType(
-          result[colName],
-          col,
-          colName,
-          schema.table,
-        );
+        result[colName] = this.coerceType(result[colName], col, colName, tableNameOf(schema));
       }
     }
 
+    this.assertValid(schema, result, tableNameOf(schema));
     return result;
   }
 
@@ -163,42 +167,83 @@ export class SchemaNode extends Node {
     data: Record<string, unknown>,
   ): Record<string, unknown> {
     const schema = this.schemas.get(tableName);
-    if (!schema?.columns) return data;
+    if (!schema?.properties) return data;
+    const props = schema.properties;
 
     const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(data)) {
-      if (!(key in schema.columns)) continue;
-      const col = schema.columns[key];
-      if (col.autoIncrement || col.computed) continue;
-      if (col.type?.toLowerCase() === "timestamp") continue;
+      if (!(key in props)) continue;
+      const col = props[key];
+      const db = col["x-db"] ?? {};
+      if (db.autoIncrement || db.computed) continue;
+      if (this.coercionType(col) === "timestamp") continue;
       result[key] = this.coerceType(value, col, key, tableName);
     }
+
+    // Partial update: validate provided fields, but never enforce `required`.
+    this.assertValid(this.updateSchemaFor(schema), result, tableName);
     return result;
   }
 
-  private static fillComputed(
+  /** A `required`-stripped clone of `schema`, cached for reuse, used to validate
+   *  partial updates without rejecting absent columns. */
+  private static updateSchemaFor(schema: TableJsonSchema): object {
+    let clone = this.updateSchemas.get(schema);
+    if (!clone) {
+      const { required: _required, ...rest } = schema;
+      clone = rest;
+      this.updateSchemas.set(schema, clone);
+    }
+    return clone;
+  }
+
+  private static assertValid(
+    schema: object,
     row: Record<string, unknown>,
-    colName: string,
-    col: ColumnDef,
+    tableName: string,
   ): void {
-    const computed = col.computed!;
+    const { valid, errors } = validate(schema, row);
+    if (!valid) {
+      throw new Error(`[Schema] Validation failed for "${tableName}": ${errors.join("; ")}`);
+    }
+  }
+
+  private static fillComputed(
+    target: Record<string, unknown>,
+    source: Record<string, unknown>,
+    colName: string,
+    computed: Record<string, string>,
+  ): void {
     for (const [fn, sourceCol] of Object.entries(computed)) {
       const computeFn = this.computeFns[fn];
-      if (computeFn && row[sourceCol] !== undefined) {
-        row[colName] = computeFn(String(row[sourceCol]));
+      if (computeFn && source[sourceCol] !== undefined) {
+        target[colName] = computeFn(String(source[sourceCol]));
       }
     }
   }
 
+  /** The type name driving coercion: `x-db.sqlType` if present, else the JSON
+   *  Schema `type` (first non-null when an array). */
+  private static coercionType(col: ColumnSchema): string {
+    const db: ColumnDbMeta = col["x-db"] ?? {};
+    const jsonType = Array.isArray(col.type)
+      ? col.type.find((t) => t !== "null")
+      : col.type;
+    return (db.sqlType ?? jsonType ?? "").toLowerCase();
+  }
+
+  /**
+   * Coerce a raw value to its stored representation. Pure type conversion only —
+   * declarative constraints (max length, enum, pattern, format) are enforced by
+   * the JSON Schema via Ajv after coercion.
+   */
   private static coerceType(
     value: unknown,
-    col: ColumnDef,
+    col: ColumnSchema,
     colName: string,
     tableName: string,
   ): unknown {
-    const colType = col.type.toLowerCase();
-
-    switch (colType) {
+    switch (this.coercionType(col)) {
       case "integer":
       case "int":
       case "biginteger":
@@ -214,6 +259,7 @@ export class SchemaNode extends Node {
         return Math.floor(num);
       }
 
+      case "number":
       case "float":
       case "double":
       case "decimal": {
@@ -227,20 +273,12 @@ export class SchemaNode extends Node {
       }
 
       case "varchar":
-      case "string": {
-        const str = String(value);
-        if (col.length && str.length > col.length) {
-          throw new Error(
-            `[Schema] Column "${colName}" in "${tableName}" exceeds max length ${col.length}`,
-          );
-        }
-        return str;
-      }
-
+      case "string":
       case "text":
         return String(value);
 
-      case "boolean": {
+      case "boolean":
+      case "bool": {
         if (typeof value === "string") {
           return value !== "" && value !== "0" && value.toLowerCase() !== "false" ? 1 : 0;
         }
@@ -254,11 +292,12 @@ export class SchemaNode extends Node {
 }
 
 async function doRegister(def: Record<string, unknown>): Promise<unknown> {
-  // Inline schema
+  // Inline schema document
   if (def.table && typeof def.table === "object") {
-    const schema = def.table as TableSchema;
+    const schema = def.table as TableJsonSchema;
+    SchemaNode.injectCommonColumns(schema);
     SchemaNode.register(schema);
-    return { registered: [schema.table] };
+    return { registered: [tableNameOf(schema)] };
   }
 
   // Directory path
@@ -271,11 +310,11 @@ async function doRegister(def: Record<string, unknown>): Promise<unknown> {
       for (const file of files) {
         if (!file.endsWith(".json")) continue;
         const content = await fs.readFile(path.join(dirPath, file), "utf-8");
-        const schema = JSON.parse(content) as TableSchema;
-        if (schema.table) {
+        const schema = JSON.parse(content) as TableJsonSchema;
+        if (schema["x-db"]?.table) {
           SchemaNode.injectCommonColumns(schema);
           SchemaNode.register(schema);
-          registered.push(schema.table);
+          registered.push(tableNameOf(schema));
         }
       }
     } catch (error) {

@@ -24,6 +24,7 @@ interface NodeLike {
   constructor: {
     name: string;
     schema?: Record<string, Record<string, unknown>>;
+    schemaDefs?: Record<string, unknown>;
   };
 }
 
@@ -90,19 +91,22 @@ async function importJexs<T = unknown>(spec: string): Promise<T> {
 const nodes: NodeLike[] = [];
 const packages: string[] = [];
 
-// Try @jexs/server first (includes core nodes)
+// Core nodes first — server/client/etc. build on top of them and the resolver
+// must include them (the real bootstrap is `[...coreNodes, ...serverNodes]`).
+// Without these, list_nodes/describe_op/resolve_expression are blind to the
+// most-used ops (var, if, map, foreach, tag, concat, …).
+try {
+  const core = await importJexs<typeof import("@jexs/core")>("@jexs/core");
+  nodes.push(...core.coreNodes);
+  packages.push("@jexs/core");
+} catch { /* not installed */ }
+
+// Server nodes (HTTP routing, sessions, SQL, file, …)
 try {
   const server = await importJexs<typeof import("@jexs/server")>("@jexs/server");
   nodes.push(...server.serverNodes);
   packages.push("@jexs/server");
-} catch {
-  // Try @jexs/core alone
-  try {
-    const core = await importJexs<typeof import("@jexs/core")>("@jexs/core");
-    nodes.push(...core.coreNodes);
-    packages.push("@jexs/core");
-  } catch { /* not installed */ }
-}
+} catch { /* not installed */ }
 
 // Try @jexs/client
 try {
@@ -268,16 +272,88 @@ mcpServer.registerTool(
     for (const node of nodes) {
       const schema = node.constructor.schema;
       if (schema && op in schema) {
-        return {
-          content: [{
-            type: "text",
-            text: `${node.constructor.name}.${op}\n\n${JSON.stringify(schema[op], null, 2)}`,
-          }],
-        };
+        const entry = schema[op] as Record<string, unknown>;
+        const lines: string[] = [`${node.constructor.name}.${op}`, ""];
+
+        const desc = entry.markdownDescription ?? entry.description;
+        if (typeof desc === "string") lines.push(desc, "");
+
+        if (entry.output !== undefined || entry.outputDescription !== undefined) {
+          const type = entry.output !== undefined ? ` (${String(entry.output)})` : "";
+          lines.push(`Returns${type}: ${entry.outputDescription ?? "—"}`, "");
+        }
+
+        const siblings = entry.siblings as Record<string, Record<string, unknown>> | undefined;
+        if (siblings && Object.keys(siblings).length > 0) {
+          lines.push("Siblings:");
+          for (const [k, v] of Object.entries(siblings)) {
+            const sd = v.description ?? v.markdownDescription ?? "";
+            lines.push(`  - ${k}${sd ? ` — ${sd}` : ""}`);
+          }
+          lines.push("");
+        }
+
+        const examples = entry.examples as unknown[] | undefined;
+        if (Array.isArray(examples) && examples.length > 0) {
+          lines.push("Examples:");
+          for (const ex of examples) lines.push(`  ${typeof ex === "string" ? ex : JSON.stringify(ex)}`);
+          lines.push("");
+        }
+
+        // Inline any `#/$defs/<name>` shapes this node contributes via static
+        // schemaDefs (e.g. RouterNode's recursive routeNode tree) so refs are
+        // resolvable without opening the source.
+        const defs = node.constructor.schemaDefs;
+        if (defs && Object.keys(defs).length > 0) {
+          lines.push("$defs contributed by this node (referenced as `#/$defs/<name>`):");
+          for (const [name, def] of Object.entries(defs)) {
+            lines.push(`  ${name}:`, JSON.stringify(def, null, 2).replace(/^/gm, "    "));
+          }
+          lines.push("");
+        }
+
+        lines.push("Raw schema:", JSON.stringify(entry, null, 2));
+        return { content: [{ type: "text", text: lines.join("\n") }] };
       }
     }
     return {
       content: [{ type: "text", text: `Unknown op: ${op}` }],
+      isError: true,
+    };
+  },
+);
+
+// Tool: describe_def — resolve a `#/$defs/<name>` shape contributed by a Node's
+// static schemaDefs. Lets you follow refs (e.g. routeNode -> _routeMethods ->
+// _routeHandler) without reading source.
+mcpServer.registerTool(
+  "describe_def",
+  {
+    description: "Show a $defs shape contributed by a Node's static schemaDefs (e.g. \"routeNode\"). Resolves refs like #/$defs/<name>.",
+    inputSchema: {
+      name: z.string().describe("The $defs name, e.g. \"routeNode\" or \"_routeHandler\""),
+    },
+  },
+  async ({ name }) => {
+    const key = name.replace(/^#\/\$defs\//, "");
+    for (const node of nodes) {
+      const defs = node.constructor.schemaDefs;
+      if (defs && key in defs) {
+        return {
+          content: [{
+            type: "text",
+            text: `${node.constructor.name} $defs.${key}\n\n${JSON.stringify(defs[key], null, 2)}`,
+          }],
+        };
+      }
+    }
+    const available: string[] = [];
+    for (const node of nodes) {
+      const defs = node.constructor.schemaDefs;
+      if (defs) for (const k of Object.keys(defs)) available.push(`${k} (${node.constructor.name})`);
+    }
+    return {
+      content: [{ type: "text", text: `Unknown $defs: ${key}\n\nAvailable: ${available.join(", ") || "(none)"}` }],
       isError: true,
     };
   },

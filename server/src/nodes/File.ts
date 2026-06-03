@@ -33,6 +33,7 @@ export class FileNode extends Node {
     file: {
       type: "string",
       markdownDescription: "Loads a JSON file relative to the `app/` directory and resolves it as a Jexs expression.\nArrays are executed as step sequences; objects are resolved as a single expression.\nPass `\"data\": true` to skip resolution and get the raw parsed JSON (use for data files, route trees, and anywhere you want the resolver to leave the file alone).\nPass `\"raw\": true` for the raw string content with no JSON parse.\nPass `\"params\"` to merge scoped variables into the file's resolution context, or `\"write\"` to write data to the file.",
+      outputDescription: "Default: the file resolved as a Jexs expression (a JSON array runs as steps → its last value; a JSON object resolves to its value). With `data: true`, the raw parsed JSON; with `raw: true`, the file as a string; non-JSON text files return their string and binaries a Buffer. `null` if the file can't be read or parsed. In `write` mode, `true`/`false` for success.",
       examples: [
         "{ \"file\": \"pages/home.json\", \"params\": { \"title\": \"Home\" } }",
       ],
@@ -57,7 +58,8 @@ export class FileNode extends Node {
     directory: {
       type: "string",
       output: "array",
-      markdownDescription: "Lists directory contents relative to `app/`. Returns `[{ name, path, size, modified }]`.",
+      markdownDescription: "Lists directory contents relative to `app/`.",
+      outputDescription: "An array of `{ name, path, size, modified }` entries (filtered by `extension` when given); `[]` if the directory can't be read.",
       examples: [
         "{ \"directory\": \"data/posts\", \"extension\": \"json\", \"recursive\": true }",
       ],
@@ -73,7 +75,8 @@ export class FileNode extends Node {
     },
     disk: {
       output: "object",
-      markdownDescription: "Returns disk usage stats for a path: `{ total, free, used }` in bytes.\nPass a path string or `true` to use the current working directory.",
+      markdownDescription: "Reports disk usage for a path. Pass a path string or `true` to use the current working directory.",
+      outputDescription: "`{ total, free, used }` in bytes, or `null` on error.",
       examples: [
         "{ \"disk\": true }",
       ],
