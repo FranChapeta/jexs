@@ -25,8 +25,11 @@ interface NodeLike {
     name: string;
     schema?: Record<string, Record<string, unknown>>;
     schemaDefs?: Record<string, unknown>;
+    commonSiblings?: Record<string, unknown>;
   };
 }
+
+interface GlobalKeyDoc { markdownDescription: string; examples?: string[]; }
 
 // Resolve @jexs/* packages from the user's project (process.cwd()), not from
 // wherever this MCP server was installed. When launched via `npx -y @jexs/mcp`,
@@ -90,6 +93,10 @@ async function importJexs<T = unknown>(spec: string): Promise<T> {
 // Discover installed Jexs packages and collect nodes
 const nodes: NodeLike[] = [];
 const packages: string[] = [];
+// Global step keys (`as`, `return`, `catch`) handled by the resolver, not any
+// Node. Sourced from @jexs/core's GLOBAL_KEYS so describe_op/list_nodes can
+// surface them even though they never appear in a node's schema.
+let globalKeys: Record<string, GlobalKeyDoc> = {};
 
 // Core nodes first — server/client/etc. build on top of them and the resolver
 // must include them (the real bootstrap is `[...coreNodes, ...serverNodes]`).
@@ -99,6 +106,8 @@ try {
   const core = await importJexs<typeof import("@jexs/core")>("@jexs/core");
   nodes.push(...core.coreNodes);
   packages.push("@jexs/core");
+  const gk = (core as { GLOBAL_KEYS?: Record<string, GlobalKeyDoc> }).GLOBAL_KEYS;
+  if (gk) globalKeys = gk;
 } catch { /* not installed */ }
 
 // Server nodes (HTTP routing, sessions, SQL, file, …)
@@ -174,6 +183,10 @@ mcpServer.registerTool(
       seen.add(name);
       entries.push(`${name}: ${keys.join(", ")}`);
     }
+    const globals = Object.keys(globalKeys);
+    if (globals.length > 0) {
+      entries.push("", `Global step keys (handled by the resolver, usable on any step): ${globals.join(", ")}`);
+    }
     return {
       content: [{ type: "text", text: entries.join("\n") }],
     };
@@ -238,10 +251,19 @@ mcpServer.registerTool(
       const usedKeys = new Set<string>();
       findKeys(parsed, allKeys, usedKeys);
 
+      const warnings: string[] = [];
+      lintTree(parsed, allKeys, new Set(Object.keys(globalKeys)), warnings, "");
+
       const lines = [
         `File: ${resolved}`,
         `Packages: ${packages.join(", ") || "(none)"}`,
         `Node keys used: ${[...usedKeys].sort().join(", ") || "(none)"}`,
+        "",
+        "Lint (advisory):",
+        ...(warnings.length
+          ? warnings.slice(0, 20).map(w => `  - ${w}`)
+          : ["  none"]),
+        ...(warnings.length > 20 ? [`  …and ${warnings.length - 20} more`] : []),
         "",
         "JSON structure:",
         JSON.stringify(parsed, null, 2).slice(0, 2000),
@@ -316,6 +338,17 @@ mcpServer.registerTool(
         return { content: [{ type: "text", text: lines.join("\n") }] };
       }
     }
+    // Fall back to global step keys (`as`, `return`, `catch`) — handled by the
+    // resolver itself, so they're not in any node's schema.
+    if (op in globalKeys) {
+      const g = globalKeys[op];
+      const lines: string[] = [`(global step key) ${op}`, "", g.markdownDescription, ""];
+      if (Array.isArray(g.examples) && g.examples.length > 0) {
+        lines.push("Examples:");
+        for (const ex of g.examples) lines.push(`  ${ex}`);
+      }
+      return { content: [{ type: "text", text: lines.join("\n") }] };
+    }
     return {
       content: [{ type: "text", text: `Unknown op: ${op}` }],
       isError: true,
@@ -369,6 +402,30 @@ function findKeys(value: unknown, allKeys: Set<string>, found: Set<string>): voi
       findKeys(obj[key], allKeys, found);
     }
   }
+}
+
+// Advisory lint for the two dispatch foot-guns: an object with more than one
+// handler key (only the first dispatches), and a data-looking object whose
+// first key is plain data but a *later* key collides with a handler name
+// (`slug`, `index`, `file`, …) so the resolver dispatches it as an operation
+// instead of returning the object. Global step keys are ignored for ordering.
+function lintTree(value: unknown, allKeys: Set<string>, globalSet: Set<string>, warnings: string[], pathStr: string): void {
+  if (Array.isArray(value)) {
+    value.forEach((item, i) => lintTree(item, allKeys, globalSet, warnings, `${pathStr}[${i}]`));
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj);
+  const nonGlobal = keys.filter(k => !globalSet.has(k));
+  const handlerKeys = nonGlobal.filter(k => allKeys.has(k));
+  const where = pathStr || "(root)";
+  if (handlerKeys.length >= 2) {
+    warnings.push(`${where}: ambiguous — multiple handler keys (${handlerKeys.join(", ")}); only the first one dispatches.`);
+  } else if (handlerKeys.length === 1 && nonGlobal.length > 0 && nonGlobal[0] !== handlerKeys[0]) {
+    warnings.push(`${where}: collision risk — first key "${nonGlobal[0]}" isn't a handler but "${handlerKeys[0]}" is, so this object dispatches as "${handlerKeys[0]}". If it is data, load it with { "data": true } or rename the key.`);
+  }
+  for (const key of keys) lintTree(obj[key], allKeys, globalSet, warnings, pathStr ? `${pathStr}.${key}` : key);
 }
 
 // Connect via stdio

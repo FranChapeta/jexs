@@ -1,5 +1,5 @@
 import { Node, Context } from "./Node.js";
-import { resolve } from "../Resolver.js";
+import { resolve, resolveAll } from "../Resolver.js";
 import { getNestedValue } from "../helpers.js";
 import type { JexsNodeSchema } from "../schema.js";
 
@@ -130,18 +130,40 @@ export class ArrayNode extends Node {
     filter: {
       tuple: 2,
       output: "array",
-      markdownDescription: "Returns items for which the condition expression is truthy.\nEach iteration exposes `item`, `index`, and `loop` in context.",
+      markdownDescription: "Returns the items of an array for which a condition is truthy. Tuple form: `[<array>, <condition>]`.\nEach iteration exposes the current element as `item` (rename via the `item`/`index` siblings), plus `index` and `loop`. Read the element with `{ \"var\": \"item\" }` — a leading `$` is optional.",
       examples: [
         "{ \"filter\": [{ \"var\": \"$nums\" }, { \"gt\": [{ \"var\": \"item\" }, 2] }] }",
+        "{ \"filter\": [{ \"var\": \"$users\" }, { \"eq\": [{ \"var\": \"u.role\" }, \"admin\"] }], \"item\": \"u\" }",
       ],
+      siblings: {
+        item: {
+          type: "string",
+          description: "Variable name for the current item (default `\"item\"`).",
+        },
+        index: {
+          type: "string",
+          description: "Variable name for the current index (default `\"index\"`).",
+        },
+      },
     },
     find: {
       tuple: 2,
-      markdownDescription: "Returns the first item for which the condition is truthy.\nEach iteration exposes `item`, `index`, and `loop` in context.",
+      markdownDescription: "Returns the first item of an array for which a condition is truthy. Tuple form: `[<array>, <condition>]`.\nEach iteration exposes the current element as `item` (rename via the `item`/`index` siblings), plus `index` and `loop`. Read the element with `{ \"var\": \"item\" }` — a leading `$` is optional.",
       outputDescription: "The first matching item (any type), or `undefined` if none match.",
       examples: [
         "{ \"find\": [{ \"var\": \"$users\" }, { \"eq\": [{ \"var\": \"item.role\" }, \"admin\"] }] }",
+        "{ \"find\": [{ \"var\": \"$users\" }, { \"eq\": [{ \"var\": \"u.role\" }, \"admin\"] }], \"item\": \"u\" }",
       ],
+      siblings: {
+        item: {
+          type: "string",
+          description: "Variable name for the current item (default `\"item\"`).",
+        },
+        index: {
+          type: "string",
+          description: "Variable name for the current index (default `\"index\"`).",
+        },
+      },
     },
     map: {
       output: "array",
@@ -161,11 +183,22 @@ export class ArrayNode extends Node {
     },
     reduce: {
       tuple: 3,
-      markdownDescription: "Reduces an array to a single value.\nEach iteration exposes `item`, `index`, `accumulator`, and `loop` in context.",
+      markdownDescription: "Reduces an array to a single value. Tuple form: `[<array>, <reducer>, <initial>]`.\nEach iteration exposes the current element as `item` (rename via the `item`/`index` siblings), plus `index`, `accumulator`, and `loop`. Read them with `{ \"var\": \"item\" }` / `{ \"var\": \"accumulator\" }` — a leading `$` is optional.",
       outputDescription: "The final accumulator value — its type follows the reducer/initial value (the initial value is returned as-is for an empty array).",
       examples: [
         "{ \"reduce\": [{ \"var\": \"$nums\" }, { \"add\": [{ \"var\": \"accumulator\" }, { \"var\": \"item\" }] }, 0] }",
+        "{ \"reduce\": [{ \"var\": \"$nums\" }, { \"add\": [{ \"var\": \"accumulator\" }, { \"var\": \"n\" }] }, 0], \"item\": \"n\" }",
       ],
+      siblings: {
+        item: {
+          type: "string",
+          description: "Variable name for the current item (default `\"item\"`).",
+        },
+        index: {
+          type: "string",
+          description: "Variable name for the current index (default `\"index\"`).",
+        },
+      },
     },
     groupBy: {
       tuple: 2,
@@ -330,50 +363,58 @@ export class ArrayNode extends Node {
 
   filter(def: Record<string, unknown>, context: Context) {
     const args = this.toArray(def.filter);
-    return resolve(args[0], context, arr => {
-      const items = this.toArray(arr);
-      const condition = args[1];
-      const results: unknown[] = [];
-      let i = 0;
-      const self = this;
-      function next(): unknown {
-        if (i >= items.length) return results;
-        const idx = i++;
-        const item = items[idx];
-        const itemCtx: Context = {
-          ...context, item, index: idx,
-          loop: { item, index: idx, key: idx, first: idx === 0, last: idx === items.length - 1, length: items.length },
-        };
-        return resolve(condition, itemCtx, v => {
-          if (self.toBoolean(v)) results.push(item);
-          return next();
-        });
-      }
-      return next();
+    return resolveAll([def.item, def.index], context, ([itemRaw, indexRaw]) => {
+      const itemName = typeof itemRaw === "string" ? itemRaw : "item";
+      const indexName = typeof indexRaw === "string" ? indexRaw : "index";
+      return resolve(args[0], context, arr => {
+        const items = this.toArray(arr);
+        const condition = args[1];
+        const results: unknown[] = [];
+        let i = 0;
+        const self = this;
+        function next(): unknown {
+          if (i >= items.length) return results;
+          const idx = i++;
+          const item = items[idx];
+          const itemCtx: Context = {
+            ...context, [itemName]: item, [indexName]: idx,
+            loop: { item, index: idx, key: idx, first: idx === 0, last: idx === items.length - 1, length: items.length },
+          };
+          return resolve(condition, itemCtx, v => {
+            if (self.toBoolean(v)) results.push(item);
+            return next();
+          });
+        }
+        return next();
+      });
     });
   }
 
   find(def: Record<string, unknown>, context: Context) {
     const args = this.toArray(def.find);
-    return resolve(args[0], context, arr => {
-      const items = this.toArray(arr);
-      const condition = args[1];
-      let i = 0;
-      const self = this;
-      function next(): unknown {
-        if (i >= items.length) return undefined;
-        const idx = i++;
-        const item = items[idx];
-        const itemCtx: Context = {
-          ...context, item, index: idx,
-          loop: { item, index: idx, key: idx, first: idx === 0, last: idx === items.length - 1, length: items.length },
-        };
-        return resolve(condition, itemCtx, v => {
-          if (self.toBoolean(v)) return item;
-          return next();
-        });
-      }
-      return next();
+    return resolveAll([def.item, def.index], context, ([itemRaw, indexRaw]) => {
+      const itemName = typeof itemRaw === "string" ? itemRaw : "item";
+      const indexName = typeof indexRaw === "string" ? indexRaw : "index";
+      return resolve(args[0], context, arr => {
+        const items = this.toArray(arr);
+        const condition = args[1];
+        let i = 0;
+        const self = this;
+        function next(): unknown {
+          if (i >= items.length) return undefined;
+          const idx = i++;
+          const item = items[idx];
+          const itemCtx: Context = {
+            ...context, [itemName]: item, [indexName]: idx,
+            loop: { item, index: idx, key: idx, first: idx === 0, last: idx === items.length - 1, length: items.length },
+          };
+          return resolve(condition, itemCtx, v => {
+            if (self.toBoolean(v)) return item;
+            return next();
+          });
+        }
+        return next();
+      });
     });
   }
 
@@ -401,23 +442,27 @@ export class ArrayNode extends Node {
 
   reduce(def: Record<string, unknown>, context: Context) {
     const args = this.toArray(def.reduce);
-    return resolve(args[0], context, arr => {
-      const items = this.toArray(arr);
-      const reducer = args[1];
-      return resolve(args.length > 2 ? args[2] : undefined, context, initial => {
-        let accumulator: unknown = initial;
-        let i = 0;
-        function next(): unknown {
-          if (i >= items.length) return accumulator;
-          const idx = i++;
-          const item = items[idx];
-          const itemCtx: Context = {
-            ...context, item, index: idx, accumulator,
-            loop: { item, index: idx, key: idx, first: idx === 0, last: idx === items.length - 1, length: items.length },
-          };
-          return resolve(reducer, itemCtx, v => { accumulator = v; return next(); });
-        }
-        return next();
+    return resolveAll([def.item, def.index], context, ([itemRaw, indexRaw]) => {
+      const itemName = typeof itemRaw === "string" ? itemRaw : "item";
+      const indexName = typeof indexRaw === "string" ? indexRaw : "index";
+      return resolve(args[0], context, arr => {
+        const items = this.toArray(arr);
+        const reducer = args[1];
+        return resolve(args.length > 2 ? args[2] : undefined, context, initial => {
+          let accumulator: unknown = initial;
+          let i = 0;
+          function next(): unknown {
+            if (i >= items.length) return accumulator;
+            const idx = i++;
+            const item = items[idx];
+            const itemCtx: Context = {
+              ...context, [itemName]: item, [indexName]: idx, accumulator,
+              loop: { item, index: idx, key: idx, first: idx === 0, last: idx === items.length - 1, length: items.length },
+            };
+            return resolve(reducer, itemCtx, v => { accumulator = v; return next(); });
+          }
+          return next();
+        });
       });
     });
   }

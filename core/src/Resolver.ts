@@ -69,7 +69,9 @@ function storeAs(step: unknown, value: unknown, context: Context): void {
 function handleErr(err: unknown, value: unknown, context: Context): unknown {
   if (isHttpError(err) && isObject(value) && Array.isArray((value as Record<string, unknown>).catch)) {
     const catchSteps = (value as Record<string, unknown>).catch as unknown[];
-    const catchCtx = { ...context, $error: { status: err.status, message: err.message } };
+    // Stored under the bare key `error` (not `$error`): `var` strips a leading
+    // `$`, so `{ "var": "$error.message" }` looks up `error.message` in context.
+    const catchCtx = { ...context, error: { status: err.status, message: err.message } };
     return runSteps(catchSteps, catchCtx);
   }
   throw err;
@@ -285,5 +287,8 @@ export function createResolver(nodes: Node[], options?: ResolverOptions): Resolv
 
   if (options?.translate) translateFn = options.translate;
 
-  return _resolve;
+  // Return the catch-aware `resolve` wrapper, not the raw `_resolve`, so a
+  // top-level `catch` on the entry expression is honored too — matching how
+  // `runSteps` (and every nested node) already resolves through `resolve()`.
+  return resolve;
 }

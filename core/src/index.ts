@@ -8,7 +8,7 @@ export type {
 
 // ── Schema generation (build-time only; not used by the runtime resolver) ──
 export {
-  buildPackageSchema, mergePackageSchemas, expandProperty,
+  buildPackageSchema, mergePackageSchemas, expandProperty, GLOBAL_KEYS,
   type PackageSchema, type CombinedSchema, type EmittedSchema,
   type EmittedMethodSchema, type EmittedNodeSchema,
 } from "./schema-gen.js";

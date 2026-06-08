@@ -424,18 +424,38 @@ function buildRichMarkdown(methodKey: string, m: EmittedMethodSchema): string {
 
 // ── Combined schema merge ──────────────────────────────────────────────────────
 
-/** Universal keys (`as`, `catch`) declared once at the top of exprFlat. */
-const UNIVERSAL: Record<string, { ref: EmittedSchema; markdownDescription: string }> = {
+/**
+ * Global step keys handled by the resolver itself rather than any Node, so they
+ * may appear as a sibling on any step but never show up in `list_nodes`. This is
+ * the single source of truth for their docs — consumed by `UNIVERSAL` (below,
+ * for the JSON schema) and re-exported for the MCP introspection tools so
+ * `describe_op return` works.
+ */
+export const GLOBAL_KEYS: Record<string, { markdownDescription: string; examples?: string[] }> = {
   as: {
-    ref: { ...REF.strOrExpr },
     markdownDescription:
-      "Store the result in a named variable, accessible via `{ \"var\": \"name\" }`.",
+      "Store this step's result in a named context variable, read later via `{ \"var\": \"name\" }`. Works on any step.",
+    examples: ["{ \"var\": \"$user.name\", \"as\": \"name\" }"],
+  },
+  return: {
+    markdownDescription:
+      "In a step array, a step that resolves to `{ \"return\": X }` stops the array early and yields `X`. Escapes only the current array — nest the wrapper to exit outer arrays.",
+    examples: [
+      "{ \"if\": { \"empty\": { \"var\": \"$name\" } }, \"then\": { \"return\": \"Hello, world!\" } }",
+    ],
   },
   catch: {
-    ref: { ...REF.steps },
     markdownDescription:
       "Step array to run if this expression throws an HTTP error. The `$error` context variable carries `{ status, message }`.",
+    examples: ["{ \"query-select\": \"users\", \"catch\": [{ \"var\": \"$error.message\" }] }"],
   },
+};
+
+/** Universal keys (`as`, `return`, `catch`) declared once at the top of exprFlat. */
+const UNIVERSAL: Record<string, { ref: EmittedSchema; markdownDescription: string }> = {
+  as:     { ref: { ...REF.strOrExpr }, markdownDescription: GLOBAL_KEYS.as.markdownDescription },
+  return: { ref: { ...REF.anyVal },    markdownDescription: GLOBAL_KEYS.return.markdownDescription },
+  catch:  { ref: { ...REF.steps },     markdownDescription: GLOBAL_KEYS.catch.markdownDescription },
 };
 
 export interface CombinedSchema {

@@ -82,6 +82,25 @@ Setting `"client": true` makes the server serve the `@jexs/client` browser bundl
 ] }]
 ```
 
+## Evaluation model
+
+A few rules govern how every expression is resolved. Worth internalizing — they explain most "why didn't that work" moments.
+
+**Dispatch: first matching key wins.** For each object, the resolver scans its keys and dispatches to the first one that is a registered handler (`if`, `map`, `concat`, …); the other keys are that node's options ("siblings"). An object with **no** handler key is treated as **data** — the resolver recurses and resolves each value, returning the object.
+
+**Data vs. operators can collide.** Because dispatch is key-based, a *data* object whose key happens to match a handler name (`slug`, `index`, `file`, `count`, …) gets dispatched as that operation instead of returned as data. Two ways to keep data literal:
+
+- Load it from a file with `"data": true` — `{ "file": "data/posts.json", "data": true }` returns the parsed JSON untouched, never resolving its keys. This is the normal way to bring data into a template.
+- Avoid handler names for object keys you build at runtime.
+
+**Arrays are step lists; the last value wins.** A top-level array (and an `if`/`switch` branch that is an array) runs its elements in order and yields the **last** one's value. Two global keys, usable as a sibling on any step:
+
+- `as` — store a step's result in a named context variable: `{ "var": "$user.name", "as": "name" }`, read later via `{ "var": "$name" }`.
+- `return` — short-circuit: a step resolving to `{ "return": X }` ends the current array early and yields `X`. It escapes only that array; nest the wrapper to exit an outer one.
+- `catch` — a step array run if the expression throws an HTTP error, with `$error` (`{ status, message }`) in context.
+
+**Iterating.** `map` transforms each element of an array via `do`; `filter`/`find`/`reduce` take a tuple `[<array>, <expr>, …]`. Each exposes the current element as `item` (and `index`, plus `accumulator` for `reduce`); rename it with the `item` sibling — `{ "filter": [{ "var": "$users" }, { "eq": [{ "var": "u.role" }, "admin"] }], "item": "u" }`. Read it with `{ "var": "item" }`; a leading `$` is optional.
+
 ## Packages
 
 | Package | Purpose | Environment | npm |
