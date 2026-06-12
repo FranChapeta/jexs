@@ -1,5 +1,5 @@
 import { Node, Context } from "./Node.js";
-import { resolve } from "../Resolver.js";
+import { resolve, resolveAll } from "../Resolver.js";
 import type { JexsNodeSchema } from "../schema.js";
 
 export class StringNode extends Node {
@@ -103,23 +103,22 @@ export class StringNode extends Node {
     replace: {
       tuple: 3,
       output: "string",
-      markdownDescription: "Replaces all occurrences of a substring.",
+      markdownDescription: "Replaces occurrences in `[input, search, replacement]`. A `search` of the form `/pattern/flags` is treated as a regular expression (so `$1`/`$&` group refs work in the replacement); any other string is matched literally. Replaces all occurrences by default — set `all: false` for only the first (literal), or omit the `g` flag (regex).",
       examples: [
         "{ \"replace\": [\"foo foo\", \"foo\", \"bar\"] }",
+        "{ \"replace\": [\"a1 b2\", \"/\\\\d/g\", \"#\"] }",
       ],
-    },
-    replaceFirst: {
-      tuple: 3,
-      output: "string",
-      markdownDescription: "Replaces only the first occurrence of a substring.",
-      examples: [
-        "{ \"replaceFirst\": [\"foo foo\", \"foo\", \"bar\"] }",
-      ],
+      siblings: {
+        all: {
+          type: "boolean",
+          description: "Replace all occurrences (default `true`). For `/regex/` patterns the `g` flag controls this unless `all` is set explicitly.",
+        },
+      },
     },
     split: {
       tuple: 2,
       output: "array",
-      markdownDescription: "Splits a string into an array.",
+      markdownDescription: "Splits a string into an array. A `/pattern/flags` separator splits on a regular expression.",
       examples: [
         "{ \"split\": [\"a,b,c\", \",\"] }",
       ],
@@ -184,9 +183,18 @@ export class StringNode extends Node {
     contains: {
       tuple: 2,
       output: "boolean",
-      markdownDescription: "Returns `true` if a string contains the given substring.",
+      markdownDescription: "Returns `true` if a string contains the given substring. A `/pattern/flags` needle tests a regular expression instead.",
       examples: [
         "{ \"contains\": [\"hello world\", \"world\"] }",
+      ],
+    },
+    match: {
+      tuple: 2,
+      output: "array",
+      outputDescription: "Array of matches, or `null` when nothing matches. With the `g` flag every match; otherwise the first match plus capture groups.",
+      markdownDescription: "Matches a regular expression against a string. The pattern may be `/pattern/flags` or a bare pattern.",
+      examples: [
+        "{ \"match\": [\"a1 b2\", \"/\\\\d/g\"] }",
       ],
     },
   };
@@ -269,17 +277,18 @@ export class StringNode extends Node {
   }
 
   replace(def: Record<string, unknown>, c: Context) {
-    return resolve(def.replace, c, args => doReplace(args, true));
-  }
-
-  replaceFirst(def: Record<string, unknown>, c: Context) {
-    return resolve(def.replaceFirst, c, args => doReplace(args, false));
+    return resolveAll([def.replace, def.all], c, ([args, all]) =>
+      doReplace(args, all as boolean | undefined),
+    );
   }
 
   split(def: Record<string, unknown>, c: Context) {
     return resolve(def.split, c, args => {
       const a = this.toArray(args);
-      return this.toString(a[0]).split(a.length > 1 ? this.toString(a[1]) : "");
+      if (a.length < 2) return this.toString(a[0]).split("");
+      // A `/pattern/flags` separator splits on a regular expression.
+      const re = toRegex(a[1]);
+      return this.toString(a[0]).split(re ?? this.toString(a[1]));
     });
   }
 
@@ -322,18 +331,60 @@ export class StringNode extends Node {
   contains(def: Record<string, unknown>, c: Context) {
     return resolve(def.contains, c, args => {
       const a = this.toArray(args);
-      return this.toString(a[0]).includes(this.toString(a[1]));
+      // A `/pattern/flags` needle tests a regular expression; else substring.
+      const re = toRegex(a[1]);
+      return re ? re.test(this.toString(a[0])) : this.toString(a[0]).includes(this.toString(a[1]));
+    });
+  }
+
+  match(def: Record<string, unknown>, c: Context) {
+    return resolve(def.match, c, args => {
+      const a = this.toArray(args);
+      // `match` is always regex: a `/re/flags` literal carries flags; a bare
+      // string is coerced to a RegExp by String.prototype.match.
+      const re = toRegex(a[1]);
+      return this.toString(a[0]).match(re ?? this.toString(a[1]));
     });
   }
 }
 
-function doReplace(args: unknown, all: boolean): string {
+function doReplace(args: unknown, all: boolean | undefined): string {
   const a = Array.isArray(args) ? (args as unknown[]) : args != null ? [args] : [];
   if (a.length < 3) return "";
   const str = String(a[0] ?? "");
-  const search = String(a[1] ?? "");
   const replacement = String(a[2] ?? "");
-  return all ? str.split(search).join(replacement) : str.replace(search, replacement);
+
+  // A `/pattern/flags` search is a regular expression; anything else is literal.
+  const re = toRegex(a[1]);
+  if (re) return str.replace(withGlobal(re, all), replacement);
+
+  const search = String(a[1] ?? "");
+  // Literal: replace all by default; `all: false` replaces only the first.
+  return all === false ? str.replace(search, replacement) : str.split(search).join(replacement);
+}
+
+const REGEX_LITERAL = /^\/(.+)\/([a-z]*)$/;
+
+/** Parse a `/pattern/flags` string into a RegExp, or null if not that form. */
+function toRegex(search: unknown): RegExp | null {
+  if (typeof search !== "string") return null;
+  const m = REGEX_LITERAL.exec(search);
+  if (!m) return null;
+  try {
+    return new RegExp(m[1], m[2]);
+  } catch {
+    return null;
+  }
+}
+
+/** Align a RegExp's `g` flag with an explicit `all`; leave it untouched if `all`
+ *  is omitted (the pattern's own flags decide). */
+function withGlobal(re: RegExp, all: boolean | undefined): RegExp {
+  if (all === undefined) return re;
+  const hasG = re.flags.includes("g");
+  if (all && !hasG) return new RegExp(re.source, re.flags + "g");
+  if (!all && hasG) return new RegExp(re.source, re.flags.replace("g", ""));
+  return re;
 }
 
 function doPad(args: unknown, side: "start" | "end"): string {
