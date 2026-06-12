@@ -73,6 +73,17 @@ export interface QueryDefinition {
   conflict?: string[];
   // Alter operations
   addColumns?: Record<string, ColumnSchema>;
+  // Write-op extras
+  /** Atomic `col = col + n` on update. */
+  increment?: Record<string, number>;
+  /** Atomic `col = col - n` on update. */
+  decrement?: Record<string, number>;
+  /** Columns to RETURN from insert/upsert/update/delete (SQLite ≥3.35 / Postgres). */
+  returning?: string[];
+  /** Columns to update on conflict for upsert; omit to merge all. */
+  merge?: string[];
+  /** INSERT OR IGNORE on conflict. */
+  ignore?: boolean;
 }
 
 /**
@@ -217,129 +228,145 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+type P = import("@jexs/core").JexsPropertySchema;
+
+/** Schemas for the clauses that live inside `options`, by name (DRY). Declared
+ *  before the class so the static schema initializer can read them (a `const`
+ *  is not hoisted). The keys are nested under `options` and resolved by VALUE by
+ *  QueryNode, so unprefixed names (`first`, `groupBy`, `schema`) don't collide
+ *  with other nodes' handler keys. */
+const OPT: Record<string, P> = {
+  where:        { description: "WHERE clause: `{ column: value }` or nested `or`/`and`." },
+  data:         { description: "Row data: an object, or an array of rows." },
+  orderBy:      { description: "ORDER BY: `{ column: 'asc' | 'desc' }`." },
+  groupBy:      { description: "GROUP BY column name or array of names." },
+  first:        { type: "boolean", description: "Return a single row instead of an array." },
+  columns:      { type: "array", description: "Columns to select (also the column for count distinct)." },
+  limit:        { type: "number", description: "LIMIT N." },
+  offset:       { type: "number", description: "OFFSET N." },
+  distinct:     { type: "boolean", description: "SELECT DISTINCT (with `columns`, COUNT(DISTINCT col) on count)." },
+  innerJoin:    { type: "array", description: "INNER JOIN clauses." },
+  leftJoin:     { type: "array", description: "LEFT JOIN clauses." },
+  rightJoin:    { type: "array", description: "RIGHT JOIN clauses." },
+  group_concat: { description: "GROUP_CONCAT aggregate." },
+  schema:       { description: "Table schema reference or inline document (create)." },
+  conflict:     { type: "array", description: "Conflict target columns (upsert)." },
+  merge:        { type: "array", description: "Columns to update on conflict (upsert); omit to merge all." },
+  ignore:       { type: "boolean", description: "INSERT OR IGNORE on conflict (insert)." },
+  addColumns:   { description: "Columns to add (alter)." },
+  returning:    { type: "array", description: "Columns to RETURN (SQLite >=3.35 / Postgres); makes update/delete resolve to the affected rows." },
+  increment:    { description: "Atomic increment `{ col: amount }` (update)." },
+  decrement:    { description: "Atomic decrement `{ col: amount }` (update)." },
+};
+
+/** Build the nested `options` schema for an op from a subset of OPT keys. */
+function opts(...keys: string[]): P {
+  return {
+    description: "Op-specific query clauses.",
+    properties: Object.fromEntries(keys.map(k => [k, OPT[k]])),
+    additionalProperties: false,
+  };
+}
+
 /**
- * QueryNode - Handles JSON query definitions.
- *
+ * A variant entry: per-op `output` + its `options` shape. Pass `narrowOnReturning`
+ * for update/delete: a dotted nested-presence variant narrows the output from
+ * `output` (the row count) to `array` (the affected rows) when `options.returning`
+ * is present — so `returning` stays a regular `options` clause.
+ */
+function op(
+  output: import("@jexs/core").JexsOutput,
+  markdown: string,
+  optionKeys: string[],
+  narrowOnReturning?: boolean,
+): import("@jexs/core").JexsMethodSchema {
+  const m: import("@jexs/core").JexsMethodSchema = {
+    output, markdownDescription: markdown, siblings: { options: opts(...optionKeys) },
+  };
+  if (narrowOnReturning) {
+    m.variants = {
+      "options.returning": { output: "array", markdownDescription: "With `returning`, resolves to the affected rows instead of the count." },
+    };
+  }
+  return m;
+}
+
+/**
+ * QueryNode — one `query` key whose value is the SQL operation; `table` is the
+ * target and `options` carries the op-specific clauses, e.g.
+ *   { "query": "select", "table": "users", "options": { "where": { "id": 1 }, "first": true } }
+ * The op is a value-mode discriminator (per-op output narrowing); `options` is a
+ * nested object whose VALUES QueryNode resolves itself, so its keys never hit the
+ * resolver's dispatch and need no `query-` prefix.
  */
 export class QueryNode extends Node {
   static schema: JexsNodeSchema = {
-    "query-select": queryMethod(
-      "Executes a SELECT query on the given table. Primary value is the table name.",
-      "{ \"query-select\": \"users\", \"where\": { \"id\": { \"var\": \"$id\" } }, \"query-first\": true }",
-      "any",
-      "An array of row objects (each a `{ column: value }` map). With `query-first: true`, the single matching row object or `null`.",
-    ),
-    "query-insert": queryMethod(
-      "Inserts data into the given table. Provide `data` as a row object or an array of rows.",
-      "{ \"query-insert\": \"users\", \"data\": { \"name\": \"John\" } }",
-      "any",
-      "The inserted row's primary key (DB-dependent), or an array of keys when `data` is an array of rows.",
-    ),
-    "query-upsert": queryMethod(
-      "Inserts or updates a row. Use `conflict` to specify the target columns.",
-      "{ \"query-upsert\": \"users\", \"data\": { \"id\": 1, \"name\": \"John\" }, \"conflict\": [\"id\"] }",
-      "any",
-      "The affected row's primary key, or an array of keys when `data` is an array of rows.",
-    ),
-    "query-update": queryMethod(
-      "Updates rows in the given table matching `where`.",
-      "{ \"query-update\": \"users\", \"data\": { \"name\": \"Jane\" }, \"where\": { \"id\": 1 } }",
-      "number",
-      "The number of rows updated.",
-    ),
-    "query-delete": queryMethod(
-      "Deletes rows from the given table matching `where`.",
-      "{ \"query-delete\": \"users\", \"where\": { \"id\": 1 } }",
-      "number",
-      "The number of rows deleted.",
-    ),
-    "query-count": queryMethod(
-      "Counts rows in the given table.",
-      "{ \"query-count\": \"users\", \"where\": { \"active\": true } }",
-      "number",
-      "The matching row count as a number.",
-    ),
-    "query-create": queryMethod(
-      "Creates a table from a registered schema (`query-schema`) or inline column definitions.",
-      "{ \"query-create\": \"users\", \"query-schema\": \"schema/users\" }",
-      "null",
-      "`null` on success; throws on SQL error.",
-    ),
-    "query-drop": queryMethod(
-      "Drops the given table.",
-      "{ \"query-drop\": \"users\" }",
-      "null",
-      "`null` on success; throws on SQL error.",
-    ),
-    "query-alter": queryMethod(
-      "Alters the given table: add columns via `addColumns`.",
-      "{ \"query-alter\": \"users\", \"addColumns\": { \"age\": { \"type\": \"integer\" } } }",
-      "null",
-      "`null` on success; throws on SQL error.",
-    ),
+    query: {
+      type: "string",
+      enum: ["select", "insert", "upsert", "update", "delete", "count", "create", "drop", "alter"],
+      markdownDescription: "Runs a database query. The value is the SQL operation; `table` is the target and `options` holds the op-specific clauses.",
+      examples: [
+        "{ \"query\": \"select\", \"table\": \"users\", \"options\": { \"where\": { \"id\": { \"var\": \"$id\" } }, \"first\": true } }",
+      ],
+      siblings: {
+        table:      { type: "string",  description: "Target table." },
+        connection: { type: "string",  description: "Named DB connection (default if omitted)." },
+        system:     { type: "boolean", description: "Skip the schema validator." },
+      },
+      variants: {
+        select: op("any", "Reads rows. Returns an array (or the single row / `null` with `first`).",
+          ["where", "orderBy", "groupBy", "first", "columns", "limit", "offset", "distinct", "innerJoin", "leftJoin", "rightJoin", "group_concat"]),
+        insert: op("any", "Inserts `data` (object or array of rows). Returns the PK(s), or the rows with `returning`.",
+          ["data", "ignore", "returning"]),
+        upsert: op("any", "Inserts or updates on `conflict`. `merge` limits which columns update.",
+          ["data", "conflict", "merge", "returning"]),
+        // update/delete return a row COUNT, narrowing to an array of rows when the
+        // `options.returning` clause is present (dotted nested-presence variant).
+        update: op("number", "Updates matching rows. `increment`/`decrement` apply atomic deltas. Returns the row count (or rows with `returning`).",
+          ["where", "data", "increment", "decrement", "returning"], true),
+        delete: op("number", "Deletes matching rows (requires `where`). Returns the row count (or rows with `returning`).",
+          ["where", "returning"], true),
+        count:  op("number", "Counts matching rows; supports joins and `distinct` + `columns`.",
+          ["where", "distinct", "columns", "innerJoin", "leftJoin", "rightJoin"]),
+        create: op("array", "Creates table(s) from a registered `schema` or inline document. Returns a per-table status array.",
+          ["schema"]),
+        drop:   op("object", "Drops the table.", []),
+        alter:  op("object", "Alters the table: add columns via `addColumns`.",
+          ["addColumns"]),
+      },
+    },
   };
 
-  /** Shared siblings across every `query-*` method. Framework auto-creates
-   *  `_QueryNodeSiblings` in $defs and $ref's it from each method's byKey
-   *  entry — sibling block stored once, not duplicated 9 times. */
-  static commonSiblings = {
-    table:           { type: "string"  as const, description: "Table name (overrides the primary value)." },
-    "query-first":   { type: "boolean" as const, description: "Return a single row instead of an array." },
-    connection:      { type: "string"  as const, description: "Named DB connection (default if omitted)." },
-    where:           { description: "WHERE clause: `{ column: value }` or nested `or`/`and`." },
-    data:            { description: "Row data for `insert`/`upsert`/`update`." },
-    orderBy:         { description: "ORDER BY: `{ column: 'asc' | 'desc' }`." },
-    "query-groupBy": { description: "GROUP BY column name or array of names." },
-    "query-schema":  { description: "Table schema reference (used by `query-create`)." },
-    group_concat:    { description: "GROUP_CONCAT aggregate." },
-    conflict:        { type: "array"   as const, description: "Conflict target columns for `upsert`." },
-    addColumns:      { description: "Columns to add (used by `query-alter`)." },
-    columns:         { type: "array"   as const, description: "Columns to select." },
-    limit:           { type: "number"  as const, description: "LIMIT N." },
-    offset:          { type: "number"  as const, description: "OFFSET N." },
-    distinct:        { type: "boolean" as const, description: "SELECT DISTINCT." },
-    innerJoin:       { description: "INNER JOIN clauses." },
-    leftJoin:        { description: "LEFT JOIN clauses." },
-    rightJoin:       { description: "RIGHT JOIN clauses." },
-    system:          { type: "boolean" as const, description: "Skip schema validator." },
-  };
+  query(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+    return this.execQuery(def, context);
+  }
 
-  ["query-select"](def: Record<string, unknown>, context: Context): Promise<NodeValue> { return this.execQuery("select", def, context); }
-  ["query-insert"](def: Record<string, unknown>, context: Context): Promise<NodeValue> { return this.execQuery("insert", def, context); }
-  ["query-upsert"](def: Record<string, unknown>, context: Context): Promise<NodeValue> { return this.execQuery("upsert", def, context); }
-  ["query-update"](def: Record<string, unknown>, context: Context): Promise<NodeValue> { return this.execQuery("update", def, context); }
-  ["query-delete"](def: Record<string, unknown>, context: Context): Promise<NodeValue> { return this.execQuery("delete", def, context); }
-  ["query-count"](def: Record<string, unknown>, context: Context): Promise<NodeValue>  { return this.execQuery("count",  def, context); }
-  ["query-create"](def: Record<string, unknown>, context: Context): Promise<NodeValue> { return this.execQuery("create", def, context); }
-  ["query-drop"](def: Record<string, unknown>, context: Context): Promise<NodeValue>   { return this.execQuery("drop",   def, context); }
-  ["query-alter"](def: Record<string, unknown>, context: Context): Promise<NodeValue>  { return this.execQuery("alter",  def, context); }
-
-  private async execQuery(
-    op: "select" | "insert" | "upsert" | "update" | "delete" | "count" | "create" | "drop" | "alter",
-    def: Record<string, unknown>,
-    context: Context,
-  ): Promise<NodeValue> {
-    // The dispatching key (e.g. "query-select") carries the table name as its
-    // value when not explicitly set via the `table` sibling.
-    const dispatchKey = `query-${op}`;
-    const tableFromDispatch = def[dispatchKey];
-    const adjustedDef: Record<string, unknown> = {
-      ...def,
-      query: op,
-      table: def.table ?? tableFromDispatch,
+  private async execQuery(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+    const options = isObject(def.options) ? def.options : {};
+    const [queryRaw, tableRaw] = await Promise.all([
+      resolve(def.query ?? null, context),
+      resolve(def.table ?? null, context),
+    ]);
+    // Flatten { query, table, ...options } into the QueryDefinition shape the
+    // execute* helpers already consume.
+    const flat: Record<string, unknown> = {
+      ...options,
+      query: queryRaw == null ? undefined : String(queryRaw),
+      table: tableRaw == null ? undefined : String(tableRaw),
+      system: def.system,
     };
 
-    const connRaw = await resolve(adjustedDef.connection ?? null, context);
+    const connRaw = await resolve(def.connection ?? null, context);
     const connectionName = connRaw
       ? String(connRaw)
       : (DatabaseNode.getDefaultConnection() ?? "default");
     const knex = DatabaseNode.getKnex(connectionName);
 
-    const resolvedQuery = await resolveQueryDef(adjustedDef, context);
+    const resolvedQuery = await resolveQueryDef(flat, context);
 
-    if (!adjustedDef.system) await runValidator(resolvedQuery, context);
+    if (!def.system) await runValidator(resolvedQuery, context);
 
-    const first = adjustedDef["query-first"] === true || resolvedQuery.first === true;
+    const first = resolvedQuery.first === true;
 
     switch (resolvedQuery.type) {
       case "select":  return executeSelect(knex, resolvedQuery, first) as Promise<NodeValue>;
@@ -354,23 +381,6 @@ export class QueryNode extends Node {
       default: throw new Error(`Unknown query type: ${resolvedQuery.type}`);
     }
   }
-}
-
-/** Helper for the schema literal — keeps the 9 method entries terse.
- *  Common siblings come from `QueryNode.commonSiblings` (framework auto-wires). */
-function queryMethod(
-  markdown: string,
-  example: string,
-  output?: "string" | "number" | "boolean" | "array" | "object" | "null" | "any",
-  outputDescription?: string,
-): import("@jexs/core").JexsMethodSchema {
-  return {
-    type: "string",
-    output,
-    outputDescription,
-    markdownDescription: markdown,
-    examples: [example],
-  };
 }
 
 /**
@@ -412,12 +422,11 @@ async function resolveQueryDef(
   context: Context,
 ): Promise<QueryDefinition> {
   const {
-    where, data, orderBy, addColumns, group_concat, conflict,
-    connection, system, as: _as, query: queryType,
-    // Renamed siblings (avoid resolver-key collisions with other Nodes' primaries):
-    "query-groupBy": groupBy,
-    "query-first":   first,
-    "query-schema":  schema,
+    where, data, orderBy, groupBy, schema, group_concat, conflict, increment, decrement,
+    addColumns,
+    connection: _connection, system: _system, as: _as, query: queryType,
+    // Static clauses (table, first, columns, limit, offset, distinct, joins,
+    // returning, merge, ignore) flow through `rest` into the query unchanged.
     ...rest
   } = def;
 
@@ -439,14 +448,16 @@ async function resolveQueryDef(
           .then(v => { query.data = v as QueryDefinition["data"]; })
       : null,
     Promise.resolve(resolveAll(
-      [orderBy ?? null, groupBy ?? null, schema ?? null, group_concat ?? null, conflict ?? null],
+      [orderBy ?? null, groupBy ?? null, schema ?? null, group_concat ?? null, conflict ?? null, increment ?? null, decrement ?? null],
       context,
-      ([rOrderBy, rGroupBy, rSchema, rGroupConcat, rConflict]) => {
+      ([rOrderBy, rGroupBy, rSchema, rGroupConcat, rConflict, rIncrement, rDecrement]) => {
         if (rOrderBy     !== null) query.orderBy      = rOrderBy     as QueryDefinition["orderBy"];
         if (rGroupBy     !== null) query.groupBy      = rGroupBy     as QueryDefinition["groupBy"];
         if (rSchema      !== null) query.schema       = rSchema      as string | TableJsonSchema;
         if (rGroupConcat !== null) query.group_concat = rGroupConcat as QueryDefinition["group_concat"];
         if (rConflict    !== null) query.conflict     = rConflict    as string[];
+        if (rIncrement   !== null) query.increment    = rIncrement   as Record<string, number>;
+        if (rDecrement   !== null) query.decrement    = rDecrement   as Record<string, number>;
         return null;
       },
     )),
@@ -603,7 +614,7 @@ async function executeSelect(
 async function executeInsert(
   knex: KnexType,
   query: QueryDefinition,
-): Promise<number | number[]> {
+): Promise<unknown> {
   if (!query.table) throw new Error("Query requires a table name");
   if (!query.data) {
     throw new Error("INSERT query requires data");
@@ -612,8 +623,13 @@ async function executeInsert(
   // Validate and enrich data (computed columns, type coercion)
   const data = SchemaNode.validateInsert(query.table!, query.data);
 
-  const result = await knex(query.table).insert(data);
-  return Array.isArray(query.data) ? result : result[0];
+  let builder = knex(query.table).insert(data);
+  if (query.ignore) builder = builder.onConflict().ignore();
+  if (query.returning) builder = builder.returning(query.returning);
+
+  const result = await builder;
+  if (query.returning) return result;
+  return Array.isArray(query.data) ? result : (result as number[])[0];
 }
 
 /**
@@ -622,7 +638,7 @@ async function executeInsert(
 async function executeUpsert(
   knex: KnexType,
   query: QueryDefinition,
-): Promise<number | number[]> {
+): Promise<unknown> {
   if (!query.table) throw new Error("Query requires a table name");
   if (!query.data) {
     throw new Error("UPSERT query requires data");
@@ -633,11 +649,17 @@ async function executeUpsert(
 
   const data = SchemaNode.validateInsert(query.table!, query.data);
 
-  const result = await knex(query.table)
+  // `merge` (subset of columns) lets the conflict update touch only some columns
+  // — e.g. keep `created_at` intact; omit to merge every inserted column.
+  let builder = knex(query.table)
     .insert(data)
     .onConflict(query.conflict)
-    .merge();
-  return Array.isArray(query.data) ? result : result[0];
+    .merge(query.merge && query.merge.length ? query.merge : undefined);
+  if (query.returning) builder = builder.returning(query.returning);
+
+  const result = await builder;
+  if (query.returning) return result;
+  return Array.isArray(query.data) ? result : (result as number[])[0];
 }
 
 /**
@@ -646,25 +668,33 @@ async function executeUpsert(
 async function executeUpdate(
   knex: KnexType,
   query: QueryDefinition,
-): Promise<number> {
+): Promise<unknown> {
   if (!query.table) throw new Error("Query requires a table name");
-  if (!query.data || Array.isArray(query.data)) {
-    throw new Error("UPDATE query requires data object");
+  const hasDelta = !!(query.increment || query.decrement);
+  if ((!query.data || Array.isArray(query.data)) && !hasDelta) {
+    throw new Error("UPDATE query requires a data object or increment/decrement");
   }
 
-  // Validate and filter data (strip unknown columns, coerce types)
-  const data = SchemaNode.validateUpdate(
-    query.table!,
-    query.data as Record<string, unknown>,
-  );
+  // Validate and filter data (strip unknown columns, coerce types).
+  const data: Record<string, unknown> = query.data && !Array.isArray(query.data)
+    ? SchemaNode.validateUpdate(query.table!, query.data as Record<string, unknown>)
+    : {};
+
+  // Atomic deltas: `col = col +/- n`, applied as raw after validation so they
+  // bypass type coercion (the value is an expression, not a literal).
+  for (const [col, amt] of Object.entries(query.increment ?? {})) {
+    data[col] = knex.raw("?? + ?", [col, Number(amt)]);
+  }
+  for (const [col, amt] of Object.entries(query.decrement ?? {})) {
+    data[col] = knex.raw("?? - ?", [col, Number(amt)]);
+  }
 
   let builder = knex(query.table);
-
   if (query.where) {
     builder = applyWhere(builder, query.where);
   }
 
-  return builder.update(data);
+  return query.returning ? builder.update(data, query.returning) : builder.update(data);
 }
 
 /**
@@ -673,7 +703,7 @@ async function executeUpdate(
 async function executeDelete(
   knex: KnexType,
   query: QueryDefinition,
-): Promise<number> {
+): Promise<unknown> {
   if (!query.table) throw new Error("Query requires a table name");
   let builder = knex(query.table);
 
@@ -684,7 +714,7 @@ async function executeDelete(
     throw new Error("DELETE query requires a WHERE clause");
   }
 
-  return builder.delete();
+  return query.returning ? builder.delete(query.returning) : builder.delete();
 }
 
 /**
@@ -694,7 +724,19 @@ async function executeCount(
   knex: KnexType,
   query: QueryDefinition,
 ): Promise<number> {
-  let builder = knex(query.table!).count("* as count");
+  let builder = knex(query.table!);
+
+  // Joins (valid on every driver for count).
+  for (const [joins, type] of [
+    [query.innerJoin, "inner"], [query.leftJoin, "left"], [query.rightJoin, "right"],
+  ] as [JoinDefinition[] | undefined, "inner" | "left" | "right"][]) {
+    if (joins) builder = applyJoins(builder, joins, type);
+  }
+
+  // `distinct` + `columns` → COUNT(DISTINCT col); otherwise COUNT(*).
+  builder = query.distinct && query.columns && query.columns.length > 0
+    ? builder.countDistinct(`${query.columns[0]} as count`)
+    : builder.count("* as count");
 
   if (query.where) {
     builder = applyWhere(builder, query.where);
