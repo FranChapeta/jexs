@@ -74,7 +74,9 @@ async function main(): Promise<void> {
 
   const combined = mergePackageSchemas(schemas);
   mkdirSync(dirname(COMBINED_OUT), { recursive: true });
-  writeFileSync(COMBINED_OUT, JSON.stringify(combined, null, 2) + "\n");
+  // Minified: this is a generated artifact the editor parses (not hand-edited),
+  // so dropping indentation saves ~35% with no functionality change.
+  writeFileSync(COMBINED_OUT, JSON.stringify(combined) + "\n");
 
   const cMethods = Object.keys(combined.byKey).length;
   const cNodes = Object.keys(combined.byNode).length;

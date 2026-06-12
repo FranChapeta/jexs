@@ -76,27 +76,21 @@ const REF = {
   exprFlat:    { $ref: "#/$defs/exprFlat"    },
 } as const;
 
-/** Output-filtered variants — used by enum and typed-array else branches in expandProperty. */
-const FILTERED_REF: Record<JexsType, EmittedSchema> = {
+/** Output-filtered variants — used by enum and typed-array else branches in
+ *  expandProperty. Keyed by the types that HAVE a filtered exprFlat (see
+ *  OUTPUT_TYPES); `object` has none (object slots route to `{ type: "object" }`),
+ *  so it's intentionally absent. */
+const FILTERED_REF: Record<Exclude<JexsType, "object">, EmittedSchema> = {
   string:  { $ref: "#/$defs/exprFlat_string"  },
   number:  { $ref: "#/$defs/exprFlat_number"  },
   boolean: { $ref: "#/$defs/exprFlat_boolean" },
   array:   { $ref: "#/$defs/exprFlat_array"   },
-  object:  { $ref: "#/$defs/exprFlat_object"  },
   null:    { $ref: "#/$defs/exprFlat_null"    },
 };
 
 // ── Property expansion ─────────────────────────────────────────────────────────
 
 export type EmittedSchema = Record<string, unknown>;
-
-/**
- * A schema slot value. JSON Schema 2020-12 allows a schema to be either an
- * object or a boolean (`true` = accept anything, `false` = reject anything;
- * equivalent to `{}` / `{ not: {} }`). We use `false` directly for rejection
- * entries in the filtered exprFlat variants — shorter than `{ not: {} }`.
- */
-export type SchemaOrBool = EmittedSchema | boolean;
 
 const METADATA_KEYS = ["description", "markdownDescription", "examples"] as const;
 
@@ -126,6 +120,22 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
   // JSON Schema 2020-12, so markdownDescription stays accessible for hover.
   if (prop.$ref) {
     const out: EmittedSchema = { $ref: prop.$ref };
+    liftMetadata(prop, out);
+    return out;
+  }
+
+  // Nested object with a declared inner shape (e.g. a query's `options`). One
+  // level of `properties` + `additionalProperties` (default false to catch
+  // typos). Values recurse via expandProperty; `additionalProperties: false`
+  // carries no recursive catch-all, so this is safe for the depth budget.
+  if (prop.properties) {
+    const props: Record<string, EmittedSchema> = {};
+    for (const [k, v] of Object.entries(prop.properties)) props[k] = expandProperty(v);
+    const out: EmittedSchema = {
+      type: "object",
+      properties: props,
+      additionalProperties: prop.additionalProperties ?? false,
+    };
     liftMetadata(prop, out);
     return out;
   }
@@ -241,12 +251,43 @@ export interface PackageSchema {
    *  are internal helpers; non-underscored names are added to the combined
    *  schema's top-level `anyOf` as root-matchable branches. */
   extraDefs?: Record<string, EmittedSchema>;
+  /** sibling name → host method keys that declare it. The merge step uses this to
+   *  gate dispatch for siblings that share a handler-key name (e.g. `session`). */
+  siblingHosts?: Record<string, string[]>;
 }
 
 export interface EmittedMethodSchema {
   properties: Record<string, EmittedSchema>;
   output?: string;
   outputDescription?: string;
+  /** Build-only: flattened per-(possibly nested)-variant output + discriminator
+   *  condition, used by the filtered-variant loop for output narrowing. Stripped
+   *  on emit. */
+  variantOutputs?: VariantOutput[];
+  /** Build-only: TOP-LEVEL variant docs for the hover "Operations" list (nesting
+   *  is flattened away in `variantOutputs`, so docs come from here). Stripped. */
+  variantDocs?: VariantDoc[];
+  /** Conditional sibling constraints for variants methods. Emitted (real schema). */
+  allOf?: EmittedSchema[];
+  /** Shared `commonSiblings` block, attached on merge (2020-12 evaluates $ref siblings). */
+  $ref?: string;
+  /** Per-handler catch-all for undeclared siblings, attached on merge. */
+  additionalProperties?: EmittedSchema;
+}
+
+/** One (possibly nested) variant's discriminator condition + resolved output
+ *  type, used by the filtered-variant loop to gate output-type narrowing. The
+ *  `cond` is the full composed condition (parent ∧ child). Build-only. */
+export interface VariantOutput {
+  cond: EmittedSchema;
+  output?: string;
+}
+
+/** A top-level variant's doc entry for hover. Build-only. */
+export interface VariantDoc {
+  key: string;
+  output?: string;
+  description?: string;
 }
 
 /**
@@ -267,6 +308,9 @@ interface CompiledMethod {
   output?: string;
   outputDescription?: string;
   ownerNode: string;
+  variantOutputs?: VariantOutput[];
+  variantDocs?: VariantDoc[];
+  allOf?: EmittedSchema[];
 }
 
 function compileMethod(
@@ -274,7 +318,12 @@ function compileMethod(
   method: JexsMethodSchema,
   ownerNode: string,
 ): CompiledMethod {
-  const { output, outputDescription, siblings, ...primary } = method;
+  const { output, outputDescription, siblings, variants, variantBy, ...primary } = method;
+
+  if (variants) {
+    return compileVariantMethod(methodKey, primary, variants, variantBy, siblings, output, outputDescription, ownerNode);
+  }
+
   const properties: Record<string, EmittedSchema> = {
     [methodKey]: expandProperty(primary),
   };
@@ -282,6 +331,166 @@ function compileMethod(
     properties[k] = expandProperty(v);
   }
   return { properties, output, outputDescription, ownerNode };
+}
+
+/**
+ * Compile a multi-op method declared via `variants`. The variant map KEY is the
+ * discriminator: in sibling-mode (no `enum`) it's a sibling whose presence selects
+ * the variant; in value-mode (primary has an `enum`) it's the primary key's value.
+ *
+ * Variants NEST: a variant may itself declare `variants` (always sibling-mode at
+ * nested levels). `walkVariants` flattens the tree into `variantOutputs` whose
+ * conditions are `allOf`-composed down the path — so output can narrow on, e.g.,
+ * the query value AND a `returning` sibling's presence. A level's `output` is the
+ * fallback when none of its variants match (e.g. FileNode `file` → "any" load
+ * mode + a `write` variant → boolean; query `update` → "number" + `returning` →
+ * array). `variantDocs` keeps the TOP-LEVEL ops for hover.
+ */
+function compileVariantMethod(
+  methodKey: string,
+  primary: JexsPropertySchema,
+  variants: NonNullable<JexsMethodSchema["variants"]>,
+  variantBy: JexsMethodSchema["variantBy"],
+  commonSiblings: Record<string, JexsPropertySchema> | undefined,
+  output: string | undefined,
+  outputDescription: string | undefined,
+  ownerNode: string,
+): CompiledMethod {
+  const properties: Record<string, EmittedSchema> = {
+    [methodKey]: expandProperty(primary),
+  };
+  // Method-level siblings apply to every variant (e.g. `flags` for regex).
+  for (const [k, v] of Object.entries(commonSiblings ?? {})) {
+    properties[k] = expandProperty(v);
+  }
+  const allOf: EmittedSchema[] = [];
+  const variantOutputs = walkVariants(
+    { variants, variantBy, output, enum: primary.enum },
+    methodKey, null, properties, allOf,
+  );
+
+  // Top-level ops for hover (nesting is flattened in variantOutputs).
+  const variantDocs: VariantDoc[] = Object.entries(variants).map(([key, v]) => ({
+    key,
+    output: v.output ?? output,
+    description: v.markdownDescription ?? v.description ?? v.outputDescription,
+  }));
+
+  return {
+    properties,
+    output,
+    outputDescription,
+    ownerNode,
+    variantOutputs,
+    variantDocs,
+    allOf: allOf.length > 0 ? allOf : undefined,
+  };
+}
+
+/** A variants-bearing spec (top method or a nested variant). */
+interface VariantSpec {
+  variants: NonNullable<JexsMethodSchema["variants"]>;
+  variantBy?: JexsMethodSchema["variantBy"];
+  output?: string;
+  enum?: readonly unknown[];
+}
+
+/**
+ * A sibling-mode presence condition. A plain key tests a root sibling; a DOTTED
+ * key (e.g. `options.returning`) tests a NESTED property's presence — letting a
+ * variant narrow on a clause that lives inside a nested object (so the user's
+ * data stays regular, e.g. `returning` stays in `options`) rather than forcing
+ * it to the root. `{ required: ["returning"] }` ⇒ `{ properties: { options: {
+ * required: ["returning"] } } }`.
+ */
+function presenceCond(key: string): EmittedSchema {
+  const parts = key.split(".");
+  let cond: EmittedSchema = { required: [parts[parts.length - 1]] };
+  for (let i = parts.length - 2; i >= 0; i--) {
+    cond = { properties: { [parts[i]]: cond } };
+  }
+  return cond;
+}
+
+/**
+ * Recursively flatten a variants tree into output-narrowing entries, registering
+ * each variant's siblings into `properties`/`allOf`. `baseCond` is the parent's
+ * composed discriminator (null at the top). value-mode is only valid at the top
+ * (it reads `methodKey`'s value); nested levels are sibling-mode (variant key =
+ * sibling presence, dotted for a nested clause).
+ */
+function walkVariants(
+  spec: VariantSpec,
+  methodKey: string,
+  baseCond: EmittedSchema | null,
+  properties: Record<string, EmittedSchema>,
+  allOf: EmittedSchema[],
+): VariantOutput[] {
+  const mode = spec.variantBy ?? (spec.enum ? "value" : "sibling");
+  const out: VariantOutput[] = [];
+  const localConds: EmittedSchema[] = [];
+
+  for (const [key, variant] of Object.entries(spec.variants)) {
+    const localCond: EmittedSchema = mode === "value"
+      ? { properties: { [methodKey]: { const: key } }, required: [methodKey] }
+      : presenceCond(key);
+    localConds.push(localCond);
+    const cond: EmittedSchema = baseCond ? { allOf: [baseCond, localCond] } : localCond;
+
+    // Sibling-mode: the trigger key is itself a sibling carrying the op's input —
+    // unless it's dotted, in which case the target lives inside a nested object
+    // (e.g. `options`) whose own schema already registers/validates it.
+    if (mode === "sibling" && !key.includes(".")) {
+      const { output: _o, outputDescription: _od, siblings: _s, variants: _v, variantBy: _vb, ...triggerProp } = variant;
+      properties[key] = expandProperty(triggerProp);
+    }
+
+    // Extra siblings: REAL shape enforced only under this variant's discriminator
+    // via `allOf`; base `properties` stays permissive so a same-named sibling with
+    // different shapes per variant (e.g. per-op `options`) isn't clobbered.
+    // Guard: never overwrite an existing base — a method-level sibling (e.g.
+    // ElementNode's `content`, which routes children to exprFlat) or an
+    // earlier variant's permissive `{}` must survive, with this variant's shape
+    // layered on via the gated `allOf` below.
+    const extra: Record<string, EmittedSchema> = {};
+    for (const [sk, sv] of Object.entries(variant.siblings ?? {})) {
+      if (!(sk in properties)) properties[sk] = {};
+      extra[sk] = expandProperty(sv);
+    }
+    if (Object.keys(extra).length > 0) {
+      allOf.push({ if: cond, then: { properties: extra } });
+    }
+
+    if (variant.variants) {
+      // Nested variants compose: recurse with this variant's condition as base.
+      out.push(...walkVariants(
+        { variants: variant.variants, variantBy: variant.variantBy, output: variant.output, enum: variant.enum },
+        key, cond, properties, allOf,
+      ));
+    } else {
+      out.push({ cond, output: variant.output ?? spec.output });
+    }
+  }
+
+  // Fallback: this level's `output` applies when none of its variants match.
+  if (spec.output !== undefined) {
+    const none: EmittedSchema = localConds.length > 0 ? { not: { anyOf: localConds } } : {};
+    out.push({ cond: baseCond ? { allOf: [baseCond, none] } : none, output: spec.output });
+  }
+
+  return out;
+}
+
+/** All sibling-property names a method can carry (its own siblings + every
+ *  variant's, recursively). Used to map sibling names to their host ops. */
+function collectMethodSiblings(method: JexsMethodSchema): string[] {
+  const out: string[] = [];
+  const walk = (m: JexsMethodSchema) => {
+    for (const k of Object.keys(m.siblings ?? {})) out.push(k);
+    if (m.variants) for (const v of Object.values(m.variants)) walk(v);
+  };
+  walk(method);
+  return out;
 }
 
 /**
@@ -300,19 +509,25 @@ export function buildPackageSchema(
   const extraDefs: Record<string, EmittedSchema> = {};
   /** Per-Node $defs ref to a shared siblings block (built from `commonSiblings`). */
   const nodeSiblingsRef: Record<string, string> = {};
+  /** sibling name → the method keys (host ops) that declare it. Lets the merge
+   *  step gate dispatch so a sibling sharing a handler-key name (e.g. `session`)
+   *  is validated as that op's sibling, not as its own op. */
+  const siblingHosts: Record<string, Set<string>> = {};
+  const addSiblingHost = (sibling: string, host: string) => {
+    (siblingHosts[sibling] ??= new Set()).add(host);
+  };
 
   for (const n of nodes) {
     // Resolve to the class (constructor) — works for both instances and classes.
     const cls = (typeof n === "function" ? n : n.constructor) as typeof Node;
-    const schema = (cls as unknown as { schema?: JexsNodeSchema }).schema;
+    const schema = cls.schema;
     if (!schema) continue;
     const nodeClass = cls.name;
 
     // If the Node declares commonSiblings, auto-create a `_<NodeName>Siblings`
     // $defs entry from it. byKey emission below picks it up via nodeSiblingsRef.
-    const nodeCommonSiblings = (cls as unknown as {
-      commonSiblings?: Record<string, JexsPropertySchema>;
-    }).commonSiblings;
+    const nodeCommonSiblings = cls.commonSiblings;
+    const methodKeys = Object.keys(schema);
     if (nodeCommonSiblings && Object.keys(nodeCommonSiblings).length > 0) {
       const siblingsDefName = `_${nodeClass}Siblings`;
       const expandedProps: Record<string, EmittedSchema> = {};
@@ -321,6 +536,10 @@ export function buildPackageSchema(
       }
       extraDefs[siblingsDefName] = { properties: expandedProps };
       nodeSiblingsRef[nodeClass] = `#/$defs/${siblingsDefName}`;
+      // commonSiblings apply to every method on the node, so all are hosts.
+      for (const sib of Object.keys(nodeCommonSiblings)) {
+        for (const mk of methodKeys) addSiblingHost(sib, mk);
+      }
     }
 
     for (const [methodKey, method] of Object.entries(schema)) {
@@ -332,10 +551,11 @@ export function buildPackageSchema(
         continue;
       }
       compiled[methodKey] = compileMethod(methodKey, method, nodeClass);
+      for (const sib of collectMethodSiblings(method)) addSiblingHost(sib, methodKey);
     }
 
     // Per-Node $defs contributions (e.g. RouterNode's routeNode tree shape).
-    const nodeDefs = (cls as unknown as { schemaDefs?: Record<string, EmittedSchema> }).schemaDefs;
+    const nodeDefs = cls.schemaDefs;
     if (nodeDefs) {
       for (const [defName, defSchema] of Object.entries(nodeDefs)) {
         if (defName in extraDefs) {
@@ -362,10 +582,13 @@ export function buildPackageSchema(
     const entry: EmittedMethodSchema = { properties: m.properties };
     if (m.output !== undefined) entry.output = m.output;
     if (m.outputDescription !== undefined) entry.outputDescription = m.outputDescription;
+    if (m.variantOutputs !== undefined) entry.variantOutputs = m.variantOutputs;
+    if (m.variantDocs !== undefined) entry.variantDocs = m.variantDocs;
+    if (m.allOf !== undefined) entry.allOf = m.allOf;
     // 2020-12 evaluates $ref siblings, so the local `properties` (primary key)
     // applies in addition to the shared siblings block from the ref'd schema.
     const ref = nodeSiblingsRef[m.ownerNode];
-    if (ref) (entry as unknown as Record<string, unknown>).$ref = ref;
+    if (ref) entry.$ref = ref;
     byKey[methodKey] = entry;
     (byNode[m.ownerNode] ??= []).push(methodKey);
   }
@@ -377,6 +600,11 @@ export function buildPackageSchema(
   };
   if (packageName) out.packageName = packageName;
   if (Object.keys(extraDefs).length > 0) out.extraDefs = extraDefs;
+  if (Object.keys(siblingHosts).length > 0) {
+    out.siblingHosts = Object.fromEntries(
+      Object.entries(siblingHosts).map(([sib, hosts]) => [sib, [...hosts]]),
+    );
+  }
   return out;
 }
 
@@ -401,14 +629,25 @@ function buildRichMarkdown(methodKey: string, m: EmittedMethodSchema): string {
   const primary = m.properties[methodKey] as MaybeMeta | undefined;
   let md = pickDesc(primary);
 
-  const siblings = Object.entries(m.properties)
-    .filter(([k]) => k !== methodKey)
-    .map(([k, v]) => {
-      const desc = pickDesc(v as MaybeMeta);
-      return desc ? `- \`${k}\` — ${desc}` : `- \`${k}\``;
+  // Variants methods document their (top-level) operations, each with its output
+  // type — the variant keys ARE the operations.
+  if (m.variantDocs && m.variantDocs.length > 0) {
+    const ops = m.variantDocs.map(v => {
+      const out = v.output ? ` → ${v.output}` : "";
+      const desc = v.description ? ` — ${v.description}` : "";
+      return `- \`${v.key}\`${out}${desc}`;
     });
-  if (siblings.length > 0) {
-    md = (md ? md + "\n\n" : "") + "**Properties:**\n" + siblings.join("\n");
+    md = (md ? md + "\n\n" : "") + "**Operations:**\n" + ops.join("\n");
+  } else {
+    const siblings = Object.entries(m.properties)
+      .filter(([k]) => k !== methodKey)
+      .map(([k, v]) => {
+        const desc = pickDesc(v as MaybeMeta);
+        return desc ? `- \`${k}\` — ${desc}` : `- \`${k}\``;
+      });
+    if (siblings.length > 0) {
+      md = (md ? md + "\n\n" : "") + "**Properties:**\n" + siblings.join("\n");
+    }
   }
 
   if (m.outputDescription) {
@@ -479,6 +718,7 @@ export function mergePackageSchemas(packages: PackageSchema[]): CombinedSchema {
   const byNode: Record<string, EmittedNodeSchema> = {};
   const extraDefs: Record<string, EmittedSchema> = {};
   const collisions: string[] = [];
+  const siblingHosts: Record<string, Set<string>> = {};
 
   for (const pkg of packages) {
     for (const [k, v] of Object.entries(pkg.byKey)) {
@@ -487,6 +727,9 @@ export function mergePackageSchemas(packages: PackageSchema[]): CombinedSchema {
         continue;
       }
       byKey[k] = v;
+    }
+    for (const [sib, hosts] of Object.entries(pkg.siblingHosts ?? {})) {
+      for (const h of hosts) (siblingHosts[sib] ??= new Set()).add(h);
     }
     for (const [n, v] of Object.entries(pkg.byNode)) {
       if (n in byNode) {
@@ -526,39 +769,10 @@ export function mergePackageSchemas(packages: PackageSchema[]): CombinedSchema {
     m.properties[methodKey] = { $ref: `#/vp/${methodKey}` };
   }
 
-  // Shape dedup: many vp entries share the same structural shape (e.g. 40+
-  // methods use `{ type: "array", minItems: 2, maxItems: 2, items: anyVal }`
-  // for tuple-2). Detect repeating shapes and move them to `$defs/_p<n>`.
-  // Per-method metadata (markdownDescription, examples, description) stays
-  // alongside the new $ref so VS Code hover and autocomplete still resolve.
-  const METADATA_FIELDS = new Set(["markdownDescription", "examples", "description"]);
-  const shapePatterns = new Map<string, string[]>();
-  for (const [k, v] of Object.entries(vp)) {
-    const shape: Record<string, unknown> = {};
-    for (const [fk, fv] of Object.entries(v)) {
-      if (!METADATA_FIELDS.has(fk)) shape[fk] = fv;
-    }
-    const serialized = JSON.stringify(shape);
-    if (serialized === "{}") continue;  // empty shape — nothing to dedup
-    if (serialized.length < 40) continue;  // already small ($refs); not worth deduping
-    if (!shapePatterns.has(serialized)) shapePatterns.set(serialized, []);
-    shapePatterns.get(serialized)!.push(k);
-  }
-  const dedupDefs: Record<string, EmittedSchema> = {};
-  let dedupCount = 0;
-  for (const [shape, methodKeys] of shapePatterns) {
-    if (methodKeys.length < 3) continue;  // needs at least 3 uses to be worth the indirection
-    const defName = `_p${dedupCount++}`;
-    dedupDefs[defName] = JSON.parse(shape);
-    for (const mk of methodKeys) {
-      const entry = vp[mk];
-      const replacement: EmittedSchema = { $ref: `#/$defs/${defName}` };
-      for (const f of METADATA_FIELDS) {
-        if (entry[f] !== undefined) replacement[f] = entry[f];
-      }
-      vp[mk] = replacement;
-    }
-  }
+  // Structural shape dedup runs as a whole-schema pass at the end (dedupeShapes),
+  // subsuming the old vp-only `_p` loop — it hoists any repeated subschema (vp
+  // shapes, byKey gating fragments, repeated enum shapes, …), keeping per-node
+  // metadata inline next to the `$ref`.
 
   const methodSchemaRefs: Record<string, EmittedSchema> = {};
   const primaryValueRefs: Record<string, EmittedSchema> = {};
@@ -570,8 +784,25 @@ export function mergePackageSchemas(packages: PackageSchema[]): CombinedSchema {
   const exprFlatProperties: Record<string, EmittedSchema> = {};
   const exprFlatDependentSchemas: Record<string, EmittedSchema> = {};
   for (const methodKey of Object.keys(byKey)) {
-    exprFlatProperties[methodKey] = primaryValueRefs[methodKey];
-    exprFlatDependentSchemas[methodKey] = methodSchemaRefs[methodKey];
+    // A key that's ALSO a sibling of other ops (e.g. `session`) must not be
+    // validated as its own op when used as that sibling. Mirror the runtime
+    // (first handler key dispatches): if a host op is present, treat this key as
+    // its sibling (the host's byKey validates the value); only dispatch it as its
+    // own op when no host is present. Keep it in `properties` (as a description
+    // stub — no value constraint) so editor completion still offers the key.
+    const hosts = [...(siblingHosts[methodKey] ?? [])].filter(h => h !== methodKey && h in byKey);
+    if (hosts.length > 0) {
+      const md = vp[methodKey]?.markdownDescription;
+      exprFlatProperties[methodKey] = md ? { markdownDescription: md } : {};
+      exprFlatDependentSchemas[methodKey] = {
+        if: { anyOf: hosts.map(h => ({ required: [h] })) },
+        then: true,
+        else: methodSchemaRefs[methodKey],
+      };
+    } else {
+      exprFlatProperties[methodKey] = primaryValueRefs[methodKey];
+      exprFlatDependentSchemas[methodKey] = methodSchemaRefs[methodKey];
+    }
   }
   for (const [name, info] of Object.entries(UNIVERSAL)) {
     exprFlatProperties[name] = {
@@ -581,25 +812,41 @@ export function mergePackageSchemas(packages: PackageSchema[]): CombinedSchema {
   }
 
   // Default schema for keys not enumerated in `properties` — i.e. siblings of
-  // a declared handler key, and any custom user keys. Array items use anyVal
-  // rather than exprFlat so a numeric/string array like `[0.4, 0.25, 0.15, 1]`
-  // (e.g. an RGBA tuple inside a `switch` `cases` value) passes through
-  // anyVal's primitive branch. Object items still recurse into exprFlat.
-  // Stored as a shared $defs entry referenced from exprFlat and every filtered
-  // variant — saves ~1KB vs inlining.
+  // a declared handler key, and any custom user keys. A sibling value may be a
+  // nested expression (object), a step/value array, or a primitive — dispatched
+  // by instance type via `if/then/else` (deterministic; no `anyOf` backtracking).
+  //
+  // CRUCIAL: this lives on each `byKey` entry, NOT on `exprFlat` (whose
+  // `additionalProperties` is `true`). A node's declared siblings — including its
+  // big recursive ones (`content`, `cases`, step sequences) — are validated by
+  // that handler's `byKey.properties` via `dependentSchemas`. If `exprFlat` ALSO
+  // had a recursive catch-all, every such sibling would be validated TWICE per
+  // nesting level — an O(2^depth) blow-up that makes the editor's JSON validator
+  // give up on deeply-nested files. Scoping the catch-all to `byKey` means each
+  // property is validated exactly once (by `properties` if declared, else by this
+  // catch-all), keeping validation full AND linear in depth.
+  // Stored as a shared $defs entry referenced from every byKey entry.
   const additionalPropertiesDef: EmittedSchema = {
-    anyOf: [
-      { ...REF.exprFlat },
-      { type: ["string", "number", "boolean", "null"] },
-      { type: "array", items: { ...REF.anyVal } },
-    ],
+    if: { type: "object" },
+    then: { ...REF.exprFlat },
+    else: {
+      if: { type: "array" },
+      then: { type: "array", items: { ...REF.anyVal } },
+      else: { type: ["string", "number", "boolean", "null"] },
+    },
   };
   const additionalPropertiesRef: EmittedSchema = { $ref: "#/$defs/_addProps" };
+
+  // The catch-all is per-handler (see above): each byKey entry validates its own
+  // undeclared siblings. exprFlat itself accepts unlisted keys freely (`true`).
+  for (const m of Object.values(byKey)) {
+    m.additionalProperties = { ...additionalPropertiesRef };
+  }
 
   const exprFlat: EmittedSchema = {
     type: "object",
     properties: exprFlatProperties,
-    additionalProperties: additionalPropertiesRef,
+    additionalProperties: true,
     dependentSchemas: exprFlatDependentSchemas,
   };
 
@@ -607,37 +854,57 @@ export function mergePackageSchemas(packages: PackageSchema[]): CombinedSchema {
   // to `exprFlat_T` for the expression-object branch, catching output-type
   // mismatches at validation time.
   //
-  // For each known handler key in the filtered variant's properties:
-  //   - matching output (T, "any", or absent → "any"): normal schema, included in dependentSchemas.
-  //   - non-matching output: boolean `false` schema — any value fails.
-  // Listing every known handler key (matching or not) prevents wrong-output-type
-  // expressions from sneaking through `additionalProperties`.
-  const OUTPUT_TYPES: JexsType[] = ["string", "number", "boolean", "array", "object", "null"];
+  // Each variant is `allOf: [ {$ref: exprFlat}, override ]` — it INHERITS the
+  // base `exprFlat` (all allowed keys' value+dependent schemas, the universal
+  // keys, and `additionalProperties`) and only overrides the differences:
+  //   - keys whose output can't match T → `properties: { key: false }` (reject).
+  //   - variant keys accepted only under a discriminator → `dependentSchemas:
+  //     { key: <gate> }`, ANDed (via the outer allOf) onto the base's method
+  //     schema for that key.
+  // Keys whose output matches unconditionally are simply inherited (not relisted),
+  // which is the bulk of the size saving vs. emitting every key per variant.
+  //
+  // `object` is intentionally absent: object-typed slots route to a plain
+  // `{ type: "object" }` (see `typeOrExprRef`) rather than to an `exprFlat_object`,
+  // so emitting that variant would just be dead weight (zero references).
+  const OUTPUT_TYPES: JexsType[] = ["string", "number", "boolean", "array", "null"];
   const filteredVariants: Record<string, EmittedSchema> = {};
   for (const target of OUTPUT_TYPES) {
-    const props: Record<string, SchemaOrBool> = {};
-    const deps: Record<string, EmittedSchema> = {};
+    const rejected: Record<string, false> = {};
+    const gated: Record<string, EmittedSchema> = {};
     for (const [methodKey, m] of Object.entries(byKey)) {
+      // Variants method: accept the key in this bucket only under the
+      // discriminator of a variant whose output matches the bucket (an
+      // any/absent-output variant matches every bucket, but still only under its
+      // own discriminator). A method-level fallback output applies when NO
+      // variant's discriminator holds.
+      if (m.variantOutputs) {
+        const outMatches = (o: string | undefined) => o === undefined || o === "any" || o === target;
+        const accept: EmittedSchema[] = m.variantOutputs.filter(v => outMatches(v.output)).map(v => v.cond);
+        // A method-level `output` is the fallback when no variant matches.
+        if (m.output !== undefined && outMatches(m.output)) {
+          const allConds = m.variantOutputs.map(v => v.cond);
+          accept.push(allConds.length > 0 ? { not: { anyOf: allConds } } : {});
+        }
+        if (accept.length === 0) {
+          rejected[methodKey] = false;
+        } else if (!accept.some(c => Object.keys(c).length === 0)) {
+          // Not a tautology (`{}` = always accept): gate the key on the
+          // accepting discriminators. The base supplies the method schema.
+          gated[methodKey] = accept.length === 1 ? accept[0] : { anyOf: accept };
+        }
+        // else: unconditionally accepted → inherit from base, nothing to emit.
+        continue;
+      }
       const out = m.output;
-      if (out === undefined || out === "any" || out === target) {
-        props[methodKey] = exprFlatProperties[methodKey];
-        deps[methodKey] = methodSchemaRefs[methodKey];
-      } else {
-        props[methodKey] = false;
+      if (!(out === undefined || out === "any" || out === target)) {
+        rejected[methodKey] = false; // wrong output type → reject; allowed ones inherit.
       }
     }
-    // Universal keys (`as`, `catch`) apply regardless of output type.
-    for (const [name, info] of Object.entries(UNIVERSAL)) {
-      props[name] = {
-        ...info.ref,
-        markdownDescription: info.markdownDescription,
-      };
-    }
+    const override: EmittedSchema = { properties: rejected };
+    if (Object.keys(gated).length > 0) override.dependentSchemas = gated;
     filteredVariants[`exprFlat_${target}`] = {
-      type: "object",
-      properties: props,
-      additionalProperties: additionalPropertiesRef,
-      dependentSchemas: deps,
+      allOf: [{ $ref: "#/$defs/exprFlat" }, override],
     };
   }
 
@@ -646,18 +913,19 @@ export function mergePackageSchemas(packages: PackageSchema[]): CombinedSchema {
   // folded into the primary key's rich markdown — nothing reads either at
   // runtime.
   for (const m of Object.values(byKey)) {
-    delete (m as { output?: unknown }).output;
-    delete (m as { outputDescription?: unknown }).outputDescription;
+    delete m.output;
+    delete m.outputDescription;
+    delete m.variantOutputs;
+    delete m.variantDocs;
   }
 
-  return {
+  const combined: CombinedSchema = {
     $schema: "https://json-schema.org/draft/2020-12/schema",
     $id: "jexs://combined",
     $defs: {
       ...sharedDefs,
       _addProps: additionalPropertiesDef,
       ...extraDefs,
-      ...dedupDefs,
       exprFlat,
       ...filteredVariants,
     },
@@ -670,4 +938,157 @@ export function mergePackageSchemas(packages: PackageSchema[]): CombinedSchema {
       ...rootMatches.map(name => ({ $ref: `#/$defs/${name}` })),
     ],
   };
+  dedupeShapes(combined);
+  return combined;
+}
+
+// ── Structural shape dedup ──────────────────────────────────────────────────────
+
+const DEDUP_METADATA = new Set(["markdownDescription", "examples", "description"]);
+// JSON Schema 2020-12 keywords whose values hold subschema(s) WE emit. Used to
+// walk only real schema positions (never `properties`/`required` CONTAINERS or
+// data like `enum`/`const`), so replacing a node with `{ $ref }` stays valid.
+const SCHEMA_SLOT_KEYS = ["if", "then", "else", "not", "items", "additionalProperties", "contains", "propertyNames"];
+const SCHEMA_LIST_KEYS = ["allOf", "anyOf", "oneOf", "prefixItems"];
+const SCHEMA_MAP_KEYS = ["properties", "$defs", "dependentSchemas", "patternProperties"];
+
+function isSchemaObj(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+/** Stable serialization (object keys sorted at every level) for shape matching. */
+function canonicalize(v: unknown): string {
+  if (Array.isArray(v)) return "[" + v.map(canonicalize).join(",") + "]";
+  if (isSchemaObj(v)) {
+    return "{" + Object.keys(v).sort().map(k => JSON.stringify(k) + ":" + canonicalize(v[k])).join(",") + "}";
+  }
+  return JSON.stringify(v);
+}
+
+/** Canonical form of a node's STRUCTURE (metadata fields stripped from the top). */
+function shapeCanonical(node: Record<string, unknown>): string {
+  const shape: Record<string, unknown> = {};
+  for (const k of Object.keys(node)) if (!DEDUP_METADATA.has(k)) shape[k] = node[k];
+  return canonicalize(shape);
+}
+
+/** Map each child SCHEMA of `node` (in real schema positions) through `fn`. */
+function mapChildSchemas(node: Record<string, unknown>, fn: (c: Record<string, unknown>) => Record<string, unknown>): void {
+  for (const k of SCHEMA_SLOT_KEYS) {
+    const c = node[k];
+    if (isSchemaObj(c)) node[k] = fn(c);
+  }
+  for (const k of SCHEMA_LIST_KEYS) {
+    const a = node[k];
+    if (Array.isArray(a)) for (let i = 0; i < a.length; i++) {
+      const e = a[i];
+      if (isSchemaObj(e)) a[i] = fn(e);
+    }
+  }
+  for (const k of SCHEMA_MAP_KEYS) {
+    const m = node[k];
+    if (isSchemaObj(m)) for (const mk of Object.keys(m)) {
+      const e = m[mk];
+      if (isSchemaObj(e)) m[mk] = fn(e);
+    }
+  }
+}
+
+/** How a single dedup pass keys nodes and emits replacements. */
+interface DedupMode {
+  /** Canonical key for `node`, or `null` to skip it. */
+  key: (node: Record<string, unknown>) => string | null;
+  /** The replacement node referencing the hoisted def. */
+  ref: (node: Record<string, unknown>, defName: string) => Record<string, unknown>;
+}
+
+/**
+ * One dedup pass: hoist every node sharing a `mode.key` (≥2 uses, net-positive
+ * bytes) to a shared `$defs/_p<N>`, replacing occurrences via `mode.ref`. The def
+ * body is `JSON.parse(key)` — the key IS canonical JSON. Returns true if anything
+ * was hoisted. Walks only real schema positions, so `{ $ref }` is always valid.
+ */
+function dedupePass(combined: CombinedSchema, mode: DedupMode, counter: { n: number }): boolean {
+  const defs = combined.$defs as Record<string, Record<string, unknown>>;
+  const roots: Record<string, unknown>[] = [
+    ...Object.values(combined.vp),
+    ...Object.values(combined.byKey),
+    ...Object.values(defs),
+    ...combined.anyOf,
+  ].filter(isSchemaObj);
+
+  const counts = new Map<string, number>();
+  const count = (node: Record<string, unknown>): Record<string, unknown> => {
+    const k = mode.key(node);
+    if (k !== null) counts.set(k, (counts.get(k) ?? 0) + 1);
+    mapChildSchemas(node, count);
+    return node;
+  };
+  for (const r of roots) count(r);
+
+  // Replacing `n` copies of an `L`-byte node with refs (~24b) + one def (L + ~9b
+  // key overhead): saved = (n-1)*L - 24n - 9. Deterministic name order.
+  const hoist = new Map<string, string>();
+  for (const k of [...counts.keys()].sort()) {
+    const c = counts.get(k)!;
+    if (c >= 2 && (c - 1) * k.length - c * 24 - 9 > 0) hoist.set(k, `_p${counter.n++}`);
+  }
+  if (hoist.size === 0) return false;
+
+  const newDefs = new Set<string>();
+  for (const [k, name] of hoist) { defs[name] = JSON.parse(k); newDefs.add(name); }
+
+  const transform = (node: Record<string, unknown>): Record<string, unknown> => {
+    const k = mode.key(node);
+    const name = k !== null ? hoist.get(k) : undefined;
+    if (name) return mode.ref(node, name);
+    mapChildSchemas(node, transform);
+    return node;
+  };
+  for (const map of [combined.vp, combined.byKey] as Record<string, Record<string, unknown>>[]) {
+    for (const mk of Object.keys(map)) if (isSchemaObj(map[mk])) map[mk] = transform(map[mk]);
+  }
+  for (const dk of Object.keys(defs)) {
+    if (!isSchemaObj(defs[dk])) continue;
+    if (newDefs.has(dk)) mapChildSchemas(defs[dk], transform);  // descend only — never alias to self
+    else defs[dk] = transform(defs[dk]);
+  }
+  combined.anyOf = combined.anyOf.map(e => isSchemaObj(e) ? transform(e) : e);
+  return true;
+}
+
+/**
+ * Hoist repeated subschemas to shared `$defs/_p<N>`. Runs two modes to fixpoint:
+ *   - EXACT (metadata included): collapses identical nodes whole — including
+ *     `{ $ref, description }` duplicates the shape pass would skip.
+ *   - SHAPE (metadata stripped): collapses same-structure nodes whose docs differ,
+ *     keeping each occurrence's metadata inline next to the `$ref`.
+ * Exact runs first (no inline-metadata repeat); the loop re-collapses the
+ * `{ $ref, description }` results the shape pass produces. Lossless — `$ref` is
+ * pure inclusion in 2020-12. Subsumes the old vp-only `_p` loop.
+ */
+function dedupeShapes(combined: CombinedSchema): void {
+  const ref = (defName: string): Record<string, unknown> => ({ $ref: `#/$defs/${defName}` });
+  const exact: DedupMode = {
+    // skip a bare `{ $ref }` (no metadata) — hoisting only aliases the ref.
+    key: node => { const ks = Object.keys(node); return ks.length === 1 && ks[0] === "$ref" ? null : canonicalize(node); },
+    ref: (_node, name) => ref(name),
+  };
+  const shape: DedupMode = {
+    key: node => {
+      const st = Object.keys(node).filter(k => !DEDUP_METADATA.has(k));
+      return st.length === 0 || (st.length === 1 && st[0] === "$ref") ? null : shapeCanonical(node);
+    },
+    ref: (node, name) => {
+      const r = ref(name);
+      for (const k of DEDUP_METADATA) if (node[k] !== undefined) r[k] = node[k];
+      return r;
+    },
+  };
+  const counter = { n: 0 };
+  for (let guard = 0; guard < 10; guard++) {
+    const a = dedupePass(combined, exact, counter);
+    const b = dedupePass(combined, shape, counter);
+    if (!a && !b) break;
+  }
 }

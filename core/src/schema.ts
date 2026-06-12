@@ -41,6 +41,13 @@ export interface JexsPropertySchema {
   map?: boolean;
   /** Strictly an array of step expressions. */
   steps?: boolean;
+  /** Nested object with a declared inner shape (e.g. a query's `options`). Emits
+   *  `{ type: "object", properties, additionalProperties }`. `additionalProperties`
+   *  defaults to `false` so typos in the nested keys are caught. */
+  properties?: Record<string, JexsPropertySchema>;
+  /** Companion to `properties`: override the default `additionalProperties: false`
+   *  (e.g. set `true` to allow arbitrary extra keys). */
+  additionalProperties?: boolean;
 }
 
 /**
@@ -48,6 +55,19 @@ export interface JexsPropertySchema {
  * KEY (the dispatch trigger). `siblings` describes properties that may appear
  * alongside the primary key. `output` declares the method's resolved return
  * type — captured now, cross-method type-checking lands later.
+ *
+ * For multi-op methods, declare `variants`: one ergonomic dispatch key whose
+ * resolved output type and valid siblings depend on a discriminator (the variant
+ * map key). Each variant is itself a method schema (minus nested `variants`); the
+ * discriminator mode is inferred from the primary key — `enum` present ⇒
+ * value-mode, else sibling-mode — unless overridden with `variantBy`. In
+ * sibling-mode the variant key names the trigger sibling and its `type` narrows
+ * that sibling's value. A method-level `output` alongside `variants` is the
+ * default/fallback output: it applies when no variant's discriminator matches
+ * (e.g. FileNode's `file`: `output: "any"` for load mode, a `write` variant for
+ * boolean) AND is inherited by any variant that omits its own `output` (handy
+ * when variants vary only their siblings — e.g. cache-connect by driver, all
+ * returning a string).
  *
  * Universal keys (`as`, `catch`) are NOT listed here — they're injected once at
  * the combined schema's top level.
@@ -62,6 +82,23 @@ export interface JexsMethodSchema extends JexsPropertySchema {
    */
   outputDescription?: string;
   siblings?: Record<string, JexsPropertySchema>;
+  /** Discriminated operations keyed by discriminator value. A sibling `output`
+   *  acts as the fallback when no variant's discriminator matches.
+   *
+   *  Variants NEST: a variant may itself declare `variants`, composing
+   *  discriminators with `allOf`. The top level is value-mode (handler-key
+   *  `enum`) or sibling-mode; every NESTED level is sibling-mode (the variant key
+   *  names a sibling tested for presence). A DOTTED key tests a NESTED clause's
+   *  presence, so the discriminator can reach into a nested object without forcing
+   *  the clause to the root. So e.g. a query `update` (value-mode on `query`) nests
+   *  `{ "options.returning": { output: "array" } }` with its own `output: "number"`
+   *  fallback — resolving to number, or array when `options.returning` is present,
+   *  while `returning` stays where it belongs (inside `options`). (Nested
+   *  value-mode — discriminating on a sibling's VALUE — is not inferred; it would
+   *  need an explicit discriminator key, added only if needed.) */
+  variants?: Record<string, JexsMethodSchema>;
+  /** Override the inferred discriminator mode. Defaults: `enum` ⇒ "value", else "sibling". */
+  variantBy?: "sibling" | "value";
 }
 
 /**
