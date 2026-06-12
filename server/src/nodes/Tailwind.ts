@@ -62,25 +62,49 @@ export class TailwindNode extends Node {
         "clear",
         "classes",
       ],
-      markdownDescription: "Extracts Tailwind class names from JSON templates and compiles CSS.\nOperations: `\"extract\"`, `\"add\"`, `\"compile\"`, `\"build\"`, `\"clear\"`, `\"classes\"`.",
-      outputDescription: "Varies by op: `classes` returns the registered class names (array); `clear` returns `{ cleared: true }`; `compile`/`build` return the generated CSS (string); `extract`/`add` register classes and return their result. `null` for unknown ops.",
+      markdownDescription: "Extracts Tailwind class names from JSON templates and compiles CSS. The operation is the primary value.",
       examples: [
         "{ \"tailwind\": \"build\", \"data\": { \"var\": \"$template\" } }",
       ],
-      siblings: {
-        data: {
-          description: "JSON template to extract Tailwind classes from (used with `\"extract\"`, `\"add\"`, `\"build\"`).",
+      variants: {
+        extract: {
+          output: "object",
+          markdownDescription: "Extracts Tailwind classes from `data` and returns `{ classes }`.",
+          siblings: {
+            data: { description: "JSON template to extract classes from." },
+          },
+        },
+        add: {
+          output: "object",
+          markdownDescription: "Registers classes from `data` and/or an explicit `classes` list; returns `{ added, total }`.",
+          siblings: {
+            data: { description: "JSON template to extract classes from." },
+            classes: {
+              type: "array",
+              items: { type: "string" },
+              description: "Explicit class names to register.",
+            },
+          },
+        },
+        compile: {
+          output: "object",
+          markdownDescription: "Compiles the registered classes; returns `{ css, classes }`.",
+        },
+        build: {
+          output: "object",
+          markdownDescription: "Registers classes from `data` then builds the stylesheet; returns `{ built, classes }`.",
+          siblings: {
+            data: { description: "JSON template to extract classes from." },
+            content: { type: "string", description: "Glob pattern for additional content sources." },
+          },
+        },
+        clear: {
+          output: "object",
+          markdownDescription: "Clears the class registry; returns `{ cleared: true }`.",
         },
         classes: {
-          type: "array",
-          items: {
-            type: "string",
-          },
-          description: "Explicit class names to register (used with `\"add\"`).",
-        },
-        content: {
-          type: "string",
-          description: "Glob pattern for additional content sources (used with `\"build\"`).",
+          output: "array",
+          markdownDescription: "Returns the registered class names as an array.",
         },
       },
     },

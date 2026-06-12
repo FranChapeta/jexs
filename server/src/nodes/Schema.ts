@@ -30,22 +30,38 @@ export class SchemaNode extends Node {
         "list",
         "validator",
       ],
-      markdownDescription: "Registers table schemas for use by QueryNode.",
+      markdownDescription: "Registers table schemas for use by QueryNode. The operation is the primary value.",
       examples: [
         "{ \"schema\": \"register\", \"path\": \"db/tables\" }",
       ],
-      siblings: {
-        path: {
-          type: "string",
-          description: "Directory path to load JSON schema files from (used with `\"register\"`).",
+      variants: {
+        register: {
+          output: "object",
+          outputDescription: "`{ registered: [tableName, ...] }`.",
+          markdownDescription: "Registers schemas from a directory `path` or an inline `table` document.",
+          siblings: {
+            path: { type: "string", description: "Directory of JSON schema files to load." },
+            table: { description: "A table JSON Schema document to register inline." },
+          },
         },
-        table: {
-          type: "string",
-          description: "Table name to retrieve (used with `\"get\"`), or a table JSON Schema document to register inline (used with `\"register\"`).",
+        get: {
+          output: "object",
+          outputDescription: "The table's JSON Schema document, or `null` if not registered.",
+          markdownDescription: "Returns a registered table schema by name.",
+          siblings: {
+            table: { type: "string", description: "Table name to retrieve." },
+          },
         },
-        run: {
-          steps: true,
-          description: "Step sequence to run as a schema validator (used with `\"validator\"`).",
+        list: {
+          output: "array",
+          markdownDescription: "Returns all registered table schemas.",
+        },
+        validator: {
+          output: "null",
+          markdownDescription: "Sets a global schema validator step sequence.",
+          siblings: {
+            run: { steps: true, description: "Step sequence to run as a schema validator." },
+          },
         },
       },
     },

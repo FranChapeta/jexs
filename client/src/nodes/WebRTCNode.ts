@@ -31,6 +31,17 @@ const FAST_COALESCE_FLUSH_MS = 16;
  * - { "rtc": "close-all" }                               — close all peer connections
  * - { "rtc": "on-message", "do": [...] }                 — register handler for incoming data channel messages
  */
+// Shared sibling defs, declared before the class so the static schema
+// initializer can read them (a `const` is not hoisted).
+const RTC_ID = { type: "string" as const, description: "Peer connection ID." };
+const RTC_FROM = { type: "string" as const, description: "Remote peer ID the signal came from." };
+const RTC_DATA = { description: "Data to send." };
+const RTC_CHANNEL = {
+  type: "string" as const,
+  enum: ["data", "fast"] as const,
+  description: "Data channel: `\"data\"` (reliable) or `\"fast\"` (unreliable, low-latency).",
+};
+
 export class WebRTCNode extends Node {
   static schema: JexsNodeSchema = {
     rtc: {
@@ -46,29 +57,60 @@ export class WebRTCNode extends Node {
         "close-all",
         "on-message",
       ],
-      markdownDescription: "Manages WebRTC peer connections. Signaling is done over the active `WsNode` WebSocket connection.\r\nOperations: `\"connect\"`, `\"answer\"`, `\"accept\"`, `\"ice\"`, `\"send\"`, `\"broadcast\"`, `\"close\"`, `\"close-all\"`, `\"on-message\"`.\r\nUse `\"channel\": \"fast\"` for unreliable (low-latency) delivery; default channel is reliable.",
+      markdownDescription: "Manages WebRTC peer connections. Signaling is done over the active `WsNode` WebSocket connection. The operation is the primary value.\r\nUse `\"channel\": \"fast\"` for unreliable (low-latency) delivery; default channel is reliable.",
       examples: [
         "{ \"rtc\": \"connect\", \"id\": { \"var\": \"$peerId\" } }",
       ],
-      siblings: {
-        id: {
-          type: "string",
-          description: "Peer connection ID (used with `\"connect\"`, `\"send\"`, `\"close\"`).",
+      variants: {
+        connect: {
+          output: "object",
+          outputDescription: "`{ peerId, status }`.",
+          markdownDescription: "Creates a peer connection and sends an offer via the WebSocket.",
+          siblings: { id: RTC_ID },
         },
-        data: {
-          description: "Data to send (used with `\"send\"`, `\"broadcast\"`).",
+        answer: {
+          output: "null",
+          markdownDescription: "Accepts an offer, creates an answer, and signals it back.",
+          siblings: { offer: { description: "Remote offer description." }, from: RTC_FROM },
         },
-        channel: {
-          type: "string",
-          enum: [
-            "data",
-            "fast",
-          ],
-          description: "Data channel: `\"data\"` (reliable) or `\"fast\"` (unreliable, low-latency).",
+        accept: {
+          output: "null",
+          markdownDescription: "Applies a received answer to the pending connection.",
+          siblings: { answer: { description: "Remote answer description." }, from: RTC_FROM },
         },
-        do: {
-          steps: true,
-          description: "Steps to run on incoming messages, with `$rtcMessage` and `$rtcPeerId` in context (used with `\"on-message\"`).",
+        ice: {
+          output: "null",
+          markdownDescription: "Adds an ICE candidate from a remote peer.",
+          siblings: { candidate: { description: "Remote ICE candidate." }, from: RTC_FROM },
+        },
+        send: {
+          output: "null",
+          markdownDescription: "Sends data to one peer over the chosen channel.",
+          siblings: { id: RTC_ID, data: RTC_DATA, channel: RTC_CHANNEL },
+        },
+        broadcast: {
+          output: "null",
+          markdownDescription: "Sends data to all connected peers.",
+          siblings: { data: RTC_DATA, channel: RTC_CHANNEL },
+        },
+        close: {
+          output: "null",
+          markdownDescription: "Closes one peer connection.",
+          siblings: { id: RTC_ID },
+        },
+        "close-all": {
+          output: "null",
+          markdownDescription: "Closes all peer connections.",
+        },
+        "on-message": {
+          output: "null",
+          markdownDescription: "Registers steps to run on incoming data-channel messages.",
+          siblings: {
+            do: {
+              steps: true,
+              description: "Steps to run on incoming messages, with `$rtcMessage` and `$rtcPeerId` in context.",
+            },
+          },
         },
       },
     },

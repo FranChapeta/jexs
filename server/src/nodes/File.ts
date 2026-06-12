@@ -32,8 +32,9 @@ export class FileNode extends Node {
   static schema: JexsNodeSchema = {
     file: {
       type: "string",
+      output: "any",
       markdownDescription: "Loads a JSON file relative to the `app/` directory and resolves it as a Jexs expression.\nArrays are executed as step sequences; objects are resolved as a single expression.\nPass `\"data\": true` to skip resolution and get the raw parsed JSON (use for data files, route trees, and anywhere you want the resolver to leave the file alone).\nPass `\"raw\": true` for the raw string content with no JSON parse.\nPass `\"params\"` to merge scoped variables into the file's resolution context, or `\"write\"` to write data to the file.",
-      outputDescription: "Default: the file resolved as a Jexs expression (a JSON array runs as steps → its last value; a JSON object resolves to its value). With `data: true`, the raw parsed JSON; with `raw: true`, the file as a string; non-JSON text files return their string and binaries a Buffer. `null` if the file can't be read or parsed. In `write` mode, `true`/`false` for success.",
+      outputDescription: "Default: the file resolved as a Jexs expression (a JSON array runs as steps → its last value; a JSON object resolves to its value). With `data: true`, the raw parsed JSON; with `raw: true`, the file as a string; non-JSON text files return their string and binaries a Buffer. `null` if the file can't be read or parsed.",
       examples: [
         "{ \"file\": \"pages/home.json\", \"params\": { \"title\": \"Home\" } }",
       ],
@@ -50,8 +51,11 @@ export class FileNode extends Node {
           map: true,
           description: "Scoped variables passed into the loaded file's context.",
         },
+      },
+      variants: {
         write: {
-          description: "Data to write to the file (triggers write mode).",
+          output: "boolean",
+          markdownDescription: "Writes data to the file (strings verbatim, otherwise JSON). Returns `true`/`false` for success.",
         },
       },
     },

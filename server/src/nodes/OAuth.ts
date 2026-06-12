@@ -79,6 +79,16 @@ const PROVIDERS: Record<
 // Module-level state
 const providers: Map<string, OAuthProvider> = new Map();
 
+// Shared sibling definitions, declared before the class so the static schema
+// initializer can read them (a `const` is not hoisted).
+const OAUTH_PROVIDER = {
+  type: "string" as const,
+  description: "Provider name (`\"google\"`, `\"github\"`, `\"facebook\"`, `\"discord\"`, `\"twitter\"`, `\"microsoft\"`).",
+};
+const OAUTH_CLIENT_ID = { type: "string" as const, description: "OAuth client ID." };
+const OAUTH_CLIENT_SECRET = { type: "string" as const, description: "OAuth client secret." };
+const OAUTH_REDIRECT_URI = { type: "string" as const, description: "OAuth redirect URI." };
+
 /**
  * OAuthNode - Handles OAuth authentication flows in JSON.
  *
@@ -103,39 +113,46 @@ export class OAuthNode extends Node {
         "state",
         "providers",
       ],
-      markdownDescription: "OAuth 2.0 flow helpers. Operations: `\"configure\"`, `\"authUrl\"`, `\"exchange\"`, `\"refresh\"`, `\"userInfo\"`, `\"state\"`, `\"providers\"`.\nBuilt-in providers: `google`, `github`, `facebook`, `discord`, `twitter`, `microsoft`.",
-      outputDescription: "Varies by op: `authUrl` → the provider authorization URL (string); `state` → a random CSRF state string; `exchange`/`refresh` → a token object (`access_token`, etc.); `userInfo` → the normalized user-profile object; `providers` → an array of configured provider names; `configure` → a status object.",
+      markdownDescription: "OAuth 2.0 flow helpers. The operation is the primary value.\nBuilt-in providers: `google`, `github`, `facebook`, `discord`, `twitter`, `microsoft`.",
       examples: [
         "{ \"oauth\": \"authUrl\", \"provider\": \"google\", \"redirectUri\": { \"var\": \"$redirectUri\" } }",
       ],
-      siblings: {
-        provider: {
-          type: "string",
-          description: "Provider name (`\"google\"`, `\"github\"`, `\"facebook\"`, `\"discord\"`, `\"twitter\"`, `\"microsoft\"`).",
+      variants: {
+        configure: {
+          output: "object",
+          markdownDescription: "Registers provider credentials. Returns a status object.",
+          siblings: { provider: OAUTH_PROVIDER, clientId: OAUTH_CLIENT_ID, clientSecret: OAUTH_CLIENT_SECRET },
         },
-        clientId: {
-          type: "string",
-          description: "OAuth client ID (used with `\"configure\"`).",
+        authUrl: {
+          output: "string",
+          markdownDescription: "Builds the provider authorization URL.",
+          siblings: { provider: OAUTH_PROVIDER, redirectUri: OAUTH_REDIRECT_URI },
         },
-        clientSecret: {
-          type: "string",
-          description: "OAuth client secret (used with `\"configure\"`).",
+        exchange: {
+          output: "object",
+          outputDescription: "A token object (`access_token`, etc.).",
+          markdownDescription: "Exchanges an authorization `code` for tokens.",
+          siblings: { provider: OAUTH_PROVIDER, code: { type: "string", description: "Authorization code from redirect." }, redirectUri: OAUTH_REDIRECT_URI },
         },
-        redirectUri: {
-          type: "string",
-          description: "OAuth redirect URI (used with `\"authUrl\"` and `\"exchange\"`).",
+        refresh: {
+          output: "object",
+          outputDescription: "A refreshed token object.",
+          markdownDescription: "Refreshes tokens using a `refreshToken`.",
+          siblings: { provider: OAUTH_PROVIDER, refreshToken: { type: "string", description: "Refresh token." } },
         },
-        code: {
-          type: "string",
-          description: "Authorization code from redirect (used with `\"exchange\"`).",
+        userInfo: {
+          output: "object",
+          outputDescription: "The normalized user-profile object.",
+          markdownDescription: "Fetches the user profile for a bearer `accessToken`.",
+          siblings: { provider: OAUTH_PROVIDER, accessToken: { type: "string", description: "Bearer token." } },
         },
-        accessToken: {
-          type: "string",
-          description: "Bearer token (used with `\"userInfo\"`).",
+        state: {
+          output: "string",
+          markdownDescription: "Returns a random CSRF state string.",
         },
-        refreshToken: {
-          type: "string",
-          description: "Refresh token (used with `\"refresh\"`).",
+        providers: {
+          output: "array",
+          markdownDescription: "Returns the array of configured provider names.",
         },
       },
     },

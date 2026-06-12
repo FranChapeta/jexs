@@ -55,40 +55,64 @@ export class DatabaseNode extends Node {
         "dropTable",
         "info",
       ],
-      markdownDescription: "Manages database connections. Supports SQLite (`better-sqlite3`), MySQL (`mysql2`), and PostgreSQL (`pg`) via Knex.",
-      outputDescription: "Varies by op: `connect`/`close`/`dropTable` return a small status object (or `null` when there's nothing to do); `raw` returns the driver result for the SQL (a rows array on SQLite, the first result set otherwise); `tableExists` returns a boolean; `info` returns a connection-info object (or `null` if unknown).",
+      markdownDescription: "Manages database connections. Supports SQLite (`better-sqlite3`), MySQL (`mysql2`), and PostgreSQL (`pg`) via Knex. The operation is the primary value; each carries its own properties.",
       examples: [
         "{ \"database\": \"connect\", \"name\": \"main\", \"type\": \"sqlite\", \"filename\": \"app/data.db\" }",
       ],
-      siblings: {
-        name: {
-          type: "string",
-          description: "Connection name (used with `\"connect\"` and `\"close\"`).",
+      variants: {
+        connect: {
+          output: "object",
+          markdownDescription: "Opens (and registers) a connection. Returns a status object.",
+          siblings: {
+            name: { type: "string", description: "Connection name (default `\"default\"`)." },
+            type: {
+              type: "string",
+              enum: ["sqlite", "mysql", "pg"],
+              description: "Database driver.",
+            },
+            filename: { type: "string", description: "SQLite file path (with `\"sqlite\"`)." },
+          },
         },
-        type: {
-          type: "string",
-          enum: [
-            "sqlite",
-            "mysql",
-            "pg",
-          ],
-          description: "Database driver (used with `\"connect\"`).",
+        close: {
+          output: "object",
+          outputDescription: "A status object, or `null` if closing failed.",
+          markdownDescription: "Closes a named connection.",
+          siblings: {
+            name: { type: "string", description: "Connection name to close." },
+          },
         },
-        filename: {
-          type: "string",
-          description: "SQLite file path (used with `\"connect\"` + `\"sqlite\"`).",
+        raw: {
+          markdownDescription: "Runs a raw SQL string with positional bindings.",
+          outputDescription: "The driver result — a rows array on SQLite, the first result set otherwise.",
+          siblings: {
+            sql: { type: "string", description: "Raw SQL string." },
+            bindings: { type: "array", description: "Positional bindings for the SQL." },
+            connection: { type: "string", description: "Named connection (default if omitted)." },
+          },
         },
-        sql: {
-          type: "string",
-          description: "Raw SQL string (used with `\"raw\"`).",
+        tableExists: {
+          output: "boolean",
+          markdownDescription: "Returns whether a table exists.",
+          siblings: {
+            table: { type: "string", description: "Table name." },
+            connection: { type: "string", description: "Named connection (default if omitted)." },
+          },
         },
-        bindings: {
-          type: "array",
-          description: "Positional bindings for the raw SQL query.",
+        dropTable: {
+          output: "object",
+          markdownDescription: "Drops a table if it exists. Returns a status object.",
+          siblings: {
+            table: { type: "string", description: "Table name." },
+            connection: { type: "string", description: "Named connection (default if omitted)." },
+          },
         },
-        table: {
-          type: "string",
-          description: "Table name (used with `\"tableExists\"`, `\"dropTable\"`).",
+        info: {
+          output: "object",
+          outputDescription: "A connection-info object, or `null` if unknown.",
+          markdownDescription: "Reports connection info (type, location, size, table count).",
+          siblings: {
+            name: { type: "string", description: "Connection name." },
+          },
         },
       },
     },
