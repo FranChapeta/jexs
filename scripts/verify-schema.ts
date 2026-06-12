@@ -72,6 +72,99 @@ const cases: Case[] = [
   { label: "string-slot accepts unannotated (any-output) expression (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { foreach: [1, 2], item: { var: "$dynamic" }, do: "x" } },
 
+  // Regex via /re/ detection on string ops, with per-op output narrowing in slots.
+  { label: "replace with /regex/ search (string-output) standalone", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { replace: ["a1 b2", "/\\d/g", "#"] } },
+  { label: "string-slot accepts replace (regex substitution, string-output) (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { foreach: [1], item: { replace: ["a1", "/\\d/g", "#"] }, do: "y" } },
+  { label: "string-slot rejects match (array-output) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { foreach: [1], item: { match: ["a1", "/\\d/g"] }, do: "y" } },
+  // Variants — value-mode (tailwind): op chosen by the primary enum value.
+  { label: "tailwind build (value-mode) standalone", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { tailwind: "build", data: { var: "$t" } } },
+  { label: "string-slot rejects tailwind classes (array-output) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { foreach: [1], item: { tailwind: "classes" }, do: "y" } },
+
+  // Value-mode variants on real nodes: per-op output narrowing in typed slots.
+  { label: "string-slot accepts oauth authUrl (string-output) (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { foreach: [1], item: { oauth: "authUrl", provider: "google" }, do: "y" } },
+  { label: "string-slot rejects oauth providers (array-output) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { foreach: [1], item: { oauth: "providers" }, do: "y" } },
+  { label: "string-slot rejects database tableExists (boolean-output) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { foreach: [1], item: { database: "tableExists", table: "users" }, do: "y" } },
+  { label: "schema list (array-output) standalone", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { schema: "list" } },
+
+  // QueryNode: `{ query: <op>, table, options }` value-mode shape.
+  { label: "query select (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { query: "select", table: "users", options: { where: { id: { var: "$id" } }, first: true, leftJoin: [{ table: "roles", on: { "users.role_id": "roles.id" } }] } } },
+  { label: "query update with increment + options.returning (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { query: "update", table: "posts", options: { where: { id: 1 }, increment: { views: 1 }, returning: ["views"] } } },
+  // Root-level returning is tolerated (permissive catch-all) but does NOT trigger
+  // narrowing — only `options.returning` does. So in an array slot it stays number.
+  { label: "root returning doesn't narrow update to array (array-slot FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { concat: { query: "update", table: "t", returning: ["id"], options: { where: { id: 1 } } } } },
+  // Dotted nested-presence narrowing: update is number, but array with options.returning.
+  { label: "number-slot accepts update WITHOUT returning (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { sleep: { query: "update", table: "t", options: { where: { id: 1 } } } } },
+  { label: "number-slot rejects update WITH options.returning (now array) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { sleep: { query: "update", table: "t", options: { where: { id: 1 }, returning: ["id"] } } } },
+  { label: "array-slot accepts update WITH options.returning (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { concat: { query: "update", table: "t", options: { where: { id: 1 }, returning: ["id"] } } } },
+  { label: "array-slot rejects update WITHOUT returning (number) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { concat: { query: "update", table: "t", options: { where: { id: 1 } } } } },
+  { label: "query count with leftJoin + distinct (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { query: "count", table: "users", options: { distinct: true, columns: ["email"], leftJoin: [{ table: "orders", on: { "users.id": "orders.user_id" } }] } } },
+  { label: "query upsert with merge subset (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { query: "upsert", table: "users", options: { data: { id: 1, name: "x" }, conflict: ["id"], merge: ["name"] } } },
+  { label: "query insert with ignore (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { query: "insert", table: "users", options: { data: { name: "x" }, ignore: true } } },
+  { label: "query cross-op option: select with data (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { query: "select", table: "users", options: { data: { name: "x" } } } },
+  { label: "query option typo (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { query: "select", table: "users", options: { wheer: { id: 1 } } } },
+  { label: "query invalid op (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { query: "frobnicate", table: "users" } },
+  { label: "string-slot rejects query count (number-output) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { foreach: [1], item: { query: "count", table: "users" }, do: "y" } },
+
+  // Keyless ops folded into the bare `cache`/`storage` key (value-mode).
+  { label: "cache value-mode stats (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { cache: "stats" } },
+  { label: "cache value-mode invalid op (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { cache: "wipe" } },
+  { label: "cache-connect keyed (driver value) still valid (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { "cache-connect": "redis", host: "localhost", port: 6379 } },
+  { label: "storage value-mode keys (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { storage: "keys" } },
+  { label: "storage value-mode clear + session sibling (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { storage: "clear", session: true } },
+  // Sibling/handler-key collision: `session` is both a sibling (StorageNode) and a
+  // handler key (SessionNode). Dispatch is gated by primary key.
+  { label: "session sibling on storage-get (gated, valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { "storage-get": "cart", session: true } },
+  { label: "session as its OWN op still validates (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { session: { user_id: 123 } } },
+  { label: "storage value-mode invalid op (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { storage: "nuke" } },
+  { label: "array-slot accepts storage keys (array-output) (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { concat: { storage: "keys" } } },
+  { label: "array-slot rejects storage clear (boolean-output) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { concat: { storage: "clear" } } },
+
+  // ElementNode per-tag attribute variants (value-mode, permissive: custom tags
+  // and unknown attrs still pass; known attrs are type/enum-checked).
+  { label: "element a with href + target (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { tag: "a", href: "/x", target: "_blank", content: ["hi"] } },
+  { label: "element input bad type enum (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { tag: "input", type: "notatype" } },
+  { label: "element custom tag accepted (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { tag: "my-widget", foo: "bar", content: [] } },
+  { label: "element unknown attr on div accepted (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { tag: "div", "data-x": "1", "hx-get": "/y" } },
+  { label: "element if-on-tag is gated, not LogicNode if (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { tag: "div", if: { var: "$show" }, content: ["x"] } },
+
   // Should fail
   { label: "eq tuple too short", schemaRef: "byKey/eq", expectValid: false,
     expr: { eq: [1] } },

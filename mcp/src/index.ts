@@ -181,7 +181,13 @@ mcpServer.registerTool(
       const keys = Object.keys(schema);
       if (keys.length === 0) continue;
       seen.add(name);
-      entries.push(`${name}: ${keys.join(", ")}`);
+      // A variants method dispatches on ONE key but offers several ops as its
+      // value (e.g. `query` → select/insert/…); surface them so they're findable.
+      const parts = keys.map(k => {
+        const ops = variantOps(schema[k]);
+        return ops.length > 0 ? `${k} (ops: ${ops.join(", ")})` : k;
+      });
+      entries.push(`${name}: ${parts.join(", ")}`);
     }
     const globals = Object.keys(globalKeys);
     if (globals.length > 0) {
@@ -305,14 +311,15 @@ mcpServer.registerTool(
           lines.push(`Returns${type}: ${entry.outputDescription ?? "—"}`, "");
         }
 
-        const siblings = entry.siblings as Record<string, Record<string, unknown>> | undefined;
-        if (siblings && Object.keys(siblings).length > 0) {
-          lines.push("Siblings:");
-          for (const [k, v] of Object.entries(siblings)) {
-            const sd = v.description ?? v.markdownDescription ?? "";
-            lines.push(`  - ${k}${sd ? ` — ${sd}` : ""}`);
-          }
-          lines.push("");
+        renderSiblings(entry.siblings as Record<string, SchemaEntry> | undefined, lines);
+
+        // A variants method documents its ops (each with output + per-op
+        // siblings + nested modifiers like `returning`).
+        const variants = entry.variants as Record<string, SchemaEntry> | undefined;
+        if (variants && Object.keys(variants).length > 0) {
+          lines.push("Operations (value of this key):");
+          describeVariants(variants, "  ", false, lines);
+          lines.push("", `Tip: run describe_op on an op value (e.g. \"${Object.keys(variants)[0]}\") for its details.`, "");
         }
 
         const examples = entry.examples as unknown[] | undefined;
@@ -338,6 +345,26 @@ mcpServer.registerTool(
         return { content: [{ type: "text", text: lines.join("\n") }] };
       }
     }
+    // Not a dispatch key — maybe it's a variant VALUE (e.g. "select" is the
+    // `query` key's value, not a key of its own). Resolve it to its parent op.
+    const found = findVariantOp(op);
+    if (found) return renderVariantOp(found.nodeName, found.dispatchKey, found.trail, found.variant);
+
+    // Old/intuitive prefixed name for a folded op (e.g. `cache-clear` after
+    // `clear` folded into the bare `cache` key). Split `<key>-<op>` and look the
+    // op up as a variant of that key.
+    const dash = op.indexOf("-");
+    if (dash > 0) {
+      const prefix = op.slice(0, dash);
+      const rest = op.slice(dash + 1);
+      for (const node of nodes) {
+        const variants = (node.constructor.schema?.[prefix] as SchemaEntry | undefined)?.variants as Record<string, SchemaEntry> | undefined;
+        if (variants && rest in variants) {
+          return renderVariantOp(node.constructor.name, prefix, [rest], variants[rest]);
+        }
+      }
+    }
+
     // Fall back to global step keys (`as`, `return`, `catch`) — handled by the
     // resolver itself, so they're not in any node's schema.
     if (op in globalKeys) {
@@ -391,6 +418,93 @@ mcpServer.registerTool(
     };
   },
 );
+
+type SchemaEntry = Record<string, unknown>;
+
+/** Top-level variant op names of a method entry (empty if it isn't a variants method). */
+function variantOps(entry: SchemaEntry | undefined): string[] {
+  const variants = entry?.variants as Record<string, SchemaEntry> | undefined;
+  return variants ? Object.keys(variants) : [];
+}
+
+/** Render a variants tree: ops at the top level, "with `<sibling>`" modifiers when nested. */
+function describeVariants(variants: Record<string, SchemaEntry>, indent: string, nested: boolean, lines: string[]): void {
+  for (const [key, v] of Object.entries(variants)) {
+    const out = v.output !== undefined ? ` → ${String(v.output)}` : "";
+    const desc = (v.markdownDescription ?? v.description ?? v.outputDescription) as string | undefined;
+    const label = nested ? `with \`${key}\`` : `\`${key}\``;
+    lines.push(`${indent}- ${label}${out}${desc ? ` — ${desc}` : ""}`);
+    const sibs = v.siblings as Record<string, SchemaEntry> | undefined;
+    if (sibs && Object.keys(sibs).length > 0) {
+      const sk = Object.keys(sibs).map(k => {
+        const inner = (sibs[k] as SchemaEntry).properties as object | undefined;
+        return inner ? `${k} {${Object.keys(inner).join(", ")}}` : k;
+      });
+      lines.push(`${indent}    siblings: ${sk.join(", ")}`);
+    }
+    const nv = v.variants as Record<string, SchemaEntry> | undefined;
+    if (nv) describeVariants(nv, `${indent}  `, true, lines);
+  }
+}
+
+/** Render a method's `siblings` block (lists nested object keys inline when present). */
+function renderSiblings(sibs: Record<string, SchemaEntry> | undefined, lines: string[]): void {
+  if (!sibs || Object.keys(sibs).length === 0) return;
+  lines.push("Siblings:");
+  for (const [k, val] of Object.entries(sibs)) {
+    const sd = (val.description ?? val.markdownDescription ?? "") as string;
+    let extra = sd ? ` — ${sd}` : "";
+    const inner = val.properties as object | undefined;
+    if (inner) extra += ` { ${Object.keys(inner).join(", ")} }`;
+    lines.push(`  - ${k}${extra}`);
+  }
+  lines.push("");
+}
+
+/** Render a resolved variant op (its description, output, siblings, nested modifiers, raw schema). */
+function renderVariantOp(nodeName: string, dispatchKey: string, trail: string[], v: SchemaEntry): { content: { type: "text"; text: string }[] } {
+  const lines: string[] = [`${nodeName}.${dispatchKey} = "${trail.join("\" → \"")}"  (variant op)`, ""];
+  const desc = v.markdownDescription ?? v.description;
+  if (typeof desc === "string") lines.push(desc, "");
+  if (v.output !== undefined || v.outputDescription !== undefined) {
+    const type = v.output !== undefined ? ` (${String(v.output)})` : "";
+    lines.push(`Returns${type}: ${(v.outputDescription as string) ?? "—"}`, "");
+  }
+  renderSiblings(v.siblings as Record<string, SchemaEntry> | undefined, lines);
+  const nested = v.variants as Record<string, SchemaEntry> | undefined;
+  if (nested && Object.keys(nested).length > 0) {
+    lines.push("Modifiers (narrow output when present):");
+    describeVariants(nested, "  ", true, lines);
+    lines.push("");
+  }
+  lines.push("Raw schema:", JSON.stringify(v, null, 2));
+  return { content: [{ type: "text", text: lines.join("\n") }] };
+}
+
+/** Find a variant op by its VALUE (e.g. "select" → QueryNode.query), searching nested variants. */
+function findVariantOp(op: string): { nodeName: string; dispatchKey: string; trail: string[]; variant: SchemaEntry } | null {
+  const search = (variants: Record<string, SchemaEntry>, trail: string[]): { trail: string[]; variant: SchemaEntry } | null => {
+    for (const [key, v] of Object.entries(variants)) {
+      // Match the key, or a dotted key's last segment (so "returning" resolves
+      // the `options.returning` nested-presence variant).
+      if (key === op || key.split(".").pop() === op) return { trail: [...trail, key], variant: v };
+      const nv = v.variants as Record<string, SchemaEntry> | undefined;
+      if (nv) { const r = search(nv, [...trail, key]); if (r) return r; }
+    }
+    return null;
+  };
+  for (const node of nodes) {
+    const schema = node.constructor.schema;
+    if (!schema) continue;
+    for (const [dispatchKey, entry] of Object.entries(schema)) {
+      const variants = (entry as SchemaEntry).variants as Record<string, SchemaEntry> | undefined;
+      if (!variants) continue;
+      const hit = search(variants, []);
+      if (hit) return { nodeName: node.constructor.name, dispatchKey, trail: hit.trail, variant: hit.variant };
+    }
+  }
+  return null;
+}
 
 function findKeys(value: unknown, allKeys: Set<string>, found: Set<string>): void {
   if (Array.isArray(value)) {
