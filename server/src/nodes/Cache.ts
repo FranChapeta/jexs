@@ -1,6 +1,6 @@
 import { Node, Context, NodeValue, resolve, resolveAll, resolveObj, createHttpError } from "@jexs/core";
 import { Cache, CacheConfig } from "../cache/Cache.js";
-import type { JexsNodeSchema, JexsPropertySchema } from "@jexs/core";
+import type { JexsNodeSchema } from "@jexs/core";
 
 export class CacheNode extends Node {
   static schema: JexsNodeSchema = {
@@ -8,7 +8,7 @@ export class CacheNode extends Node {
       type: "string",
       enum: ["redis", "memory", "memcached"],
       output: "string",
-      markdownDescription: "Initializes the cache singleton. The value selects the driver; connection details are siblings.",
+      markdownDescription: "Initializes the cache singleton. The value selects the driver; connection details vary by driver.",
       outputDescription: "The connected driver name (`\"memory\"`, `\"redis\"`, or `\"memcached\"`).",
       examples: [
         "{ \"cache-connect\": \"memory\" }",
@@ -16,21 +16,35 @@ export class CacheNode extends Node {
         "{ \"cache-connect\": \"memcached\", \"servers\": [\"localhost:11211\"] }",
       ],
       siblings: {
-        host:         { type: "string", description: "Hostname (redis, memcached fallback)." },
-        port:         { type: "number", description: "Port number." },
-        password:     { type: "string", description: "Auth password (redis)." },
-        db:           { type: "number", description: "Database index (redis)." },
-        servers:      { type: "array",  description: "Server list as `host:port` strings (memcached)." },
-        maxSize:      { type: "number", description: "Maximum entry count (memory)." },
-        checkPeriod:  { type: "number", description: "Expiry sweep interval in seconds (memory)." },
-        prefix:       { type: "string", description: "Key prefix applied to every operation." },
-        defaultTtl:   { type: "number", description: "Default TTL in seconds when `ttl` is omitted on set." },
+        prefix:     { type: "string", description: "Key prefix applied to every operation." },
+        defaultTtl: { type: "number", description: "Default TTL in seconds when `ttl` is omitted on set." },
       },
-    },
-    "cache-close": {
-      type: "boolean",
-      output: "null",
-      markdownDescription: "Closes the cache connection. Pass `true` to trigger.",
+      variants: {
+        redis: {
+          markdownDescription: "Redis driver.",
+          siblings: {
+            host:     { type: "string", description: "Redis hostname." },
+            port:     { type: "number", description: "Redis port." },
+            password: { type: "string", description: "Auth password." },
+            db:       { type: "number", description: "Database index." },
+          },
+        },
+        memcached: {
+          markdownDescription: "Memcached driver.",
+          siblings: {
+            servers: { type: "array",  description: "Server list as `host:port` strings." },
+            host:    { type: "string", description: "Hostname (used to build one server when `servers` is omitted)." },
+            port:    { type: "number", description: "Port (with `host`)." },
+          },
+        },
+        memory: {
+          markdownDescription: "In-memory driver.",
+          siblings: {
+            maxSize:     { type: "number", description: "Maximum entry count." },
+            checkPeriod: { type: "number", description: "Expiry sweep interval in seconds." },
+          },
+        },
+      },
     },
     "cache-get": {
       type: "string",
@@ -70,27 +84,26 @@ export class CacheNode extends Node {
         "{ \"cache-has\": \"user:42\" }",
       ],
     },
-    "cache-clear": {
-      type: "boolean",
-      output: "null",
-      markdownDescription: "Removes every entry. Pass `true` to trigger.",
-      outputDescription: "Always `null`.",
-    },
-    "cache-stats": {
-      type: "boolean",
-      output: "object",
-      markdownDescription: "Reports driver statistics.",
-      outputDescription: "A stats object (hit/miss counts, entry count/size, etc.) — exact fields depend on the driver.",
-    },
-    "cache-dump": {
-      type: "boolean",
-      output: "object",
-      markdownDescription: "Snapshots the cache contents (memory driver only).",
-      outputDescription: "An object snapshot of all entries. Memory driver only — other drivers return an error object.",
+    // Keyless lifecycle / bulk ops fold into the bare `cache` key (value-mode):
+    // their value carries no key, so the op name takes the value slot. Keyed CRUD
+    // (`cache-get`/`set`/`has`/`delete`) and the driver-valued `cache-connect`
+    // keep their prefix.
+    cache: {
+      type: "string",
+      enum: ["close", "clear", "stats", "dump"],
+      markdownDescription: "Cache lifecycle / bulk operation (the value is the op).",
+      examples: [
+        "{ \"cache\": \"stats\" }",
+        "{ \"cache\": \"clear\" }",
+      ],
+      variants: {
+        close: { output: "null", markdownDescription: "Closes the cache connection." },
+        clear: { output: "null", markdownDescription: "Removes every entry.", outputDescription: "Always `null`." },
+        stats: { output: "object", markdownDescription: "Reports driver statistics.", outputDescription: "A stats object (hit/miss counts, entry count/size, etc.) — exact fields depend on the driver." },
+        dump:  { output: "object", markdownDescription: "Snapshots the cache contents (memory driver only).", outputDescription: "An object snapshot of all entries. Memory driver only — other drivers return an error object." },
+      },
     },
   };
-
-  static commonSiblings: Record<string, JexsPropertySchema> = {};
 
   ["cache-connect"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveObj(def, context, r => {
@@ -130,8 +143,21 @@ export class CacheNode extends Node {
     });
   }
 
-  ["cache-close"](_def: Record<string, unknown>, _context: Context): NodeValue {
-    return Cache.close();
+  ["cache"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.cache, context, op => {
+      switch (op) {
+        case "close": return Cache.close();
+        case "clear": return Cache.getInstance().clear();
+        case "stats": return Cache.getInstance().stats();
+        case "dump": {
+          const instance = Cache.getInstance() as unknown as Record<string, unknown>;
+          if (typeof instance.dump === "function") return instance.dump();
+          throw createHttpError(501, "cache dump is only supported by the memory driver");
+        }
+        default:
+          throw createHttpError(400, `Unknown cache op: ${String(op)}`);
+      }
+    });
   }
 
   ["cache-get"](def: Record<string, unknown>, context: Context): NodeValue {
@@ -152,19 +178,5 @@ export class CacheNode extends Node {
 
   ["cache-has"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["cache-has"], context, async keyRaw => Cache.getInstance().has(String(keyRaw)));
-  }
-
-  ["cache-clear"](_def: Record<string, unknown>, _context: Context): NodeValue {
-    return Cache.getInstance().clear();
-  }
-
-  ["cache-stats"](_def: Record<string, unknown>, _context: Context): NodeValue {
-    return Cache.getInstance().stats();
-  }
-
-  ["cache-dump"](_def: Record<string, unknown>, _context: Context): NodeValue {
-    const instance = Cache.getInstance() as unknown as Record<string, unknown>;
-    if (typeof instance.dump === "function") return instance.dump();
-    throw createHttpError(501, "cache-dump is only supported by the memory driver");
   }
 }

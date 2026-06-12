@@ -41,25 +41,27 @@ export class StorageNode extends Node {
         "{ \"storage-remove\": \"username\" }",
       ],
     },
-    "storage-clear": {
-      type: "boolean",
-      output: "boolean",
-      markdownDescription: "Clears every entry in the selected store. Pass `true` to trigger. Returns `true`.",
+    // Keyless bulk ops fold into the bare `storage` key (value-mode); the keyed
+    // CRUD (`storage-get`/`set`/`remove`) keeps its prefix. Both honor `session`.
+    storage: {
+      type: "string",
+      enum: ["clear", "keys"],
+      markdownDescription: "Storage bulk operation (the value is the op). Honors `session`.",
       examples: [
-        "{ \"storage-clear\": true }",
+        "{ \"storage\": \"keys\" }",
+        "{ \"storage\": \"clear\", \"session\": true }",
       ],
-    },
-    "storage-keys": {
-      type: "boolean",
-      output: "array",
-      markdownDescription: "Returns all keys present in the selected store as a string array.",
-      examples: [
-        "{ \"storage-keys\": true }",
-      ],
+      variants: {
+        clear: { output: "boolean", markdownDescription: "Clears every entry in the selected store. Returns `true`." },
+        keys:  { output: "array", markdownDescription: "Returns all keys present in the selected store as a string array." },
+      },
     },
   };
 
   static commonSiblings: Record<string, JexsPropertySchema> = {
+    // `session` shares a name with SessionNode's handler key, but the combined
+    // schema gates dispatch by primary key — when a `storage-*` op is present,
+    // `session` is validated as this sibling, not as a SessionNode op.
     session: {
       type: "boolean",
       description: "If true, target `sessionStorage` instead of `localStorage`.",
@@ -91,22 +93,24 @@ export class StorageNode extends Node {
     });
   }
 
-  ["storage-clear"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def.session], context, ([sessionRaw]) => {
-      pickStore(sessionRaw).clear();
-      return true;
-    });
-  }
-
-  ["storage-keys"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def.session], context, ([sessionRaw]) => {
+  ["storage"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def.storage, def.session], context, ([op, sessionRaw]) => {
       const store = pickStore(sessionRaw);
-      const keys: string[] = [];
-      for (let i = 0; i < store.length; i++) {
-        const k = store.key(i);
-        if (k !== null) keys.push(k);
+      switch (op) {
+        case "clear":
+          store.clear();
+          return true;
+        case "keys": {
+          const keys: string[] = [];
+          for (let i = 0; i < store.length; i++) {
+            const k = store.key(i);
+            if (k !== null) keys.push(k);
+          }
+          return keys;
+        }
+        default:
+          return null;
       }
-      return keys;
     });
   }
 }
