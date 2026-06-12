@@ -266,6 +266,7 @@ async function main(): Promise<void> {
 
   mkdirSync(dir);
   mkdirSync(join(dir, ".vscode"));
+  mkdirSync(join(dir, ".claude"));
   if (useServer) {
     // app/ holds the JSON templates the resolver loads via FileNode (its default
     // base directory). public/ is auto-served by the HTTP server for static
@@ -394,6 +395,16 @@ async function main(): Promise<void> {
     }, null, 2) + "\n",
   );
 
+  // .claude/settings.json — pre-approves the jexs-dev MCP server so Claude Code
+  // doesn't prompt for each introspection call. The @jexs/mcp tools are all
+  // read-only (resolve/describe/list/inspect), so allowing them wholesale is safe.
+  writeFileSync(
+    join(dir, ".claude", "settings.json"),
+    JSON.stringify({
+      permissions: { allow: ["mcp__jexs-dev"] },
+    }, null, 2) + "\n",
+  );
+
   // CLAUDE.md — the conventions + gotchas an AI assistant should know before
   // editing JSON in this project. Read automatically by Claude Code and many
   // other AI coding tools. Kept terse on purpose; the long-form docs live on
@@ -471,6 +482,7 @@ async function main(): Promise<void> {
   console.log(`  .vscode/settings.json`);
   console.log(`  .prettierrc.json`);
   console.log(`  .mcp.json`);
+  console.log(`  .claude/settings.json`);
   console.log(`  .gitignore`);
   console.log(`  .gitattributes`);
   console.log(`  CLAUDE.md`);
