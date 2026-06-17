@@ -38,3 +38,20 @@ test("replace: literal search, all by default and first with all:false", () => {
   assert.equal(resolve({ replace: ["foo foo", "foo", "bar"] }, {}), "bar bar");
   assert.equal(resolve({ replace: ["foo foo", "foo", "bar"], all: false }, {}), "bar foo");
 });
+
+// The /pattern/ literals below are cached and reused across calls. A cached g/y
+// regex carries lastIndex, so a naive cache (no reset) would alternate results
+// on repeated use. These guard the statefulness fix in toRegex/contains.
+
+test("contains: repeated /o/g literal stays stable across calls (lastIndex reset)", () => {
+  for (let i = 0; i < 4; i++) {
+    assert.equal(resolve({ contains: ["foo", "/o/g"] }, {}), true);
+    assert.equal(resolve({ contains: ["bar", "/o/g"] }, {}), false);
+  }
+});
+
+test("match: repeated /\\d/g literal returns all matches every time (lastIndex reset)", () => {
+  for (let i = 0; i < 4; i++) {
+    assert.deepEqual(resolve({ match: ["a1 b2 c3", "/\\d/g"] }, {}), ["1", "2", "3"]);
+  }
+});

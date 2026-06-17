@@ -241,11 +241,11 @@ export class StringNode extends Node {
       this.toString(v)
         .toLowerCase()
         .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .replace(/[^a-z0-9\s-]/g, "")
-        .replace(/\s+/g, "-")
-        .replace(/-+/g, "-")
-        .replace(/^-|-$/g, "")
+        .replace(SLUG_DIACRITICS, "")
+        .replace(SLUG_NON_ALNUM, "")
+        .replace(SLUG_SPACES, "-")
+        .replace(SLUG_DASHES, "-")
+        .replace(SLUG_EDGE_DASHES, "")
     );
   }
 
@@ -332,8 +332,9 @@ export class StringNode extends Node {
     return resolve(def.contains, c, args => {
       const a = this.toArray(args);
       // A `/pattern/flags` needle tests a regular expression; else substring.
+      // `search` saves/restores lastIndex, so a cached g/y regex stays safe.
       const re = toRegex(a[1]);
-      return re ? re.test(this.toString(a[0])) : this.toString(a[0]).includes(this.toString(a[1]));
+      return re ? this.toString(a[0]).search(re) !== -1 : this.toString(a[0]).includes(this.toString(a[1]));
     });
   }
 
@@ -363,18 +364,54 @@ function doReplace(args: unknown, all: boolean | undefined): string {
   return all === false ? str.replace(search, replacement) : str.split(search).join(replacement);
 }
 
+// Slug normalization regexes, hoisted out of the per-call chain. All are used
+// only with String.replace (which resets lastIndex), so the shared `/g` consts
+// are safe — do not call .test()/.exec() on them.
+const SLUG_DIACRITICS = /[̀-ͯ]/g;
+const SLUG_NON_ALNUM = /[^a-z0-9\s-]/g;
+const SLUG_SPACES = /\s+/g;
+const SLUG_DASHES = /-+/g;
+const SLUG_EDGE_DASHES = /^-|-$/g;
+
 const REGEX_LITERAL = /^\/(.+)\/([a-z]*)$/;
+
+// Cache parsed `/pattern/flags` literals (including the `null` non-match result).
+// Only strings starting with `/` (charCode 47) are cached — a `/...` literal is
+// the only form REGEX_LITERAL can match — so dynamic literal needles passed to
+// contains/split don't pollute the cache. When full we evict the oldest entry
+// (FIFO, via Map insertion order); the hit path stays a single Map.get with no
+// reorder. Literal cardinality is bounded by the templates in play.
+const _regexCache = new Map<string, RegExp | null>();
+const REGEX_CACHE_MAX = 200;
 
 /** Parse a `/pattern/flags` string into a RegExp, or null if not that form. */
 function toRegex(search: unknown): RegExp | null {
   if (typeof search !== "string") return null;
-  const m = REGEX_LITERAL.exec(search);
-  if (!m) return null;
-  try {
-    return new RegExp(m[1], m[2]);
-  } catch {
-    return null;
+  const cacheable = search.charCodeAt(0) === 47;
+  if (cacheable) {
+    const hit = _regexCache.get(search);
+    if (hit !== undefined) {
+      // A shared regex with the g/y flag carries lastIndex between calls; reset
+      // it so repeated test/exec/match always start from the beginning.
+      if (hit) hit.lastIndex = 0;
+      return hit;
+    }
   }
+  const m = REGEX_LITERAL.exec(search);
+  let re: RegExp | null = null;
+  if (m) {
+    try {
+      re = new RegExp(m[1], m[2]);
+    } catch {
+      re = null;
+    }
+  }
+  if (cacheable) {
+    // size >= MAX guarantees at least one entry, so the oldest key is non-null.
+    if (_regexCache.size >= REGEX_CACHE_MAX) _regexCache.delete(_regexCache.keys().next().value!);
+    _regexCache.set(search, re);
+  }
+  return re;
 }
 
 /** Align a RegExp's `g` flag with an explicit `all`; leave it untouched if `all`

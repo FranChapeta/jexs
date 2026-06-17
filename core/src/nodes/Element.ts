@@ -302,10 +302,13 @@ function renderAttrs(
   return r as string | Promise<string>;
 }
 
+// `/g` const used only with String.replace (lastIndex-safe); never call .test/.exec.
+const UPPER_CHAR = /([A-Z])/g;
+
 function camelToKebab(key: string): string {
   // Already-kebab keys ("font-size") and custom properties ("--accent") have no
   // uppercase letters, so they pass through untouched.
-  return key.startsWith("--") ? key : key.replace(/([A-Z])/g, "-$1").toLowerCase();
+  return key.startsWith("--") ? key : key.replace(UPPER_CHAR, "-$1").toLowerCase();
 }
 
 // Compiles a CSS-in-JSON object to a stylesheet string. Object values are

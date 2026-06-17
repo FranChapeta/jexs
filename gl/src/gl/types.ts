@@ -94,7 +94,7 @@ export interface GlInstance {
   textCache: Map<string, { tex: WebGLTexture; w: number; h: number }>;
   atlases: Map<string, { texture: string; frames: [number, number, number, number][] }>;
   tilemaps: Map<string, { vbo: WebGLBuffer; vertCount: number; textureName: string; z: number; dirty: boolean; data: number[][]; atlas: string; tileW: number; tileH: number }>;
-  shaders: Map<string, { program: WebGLProgram; uniforms: Record<string, WebGLUniformLocation | null> }>;
+  shaders: Map<string, { program: WebGLProgram; uniforms: Record<string, WebGLUniformLocation | null>; aPosition: number }>;
   // Performance metrics
   metrics: boolean;
   metricsEl: HTMLDivElement | null;

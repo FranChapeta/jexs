@@ -8,6 +8,35 @@ import { WebSocketServer } from "ws";
 import { Context, Node, ResolverFn, TimerNode, isHttpError } from "@jexs/core";
 import { WebSocketNode } from "./nodes/WebSocket.js";
 
+// Static file content types — built once, not per static-file request.
+const MIME_TYPES: Record<string, string> = {
+  ".css": "text/css",
+  ".js": "application/javascript",
+  ".json": "application/json",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".glb": "model/gltf-binary",
+  ".gltf": "model/gltf+json",
+  ".bin": "application/octet-stream",
+};
+
+// Host facts fixed for the process lifetime — snapshot once instead of calling
+// os.platform/arch/hostname and os.cpus() (which allocates a per-CPU timing
+// array) on every request. uptime/memory stay dynamic at the call site.
+const HOST_INFO = {
+  platform: os.platform(),
+  arch: os.arch(),
+  hostname: os.hostname(),
+  node: process.version,
+  cpus: os.cpus().length,
+};
+
 export class Server {
   private httpServer: http.Server;
   private wss: WebSocketServer;
@@ -212,11 +241,7 @@ export class Server {
         },
         system: {
           uptime: Math.floor(process.uptime()),
-          platform: os.platform(),
-          arch: os.arch(),
-          hostname: os.hostname(),
-          node: process.version,
-          cpus: os.cpus().length,
+          ...HOST_INFO,
           memory: {
             total: totalMem,
             free: freeMem,
@@ -489,23 +514,7 @@ export class Server {
   }
 
   private getMimeType(ext: string): string {
-    const mimeTypes: Record<string, string> = {
-      ".css": "text/css",
-      ".js": "application/javascript",
-      ".json": "application/json",
-      ".png": "image/png",
-      ".jpg": "image/jpeg",
-      ".jpeg": "image/jpeg",
-      ".gif": "image/gif",
-      ".svg": "image/svg+xml",
-      ".ico": "image/x-icon",
-      ".woff": "font/woff",
-      ".woff2": "font/woff2",
-      ".glb": "model/gltf-binary",
-      ".gltf": "model/gltf+json",
-      ".bin": "application/octet-stream",
-    };
-    return mimeTypes[ext] || "application/octet-stream";
+    return MIME_TYPES[ext] || "application/octet-stream";
   }
 
   private async sendStreamingResponse(

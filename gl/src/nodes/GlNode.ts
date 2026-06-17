@@ -65,6 +65,17 @@ const _projBase9 = new Float32Array(9);
 // Scratch buffer for non-batchable 3D entity vertex data (grows as needed)
 let _singleBuf = new Float32Array(120 * STRIDE_3D); // 120 verts covers circles
 
+// Custom entity vertices (number[]) → Float32Array, keyed by array reference.
+// meta.vertices is only ever reassigned wholesale (never mutated in place), so
+// reference-keying is a correct invalidation strategy and dedupes shared
+// template arrays across entities.
+const _customVerts = new WeakMap<number[], Float32Array>();
+function customVerts(v: number[]): Float32Array {
+  let f = _customVerts.get(v);
+  if (!f) { f = new Float32Array(v); _customVerts.set(v, f); }
+  return f;
+}
+
 // Render performance tracing
 let _glPerfAccum = { render: 0, onFrame: 0, frames: 0 };
 let _glPerfLastLog = 0;
@@ -1378,7 +1389,10 @@ export class GlNode extends Node {
         u_lightDir: gl.getUniformLocation(program, "u_lightDir"),
         u_ambient: gl.getUniformLocation(program, "u_ambient"),
       };
-      inst.shaders.set(name, { program, uniforms });
+      // Cache the a_position attrib location once (mirrors the default program
+      // at setup) instead of querying it per entity per frame in drawSingleEntity.
+      const aPosition = gl.getAttribLocation(program, "a_position");
+      inst.shaders.set(name, { program, uniforms, aPosition });
       return null;
     });
   }
@@ -2135,53 +2149,52 @@ export class GlNode extends Node {
       const isFixed = !!(d[b + F_FLAGS] & FLAG_FIXED);
       const activeProj = isFixed ? projBase : projCam;
 
+      // One shader lookup for the whole entity (reused for every uniform below).
+      const shaderInfo = meta.shader ? inst.shaders.get(meta.shader) : undefined;
+
       // Handle custom shader or default program
       let currentProg = program;
-      if (meta.shader) {
-        const shaderInfo = inst.shaders.get(meta.shader);
-        if (shaderInfo) {
-          currentProg = shaderInfo.program;
-          gl.useProgram(currentProg);
-          if (shaderInfo.uniforms.u_projection) gl.uniformMatrix3fv(shaderInfo.uniforms.u_projection, false, activeProj);
-          if (shaderInfo.uniforms.u_time) gl.uniform1f(shaderInfo.uniforms.u_time, inst.lastTime / 1000);
-          if (shaderInfo.uniforms.u_resolution) gl.uniform2f(shaderInfo.uniforms.u_resolution, vw, vh);
-          if (shaderInfo.uniforms.u_texture) gl.uniform1i(shaderInfo.uniforms.u_texture, 0);
-          gl.bindBuffer(gl.ARRAY_BUFFER, positionBuf);
-          const aPos = gl.getAttribLocation(currentProg, "a_position");
-          gl.enableVertexAttribArray(aPos);
-          gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
-        }
-      } else {
+      if (shaderInfo) {
+        currentProg = shaderInfo.program;
+        gl.useProgram(currentProg);
+        if (shaderInfo.uniforms.u_projection) gl.uniformMatrix3fv(shaderInfo.uniforms.u_projection, false, activeProj);
+        if (shaderInfo.uniforms.u_time) gl.uniform1f(shaderInfo.uniforms.u_time, inst.lastTime / 1000);
+        if (shaderInfo.uniforms.u_resolution) gl.uniform2f(shaderInfo.uniforms.u_resolution, vw, vh);
+        if (shaderInfo.uniforms.u_texture) gl.uniform1i(shaderInfo.uniforms.u_texture, 0);
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuf);
+        gl.enableVertexAttribArray(shaderInfo.aPosition);
+        gl.vertexAttribPointer(shaderInfo.aPosition, 2, gl.FLOAT, false, 0, 0);
+      } else if (!meta.shader) {
         gl.uniformMatrix3fv(inst.uProjection, false, activeProj);
       }
 
       // Geometry
       const verts = meta.vertices
-        ? new Float32Array(meta.vertices)
+        ? customVerts(meta.vertices)
         : meta.type === "triangle" ? TRI_VERTS
           : meta.type === "circle" ? CIRCLE_VERTS
             : QUAD_VERTS;
       gl.bufferData(gl.ARRAY_BUFFER, verts, gl.DYNAMIC_DRAW);
 
       // Color
-      const colorLoc = meta.shader
-        ? (inst.shaders.get(meta.shader)?.uniforms.u_color ?? inst.uColor)
+      const colorLoc = shaderInfo
+        ? (shaderInfo.uniforms.u_color ?? inst.uColor)
         : inst.uColor;
       const opacity = d[b + F_OPACITY];
       _color4[0] = d[b + F_CR]; _color4[1] = d[b + F_CG]; _color4[2] = d[b + F_CB]; _color4[3] = d[b + F_CA] * opacity;
       gl.uniform4fv(colorLoc, _color4);
 
       // UV rect
-      const uvLoc = meta.shader
-        ? (inst.shaders.get(meta.shader)?.uniforms.u_uvRect ?? inst.uUvRect)
+      const uvLoc = shaderInfo
+        ? (shaderInfo.uniforms.u_uvRect ?? inst.uUvRect)
         : inst.uUvRect;
       _uv4[0] = d[b + F_U]; _uv4[1] = d[b + F_V]; _uv4[2] = d[b + F_UW]; _uv4[3] = d[b + F_UH];
       gl.uniform4fv(uvLoc, _uv4);
 
       // Texture
       const texInfo = meta.textureName ? inst.textures.get(meta.textureName) : null;
-      const useTexLoc = meta.shader
-        ? (inst.shaders.get(meta.shader)?.uniforms.u_useTexture ?? inst.uUseTexture)
+      const useTexLoc = shaderInfo
+        ? (shaderInfo.uniforms.u_useTexture ?? inst.uUseTexture)
         : inst.uUseTexture;
       if (texInfo) {
         if (currentTexture !== texInfo.tex) {
@@ -2193,8 +2206,8 @@ export class GlNode extends Node {
       }
 
       // Transform (with parent chain if parented)
-      const transformLoc = meta.shader
-        ? (inst.shaders.get(meta.shader)?.uniforms.u_transform ?? inst.uTransform)
+      const transformLoc = shaderInfo
+        ? (shaderInfo.uniforms.u_transform ?? inst.uTransform)
         : inst.uTransform;
       const wt = meta.parent ? store.getWorldTransform(slot) : null;
       const qz = wt ? wt[8] : d[b + F_QZ], qw = wt ? wt[9] : d[b + F_QW];
@@ -2642,9 +2655,11 @@ export class GlNode extends Node {
               gl.uniform1f(locs3d.uNormalMapEnabled, 0.0);
             }
           }
-          // Upload vertex data: custom vertices or unit geometry
-          const verts = meta.vertices
-            ? new Float32Array(meta.vertices)
+          // Upload vertex data: custom vertices or unit geometry. The custom
+          // path only reads elements back out below, so index meta.vertices
+          // directly (number[]) — no Float32Array conversion needed here.
+          const verts: ArrayLike<number> = meta.vertices
+            ? meta.vertices
             : meta.type === "circle" ? CIRCLE_VERTS : QUAD_VERTS;
           const vertCount = verts.length / 2;
           // Build per-vertex data with pos3+normal3+color4+uv2+useTex1

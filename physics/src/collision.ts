@@ -46,6 +46,11 @@ export function usesMeshCollision(meta: EntityMeta): boolean {
 }
 
 const _rotIdentity = new Float32Array([1,0,0, 0,1,0, 0,0,1]);
+// Scratch rotation matrices reused by obbVsObb (single, non-reentrant call site)
+// instead of allocating a Float32Array(9) per rotated pair per tick. Never write
+// into _rotIdentity — these are the only writable rotation buffers.
+const _rotBufA = new Float32Array(9);
+const _rotBufB = new Float32Array(9);
 export function isRotated(d: Float64Array, base: number): boolean {
   return d[base + F_QX] !== 0 || d[base + F_QY] !== 0 || d[base + F_QZ] !== 0;
 }
@@ -217,13 +222,11 @@ function obbVsObb(d: Float64Array, slotA: number, slotB: number): Contact | null
   const aCx = d[ba+F_TX] + aEx, aCy = d[ba+F_TY] + aEy, aCz = d[ba+F_TZ] + aEz;
   const bCx = d[bb+F_TX] + bEx, bCy = d[bb+F_TY] + bEy, bCz = d[bb+F_TZ] + bEz;
 
-  const rotABuf = isRotated(d, ba) ? new Float32Array(9) : null;
-  const rotBBuf = isRotated(d, bb) ? new Float32Array(9) : null;
-  const rotARef = rotABuf
-    ? (rotMatrixQuat(d[ba+F_QX], d[ba+F_QY], d[ba+F_QZ], d[ba+F_QW], rotABuf), rotABuf)
+  const rotARef = isRotated(d, ba)
+    ? (rotMatrixQuat(d[ba+F_QX], d[ba+F_QY], d[ba+F_QZ], d[ba+F_QW], _rotBufA), _rotBufA)
     : _rotIdentity;
-  const rotBRef = rotBBuf
-    ? (rotMatrixQuat(d[bb+F_QX], d[bb+F_QY], d[bb+F_QZ], d[bb+F_QW], rotBBuf), rotBBuf)
+  const rotBRef = isRotated(d, bb)
+    ? (rotMatrixQuat(d[bb+F_QX], d[bb+F_QY], d[bb+F_QZ], d[bb+F_QW], _rotBufB), _rotBufB)
     : _rotIdentity;
 
   const a0x = rotARef[0], a0y = rotARef[1], a0z = rotARef[2];

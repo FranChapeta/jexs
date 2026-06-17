@@ -202,8 +202,10 @@ export function createResolver(nodes: Node[], options?: ResolverOptions): Resolv
   }
 
   _resolve = function resolveImpl(value: unknown, context: Context): unknown {
-    if (value === null || value === undefined) return value;
-    if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") return value;
+    // Hottest case first: anything that isn't a non-null object resolves to
+    // itself. Covers null/undefined/boolean/number/string and also
+    // function/symbol/bigint (all previously fell through to `return value`).
+    if (value === null || typeof value !== "object") return value;
 
     if (Array.isArray(value)) {
       const arr = value as unknown[];
@@ -238,25 +240,29 @@ export function createResolver(nodes: Node[], options?: ResolverOptions): Resolv
         if (node) return node.resolve(obj, context, objKeys[i]);
       }
 
-      // Lazy load: if any key matches a lazy module, load it and retry dispatch
-      for (let i = 0; i < objKeys.length; i++) {
-        const loader = _lazyMap.get(objKeys[i]);
-        if (loader) {
-          let pending = _pendingLoads.get(loader);
-          if (!pending) {
-            pending = loader().catch((err) => {
-              _pendingLoads.delete(loader);
-              throw err;
-            });
-            _pendingLoads.set(loader, pending);
-          }
-          return pending.then(() => {
-            for (const [key, fn] of _lazyMap) { if (fn === loader) _lazyMap.delete(key); }
-            for (let j = 0; j < objKeys.length; j++) {
-              const node = keyMap.get(objKeys[j]);
-              if (node) return node.resolve(obj, context, objKeys[j]);
+      // Lazy load: if any key matches a lazy module, load it and retry dispatch.
+      // Skip the scan entirely when nothing is registered (the common case) so
+      // plain data objects don't pay N map misses on every resolution.
+      if (_lazyMap.size !== 0) {
+        for (let i = 0; i < objKeys.length; i++) {
+          const loader = _lazyMap.get(objKeys[i]);
+          if (loader) {
+            let pending = _pendingLoads.get(loader);
+            if (!pending) {
+              pending = loader().catch((err) => {
+                _pendingLoads.delete(loader);
+                throw err;
+              });
+              _pendingLoads.set(loader, pending);
             }
-          });
+            return pending.then(() => {
+              for (const [key, fn] of _lazyMap) { if (fn === loader) _lazyMap.delete(key); }
+              for (let j = 0; j < objKeys.length; j++) {
+                const node = keyMap.get(objKeys[j]);
+                if (node) return node.resolve(obj, context, objKeys[j]);
+              }
+            });
+          }
         }
       }
 

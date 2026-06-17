@@ -322,10 +322,13 @@ async function doRegister(def: Record<string, unknown>): Promise<unknown> {
     const registered: string[] = [];
 
     try {
-      const files = await fs.readdir(dirPath);
-      for (const file of files) {
-        if (!file.endsWith(".json")) continue;
-        const content = await fs.readFile(path.join(dirPath, file), "utf-8");
+      const files = (await fs.readdir(dirPath)).filter(f => f.endsWith(".json"));
+      // Read all files concurrently, then parse/register sequentially in
+      // readdir order so registration order stays deterministic.
+      const contents = await Promise.all(
+        files.map(file => fs.readFile(path.join(dirPath, file), "utf-8")),
+      );
+      for (const content of contents) {
         const schema = JSON.parse(content) as TableJsonSchema;
         if (schema["x-db"]?.table) {
           SchemaNode.injectCommonColumns(schema);

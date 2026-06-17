@@ -1,5 +1,4 @@
 import fs from "fs/promises";
-import { statfsSync } from "fs";
 import path from "path";
 import { Node, Context, NodeValue, resolve, resolveAll, resolveObj, runSteps } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
@@ -138,16 +137,17 @@ export class FileNode extends Node {
     return resolve(def.disk, context, diskPath => {
       const target = diskPath && diskPath !== true ? String(diskPath) : process.cwd();
 
-      try {
-        const stats = statfsSync(target);
+      // Async statfs keeps the event loop free during the syscall; the resolve
+      // family propagates the returned promise. Error semantics preserved.
+      return fs.statfs(target).then(stats => {
         const total = stats.bsize * stats.blocks;
         const free = stats.bsize * stats.bavail;
         return { total, free, used: total - free };
-      } catch (error) {
+      }).catch(error => {
         const e = error as Error;
         console.error(`[FileNode] Error getting disk info:`, e.message);
         return null;
-      }
+      });
     });
   }
 }

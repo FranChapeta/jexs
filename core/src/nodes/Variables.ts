@@ -60,15 +60,20 @@ export function resolveVariable(path: string, context: Context): unknown {
   return getNestedValue(context, cleanPath);
 }
 
+// `/g` const used only with String.replace (lastIndex-safe); never call .test/.exec.
+const VAR_TOKEN = /\$([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)/g;
+// Non-global, used only with .test — safe to share as a module const.
+const HAS_VAR = /\$[a-zA-Z_][a-zA-Z0-9_]*/;
+
 export function interpolate(template: string, context: Context): string {
   return template.replace(
-    /\$([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)/g,
+    VAR_TOKEN,
     (_, path) => valueToString(resolveVariable(path, context)),
   );
 }
 
 export function hasVariables(value: string): boolean {
-  return /\$[a-zA-Z_][a-zA-Z0-9_]*/.test(value);
+  return HAS_VAR.test(value);
 }
 
 function valueToString(value: unknown): string {

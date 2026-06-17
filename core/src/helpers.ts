@@ -15,13 +15,39 @@ export function isAssociativeArray(
 }
 
 /**
+ * Split a dot-path into its segments, memoized.
+ *
+ * `getNestedValue` / `setNestedValue` / `Node.setContextValue` run this on the
+ * hottest string in the engine — every `{ "var": ... }` lookup and `$x.y`
+ * interpolation. Paths come from static templates so their cardinality is
+ * bounded; the cap only guards against dynamically built paths. When full we
+ * evict the oldest entry (FIFO, via Map insertion order) so a working set a
+ * little over the cap degrades gracefully instead of flushing wholesale. We do
+ * NOT reorder on hit, so the lookup stays a single `Map.get`.
+ *
+ * Callers MUST NOT mutate the returned array — it is shared across calls.
+ */
+const _pathCache = new Map<string, string[]>();
+const PATH_CACHE_MAX = 500;
+
+export function splitPath(path: string): string[] {
+  let parts = _pathCache.get(path);
+  if (parts) return parts;
+  parts = path.split(".");
+  // size >= MAX guarantees at least one entry, so the oldest key is non-null.
+  if (_pathCache.size >= PATH_CACHE_MAX) _pathCache.delete(_pathCache.keys().next().value!);
+  _pathCache.set(path, parts);
+  return parts;
+}
+
+/**
  * Deep get a value from an object using dot notation
  * e.g., getNestedValue(obj, 'user.profile.name')
  */
 export function getNestedValue(obj: unknown, path: string): unknown {
   if (!path) return obj;
 
-  const keys = path.split(".");
+  const keys = splitPath(path);
   let current: unknown = obj;
 
   for (const key of keys) {
@@ -46,7 +72,7 @@ export function setNestedValue(
   path: string,
   value: unknown,
 ): void {
-  const keys = path.split(".");
+  const keys = splitPath(path);
   let current = obj;
 
   for (let i = 0; i < keys.length - 1; i++) {
@@ -115,16 +141,19 @@ export function deepMerge<T extends Record<string, unknown>>(
 /**
  * Escape HTML entities to prevent XSS
  */
-export function escapeHtml(str: string): string {
-  const htmlEntities: Record<string, string> = {
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  };
+const HTML_ENTITIES: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+// `/g` const: only ever used with String.replace (which resets lastIndex).
+// Do not call .test()/.exec() on it — those would advance lastIndex.
+const HTML_ESCAPE_RE = /[&<>"']/g;
 
-  return str.replace(/[&<>"']/g, (char) => htmlEntities[char] || char);
+export function escapeHtml(str: string): string {
+  return str.replace(HTML_ESCAPE_RE, (char) => HTML_ENTITIES[char] || char);
 }
 
 /**
@@ -148,13 +177,26 @@ export function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * True if the object has at least one own enumerable key — an allocation-free
+ * `Object.keys(obj).length > 0`. The hasOwnProperty guard keeps the same
+ * semantics as `Object.keys` (inherited enumerable props don't count), and the
+ * loop early-exits on the first own key.
+ */
+export function hasAnyKey(obj: object): boolean {
+  for (const key in obj) {
+    if (Object.prototype.hasOwnProperty.call(obj, key)) return true;
+  }
+  return false;
+}
+
+/**
  * Check if a value is empty (null, undefined, empty string, empty array, empty object)
  */
 export function isEmpty(value: unknown): boolean {
   if (value === null || value === undefined) return true;
   if (typeof value === "string" && value.trim() === "") return true;
   if (Array.isArray(value) && value.length === 0) return true;
-  if (isObject(value) && Object.keys(value).length === 0) return true;
+  if (isObject(value) && !hasAnyKey(value)) return true;
   return false;
 }
 
@@ -180,19 +222,4 @@ export function truncate(
 ): string {
   if (str.length <= maxLength) return str;
   return str.slice(0, maxLength - suffix.length) + suffix;
-}
-
-/**
- * Parse a variable path like "$user.profile.name" or "user.profile.name"
- */
-export function parseVariablePath(path: string): {
-  name: string;
-  rest: string[];
-} {
-  const cleanPath = path.startsWith("$") ? path.slice(1) : path;
-  const parts = cleanPath.split(".");
-  return {
-    name: parts[0],
-    rest: parts.slice(1),
-  };
 }

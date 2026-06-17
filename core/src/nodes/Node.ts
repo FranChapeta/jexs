@@ -7,6 +7,7 @@
  */
 
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
+import { splitPath, hasAnyKey } from "../helpers.js";
 
 export interface Context {
   [key: string]: unknown;
@@ -99,7 +100,9 @@ export abstract class Node {
    * e.g. setContextValue(ctx, "request.body.value", hash) sets ctx.request.body.value
    */
   static setContextValue(context: Context, varName: string, value: unknown): void {
-    const parts = varName.replace(/^\$/, "").split(".");
+    // Strip a leading `$` (charCode 36) so "$a.b" and "a.b" share one cache key.
+    const normalized = varName.charCodeAt(0) === 36 ? varName.slice(1) : varName;
+    const parts = splitPath(normalized);
     if (parts.length === 1) {
       context[parts[0]] = value;
       return;
@@ -152,7 +155,7 @@ export abstract class Node {
     if (Array.isArray(value)) return value.length > 0;
     if (this.isObject(value)) {
       if ("nodeType" in value) return true; // DOM nodes are truthy
-      return Object.keys(value).length > 0;
+      return hasAnyKey(value);
     }
     return value !== null && value !== undefined;
   }

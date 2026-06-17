@@ -1,6 +1,7 @@
 import { Node, Context, NodeValue } from "./Node.js";
 import { resolve, resolveAll } from "../Resolver.js";
 import { runSteps, resolveSteps } from "../Resolver.js";
+import { hasAnyKey } from "../helpers.js";
 import type { JexsNodeSchema } from "../schema.js";
 
 export class LogicNode extends Node {
@@ -350,7 +351,7 @@ export class LogicNode extends Node {
       if (value === null || value === undefined) return true;
       if (typeof value === "string") return value === "";
       if (Array.isArray(value)) return value.length === 0;
-      if (this.isObject(value)) return Object.keys(value).length === 0;
+      if (this.isObject(value)) return !hasAnyKey(value);
       return false;
     });
   }
@@ -360,7 +361,7 @@ export class LogicNode extends Node {
       if (value === null || value === undefined) return false;
       if (typeof value === "string") return value !== "";
       if (Array.isArray(value)) return value.length > 0;
-      if (this.isObject(value)) return Object.keys(value).length > 0;
+      if (this.isObject(value)) return hasAnyKey(value);
       return true;
     });
   }
