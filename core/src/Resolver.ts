@@ -66,12 +66,23 @@ function storeAs(step: unknown, value: unknown, context: Context): void {
   }
 }
 
-function handleErr(err: unknown, value: unknown, context: Context): unknown {
-  if (isHttpError(err) && isObject(value) && Array.isArray((value as Record<string, unknown>).catch)) {
+/**
+ * Run a step's `catch` array (if present) with `$error` bound, else rethrow.
+ * Exported so async nodes that handle their own rejection off the normal
+ * `resolve` flow (e.g. the fire-and-forget `thread` node) reuse the same
+ * `catch`/`$error` semantics.
+ */
+export function handleErr(err: unknown, value: unknown, context: Context): unknown {
+  if (isObject(value) && Array.isArray((value as Record<string, unknown>).catch)) {
     const catchSteps = (value as Record<string, unknown>).catch as unknown[];
-    // Stored under the bare key `error` (not `$error`): `var` strips a leading
+    // Bind under the bare key `error` (not `$error`): `var` strips a leading
     // `$`, so `{ "var": "$error.message" }` looks up `error.message` in context.
-    const catchCtx = { ...context, error: { status: err.status, message: err.message } };
+    // HTTP errors carry a status; any other thrown/rejected error (e.g. a worker
+    // task failure) binds just its message.
+    const error = isHttpError(err)
+      ? { status: err.status, message: err.message }
+      : { message: err instanceof Error ? err.message : String(err) };
+    const catchCtx = { ...context, error };
     return runSteps(catchSteps, catchCtx);
   }
   throw err;
