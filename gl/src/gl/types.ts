@@ -5,6 +5,9 @@
 
 import { EntityStore } from "@jexs/physics";
 import { Context } from "@jexs/core";
+import type { MsdfFont } from "./msdfText.js";
+import type { MsdfProgram } from "./msdfRender.js";
+import type { EquirectSkyProgram } from "./skybox.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -90,11 +93,25 @@ export interface GlInstance {
   vpOffsetX: number;
   vpOffsetY: number;
   camera: GlCamera;
-  textures: Map<string, { tex: WebGLTexture; w: number; h: number }>;
+  textures: Map<string, { tex: WebGLTexture; w: number; h: number; float?: boolean }>;
   textCache: Map<string, { tex: WebGLTexture; w: number; h: number }>;
   atlases: Map<string, { texture: string; frames: [number, number, number, number][] }>;
   tilemaps: Map<string, { vbo: WebGLBuffer; vertCount: number; textureName: string; z: number; dirty: boolean; data: number[][]; atlas: string; tileW: number; tileH: number }>;
   shaders: Map<string, { program: WebGLProgram; uniforms: Record<string, WebGLUniformLocation | null>; aPosition: number }>;
+  /** Registered MSDF fonts (atlas texture + parsed metrics), keyed by gl-font name.
+   *  gl-text with `font` matching a key renders via the MSDF path (crisp at any
+   *  scale); any other font string falls back to the canvas texture (Tier 1). */
+  msdfFonts: Map<string, { font: MsdfFont; tex: WebGLTexture; w: number; h: number }>;
+  /** Active equirectangular env backdrop: a registered `textures` entry (LDR
+   *  panorama OR float HDR) drawn as a skybox sampled by view direction, plus its
+   *  draw settings. Null = use the `skyTop`/`skyBottom` gradient sky instead. Set
+   *  via the `skybox` field on `gl-init`/`gl-camera`; the env map is just a
+   *  texture, not a separate concept. */
+  envSky: { texture: string; intensity: number; rotation: number } | null;
+  /** Lazily-built equirect skybox program (view-direction sampled). */
+  envSkyProg: EquirectSkyProgram | null;
+  /** Lazily-built MSDF shader program (median-of-3); null until first MSDF text. */
+  msdf: MsdfProgram | null;
   // Performance metrics
   metrics: boolean;
   metricsEl: HTMLDivElement | null;

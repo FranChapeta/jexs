@@ -26,6 +26,9 @@ import { updateTrails, renderTrails } from "../gl/trails.js";
 import { initShadow, renderShadowPass } from "../gl/shadows.js";
 import { initSsao, renderSsaoPass } from "../gl/ssao.js";
 import { renderTextTexture } from "../gl/textRendering.js";
+import { parseMsdfFont, layoutText } from "../gl/msdfText.js";
+import { initMsdfProgram, drawMsdfText } from "../gl/msdfRender.js";
+import { decodeHdr } from "../gl/hdr.js";
 import { init3dProgram } from "../gl/setup3d.js";
 import {
   upgradeVert, upgradeFrag,
@@ -46,11 +49,12 @@ import {
 import {
   mat4Perspective, mat4Ortho, mat4LookAt,
   normalMat3, mat4ModelQuat, mat4Billboard,
-  mat4Multiply, unprojectRay, rayAABB,
+  mat4Multiply, mat4Invert, unprojectRay, rayAABB,
   MAT4_IDENTITY, bindTex,
   _projM, _viewM,
   _frustum,
 } from "../gl/math.js";
+import { initEquirectSky, drawEquirectSky } from "../gl/skybox.js";
 import { raycastStore, type MeshEntry, type Bounds } from "@jexs/physics";
 import type { GpuMesh } from "../gl/types.js";
 import type { JexsNodeSchema } from "@jexs/core";
@@ -210,6 +214,14 @@ export class GlNode extends Node {
         src: {
           type: "string",
           description: "URL of the image to load.",
+        },
+        linear: {
+          type: "boolean",
+          description: "Use LINEAR filtering instead of NEAREST (default). Set for smooth/upscaled textures and MSDF atlases.",
+        },
+        hdr: {
+          type: "boolean",
+          description: "Decode `src` as a Radiance `.hdr` (RGBE) image and upload a float texture (values may exceed 1.0). Use for an equirectangular environment map referenced by a `skybox` setting.",
         },
       },
     },
@@ -412,11 +424,36 @@ export class GlNode extends Node {
         },
         font: {
           type: "string",
-          description: "CSS font string (e.g. `\"24px Arial\"`).",
+          description: "CSS font string for the canvas path (e.g. `\"24px Arial\"`). Ignored when `msdf` is set.",
         },
         fill: {
           type: "string",
           description: "CSS color string for the text fill.",
+        },
+        msdf: {
+          type: "string",
+          description: "Name of a registered `gl-font` to render this text via the MSDF path (crisp at any scale, recolorable). When set, `font` is ignored and `size` controls the px size.",
+        },
+        size: {
+          type: "number",
+          description: "Font size in px for the MSDF path (when `msdf` is set). Default `32`.",
+        },
+      },
+    },
+    "gl-font": {
+      type: "string",
+      output: "string",
+      markdownDescription: "Registers an MSDF font from a pre-loaded atlas texture + parsed BMFont metrics, so `gl-text` with a matching `font` renders crisp at any scale (recolorable, one shared atlas).\nLoad the atlas PNG with `gl-texture` and the metrics JSON with a file/fetch node, then pass the texture name as `atlas` and the parsed JSON as `metrics`.",
+      examples: [
+        "{ \"gl-font\": \"hud\", \"atlas\": \"hud-atlas\", \"metrics\": { \"file\": \"/fonts/hud.json\" } }",
+      ],
+      siblings: {
+        atlas: {
+          type: "string",
+          description: "Name of a `gl-texture` holding the MSDF atlas PNG.",
+        },
+        metrics: {
+          description: "Parsed BMFont-JSON descriptor (from a file/fetch node), or a JSON string.",
         },
       },
     },
@@ -621,6 +658,10 @@ export class GlNode extends Node {
         atlases: new Map(),
         tilemaps: new Map(),
         shaders: new Map(),
+        msdfFonts: new Map(),
+        msdf: null,
+        envSky: null,
+        envSkyProg: null,
         metrics: !!def["metrics"],
         metricsEl: null,
         metricsFrames: 0,
@@ -703,6 +744,7 @@ export class GlNode extends Node {
       if (r["ambientColor"] !== undefined) inst.ambientColor = r["ambientColor"] as [number, number, number];
       if (r["skyTop"] !== undefined) inst.skyTop = r["skyTop"] as [number, number, number];
       if (r["skyBottom"] !== undefined) inst.skyBottom = r["skyBottom"] as [number, number, number];
+      if (r["skybox"] !== undefined) inst.envSky = GlNode.parseSkybox(r);
       if (r["fogColor"] !== undefined) inst.fogColor = r["fogColor"] as [number, number, number];
       if (r["fogNear"] !== undefined) inst.fogNear = Number(r["fogNear"]);
       if (r["fogFar"] !== undefined) inst.fogFar = Number(r["fogFar"]);
@@ -921,6 +963,7 @@ export class GlNode extends Node {
       if (r["ambientColor"] !== undefined) inst.ambientColor = r["ambientColor"] as [number, number, number];
       if (r["skyTop"] !== undefined) inst.skyTop = r["skyTop"] as [number, number, number];
       if (r["skyBottom"] !== undefined) inst.skyBottom = r["skyBottom"] as [number, number, number];
+      if (r["skybox"] !== undefined) inst.envSky = GlNode.parseSkybox(r);
       if (r["fogColor"] !== undefined) inst.fogColor = r["fogColor"] as [number, number, number];
       if (r["fogNear"] !== undefined) inst.fogNear = Number(r["fogNear"]);
       if (r["fogFar"] !== undefined) inst.fogFar = Number(r["fogFar"]);
@@ -953,25 +996,89 @@ export class GlNode extends Node {
   ["gl-texture"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-    return resolveAll([def["gl-texture"], def["src"]], context, ([nameV, srcV]) => {
+    return resolveAll([def["gl-texture"], def["src"], def["linear"] ?? null, def["hdr"] ?? null], context, ([nameV, srcV, linearV, hdrV]) => {
       const name = String(nameV);
       const src = String(srcV);
+      const linear = linearV === true;
+      // HDR path: fetch bytes, decode Radiance .hdr to float pixels, upload a
+      // gl.FLOAT equirect texture (values can exceed 1.0). Else the LDR image path.
+      if (hdrV === true) {
+        return fetch(src, { mode: "cors" })
+          .then((r) => r.arrayBuffer())
+          .then((buf) => {
+            const img = decodeHdr(new Uint8Array(buf));
+            const tex = GlNode.createFloatTexture(inst.gl, inst.isWebGL2, img.width, img.height, img.data);
+            if (tex) inst.textures.set(name, { tex, w: img.width, h: img.height, float: true });
+            inst.dirty = true;
+            GlNode.scheduleRender(inst);
+            return null;
+          })
+          .catch((e) => { console.error("[GL] Failed to load HDR texture:", src, e); return null; });
+      }
+      return GlNode.loadTextureSource(src).then((source) => {
+        if (!source) { console.error("[GL] Failed to load texture:", src); return null; }
+        const tex = GlNode.createTexture(inst.gl, source, linear);
+        if (tex) inst.textures.set(name, { tex, w: source.width, h: source.height });
+        if ("close" in source) source.close(); // free the ImageBitmap after upload
+        inst.dirty = true;
+        GlNode.scheduleRender(inst);
+        return null;
+      });
+    });
+  }
+
+  /**
+   * Load an image to a GPU-uploadable source. Prefers `fetch` + `createImageBitmap`
+   * so the DECODE happens off the main thread (the browser threads it internally);
+   * only the `texImage2D` upload is main-thread (GL is thread-affine). Falls back
+   * to `new Image()` where `createImageBitmap` is unavailable.
+   */
+  private static loadTextureSource(src: string): Promise<ImageBitmap | HTMLImageElement | null> {
+    if (typeof createImageBitmap === "function" && typeof fetch === "function") {
+      return fetch(src, { mode: "cors" })
+        .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(`HTTP ${r.status}`))))
+        .then((blob) => createImageBitmap(blob))
+        .catch(() => GlNode.loadImageElement(src));
+    }
+    return GlNode.loadImageElement(src);
+  }
+
+  private static loadImageElement(src: string): Promise<HTMLImageElement | null> {
+    return new Promise((res) => {
       const img = new Image();
       img.crossOrigin = "anonymous";
-      return new Promise<NodeValue>((res) => {
-        img.onload = () => {
-          const tex = GlNode.createTexture(inst.gl, img);
-          if (tex) inst.textures.set(name, { tex, w: img.width, h: img.height });
-          inst.dirty = true;
-          GlNode.scheduleRender(inst);
-          res(null);
-        };
-        img.onerror = () => {
-          console.error("[GL] Failed to load texture:", src);
-          res(null);
-        };
-        img.src = src;
-      });
+      img.onload = () => res(img);
+      img.onerror = () => res(null);
+      img.src = src;
+    });
+  }
+
+  // ── gl-font (register an MSDF font: atlas texture + parsed metrics) ───────
+
+  ["gl-font"](def: Record<string, unknown>, context: Context): NodeValue {
+    const inst = GlNode.getInst(context);
+    if (!inst) return null;
+    return resolveObj(def, context, r => {
+      const name = String(r["gl-font"]);
+      const atlasName = String(r["atlas"]);     // a registered gl-texture name
+      const metricsRaw = r["metrics"];          // parsed BMFont JSON (from a file/fetch node) or a JSON string
+
+      const texInfo = inst.textures.get(atlasName);
+      if (!texInfo) { console.error(`[GL] gl-font '${name}': no texture '${atlasName}' (register it with gl-texture first)`); return null; }
+      if (metricsRaw == null) { console.error(`[GL] gl-font '${name}': missing 'metrics'`); return null; }
+
+      const font = parseMsdfFont(metricsRaw as string | Record<string, unknown>);
+
+      // MSDF reconstruction needs LINEAR filtering on the atlas; the texture may
+      // have been registered with NEAREST, so set it here.
+      const gl = inst.gl;
+      gl.bindTexture(gl.TEXTURE_2D, texInfo.tex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+
+      inst.msdfFonts.set(name, { font, tex: texInfo.tex, w: texInfo.w, h: texInfo.h });
+      return name;
     });
   }
 
@@ -1347,15 +1454,31 @@ export class GlNode extends Node {
         if (z !== 0) { inst.store.zDirty = true; inst.store.zDirtyCount++; }
       }
       const meta = inst.store.meta[slot]!;
-      meta.text = { content: text, font, fill };
-      meta.textureName = `__text_${id}`;
-      renderTextTexture(inst, id, meta, GlNode.createTexture);
-      const texInfo = inst.textures.get(meta.textureName);
-      if (texInfo) {
-        const d = inst.store.data;
-        const b = slot * STRIDE;
-        d[b + F_SX] = r["w"] !== undefined ? Number(r["w"]) : texInfo.w;
-        d[b + F_SY] = r["h"] !== undefined ? Number(r["h"]) : texInfo.h;
+      const d = inst.store.data;
+      const b = slot * STRIDE;
+
+      // MSDF path: explicit `msdf: "<gl-font name>"` → render per frame (crisp at
+      // any scale), no canvas texture. Else the canvas Tier-1 path (`font` is a
+      // CSS font string). The two selectors are separate so there's no ambiguity.
+      const msdfName = r["msdf"] !== undefined ? String(r["msdf"]) : null;
+      const msdfFont = msdfName ? inst.msdfFonts.get(msdfName) : undefined;
+      if (msdfName && msdfFont) {
+        const size = r["size"] !== undefined ? Number(r["size"]) : 32;
+        meta.text = { content: text, font, fill, msdf: { font: msdfName, size } };
+        meta.textureName = undefined;
+        const layout = layoutText(text, msdfFont.font, size);
+        d[b + F_SX] = r["w"] !== undefined ? Number(r["w"]) : layout.width;
+        d[b + F_SY] = r["h"] !== undefined ? Number(r["h"]) : layout.height;
+      } else {
+        if (msdfName) console.error(`[GL] gl-text '${id}': no MSDF font '${msdfName}' (register it with gl-font)`);
+        meta.text = { content: text, font, fill };
+        meta.textureName = `__text_${id}`;
+        renderTextTexture(inst, id, meta, GlNode.createTexture);
+        const texInfo = inst.textures.get(meta.textureName);
+        if (texInfo) {
+          d[b + F_SX] = r["w"] !== undefined ? Number(r["w"]) : texInfo.w;
+          d[b + F_SY] = r["h"] !== undefined ? Number(r["h"]) : texInfo.h;
+        }
       }
       inst.dirty = true;
       GlNode.scheduleRender(inst);
@@ -1664,6 +1787,48 @@ export class GlNode extends Node {
     return tex;
   }
 
+  /** Parse a `skybox` setting: a texture name string, a `{texture, intensity,
+   *  rotation}` object, or false/null to disable. The named texture (LDR or HDR)
+   *  is drawn as an equirectangular backdrop. */
+  private static parseSkybox(r: Record<string, unknown>): GlInstance["envSky"] {
+    const v = r["skybox"];
+    if (v == null || v === false) return null;
+    if (typeof v === "string") return { texture: v, intensity: 1, rotation: 0 };
+    if (typeof v === "object") {
+      const o = v as Record<string, unknown>;
+      return {
+        texture: String(o.texture ?? ""),
+        intensity: o.intensity !== undefined ? Number(o.intensity) : 1,
+        rotation: o.rotation !== undefined ? Number(o.rotation) : 0,
+      };
+    }
+    return null;
+  }
+
+  /** Upload RGB float pixels (e.g. a decoded HDR equirect) as a gl.FLOAT texture.
+   *  Needs WebGL2 or the OES_texture_float extension; returns null if unsupported. */
+  private static createFloatTexture(
+    gl: WebGLRenderingContext, isWebGL2: boolean, w: number, h: number, rgb: Float32Array,
+  ): WebGLTexture | null {
+    if (!isWebGL2 && !gl.getExtension("OES_texture_float")) {
+      console.error("[GL] float textures unsupported (no WebGL2 / OES_texture_float) — HDR texture skipped");
+      return null;
+    }
+    const tex = gl.createTexture();
+    if (!tex) return null;
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    // WebGL2 wants the sized internal format RGB32F; WebGL1 uses RGB + FLOAT.
+    const gl2 = gl as WebGL2RenderingContext;
+    const internal = isWebGL2 ? gl2.RGB32F : gl.RGB;
+    gl.texImage2D(gl.TEXTURE_2D, 0, internal, w, h, 0, gl.RGB, gl.FLOAT, rgb);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    return tex;
+  }
+
 
   // ── Render loop ─────────────────────────────────────────────────────────
 
@@ -1773,15 +1938,16 @@ export class GlNode extends Node {
       // physics position (prevents jitter).
       const store = inst.store;
       const willRender = inst.dirty;
-      const hasInterp = willRender && store.interpolationAlpha < 1;
-      const followSlot = (hasInterp && inst.camera.follow) ? store.slot(inst.camera.follow) : -1;
-      if (hasInterp) store.applyInterpolation(followSlot);
+      // Compute interpolated RENDER positions into store.renderPos (read-only over
+      // the physics state — safe while a worker writes store.data). The renderer
+      // reads visible transforms from renderPos; data stays physics-truth. The
+      // camera-follow entity is rendered raw so it doesn't jitter vs the camera.
+      const followSlot = (willRender && inst.camera.follow) ? store.slot(inst.camera.follow) : -1;
+      if (willRender) store.computeRenderPositions(followSlot);
 
       const _rt0 = performance.now();
       if (willRender) GlNode.render(inst, delta);
       const _rt1 = performance.now();
-
-      if (hasInterp) store.restoreFromInterpolation();
 
       if (inst.onFrame && inst.frameContext) {
         GlNode.dispatchOnFrame(inst, time, delta);
@@ -1927,6 +2093,7 @@ export class GlNode extends Node {
     projBase[6] = -1; projBase[7] = 1; projBase[8] = 1;
 
     const d = store.data;
+    const rp = store.renderPos; // interpolated render positions (3/slot: x,y,z)
     let drawCalls = 0;
     let currentTexture: WebGLTexture | null = null;
 
@@ -1972,8 +2139,20 @@ export class GlNode extends Node {
         gl.useProgram(inst.prog3d); // restore for non-batchable entities
       }
 
-      // ── Skybox atmospheric pass ────────────────────────────────────────────
-      if (inst.skyTop && inst.skyBottom && inst.skyboxProg && inst.skyboxLocs && inst.skyboxBuf) {
+      // ── Equirect env skybox (LDR panorama / HDR) — takes priority over the
+      //    procedural gradient when an env texture is set ──────────────────────
+      const envSky = inst.envSky;
+      const envTex = envSky ? inst.textures.get(envSky.texture) : undefined;
+      if (envSky && envTex) {
+        if (!inst.envSkyProg) inst.envSkyProg = initEquirectSky(gl, GlNode.createProgram, inst.isWebGL2);
+        const invVP = mat4Invert(mat4Multiply(_projM, _viewM));
+        if (inst.envSkyProg && invVP) {
+          drawEquirectSky(gl, inst.envSkyProg, envTex.tex, invVP, envSky.intensity, envSky.rotation);
+          drawCalls++;
+          gl.useProgram(inst.prog3d); // restore
+        }
+      } else if (inst.skyTop && inst.skyBottom && inst.skyboxProg && inst.skyboxLocs && inst.skyboxBuf) {
+      // ── Procedural gradient skybox (fallback) ──────────────────────────────
         // Compute sun screen position: project a point far along -lightDir
         const ld = inst.lightDir;
         const ldLen = Math.sqrt(ld[0] * ld[0] + ld[1] * ld[1] + ld[2] * ld[2]) || 1;
@@ -2209,13 +2388,13 @@ export class GlNode extends Node {
       const transformLoc = shaderInfo
         ? (shaderInfo.uniforms.u_transform ?? inst.uTransform)
         : inst.uTransform;
-      const wt = meta.parent ? store.getWorldTransform(slot) : null;
+      const wt = meta.parent ? store.getWorldTransform(slot, true) : null;
       const qz = wt ? wt[8] : d[b + F_QZ], qw = wt ? wt[9] : d[b + F_QW];
       const cos = qw * qw - qz * qz, sin = 2 * qz * qw;
       const ew = d[b + F_SX], eh = d[b + F_SY];
       _xform9[0] = ew * cos; _xform9[1] = ew * sin; _xform9[2] = 0;
       _xform9[3] = -eh * sin; _xform9[4] = eh * cos; _xform9[5] = 0;
-      _xform9[6] = wt ? wt[0] : d[b + F_TX]; _xform9[7] = wt ? wt[1] : d[b + F_TY]; _xform9[8] = 1;
+      _xform9[6] = wt ? wt[0] : rp[slot * 3]; _xform9[7] = wt ? wt[1] : rp[slot * 3 + 1]; _xform9[8] = 1;
       gl.uniformMatrix3fv(transformLoc, false, _xform9);
 
       // Line width
@@ -2429,19 +2608,21 @@ export class GlNode extends Node {
 
     for (const slot of store.order) {
       const b = slot * STRIDE;
+      const b3 = slot * 3; // renderPos index
       if (!(d[b + F_FLAGS] & FLAG_VISIBLE)) continue;
       const meta_ = store.meta[slot];
       if (meta_?.type === "pivot") continue;
 
-      const ex = d[b + F_TX], ey = d[b + F_TY], ew = d[b + F_SX], eh = d[b + F_SY];
-      const ez = d[b + F_TZ], ed = d[b + F_SZ] || 0.01;
+      // Render position: interpolated (renderPos), not raw physics (data).
+      const ex = rp[b3], ey = rp[b3 + 1], ew = d[b + F_SX], eh = d[b + F_SY];
+      const ez = rp[b3 + 2], ed = d[b + F_SZ] || 0.01;
       const eqx = d[b + F_QX], eqy = d[b + F_QY], eqz = d[b + F_QZ], eqw = d[b + F_QW];
       const isFixed = !!(d[b + F_FLAGS] & FLAG_FIXED);
-      let cullX = ex, cullY = ey, cullZ = d[b + F_TZ];
+      let cullX = ex, cullY = ey, cullZ = ez;
       let cullSX = ew, cullSY = eh, cullSZ = ed;
       let cullQX = eqx, cullQY = eqy, cullQZ = eqz, cullQW = eqw;
       if (meta_?.parent) {
-        const wt = store.getWorldTransform(slot);
+        const wt = store.getWorldTransform(slot, true);
         cullX = wt[0]; cullY = wt[1]; cullZ = wt[2];
         cullSX = wt[3]; cullSY = wt[4]; cullSZ = wt[5] || 0.01;
         cullQX = wt[6]; cullQY = wt[7]; cullQZ = wt[8]; cullQW = wt[9];
@@ -2520,8 +2701,9 @@ export class GlNode extends Node {
         }
       }
 
-      // Re-render text texture if dirty, then clear all dirty bits
-      if (meta.dirty & DIRTY_TEXT) {
+      // Re-render text texture if dirty (canvas Tier-1 only — MSDF text lays out
+      // at draw time and has no texture), then clear all dirty bits.
+      if (meta.dirty & DIRTY_TEXT && !meta.text?.msdf) {
         renderTextTexture(inst, meta.id, meta, GlNode.createTexture);
         const texInfo = inst.textures.get(meta.textureName!);
         if (texInfo) {
@@ -2530,6 +2712,27 @@ export class GlNode extends Node {
         }
       }
       meta.dirty = 0;
+
+      // MSDF text: draw via the median-of-3 path (crisp at any scale) and skip the
+      // normal quad draw for this slot.
+      if (meta.text?.msdf) {
+        const mt = meta.text.msdf;
+        const mf = inst.msdfFonts.get(mt.font);
+        if (!inst.msdf) inst.msdf = initMsdfProgram(gl, GlNode.createProgram, inst.isWebGL2);
+        if (mf && inst.msdf) {
+          const isFixed = !!(d[b + F_FLAGS] & FLAG_FIXED);
+          const proj = isFixed ? projBase : projCam;
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+          drawMsdfText(
+            gl, inst.msdf, mf.font, mf.tex, meta.text.content, mt.size, proj,
+            rp[b3], rp[b3 + 1],
+            [d[b + F_CR], d[b + F_CG], d[b + F_CB], d[b + F_CA] * d[b + F_OPACITY]],
+          );
+          drawCalls++;
+        }
+        continue;
+      }
 
       // ── 3D path ─────────────────────────────────────────────────────────────
       if (is3d && bd3d) {
@@ -2557,7 +2760,7 @@ export class GlNode extends Node {
         // Apply parent world transform for 3D
         let mx = ex, my = ey, mz = ez, mw = ew, mh = eh, md = ed, mqx = eqx, mqy = eqy, mqz = eqz, mqw = eqw;
         if (meta.parent) {
-          const wt = store.getWorldTransform(slot);
+          const wt = store.getWorldTransform(slot, true);
           mx = wt[0]; my = wt[1]; mz = wt[2];
           mw = wt[3]; mh = wt[4]; md = wt[5] || 0.01;
           mqx = wt[6]; mqy = wt[7]; mqz = wt[8]; mqw = wt[9];
@@ -2817,8 +3020,8 @@ export class GlNode extends Node {
         bd = inst.batchData = newBd;
       }
 
-      const wt = meta.parent ? store.getWorldTransform(slot) : null;
-      const x = wt ? wt[0] : d[b + F_TX], y = wt ? wt[1] : d[b + F_TY];
+      const wt = meta.parent ? store.getWorldTransform(slot, true) : null;
+      const x = wt ? wt[0] : rp[b3], y = wt ? wt[1] : rp[b3 + 1];
       const w = d[b + F_SX], h = d[b + F_SY];
       const qz2 = wt ? wt[8] : d[b + F_QZ], qw2 = wt ? wt[9] : d[b + F_QW];
       const cos = qw2 * qw2 - qz2 * qz2, sin = 2 * qz2 * qw2;

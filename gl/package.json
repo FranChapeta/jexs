@@ -3,7 +3,17 @@
   "version": "0.4.1",
   "license": "MIT",
   "description": "WebGL renderer for Jexs — lighting, shadows, SSAO, particles, text, tweening, post-processing",
-  "keywords": ["jexs", "webgl", "rendering", "3d", "graphics", "shadows", "ssao", "particles", "shaders"],
+  "keywords": [
+    "jexs",
+    "webgl",
+    "rendering",
+    "3d",
+    "graphics",
+    "shadows",
+    "ssao",
+    "particles",
+    "shaders"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/FranChapeta/jexs.git",
@@ -15,11 +25,19 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
-    ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts" }
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "peerDependencies": {
     "@jexs/core": "^0.7.3",
     "@jexs/physics": "^0.4.0"
-    }
+  },
+  "dependencies": {
+    "meshoptimizer": "^1.1.1"
   }
+}

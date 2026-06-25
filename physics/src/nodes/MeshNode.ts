@@ -138,23 +138,107 @@ function resolveBuffer(
   return toUint8(candidate);
 }
 
+/**
+ * meshopt decoder (EXT_meshopt_compression), injected by the host so this
+ * env-agnostic package never fetches/instantiates WASM itself. The host
+ * (browser: client/gl) loads `meshopt_decoder` and calls `setMeshoptDecoder`.
+ */
+export interface MeshoptDecoder {
+  decodeGltfBuffer(
+    target: Uint8Array, count: number, size: number,
+    source: Uint8Array, mode: string, filter?: string,
+  ): void;
+}
+
+// The decoder is loaded LAZILY — only when a glTF that actually uses
+// EXT_meshopt_compression is parsed. The env (gl) supplies an async loader that
+// `import()`s the WASM decoder; physics stays env-agnostic and never fetches it.
+let _meshoptDecoder: MeshoptDecoder | null = null;
+let _meshoptLoader: (() => Promise<MeshoptDecoder>) | null = null;
+
+/** Env hook: provide an async loader for the meshopt decoder (e.g.
+ *  `() => import("meshoptimizer").then(...)`). Called once, on the first
+ *  meshopt-compressed mesh. */
+export function setMeshoptLoader(loader: (() => Promise<MeshoptDecoder>) | null): void {
+  _meshoptLoader = loader;
+}
+
+/** True if a glTF document declares any `EXT_meshopt_compression` bufferView. */
+function hasMeshoptViews(gltf: Record<string, unknown>): boolean {
+  const views = gltf.bufferViews as Array<Record<string, unknown>> | undefined;
+  if (!views) return false;
+  for (const v of views) {
+    if ((v.extensions as Record<string, unknown> | undefined)?.EXT_meshopt_compression) return true;
+  }
+  return false;
+}
+
+/** Ensure the meshopt decoder is loaded (await before the sync parse). No-op
+ *  when already loaded; throws if the doc needs it but no loader was supplied. */
+async function ensureMeshoptDecoder(gltf: Record<string, unknown>): Promise<void> {
+  if (_meshoptDecoder || !hasMeshoptViews(gltf)) return;
+  if (!_meshoptLoader) {
+    throw new Error("MeshNode: mesh uses EXT_meshopt_compression but no decoder loader is set — call setMeshoptLoader()");
+  }
+  _meshoptDecoder = await _meshoptLoader();
+}
+
+/**
+ * Pre-decode every bufferView carrying `EXT_meshopt_compression` into a tight,
+ * standalone byte array, keyed by bufferView index. Accessors then read from
+ * the decoded bytes instead of the raw buffer.
+ */
+function decodeMeshoptViews(
+  gltf: Record<string, unknown>,
+  bufferBytes: Uint8Array[],
+): Map<number, Uint8Array> {
+  const bufferViews = gltf.bufferViews as Array<Record<string, unknown>> | undefined;
+  const decoded = new Map<number, Uint8Array>();
+  if (!bufferViews) return decoded;
+  for (let i = 0; i < bufferViews.length; i++) {
+    const ext = (bufferViews[i].extensions as Record<string, unknown> | undefined)
+      ?.EXT_meshopt_compression as Record<string, unknown> | undefined;
+    if (!ext) continue;
+    if (!_meshoptDecoder) {
+      throw new Error("MeshNode: mesh uses EXT_meshopt_compression but no decoder is set — call setMeshoptDecoder()");
+    }
+    const src        = bufferBytes[ext.buffer as number];
+    const byteOffset = (ext.byteOffset as number | undefined) ?? 0;
+    const byteLength = ext.byteLength as number;
+    const count      = ext.count as number;
+    const byteStride = ext.byteStride as number;
+    const mode       = ext.mode as string;
+    const filter     = (ext.filter as string | undefined) ?? "NONE";
+    const source = src.subarray(byteOffset, byteOffset + byteLength);
+    const target = new Uint8Array(count * byteStride);
+    _meshoptDecoder.decodeGltfBuffer(target, count, byteStride, source, mode, filter);
+    decoded.set(i, target);
+  }
+  return decoded;
+}
+
 /** Read a typed array view of a glTF accessor. */
 function readAccessor(
   gltf: Record<string, unknown>,
   bufferBytes: Uint8Array[],
+  decodedViews: Map<number, Uint8Array>,
   accessorIdx: number,
 ): { array: Float32Array | Uint16Array | Uint32Array | Uint8Array | Int16Array | Int8Array; count: number; numComponents: number } {
   const accessors   = gltf.accessors as Array<Record<string, unknown>>;
   const bufferViews = gltf.bufferViews as Array<Record<string, unknown>>;
   const acc  = accessors[accessorIdx];
-  const view = bufferViews[acc.bufferView as number];
-  const buf  = bufferBytes[view.buffer as number];
+  const viewIdx = acc.bufferView as number;
+  const view = bufferViews[viewIdx];
+  // A meshopt-compressed view was pre-decoded into its own tight Uint8Array;
+  // that buffer IS the view content, so its view-relative offset is 0.
+  const decoded = decodedViews.get(viewIdx);
+  const buf  = decoded ?? bufferBytes[view.buffer as number];
 
   const componentType = acc.componentType as number;
   const numComponents = TYPE_NUM_COMPONENTS[acc.type as string];
   const count         = acc.count as number;
   const accByteOffset = (acc.byteOffset as number | undefined) ?? 0;
-  const viewByteOffset = (view.byteOffset as number | undefined) ?? 0;
+  const viewByteOffset = decoded ? 0 : ((view.byteOffset as number | undefined) ?? 0);
   const totalOffset   = buf.byteOffset + viewByteOffset + accByteOffset;
   const compSize      = COMPONENT_BYTE_SIZE[componentType];
   const stride        = (view.byteStride as number | undefined) ?? compSize * numComponents;
@@ -394,6 +478,8 @@ function parseGltfJson(
   // Resolve all buffers.
   const bufferDefs = (json.buffers as Array<Record<string, unknown>> | undefined) ?? [];
   const bufferBytes: Uint8Array[] = bufferDefs.map((b, i) => resolveBuffer(b, i, buffers, glbBin));
+  // Pre-decode any meshopt-compressed bufferViews once for this document.
+  const decodedViews = decodeMeshoptViews(json, bufferBytes);
 
   // Build MeshData per (mesh, primitive). A glTF "mesh" is a container of 1..N primitives,
   // and each primitive is one draw call (own material). We emit one MeshData per primitive
@@ -413,12 +499,12 @@ function parseGltfJson(
       const attribs = (prim.attributes as Record<string, number>) ?? {};
       if (attribs.POSITION == null) continue;
 
-      const posAcc = readAccessor(json, bufferBytes, attribs.POSITION);
+      const posAcc = readAccessor(json, bufferBytes, decodedViews, attribs.POSITION);
       const positions = posAcc.array instanceof Float32Array ? posAcc.array : Float32Array.from(posAcc.array);
 
       let indices: Uint16Array | Uint32Array | undefined;
       if (prim.indices != null) {
-        const idxAcc = readAccessor(json, bufferBytes, prim.indices as number);
+        const idxAcc = readAccessor(json, bufferBytes, decodedViews, prim.indices as number);
         if (idxAcc.array instanceof Uint32Array) indices = idxAcc.array;
         else if (idxAcc.array instanceof Uint16Array) indices = idxAcc.array;
         else if (idxAcc.array instanceof Uint8Array) indices = Uint16Array.from(idxAcc.array);
@@ -427,7 +513,7 @@ function parseGltfJson(
 
       let normals: Float32Array | undefined;
       if (attribs.NORMAL != null) {
-        const a = readAccessor(json, bufferBytes, attribs.NORMAL);
+        const a = readAccessor(json, bufferBytes, decodedViews, attribs.NORMAL);
         normals = a.array instanceof Float32Array ? a.array : Float32Array.from(a.array);
       } else {
         normals = computeFlatNormals(positions, indices);
@@ -435,7 +521,7 @@ function parseGltfJson(
 
       let uvs: Float32Array | undefined;
       if (attribs.TEXCOORD_0 != null) {
-        const a = readAccessor(json, bufferBytes, attribs.TEXCOORD_0);
+        const a = readAccessor(json, bufferBytes, decodedViews, attribs.TEXCOORD_0);
         uvs = a.array instanceof Float32Array ? a.array : Float32Array.from(a.array);
       }
 
@@ -607,16 +693,17 @@ export class MeshNode extends Node {
   };
 
   parseGLB(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def.parseGLB, def.name], context, ([bufRaw, nameRaw]) => {
+    return resolveAll([def.parseGLB, def.name], context, async ([bufRaw, nameRaw]) => {
       const bytes = toUint8(bufRaw);
       const { json, bin } = readGlb(bytes);
       const name = (nameRaw as string | undefined) ?? randomName();
+      await ensureMeshoptDecoder(json); // lazy-load the WASM decoder iff needed
       return parseGltfJson(json, [], bin, name);
     });
   }
 
   parseGLTF(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveObj(def, context, r => {
+    return resolveObj(def, context, async r => {
       const arg = r["parseGLTF"] as Record<string, unknown> | undefined;
       if (!arg) return null;
       const json = arg.json as Record<string, unknown>;
@@ -624,6 +711,7 @@ export class MeshNode extends Node {
       const buffers = (arg.buffers ?? []) as unknown[] | Record<string, unknown>;
       const name = (r["name"] as string | undefined) ?? randomName();
       const basePath = (r["basePath"] as string | undefined);
+      await ensureMeshoptDecoder(json); // lazy-load the WASM decoder iff needed
       return parseGltfJson(json, buffers, null, name, basePath);
     });
   }

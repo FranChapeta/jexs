@@ -15,4 +15,8 @@ export * from "./trails.js";
 export * from "./shadows.js";
 export * from "./ssao.js";
 export * from "./textRendering.js";
+export * from "./msdfText.js";
+export * from "./msdfRender.js";
+export * from "./hdr.js";
+export * from "./skybox.js";
 export * from "./setup3d.js";
