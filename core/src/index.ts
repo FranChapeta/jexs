@@ -55,4 +55,22 @@ export const coreNodes: Node[] = [
 // (runSteps and resolveSteps are already exported above via Resolver.js)
 
 // ── Helpers ──
-export { randomString } from "./helpers.js";
+export { randomString, collectTransferables } from "./helpers.js";
+
+// ── Generic worker offload (run units over SABs; one worker, many units) ──
+// The SAB/Atomics control-block handshake is private to this module; only the
+// high-level offload API is public.
+export {
+  runOnWorker, runWorkerRuntime,
+  type WorkerLike, type WorkerStepper, type WorkerSetup, type WorkerMsg, type Subscribe,
+} from "./workerRuntime.js";
+
+// ── Worker pool + the `thread` node (run resolver steps on another thread) ──
+// The pool (lazy-per-key + idle reaping) is shared with runOnWorker; WorkerNode
+// rides on it directly for one-shot request/response. The env worker constructor
+// is passed to `new WorkerNode(makeWorker)` in the client/server entry.
+export {
+  acquireWorker, releaseWorker, peekWorker, terminateWorker,
+  type PooledWorker, type TaskWorkerLike,
+} from "./workerPool.js";
+export { WorkerNode } from "./nodes/Worker.js";
