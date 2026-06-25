@@ -16,10 +16,13 @@ import {
   F_INV_MASS, F_RESTITUTION, F_FRICTION, F_DAMPING,
   F_MOVE_X, F_MOVE_Y, F_FLAGS,
   FLAG_PHYSICS, FLAG_SLEEPING, FLAG_TRIGGER, FLAG_CCD,
+  SHAPE_MESH,
   type EntityMeta,
 } from "../EntityStore.js";
 import { raycastStore } from "../Raycast.js";
-import { detectCollision, resolveCollision, wakeBody, isRotated, usesMeshCollision } from "../collision.js";
+import { offloadWorld, readContacts, type WorldOffload } from "../sharedPhysics.js";
+import type { WorkerLike } from "@jexs/core";
+import { detectCollision, resolveCollision, wakeBody, isRotated, usesMeshCollision, maskAllows } from "../collision.js";
 import { solveConstraints, type Constraint, type ConstraintType } from "../constraints.js";
 import { SpatialGrid } from "../SpatialGrid.js";
 import type { JexsNodeSchema } from "@jexs/core";
@@ -53,6 +56,18 @@ interface CollisionHandler {
   id: string;
   groups: [string, string];
   do: unknown[];
+  /**
+   * Where the `do` steps run when physics is threaded off the main thread:
+   * - "physics" (default): in the physics worker's resolver, against the
+   *   worker-local context. Safe only when `do` touches the EntityStore and
+   *   worker-local state — no DOM, no network, no client/server context the
+   *   owning thread also reads.
+   * - "main": the contact is posted to the owning thread (client RAF / server
+   *   request) and `do` runs there against the real context. Use this whenever
+   *   the handler mutates state the other thread reads.
+   * Ignored when physics runs on the main thread (everything is "main").
+   */
+  thread: "physics" | "main";
 }
 
 /** Fixed timestep (seconds). Physics always steps at this rate. */
@@ -94,7 +109,16 @@ interface PhysicsWorld {
   context: Context;
   paused: boolean;
   onStep: (() => void) | null;
+  /** Fixed tick interval in ms (1000/hz) when `hz` was set on physics-init; null
+   *  = use the default scheduler (RAF on client, ~16ms timer on server). Physics
+   *  still steps at FIXED_DT internally — this is only how often the loop fires. */
+  tickMs: number | null;
+  /** Off-thread handle when the world steps on the shared worker; null = main
+   *  thread. Holds core's stepper + the two physics-owned shared views (live
+   *  entity count + marshaled contacts) the tick reads/writes directly. */
+  offload: WorldOffload | null;
 }
+
 
 // ─── Shared state ────────────────────────────────────────────────────────────
 
@@ -107,14 +131,18 @@ export let _physicsDebug = false;
 
 const hasRAF = typeof requestAnimationFrame !== "undefined";
 
-function scheduleFrame(fn: (time: number) => void): number {
+/** Schedule the next tick. `delayMs` (from a world's fixed `hz` cadence, already
+ *  drift-compensated by the caller) forces a fixed-rate timer; null uses RAF on
+ *  the client / a ~16ms timer on the server. A fixed rate is timer-based even on
+ *  the client (so an authoritative loop runs at e.g. 30Hz regardless of refresh). */
+function scheduleFrame(fn: (time: number) => void, delayMs: number | null): number {
+  if (delayMs !== null) return setTimeout(() => fn(Date.now()), Math.max(0, delayMs)) as unknown as number;
   if (hasRAF) return requestAnimationFrame(fn);
-  const start = Date.now();
-  return setTimeout(() => fn(start), 16) as unknown as number;
+  return setTimeout(() => fn(Date.now()), 16) as unknown as number;
 }
 
-function cancelFrame(id: number): void {
-  if (hasRAF) cancelAnimationFrame(id);
+function cancelFrame(id: number, tickMs: number | null): void {
+  if (tickMs === null && hasRAF) cancelAnimationFrame(id);
   else clearTimeout(id);
 }
 
@@ -207,13 +235,8 @@ function ccdPass(store: EntityStore, dynamicSlots: number[], staticSlots: number
 
     for (let j = 0; j < staticSlots.length; j++) {
       const sb = staticSlots[j] * STRIDE;
-      const meta = store.meta[staticSlots[j]];
-      if (!meta) continue;
-
-      // Check mask compatibility
-      const movingMeta = store.meta[slot];
-      if (!movingMeta) continue;
-      if (!movingMeta.mask.includes(meta.group) && !meta.mask.includes(movingMeta.group)) continue;
+      // Packed group/mask bitmask filter (no meta access).
+      if (!maskAllows(store, slot, staticSlots[j])) continue;
 
       const toi = sweptAABB(
         prevX, prevY, w, h, dx, dy,
@@ -227,11 +250,8 @@ function ccdPass(store: EntityStore, dynamicSlots: number[], staticSlots: number
     for (let j = 0; j < dynamicSlots.length; j++) {
       if (dynamicSlots[j] === slot) continue;
       const sb = dynamicSlots[j] * STRIDE;
-      const meta = store.meta[dynamicSlots[j]];
-      if (!meta) continue;
-      const movingMeta = store.meta[slot];
-      if (!movingMeta) continue;
-      if (!movingMeta.mask.includes(meta.group) && !meta.mask.includes(movingMeta.group)) continue;
+      // Packed group/mask bitmask filter (no meta access).
+      if (!maskAllows(store, slot, dynamicSlots[j])) continue;
 
       const toi = sweptAABB(
         prevX, prevY, w, h, dx, dy,
@@ -284,7 +304,7 @@ function meshNarrowphase(
   const meshId = store.meta[meshSlot]!.meshId!;
   const entry = store.meshes.get(meshId);
   const minEdge = entry?.minTriEdge ?? 0;
-  if (!entry || minEdge <= 0) return detectCollision(store, sa, sb, ma, mb, dt);
+  if (!entry || minEdge <= 0) return detectCollision(store, sa, sb, dt);
 
   // Mesh world scale — convert minTriEdge from local to world units.
   const wt = store.getWorldTransform(meshSlot);
@@ -302,7 +322,7 @@ function meshNarrowphase(
   const dist2 = dx * dx + dy * dy + dz * dz;
   const threshold = featureWorld * 0.5;
   if (dist2 <= threshold * threshold) {
-    return detectCollision(store, sa, sb, ma, mb, dt);
+    return detectCollision(store, sa, sb, dt);
   }
 
   // Need sub-stepping.
@@ -315,7 +335,7 @@ function meshNarrowphase(
     // Invalidate body's world-transform cache — it depends on local position.
     const m = store.meta[bodySlot];
     if (m && m.worldTransform) m.worldTransform = null;
-    const c = detectCollision(store, sa, sb, ma, mb, dt / steps);
+    const c = detectCollision(store, sa, sb, dt / steps);
     if (c) {
       // Body stays at the sub-step where contact first appeared; the resolution
       // pass will then push it out along the contact normal.
@@ -439,9 +459,9 @@ export function physicsStep(store: EntityStore, config: PhysicsConfig, dt: numbe
         if (_pairsSeen!.has(pairKey)) continue;
         _pairsSeen!.add(pairKey);
         const mb = store.meta[sb]!;
-        if (!ma.mask.includes(mb.group) && !mb.mask.includes(ma.group)) { _maskSkips++; continue; }
+        if (!maskAllows(store, sa, sb)) { _maskSkips++; continue; }
         _narrowTests++;
-        const c = detectCollision(store, sa, sb, ma, mb, dt);
+        const c = detectCollision(store, sa, sb, dt);
         if (c) _contacts.push(c);
       }
     }
@@ -450,9 +470,9 @@ export function physicsStep(store: EntityStore, config: PhysicsConfig, dt: numbe
       for (let j = i + 1; j < _dynamicSlots.length; j++) {
         const sa = _dynamicSlots[i], sb = _dynamicSlots[j];
         const ma = store.meta[sa]!, mb = store.meta[sb]!;
-        if (!ma.mask.includes(mb.group) && !mb.mask.includes(ma.group)) { _maskSkips++; continue; }
+        if (!maskAllows(store, sa, sb)) { _maskSkips++; continue; }
         _narrowTests++;
-        const c = detectCollision(store, sa, sb, ma, mb, dt);
+        const c = detectCollision(store, sa, sb, dt);
         if (c) _contacts.push(c);
       }
     }
@@ -470,15 +490,15 @@ export function physicsStep(store: EntityStore, config: PhysicsConfig, dt: numbe
         const sb = neighbors[j];
         if (d[sb * STRIDE + F_INV_MASS] !== 0) continue; // skip dynamics in this pass
         const mb = store.meta[sb]!;
-        if (!ma.mask.includes(mb.group) && !mb.mask.includes(ma.group)) { _maskSkips++; continue; }
+        if (!maskAllows(store, sa, sb)) { _maskSkips++; continue; }
         const bb = sb * STRIDE;
-        const meshB = usesMeshCollision(mb);
+        const meshB = store.shapeType[sb] === SHAPE_MESH;
         if (!meshB && !isRotated(d, bb)) {
           const bz = d[bb + F_TZ], bd = d[bb + F_SZ] || 0.01;
           if (az > bz + bd || bz > aTop) { _zSkips++; continue; }
         }
         _narrowTests++;
-        const c = meshB ? meshNarrowphase(store, sa, sb, ma, mb, dt) : detectCollision(store, sa, sb, ma, mb, dt);
+        const c = meshB ? meshNarrowphase(store, sa, sb, ma, mb, dt) : detectCollision(store, sa, sb, dt);
         if (c) _contacts.push(c);
       }
     }
@@ -493,19 +513,19 @@ export function physicsStep(store: EntityStore, config: PhysicsConfig, dt: numbe
       for (let j = 0; j < _staticSlots.length; j++) {
         const sb = _staticSlots[j];
         const mb = store.meta[sb]!;
-        if (!ma.mask.includes(mb.group) && !mb.mask.includes(ma.group)) { _maskSkips++; continue; }
+        if (!maskAllows(store, sa, sb)) { _maskSkips++; continue; }
 
         // Quick Z-overlap pre-check before full collision test
         // Skip broadphase for rotated statics — their Z extent differs from raw d
         const bb = sb * STRIDE;
-        const meshB = usesMeshCollision(mb);
+        const meshB = store.shapeType[sb] === SHAPE_MESH;
         if (!meshB && !isRotated(d, bb)) {
           const bz = d[bb + F_TZ], bd = d[bb + F_SZ] || 0.01;
           if (az > bz + bd || bz > aTop) { _zSkips++; continue; }
         }
 
         _narrowTests++;
-        const c = meshB ? meshNarrowphase(store, sa, sb, ma, mb, dt) : detectCollision(store, sa, sb, ma, mb, dt);
+        const c = meshB ? meshNarrowphase(store, sa, sb, ma, mb, dt) : detectCollision(store, sa, sb, dt);
         if (c) _contacts.push(c);
       }
     }
@@ -520,11 +540,11 @@ export function physicsStep(store: EntityStore, config: PhysicsConfig, dt: numbe
       for (let j = 0; j < _staticSlots.length; j++) {
         const sb = _staticSlots[j];
         const mb = store.meta[sb]!;
-        if (!usesMeshCollision(mb)) continue;
+        if (store.shapeType[sb] !== SHAPE_MESH) continue;
         const pairKey = sa < sb ? sa * 0x100000 + sb : sb * 0x100000 + sa;
         if (_pairsSeen!.has(pairKey)) continue;
         _pairsSeen!.add(pairKey);
-        if (!ma.mask.includes(mb.group) && !mb.mask.includes(ma.group)) { _maskSkips++; continue; }
+        if (!maskAllows(store, sa, sb)) { _maskSkips++; continue; }
         _narrowTests++;
         const c = meshNarrowphase(store, sa, sb, ma, mb, dt);
         if (c) _contacts.push(c);
@@ -607,6 +627,19 @@ export function applyImpulse(store: EntityStore, slot: number, ix: number, iy: n
 // ─── PhysicsNode — JMS integration ──────────────────────────────────────────
 
 export class PhysicsNode extends Node {
+  /**
+   * Optional env worker constructor. The env packages pass their worker factory:
+   * `new PhysicsNode(() => new Worker(...))`. When present, a `shared:true`
+   * store's `physics-init` registers its world as a job on the (lazily created,
+   * shared) physics worker and steps off-thread; otherwise it steps main-thread.
+   */
+  private readonly makeWorker: (() => WorkerLike) | null;
+
+  constructor(makeWorker: (() => WorkerLike) | null = null) {
+    super();
+    this.makeWorker = makeWorker;
+  }
+
   static schema: JexsNodeSchema = {
       "physics-init": {
       type: "boolean",
@@ -629,6 +662,14 @@ export class PhysicsNode extends Node {
         },
         bounds: {
           description: "World boundary object `{x, y, w, h}` or `\"canvas\"`, or `null` for unbounded.",
+        },
+        start: {
+          type: "boolean",
+          description: "Auto-start the simulation loop (default `true`). Set `false` to create the world without a loop and drive it yourself with `physics-step` (e.g. a server authoritative tick) — avoids double-stepping.",
+        },
+        hz: {
+          type: "number",
+          description: "Loop tick rate in Hz (e.g. `30`). The loop fires at this fixed rate via a timer instead of RAF (client) / the default ~60Hz timer (server). Physics still steps at the fixed timestep internally — this only sets how often the loop runs, e.g. for a server authoritative tick.",
         },
       },
     },
@@ -655,16 +696,21 @@ export class PhysicsNode extends Node {
     if (!selector) { console.error("[Physics] No _glSelector on context"); return null; }
 
     const prev = worlds.get(selector);
-    if (prev?.loopId != null) cancelFrame(prev.loopId);
+    if (prev?.loopId != null) cancelFrame(prev.loopId, prev.tickMs);
+    prev?.offload?.worker.stop();
 
     const stores = context._entityStores as Record<string, EntityStore> | undefined;
     const store = stores?.[selector];
     if (!store) { console.error("[Physics] No entity store for", selector); return null; }
 
+    // Off-thread when the node has an env worker factory AND the store is shared;
+    // else null and the world steps on this thread (unchanged behavior).
+    const makeWorker = this.makeWorker;
+
     return resolveAll(
-      [def.gravity ?? null, def.damping ?? null, def.bounds ?? null],
+      [def.gravity ?? null, def.damping ?? null, def.bounds ?? null, def.start ?? null, def.hz ?? null],
       context,
-      ([gravityRaw, dampingRaw, boundsRaw]) => {
+      ([gravityRaw, dampingRaw, boundsRaw, startRaw, hzRaw]) => {
         const config: PhysicsConfig = {
           gravity: gravityRaw ? gravityRaw as [number, number] : [0, 980],
           damping: dampingRaw !== null ? Number(dampingRaw) : 0.01,
@@ -684,10 +730,18 @@ export class PhysicsNode extends Node {
           onStep: (context._onPhysicsStep as ((selector: string) => void) | undefined)
             ? () => (context._onPhysicsStep as (s: string) => void)(selector)
             : null,
+          // Fixed tick rate (ms) when `hz` is given; null = default scheduler.
+          tickMs: hzRaw != null && Number(hzRaw) > 0 ? 1000 / Number(hzRaw) : null,
+          // Off-thread stepping when the node has an env worker factory and the
+          // store is shared; registers this world as a job. Else main-thread.
+          offload: makeWorker && store.shared ? offloadWorld(makeWorker, selector, store, config) : null,
         };
 
         worlds.set(selector, world);
-        startLoop(world);
+        // `start: false` creates the world without the auto-loop, so the author
+        // drives it with `physics-step` (e.g. a server authoritative tick) — no
+        // double-stepping. Defaults to true (auto-loop) for backward compat.
+        if (startRaw !== false) startLoop(world);
         return null;
       },
     );
@@ -708,7 +762,8 @@ export class PhysicsNode extends Node {
   ["physics-destroy"](_def: Record<string, unknown>, context: Context): NodeValue {
     const selector = PhysicsNode.sel(context);
     const w = worlds.get(selector);
-    if (w?.loopId != null) cancelFrame(w.loopId);
+    if (w?.loopId != null) cancelFrame(w.loopId, w.tickMs);
+    w?.offload?.worker.stop();
     worlds.delete(selector);
     return null;
   }
@@ -797,6 +852,10 @@ export class CollisionNode extends Node {
           type: "array",
           description: "Steps to run on collision.",
         },
+        thread: {
+          enum: ["physics", "main"],
+          description: "Where `do` runs when physics is threaded. `physics` (default) runs it in the physics worker; use `main` when the steps mutate client/server context, DOM, or network state the owning thread reads.",
+        },
       },
     },
   };
@@ -807,10 +866,13 @@ export class CollisionNode extends Node {
     if (!w) return null;
 
     return resolveAll([def.groups, def.id ?? null], context, ([groupsRaw, idRaw]) => {
-      const groups = groupsRaw as [string, string];
+      const groups: [string, string] = Array.isArray(groupsRaw)
+        ? [String(groupsRaw[0]), String(groupsRaw[1])]
+        : ["", ""];
       const id = idRaw !== null ? String(idRaw) : `h${w.handlers.length}`;
       const steps = Array.isArray(def.do) ? def.do as unknown[] : [];
-      w.handlers.push({ id, groups, do: steps });
+      const thread = def.thread === "main" ? "main" : "physics";
+      w.handlers.push({ id, groups, do: steps, thread });
       return id;
     });
   }
@@ -954,15 +1016,18 @@ export class JointNode extends Node {
 
 // ─── Collision handler dispatch ──────────────────────────────────────────────
 
-function fireCollisionHandlers(world: PhysicsWorld, contacts: Contact[]): void | Promise<void> {
+function fireCollisionHandlers(world: PhysicsWorld, contacts: Contact[], onlyMain = false): void | Promise<void> {
   // Sync-fast-path: walk all contacts/handlers inline; only return a Promise chain
   // when a handler actually returns one. Sequential ordering is preserved on the
   // async path so `world.context.collisionX` is not clobbered between handlers.
+  // `onlyMain`: skip `thread:"physics"` handlers (they already ran on the worker)
+  // — used by the off-thread path, where `contacts` are only the marshaled ones.
   let chain: Promise<unknown> | null = null;
   for (const { slotA, slotB, nx, ny, nz } of contacts) {
     const ma = world.store.meta[slotA]!, mb = world.store.meta[slotB]!;
     for (const h of world.handlers) {
       if (h.do.length === 0) continue;
+      if (onlyMain && h.thread !== "main") continue;
       const [g1, g2] = h.groups;
       let ca: string, cb: string, cnx: number, cny: number, cnz: number;
       if (ma.group === g1 && mb.group === g2) {
@@ -1011,8 +1076,18 @@ function snapshotPositions(store: EntityStore): void {
 }
 
 function startLoop(world: PhysicsWorld): void {
+  // For a fixed `hz` cadence, schedule against a moving TARGET timestamp (advanced
+  // by tickMs each tick) and sleep only `target - now`, so per-tick work + timer
+  // jitter don't accumulate — the average rate holds. A flat setTimeout(tickMs)
+  // would drift slow (work time leaks into every period).
+  let nextAt = world.tickMs !== null ? Date.now() + world.tickMs : 0;
   const tick = async (time: number) => {
-    world.loopId = scheduleFrame(tick);
+    let delay: number | null = null;
+    if (world.tickMs !== null) {
+      delay = nextAt - Date.now();
+      nextAt += world.tickMs;
+    }
+    world.loopId = scheduleFrame(tick, delay);
     if (world.paused) { world.lastTime = 0; world.accumulator = 0; return; }
 
     const frameDt = world.lastTime
@@ -1025,19 +1100,42 @@ function startLoop(world: PhysicsWorld): void {
     let contacts: Contact[] = [];
     let steps = 0;
 
-    // Fixed timestep: run as many FIXED_DT steps as accumulated time allows.
-    // Skip the microtask hop when collision handlers ran sync — await on undefined
-    // still queues a microtask, which adds up across many fixed steps per frame.
-    while (world.accumulator >= FIXED_DT) {
-      snapshotPositions(world.store);
-      contacts = physicsStep(world.store, world.config, FIXED_DT, world.constraints);
-      world.store.deferringRemovals = true;
-      const fired = fireCollisionHandlers(world, contacts);
-      if (fired) await fired;
-      world.accumulator -= FIXED_DT;
-      steps++;
+    // Off-thread path: batch all accumulated steps to the host's worker, then run
+    // only the `thread:"main"` handlers on the marshaled contacts (the worker
+    // already ran `thread:"physics"` ones). Constraints aren't marshaled, so fall
+    // back to the main-thread loop while any exist.
+    if (world.offload && world.constraints.length === 0) {
+      const want = Math.floor(world.accumulator / FIXED_DT);
+      if (want > 0) {
+        const off = world.offload;
+        snapshotPositions(world.store); // pre-batch snapshot for render interpolation
+        world.store.deferringRemovals = true;
+        Atomics.store(off.countView, 0, world.store.count); // sync live entity count
+        const { committed } = off.worker.step(want);
+        // committed>0 launched a fresh batch; the contacts buffer now holds the
+        // PREVIOUS batch's results (pipelined one behind) — read the main-thread ones.
+        if (committed > 0) contacts = readContacts(off.contactsView);
+        steps = committed;
+        const fired = fireCollisionHandlers(world, contacts, true);
+        if (fired) await fired;
+        world.accumulator -= steps * FIXED_DT; // only the steps actually committed
+        world.store.flushRemovals();
+      }
+    } else {
+      // Fixed timestep: run as many FIXED_DT steps as accumulated time allows.
+      // Skip the microtask hop when collision handlers ran sync — await on undefined
+      // still queues a microtask, which adds up across many fixed steps per frame.
+      while (world.accumulator >= FIXED_DT) {
+        snapshotPositions(world.store);
+        contacts = physicsStep(world.store, world.config, FIXED_DT, world.constraints);
+        world.store.deferringRemovals = true;
+        const fired = fireCollisionHandlers(world, contacts);
+        if (fired) await fired;
+        world.accumulator -= FIXED_DT;
+        steps++;
+      }
+      world.store.flushRemovals();
     }
-    world.store.flushRemovals();
 
     // Interpolation alpha: how far into the next fixed step we are
     world.store.interpolationAlpha = world.accumulator / FIXED_DT;
@@ -1064,7 +1162,7 @@ function startLoop(world: PhysicsWorld): void {
       _perfLastLog = time;
     }
   };
-  world.loopId = scheduleFrame(tick);
+  world.loopId = scheduleFrame(tick, world.tickMs);
 }
 
 

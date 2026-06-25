@@ -13,13 +13,14 @@ export {
   F_U, F_V, F_UW, F_UH, F_OPACITY,
   FLAG_VISIBLE, FLAG_PHYSICS, FLAG_FIXED, FLAG_POOLED, FLAG_SLEEPING, FLAG_TRIGGER, FLAG_CCD,
   DIRTY_TRANSFORM, DIRTY_VISUAL, DIRTY_TEXT, DIRTY_Z, DIRTY_WORLD,
+  SHAPE_RECT, SHAPE_CIRCLE, SHAPE_RAMP, SHAPE_MESH, MAX_GROUPS,
 } from "./EntityStore.js";
 
 // ── Entity Node ──
 export { EntityNode } from "./nodes/EntityNode.js";
 
 // ── Mesh Import (GLB / GLTF) ──
-export { MeshNode } from "./nodes/MeshNode.js";
+export { MeshNode, setMeshoptLoader, type MeshoptDecoder } from "./nodes/MeshNode.js";
 export type {
   Bounds, MeshMaterial, MeshData, NodeData, Scene, MeshEntry, BVH,
 } from "./Mesh.js";
@@ -37,6 +38,17 @@ export {
 
 // ── Raycast ──
 export { rayAABB, raycastStore, type RayHit } from "./Raycast.js";
+
+// The generic worker offload (`runOnWorker` / `runWorkerRuntime`) lives in
+// @jexs/core. Physics provides only the job (`physicsSetup`) + a thin host helper
+// (`offloadWorld`); the env packages provide `makePhysicsWorker`.
+
+// ── Physics worker job (runs on @jexs/core's generic worker runtime) ──
+export {
+  physicsSetup, offloadWorld,
+  makeContactsBuffer, readContacts, CONTACT_STRIDE,
+  type WorldOffload, type PhysicsJobBufs,
+} from "./sharedPhysics.js";
 
 // ── Vector ──
 export {

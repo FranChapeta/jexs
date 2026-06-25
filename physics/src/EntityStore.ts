@@ -108,12 +108,74 @@ export interface EntityMeta {
     content: string;
     font: string;
     fill: string;
+    /** Set when `font` names a registered MSDF font: render via the GL MSDF path
+     *  (per frame, crisp at any scale) instead of a one-shot canvas texture. */
+    msdf?: { font: string; size: number };
   };
 }
 
 // ─── EntityStore ─────────────────────────────────────────────────────────────
 
 const INITIAL_CAPACITY = 64;
+
+// ─── Packed collision metadata (SAB-refactor) ────────────────────────────────
+// Collision filtering + shape dispatch read these per-slot typed arrays instead
+// of the `meta` objects, so the physics step can run with no object access
+// (and, in shared mode, on a worker over shared memory).
+
+/** Shape enum packed per slot for narrowphase dispatch. */
+export const SHAPE_RECT = 0;
+export const SHAPE_CIRCLE = 1;
+export const SHAPE_RAMP = 2;
+export const SHAPE_MESH = 3;
+
+/** Max distinct collision groups: each group is one bit of a 32-bit mask. */
+export const MAX_GROUPS = 32;
+
+/**
+ * Hard ceiling for a SharedArrayBuffer-backed store. A growable SAB reserves
+ * address space up to its maxByteLength, so this bounds the reservation; the
+ * non-shared store has no such cap (it reallocs on demand).
+ */
+const MAX_CAPACITY = 1 << 17; // 131072 entities
+
+// Growable SharedArrayBuffer (ES2024) — minimal ambient types until the build
+// target's lib includes them. Scoped to what this module uses.
+declare global {
+  interface SharedArrayBuffer {
+    grow(newByteLength: number): void;
+    readonly growable: boolean;
+  }
+  interface SharedArrayBufferConstructor {
+    new (byteLength: number, options?: { maxByteLength?: number }): SharedArrayBuffer;
+  }
+}
+
+/** The shared backing buffers, one per per-slot typed array (shared mode only). */
+interface SharedSabs {
+  data: SharedArrayBuffer; prev: SharedArrayBuffer;
+  motion: SharedArrayBuffer; sleep: SharedArrayBuffer;
+  group: SharedArrayBuffer; mask: SharedArrayBuffer;
+  shape: SharedArrayBuffer; mesh: SharedArrayBuffer;
+}
+
+/** Reallocate a typed-array view to a new length, copying contents (non-shared grow). */
+function regrow<T extends { set(src: T): void }>(view: T, len: number, Ctor: new (n: number) => T): T {
+  const next = new Ctor(len);
+  next.set(view);
+  return next;
+}
+
+/** True when growable SharedArrayBuffer is available (requires cross-origin isolation). */
+function supportsGrowableSAB(): boolean {
+  if (typeof SharedArrayBuffer === "undefined") return false;
+  try {
+    const probe = new SharedArrayBuffer(8, { maxByteLength: 16 });
+    return typeof probe.grow === "function";
+  } catch {
+    return false;
+  }
+}
 
 export class EntityStore {
   data: Float64Array;
@@ -147,6 +209,14 @@ export class EntityStore {
 
   /** Previous positions for fixed-timestep interpolation (3 floats per entity: x, y, z). */
   prevPositions: Float64Array;
+  /**
+   * Interpolated render positions (3 floats per entity: x, y, z) — a MAIN-THREAD
+   * render scratch, NOT shared and NEVER touched by the physics worker. The
+   * renderer computes the prev↔current blend into this each frame and reads its
+   * visible transforms from here, so `data` stays the authoritative physics state
+   * (the worker writes `data`; the renderer only reads it). Grows with the store.
+   */
+  renderPos: Float64Array;
   /** Interpolation alpha [0..1] for rendering between prev and current positions. */
   interpolationAlpha = 1;
   /** Per-entity low-pass filtered motion value for sleep detection. */
@@ -158,13 +228,181 @@ export class EntityStore {
   /** When true, remove() defers instead of executing immediately. */
   deferringRemovals = false;
 
-  constructor(capacity = INITIAL_CAPACITY) {
+  /** True when the numeric buffers are backed by growable SharedArrayBuffers
+   *  (cross-thread sharing). Falls back to plain Float64Array when unavailable. */
+  readonly shared: boolean;
+  /** Bumped whenever the numeric views are re-created (a `grow()`). Consumers
+   *  that cache a view of `data` re-acquire it when this changes. */
+  bufferGeneration = 0;
+  // No separate SAB handles are kept: in shared mode each typed-array view is a
+  // length-tracking view over its growable SharedArrayBuffer, so `view.buffer`
+  // IS the SAB (used by grow()/getSharedBuffers()).
+
+  // ── Packed collision metadata (one element per slot) ──
+  /** Interned group id per slot (0..MAX_GROUPS-1). */
+  groupId: Int32Array;
+  /** 32-bit bitset of allowed groups per slot (`1<<groupId` of each mask entry). */
+  maskBits: Int32Array;
+  /** SHAPE_* enum per slot. */
+  shapeType: Uint8Array;
+  /** Interned mesh id per slot, -1 if none (for mesh-collision dispatch). */
+  meshIndex: Int32Array;
+  private _groupIds = new Map<string, number>();
+  private _meshIds = new Map<string, number>();
+
+  // Grow strategy + capacity ceiling, fixed at construction from `shared` — so
+  // grow() doesn't re-branch. Shared: grow each SAB in place (length-tracking
+  // views auto-extend), capped at MAX_CAPACITY. Non-shared: realloc+copy, no cap.
+  private readonly _maxCap: number;
+  private readonly _grow: (cap: number) => void;
+  /** The shared backing buffers (shared mode only) — the source of truth handed
+   *  to a worker via getSharedBuffers(). Null in non-shared mode. */
+  private readonly _sharedBuffers: SharedSabs | null;
+
+  constructor(capacity = INITIAL_CAPACITY, shared = false) {
     this.capacity = capacity;
-    this.data = new Float64Array(capacity * STRIDE);
-    this.prevPositions = new Float64Array(capacity * 3);
-    this.motion = new Float64Array(capacity);
-    this.sleepFrames = new Uint16Array(capacity);
+    this.shared = shared && supportsGrowableSAB();
+    if (this.shared) {
+      // Growable SABs, captured once here as the single source of truth for both
+      // grow() and getSharedBuffers() — no per-call re-derivation from .buffer.
+      // Views are length-tracking (no explicit length) so they auto-extend on grow.
+      const sab = (bytes: number, max: number) => new SharedArrayBuffer(bytes, { maxByteLength: max });
+      const sb: SharedSabs = {
+        data: sab(capacity * STRIDE * 8, MAX_CAPACITY * STRIDE * 8),
+        prev: sab(capacity * 3 * 8, MAX_CAPACITY * 3 * 8),
+        motion: sab(capacity * 8, MAX_CAPACITY * 8),
+        sleep: sab(capacity * 2, MAX_CAPACITY * 2),
+        group: sab(capacity * 4, MAX_CAPACITY * 4),
+        mask: sab(capacity * 4, MAX_CAPACITY * 4),
+        shape: sab(capacity, MAX_CAPACITY),
+        mesh: sab(capacity * 4, MAX_CAPACITY * 4),
+      };
+      this._sharedBuffers = sb;
+      this.data = new Float64Array(sb.data);
+      this.prevPositions = new Float64Array(sb.prev);
+      this.renderPos = new Float64Array(capacity * 3); // main-thread scratch, not shared
+      this.motion = new Float64Array(sb.motion);
+      this.sleepFrames = new Uint16Array(sb.sleep);
+      this.groupId = new Int32Array(sb.group);
+      this.maskBits = new Int32Array(sb.mask);
+      this.shapeType = new Uint8Array(sb.shape);
+      this.meshIndex = new Int32Array(sb.mesh);
+      this._maxCap = MAX_CAPACITY;
+      this._grow = (cap) => {
+        sb.data.grow(cap * STRIDE * 8);
+        sb.prev.grow(cap * 3 * 8);
+        sb.motion.grow(cap * 8);
+        sb.sleep.grow(cap * 2);
+        sb.group.grow(cap * 4);
+        sb.mask.grow(cap * 4);
+        sb.shape.grow(cap);
+        sb.mesh.grow(cap * 4);
+        this.renderPos = regrow(this.renderPos, cap * 3, Float64Array); // non-shared scratch
+      };
+    } else {
+      this.data = new Float64Array(capacity * STRIDE);
+      this.prevPositions = new Float64Array(capacity * 3);
+      this.renderPos = new Float64Array(capacity * 3);
+      this.motion = new Float64Array(capacity);
+      this.sleepFrames = new Uint16Array(capacity);
+      this.groupId = new Int32Array(capacity);
+      this.maskBits = new Int32Array(capacity);
+      this.shapeType = new Uint8Array(capacity);
+      this.meshIndex = new Int32Array(capacity);
+      this._maxCap = Infinity;
+      this._grow = (cap) => {
+        this.data = regrow(this.data, cap * STRIDE, Float64Array);
+        this.prevPositions = regrow(this.prevPositions, cap * 3, Float64Array);
+        this.renderPos = regrow(this.renderPos, cap * 3, Float64Array);
+        this.motion = regrow(this.motion, cap, Float64Array);
+        this.sleepFrames = regrow(this.sleepFrames, cap, Uint16Array);
+        this.groupId = regrow(this.groupId, cap, Int32Array);
+        this.maskBits = regrow(this.maskBits, cap, Int32Array);
+        this.shapeType = regrow(this.shapeType, cap, Uint8Array);
+        this.meshIndex = regrow(this.meshIndex, cap, Int32Array);
+      };
+      this._sharedBuffers = null;
+    }
+    // meshIndex sentinel is -1 (no mesh); repackCollision() sets each slot on add,
+    // so newly grown slots (SAB grows zero-filled) are written before they're read.
+    this.meshIndex.fill(-1);
     this.meta = new Array(capacity).fill(null);
+  }
+
+  /** Intern a group string into a stable 0-based id (one bit of the mask). */
+  private internGroup(group: string): number {
+    let id = this._groupIds.get(group);
+    if (id === undefined) {
+      id = this._groupIds.size;
+      if (id >= MAX_GROUPS) throw new Error(`EntityStore: exceeded ${MAX_GROUPS} collision groups`);
+      this._groupIds.set(group, id);
+    }
+    return id;
+  }
+
+  /** Intern a mesh id string into a stable 0-based index. */
+  private internMesh(meshId: string): number {
+    let idx = this._meshIds.get(meshId);
+    if (idx === undefined) { idx = this._meshIds.size; this._meshIds.set(meshId, idx); }
+    return idx;
+  }
+
+  /**
+   * Refresh a slot's packed collision arrays from its `meta` (group/mask/type/
+   * meshId). Call after `add()` and whenever any of those fields change.
+   */
+  repackCollision(slot: number): void {
+    const m = this.meta[slot];
+    if (!m) return;
+    this.groupId[slot] = this.internGroup(m.group);
+    let bits = 0;
+    for (const g of m.mask) bits |= 1 << this.internGroup(g);
+    this.maskBits[slot] = bits;
+    this.shapeType[slot] =
+      m.type === "circle" ? SHAPE_CIRCLE :
+      m.type === "ramp"   ? SHAPE_RAMP :
+      (m.type === "mesh" && m.meshId) ? SHAPE_MESH : SHAPE_RECT;
+    this.meshIndex[slot] = m.meshId ? this.internMesh(m.meshId) : -1;
+  }
+
+  /** The shared buffers + layout, for transfer to a physics worker. Null when
+   *  not in shared mode. `meta` is intentionally excluded — it stays main-thread. */
+  getSharedBuffers(): (SharedSabs & { stride: number; capacity: number }) | null {
+    if (!this._sharedBuffers) return null;
+    return { ...this._sharedBuffers, stride: STRIDE, capacity: this.capacity };
+  }
+
+  /**
+   * Build a worker-side EntityStore over the host's shared buffers (no copy).
+   * The numeric typed arrays are WINDOWS onto the same SharedArrayBuffers, so
+   * `physicsStep` writes transforms/velocities here and the host sees them in
+   * place — this store is fully writable for the per-step numeric path.
+   *
+   * What it does NOT carry: the `meta` objects (empty — `EntityMeta[]` is JS
+   * objects, not shareable) and `meshes`, so it is valid only for the meta-free
+   * step (non-parented, non-mesh bodies; parenting/mesh stay host-side). And it
+   * must not change the POPULATION: do not add/remove/grow on this view —
+   * structural changes (which realloc/extend the SAB and move `count`) are owned
+   * by the host and marshaled in via `countView`. The host writes structure; the
+   * worker writes per-step physics.
+   */
+  static viewShared(
+    bufs: NonNullable<ReturnType<EntityStore["getSharedBuffers"]>>,
+    count: number,
+  ): EntityStore {
+    const s = new EntityStore(1); // minimal; views below replace its buffers
+    s.data = new Float64Array(bufs.data);
+    s.prevPositions = new Float64Array(bufs.prev);
+    s.motion = new Float64Array(bufs.motion);
+    s.sleepFrames = new Uint16Array(bufs.sleep);
+    s.groupId = new Int32Array(bufs.group);
+    s.maskBits = new Int32Array(bufs.mask);
+    s.shapeType = new Uint8Array(bufs.shape);
+    s.meshIndex = new Int32Array(bufs.mesh);
+    s.capacity = bufs.capacity;
+    s.count = count;
+    s.meta = []; // worker has no meta objects; step path is meta-free
+    return s;
   }
 
   /** Allocate a slot for a new entity. Returns the slot index. */
@@ -245,6 +483,7 @@ export class EntityStore {
     this.prevPositions[pb + 2] = t[2];
 
     this.meta[slot] = { id, type, group, mask, vertices, dirty: 0, children: [], worldTransform: null, custom: {} };
+    this.repackCollision(slot);
     this.idToSlot.set(id, slot);
     this.slotToOrderIdx.set(slot, this.order.length);
     this.order.push(slot);
@@ -331,6 +570,11 @@ export class EntityStore {
       this.prevPositions[dstPrev + 2] = this.prevPositions[srcPrev + 2];
       this.motion[slot] = this.motion[last];
       this.sleepFrames[slot] = this.sleepFrames[last];
+      // Packed collision arrays move with the entity.
+      this.groupId[slot] = this.groupId[last];
+      this.maskBits[slot] = this.maskBits[last];
+      this.shapeType[slot] = this.shapeType[last];
+      this.meshIndex[slot] = this.meshIndex[last];
 
       const lastMeta = this.meta[last]!;
       this.meta[slot] = lastMeta;
@@ -475,13 +719,20 @@ export class EntityStore {
    * Get world transform for a slot: [wtx, wty, wtz, wsx, wsy, wsz, wqx, wqy, wqz, wqw].
    * Computes from parent chain if not cached. Caches the result.
    */
-  getWorldTransform(slot: number): Float64Array {
+  getWorldTransform(slot: number, interpolated = false): Float64Array {
     const meta = this.meta[slot];
     if (!meta) return _identityWT;
-    if (meta.worldTransform) return meta.worldTransform;
+    // Raw path caches into meta.worldTransform (invalidated on mutation). The
+    // interpolated path (render only) reads renderPos for translation and is NOT
+    // cached — alpha changes every frame — so it returns a fresh transform.
+    if (!interpolated && meta.worldTransform) return meta.worldTransform;
 
-    const b = slot * STRIDE;
-    const lx = this.data[b + F_TX], ly = this.data[b + F_TY], lz = this.data[b + F_TZ];
+    const b = slot * STRIDE, pb = slot * 3;
+    // Local translation: from renderPos (interpolated) or data (raw physics).
+    const r = interpolated ? this.renderPos : null;
+    const lx = r ? r[pb]     : this.data[b + F_TX];
+    const ly = r ? r[pb + 1] : this.data[b + F_TY];
+    const lz = r ? r[pb + 2] : this.data[b + F_TZ];
     const lsx = this.data[b + F_SX], lsy = this.data[b + F_SY], lsz = this.data[b + F_SZ];
     const lqx = this.data[b + F_QX], lqy = this.data[b + F_QY];
     const lqz = this.data[b + F_QZ], lqw = this.data[b + F_QW];
@@ -491,6 +742,7 @@ export class EntityStore {
       wt[0]=lx; wt[1]=ly; wt[2]=lz;
       wt[3]=lsx; wt[4]=lsy; wt[5]=lsz;
       wt[6]=lqx; wt[7]=lqy; wt[8]=lqz; wt[9]=lqw;
+      if (interpolated) return wt;
       meta.worldTransform = wt;
       meta.dirty &= ~DIRTY_WORLD;
       return wt;
@@ -502,12 +754,13 @@ export class EntityStore {
       wt[0]=lx; wt[1]=ly; wt[2]=lz;
       wt[3]=lsx; wt[4]=lsy; wt[5]=lsz;
       wt[6]=lqx; wt[7]=lqy; wt[8]=lqz; wt[9]=lqw;
+      if (interpolated) return wt;
       meta.worldTransform = wt;
       meta.dirty &= ~DIRTY_WORLD;
       return wt;
     }
 
-    const pwt = this.getWorldTransform(parentSlot);
+    const pwt = this.getWorldTransform(parentSlot, interpolated);
     const px = pwt[0], py = pwt[1], pz = pwt[2];
     const psx = pwt[3], psy = pwt[4], psz = pwt[5];
     const pqx = pwt[6], pqy = pwt[7], pqz = pwt[8], pqw = pwt[9];
@@ -535,6 +788,7 @@ export class EntityStore {
     wt[0]=wtx; wt[1]=wty; wt[2]=wtz;
     wt[3]=wsx; wt[4]=wsy; wt[5]=wsz;
     wt[6]=wqx; wt[7]=wqy; wt[8]=wqz; wt[9]=wqw;
+    if (interpolated) return wt;
     meta.worldTransform = wt;
     meta.dirty &= ~DIRTY_WORLD;
     return wt;
@@ -556,45 +810,30 @@ export class EntityStore {
   }
 
   /**
-   * Lerp positions in-place for rendering. Call before drawing.
-   * Overwrites data[F_X/F_Y/F_Z] with interpolated values and
-   * stashes the real physics positions into prevPositions.
+   * Compute interpolated RENDER positions into `renderPos` (read-only over the
+   * physics state). Call once per frame before drawing; the renderer then reads
+   * visible transforms from `renderPos` while `data` stays the authoritative
+   * physics state. NON-MUTATING — never writes `data`/`prevPositions`, so it is
+   * safe while a physics worker concurrently writes `data` (the industry-standard
+   * separation: simulate in `data`, blend into a render-only buffer).
    *
-   * Invalidates worldTransform cache for any entity whose position changed —
-   * stale caches built before this call would otherwise propagate through
-   * child entities during the render pass and during any on-frame work that
-   * reads `worldX/worldY/worldZ` after the matching restoreFromInterpolation.
+   * `skipSlot` (the camera-follow entity) renders at its RAW position so camera
+   * and entity use the same coordinate and don't jitter against each other.
    */
-  applyInterpolation(skipSlot = -1): void {
-    const d = this.data, p = this.prevPositions;
+  computeRenderPositions(skipSlot = -1): void {
+    const d = this.data, p = this.prevPositions, r = this.renderPos;
     const alpha = this.interpolationAlpha;
     const oneMinusAlpha = 1 - alpha;
     for (let i = 0; i < this.count; i++) {
       const b = i * STRIDE, pb = i * 3;
       const cx = d[b + F_TX], cy = d[b + F_TY], cz = d[b + F_TZ];
-      if (i !== skipSlot) {
-        d[b + F_TX] = p[pb]     * oneMinusAlpha + cx * alpha;
-        d[b + F_TY] = p[pb + 1] * oneMinusAlpha + cy * alpha;
-        d[b + F_TZ] = p[pb + 2] * oneMinusAlpha + cz * alpha;
-        const m = this.meta[i];
-        if (m && m.worldTransform) m.worldTransform = null;
+      if (i === skipSlot || alpha >= 1) {
+        r[pb] = cx; r[pb + 1] = cy; r[pb + 2] = cz;
+      } else {
+        r[pb]     = p[pb]     * oneMinusAlpha + cx * alpha;
+        r[pb + 1] = p[pb + 1] * oneMinusAlpha + cy * alpha;
+        r[pb + 2] = p[pb + 2] * oneMinusAlpha + cz * alpha;
       }
-      p[pb]     = cx;
-      p[pb + 1] = cy;
-      p[pb + 2] = cz;
-    }
-  }
-
-  /** Restore physics positions after rendering. Call after drawing. */
-  restoreFromInterpolation(): void {
-    const d = this.data, p = this.prevPositions;
-    for (let i = 0; i < this.count; i++) {
-      const b = i * STRIDE, pb = i * 3;
-      d[b + F_TX] = p[pb];
-      d[b + F_TY] = p[pb + 1];
-      d[b + F_TZ] = p[pb + 2];
-      const m = this.meta[i];
-      if (m && m.worldTransform) m.worldTransform = null;
     }
   }
 
@@ -629,22 +868,19 @@ export class EntityStore {
     this.zDirtyCount = 0;
   }
 
-  /** Double the capacity. */
+  /** Double the capacity, applying the grow strategy fixed at construction. */
   private grow(): void {
-    this.capacity *= 2;
-    const newData = new Float64Array(this.capacity * STRIDE);
-    newData.set(this.data);
-    this.data = newData;
-    const newPrev = new Float64Array(this.capacity * 3);
-    newPrev.set(this.prevPositions);
-    this.prevPositions = newPrev;
-    const newMotion = new Float64Array(this.capacity);
-    newMotion.set(this.motion);
-    this.motion = newMotion;
-    const newSleep = new Uint16Array(this.capacity);
-    newSleep.set(this.sleepFrames);
-    this.sleepFrames = newSleep;
+    const newCap = Math.min(this.capacity * 2, this._maxCap);
+    if (newCap <= this.capacity) {
+      throw new Error(`EntityStore: capacity cap (${this._maxCap}) reached`);
+    }
+    this.capacity = newCap;
+    this._grow(this.capacity); // shared: grow SABs in place; non-shared: realloc+copy
     this.meta.length = this.capacity;
+    // Consumers caching a view of `data` must re-acquire after a grow: in the
+    // non-shared path the array identity changed; in the shared path the
+    // length-tracking view extended.
+    this.bufferGeneration++;
   }
 }
 

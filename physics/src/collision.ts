@@ -16,6 +16,7 @@ import {
   F_INV_MASS, F_RESTITUTION, F_FRICTION,
   F_FLAGS,
   FLAG_TRIGGER, FLAG_SLEEPING,
+  SHAPE_CIRCLE, SHAPE_RAMP, SHAPE_MESH,
   type EntityMeta,
 } from "./EntityStore.js";
 import type { Contact, PhysicsConfig } from "./nodes/Physics.js";
@@ -32,10 +33,6 @@ import { rotateVecByQuat } from "./quat.js";
  */
 const MESH_THICKNESS_SLACK = 0.01;
 
-function shapeOf(meta: { type: string }): "circle" | "rect" {
-  return meta.type === "circle" ? "circle" : "rect";
-}
-
 /**
  * True when this entity should collide as a triangle mesh. An entity must explicitly
  * declare `type: "mesh"` to opt in — `type: "quad" | "circle"` with a mesh id renders
@@ -43,6 +40,16 @@ function shapeOf(meta: { type: string }): "circle" | "rect" {
  */
 export function usesMeshCollision(meta: EntityMeta): boolean {
   return meta.type === "mesh" && !!meta.meshId;
+}
+
+/**
+ * Packed collision-group filter — true if either body's mask includes the
+ * other's group. Replaces the `meta.mask.includes(meta.group)` string-array
+ * scan with two bitmask ANDs over the shared `groupId`/`maskBits` arrays.
+ */
+export function maskAllows(store: EntityStore, sa: number, sb: number): boolean {
+  return (store.maskBits[sa] & (1 << store.groupId[sb])) !== 0
+      || (store.maskBits[sb] & (1 << store.groupId[sa])) !== 0;
 }
 
 const _rotIdentity = new Float32Array([1,0,0, 0,1,0, 0,0,1]);
@@ -583,30 +590,34 @@ function closestPointOnTriangle(
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 export function detectCollision(
-  store: EntityStore, slotA: number, slotB: number,
-  metaA: EntityMeta, metaB: EntityMeta, dt: number,
+  store: EntityStore, slotA: number, slotB: number, dt: number,
 ): Contact | null {
   const d = store.data;
+  // Meta-free dispatch: shape comes from the packed shapeType array. meta is
+  // only consulted for the mesh-registry key, and only on the mesh branch — so
+  // primitive collisions touch no `meta` objects (worker-safe).
+  const shapeA = store.shapeType[slotA], shapeB = store.shapeType[slotB];
 
-  // Triangle-mesh dispatch — only when the entity's `type` is explicitly "mesh".
-  // An entity with type "quad"/"circle" + a meshId renders the mesh but collides
-  // as a box/sphere using the existing primitive paths below. This keeps narrowphase
-  // cheap for decorative or simple-shape objects.
-  const meshA = usesMeshCollision(metaA);
-  const meshB = usesMeshCollision(metaB);
+  // Triangle-mesh dispatch — only when shapeType is SHAPE_MESH (type "mesh" +
+  // meshId). A "quad"/"circle" with a meshId renders the mesh but collides as a
+  // box/sphere via the primitive paths below, keeping narrowphase cheap.
+  const meshA = shapeA === SHAPE_MESH;
+  const meshB = shapeB === SHAPE_MESH;
   if (meshA && !meshB) {
-    const entry = store.meshes.get(metaA.meshId!);
+    const meshId = store.meta[slotA]?.meshId;
+    const entry = meshId ? store.meshes.get(meshId) : undefined;
     if (entry) {
-      const c = metaB.type === "circle"
+      const c = shapeB === SHAPE_CIRCLE
         ? triMeshVsSphere(store, d, slotA, slotB, entry, dt)
         : triMeshVsAabb(store, d, slotA, slotB, entry, dt);
       if (c) c.trigger = !!(d[slotA * STRIDE + F_FLAGS] & FLAG_TRIGGER) || !!(d[slotB * STRIDE + F_FLAGS] & FLAG_TRIGGER);
       return c;
     }
   } else if (meshB && !meshA) {
-    const entry = store.meshes.get(metaB.meshId!);
+    const meshId = store.meta[slotB]?.meshId;
+    const entry = meshId ? store.meshes.get(meshId) : undefined;
     if (entry) {
-      const c = metaA.type === "circle"
+      const c = shapeA === SHAPE_CIRCLE
         ? triMeshVsSphere(store, d, slotB, slotA, entry, dt)
         : triMeshVsAabb(store, d, slotB, slotA, entry, dt);
       if (!c) return null;
@@ -619,20 +630,20 @@ export function detectCollision(
     }
   }
 
-  const ta = metaA.type, tb = metaB.type;
   let c: Contact | null;
-  if (ta === "ramp" && tb !== "ramp") c = rampVsRect(d, slotA, slotB, true);
-  else if (tb === "ramp" && ta !== "ramp") c = rampVsRect(d, slotB, slotA, false);
+  if (shapeA === SHAPE_RAMP && shapeB !== SHAPE_RAMP) c = rampVsRect(d, slotA, slotB, true);
+  else if (shapeB === SHAPE_RAMP && shapeA !== SHAPE_RAMP) c = rampVsRect(d, slotB, slotA, false);
   else {
-    const sa = shapeOf(metaA), sb = shapeOf(metaB);
-    if (sa === "rect" && sb === "rect") {
+    // Non-circle (rect/ramp-vs-ramp/mesh-vs-mesh) collapses to the rect path,
+    // matching the previous shapeOf() semantics.
+    const aCircle = shapeA === SHAPE_CIRCLE, bCircle = shapeB === SHAPE_CIRCLE;
+    if (!aCircle && !bCircle) {
       const ba = slotA * STRIDE, bb = slotB * STRIDE;
       c = (isRotated(d, ba) || isRotated(d, bb)) ? obbVsObb(d, slotA, slotB) : rectVsRect(d, slotA, slotB);
     }
-    else if (sa === "circle" && sb === "circle") c = circleVsCircle(d, slotA, slotB);
-    else if (sa === "circle" && sb === "rect")   c = circleVsRect(d, slotA, slotB, false);
-    else if (sa === "rect"   && sb === "circle") c = circleVsRect(d, slotB, slotA, true);
-    else return null;
+    else if (aCircle && bCircle)  c = circleVsCircle(d, slotA, slotB);
+    else if (aCircle && !bCircle) c = circleVsRect(d, slotA, slotB, false);
+    else                          c = circleVsRect(d, slotB, slotA, true);
   }
   if (c) {
     c.trigger = !!(d[slotA * STRIDE + F_FLAGS] & FLAG_TRIGGER) || !!(d[slotB * STRIDE + F_FLAGS] & FLAG_TRIGGER);

@@ -130,6 +130,10 @@ export class EntityNode extends Node {
           type: "number",
           description: "World height in pixels (default `600`).",
         },
+        shared: {
+          type: "boolean",
+          description: "Back the store with SharedArrayBuffers so the host can step physics on a worker thread (off the main thread). Falls back to a normal store if growable SAB is unsupported. Default `false`.",
+        },
       },
     },
     "entity-add": {
@@ -299,7 +303,10 @@ export class EntityNode extends Node {
   ["entity-init"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveObj(def, context, r => {
       const id = String(r["entity-init"]);
-      const store = new EntityStore();
+      // `shared:true` backs the store with growable SharedArrayBuffers so the host
+      // (Server worker_threads / Client Web Worker) can step physics off-thread.
+      // The store quietly stays non-shared if growable SAB is unsupported.
+      const store = new EntityStore(undefined, r["shared"] === true);
       store.width  = r["width"]  !== undefined ? Number(r["width"])  : 800;
       store.height = r["height"] !== undefined ? Number(r["height"]) : 600;
       store.virtualWidth  = store.width;
@@ -444,6 +451,11 @@ export class EntityNode extends Node {
       for (const key of keys) {
         if (!KNOWN_KEYS.has(key)) meta.custom[key] = r[key];
       }
+
+      // Sync packed collision arrays now that group/mask/type/meshId are final
+      // (add() packed the fresh-entity defaults; meshId + pooled group/mask are
+      // set above, so re-pack once here to capture them).
+      store.repackCollision(slot);
 
       meta.dirty = DIRTY_TRANSFORM | DIRTY_VISUAL;
       if (r["translation"] !== undefined) {
@@ -618,8 +630,8 @@ export class EntityNode extends Node {
               break;
             }
             case "vertices":    meta.vertices    = v as number[]; meta.dirty |= DIRTY_VISUAL; break;
-            case "group":       meta.group       = String(v); break;
-            case "mask":        meta.mask        = v as string[]; break;
+            case "group":       meta.group       = String(v); store.repackCollision(slot); break;
+            case "mask":        meta.mask        = v as string[]; store.repackCollision(slot); break;
             case "texture":     meta.textureName = String(v); meta.dirty |= DIRTY_VISUAL; break;
             case "normalMap":   meta.normalMap   = String(v); meta.dirty |= DIRTY_VISUAL; break;
             case "normalScale": meta.normalScale = Number(v); meta.dirty |= DIRTY_VISUAL; break;
