@@ -1,4 +1,5 @@
-import { Node } from "@jexs/core";
+import { Node, WorkerNode } from "@jexs/core";
+import { makeThreadWorker } from "./makeWorker.js";
 import { CryptoNode } from "./nodes/Crypto.js";
 import { FileNode } from "./nodes/File.js";
 import { RouterNode } from "./nodes/Router.js";
@@ -36,9 +37,14 @@ export const serverNodes: Node[] = [
   new SchemaNode(),
   new WebSocketNode(),
   new StdioNode(),
+  // `thread` node — runs `do` steps on a worker_threads resolver. The worker
+  // re-enters resolverWorker.js (no-op on the main thread); spawned lazily on
+  // the first `thread` step.
+  new WorkerNode(makeThreadWorker(new URL("./resolverWorker.js", import.meta.url))),
 ];
 
 export { Server } from "./Server.js";
+export { makePhysicsWorker } from "./physicsWorker.js";
 export { DatabaseNode } from "./nodes/Database.js";
 export { QueryNode } from "./nodes/Query.js";
 export { SchemaNode } from "./nodes/Schema.js";

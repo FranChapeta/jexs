@@ -1,5 +1,7 @@
-import { registerNode, registerLazy } from "@jexs/core";
+import { registerNode, WorkerNode } from "@jexs/core";
 import { Client } from "./Client.js";
+import { registerComputeLazy, registerDomLazy } from "./registerNodes.js";
+import { makeModuleWorker } from "./makeWorker.js";
 
 export { Client, clientNodes } from "./Client.js";
 
@@ -24,70 +26,15 @@ if (typeof window !== "undefined") {
   const client = new Client();
   (window as unknown as Record<string, unknown>).jexs = client;
 
-  registerLazy(
-    ["tree-init", "tree-insert", "tree-remove", "tree-update", "tree-move"],
-    () => import("./nodes/TreeNode.js").then(({ TreeNode, setInitEvents }) => {
-      setInitEvents((root) => client.initEvents(root));
-      registerNode(new TreeNode());
-    }),
-  );
+  // Lazy node groups (loaded on first use). Compute groups are worker-safe; DOM
+  // groups need the main thread. The resolver worker reuses registerComputeLazy
+  // (the same blocks), so there are no duplicated node lists.
+  registerComputeLazy();
+  registerDomLazy(client);
 
-  registerLazy(
-    ["list-add", "list-remove", "list-move-up", "list-move-down", "list-init", "list-sortable", "list-serialize"],
-    () => import("./nodes/ListNode.js").then(({ ListNode, setInitEvents }) => {
-      setInitEvents((root) => client.initEvents(root));
-      registerNode(new ListNode());
-    }),
-  );
-
-  registerLazy(
-    ["ws-connect", "ws-send", "ws-close"],
-    () => import("./nodes/WsNode.js").then(({ WsNode }) => {
-      registerNode(new WsNode());
-    }),
-  );
-
-  registerLazy(
-    ["push-subscribe", "push-unsubscribe"],
-    () => import("./nodes/PushNode.js").then(({ PushNode }) => {
-      registerNode(new PushNode());
-    }),
-  );
-
-  registerLazy(
-    ["rtc"],
-    () => import("./nodes/WebRTCNode.js").then(({ WebRTCNode }) => {
-      registerNode(new WebRTCNode());
-    }),
-  );
-
-  registerLazy(
-    ["gl-init", "gl-destroy", "gl-hit", "gl-camera", "gl-texture", "gl-animate",
-     "gl-text", "gl-shader", "gl-blur", "gl-transition", "gl-tween", "gl-ssao",
-     "gl-register-mesh"],
-    () => import("@jexs/gl").then(({ GlNode }) => {
-      registerNode(new GlNode());
-    }),
-  );
-
-  registerLazy(
-    ["entity-init", "entity-add", "entity-remove", "entity-move", "entity-update",
-     "entity-clear", "entity-list", "entity-nearest", "entity-get",
-     "v-distance", "v-lerp", "v-toward", "v-normalize", "v-scale",
-     "v-add", "v-sub", "v-direction", "v-cross", "v-dot",
-     "physics-init", "physics-pause", "physics-resume", "physics-destroy", "physics-apply", "physics-step",
-     "collision-on", "collision-off",
-     "joint-add", "joint-remove",
-     "parseGLB", "parseGLTF", "register-mesh"],
-    () => import("@jexs/physics").then(({ EntityNode, VectorNode, PhysicsNode, CollisionNode, JointNode, MeshNode }) => {
-      registerNode(new EntityNode());
-      registerNode(new VectorNode());
-      registerNode(new PhysicsNode());
-      registerNode(new CollisionNode());
-      registerNode(new JointNode());
-      registerNode(new MeshNode());
-    }),
-  );
+  // `thread` node — runs `do` steps on a resolver Web Worker. The leaf bundle is
+  // only FETCHED when the first `thread` step runs (URL resolved, not loaded).
+  registerNode(new WorkerNode(makeModuleWorker(new URL("./resolverWorker.js", import.meta.url))));
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => client.initEvents());

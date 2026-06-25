@@ -4,3 +4,4 @@ dist
 public/js
 *.db
 .claude/settings.local.json
+scratch/
