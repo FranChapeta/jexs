@@ -1,6 +1,6 @@
 {
   "name": "@jexs/physics",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "license": "MIT",
   "description": "Entity store, physics simulation, collision detection, raycasting, vectors, and GLB/GLTF mesh loading for Jexs",
   "keywords": ["jexs", "physics", "collision", "raycast", "entity-component-system", "bvh", "glb", "gltf", "vector", "simulation"],
@@ -19,6 +19,6 @@
   },
   "files": ["dist"],
   "peerDependencies": {
-    "@jexs/core": "^0.7.3"
+    "@jexs/core": "^0.8.0"
   }
 }
