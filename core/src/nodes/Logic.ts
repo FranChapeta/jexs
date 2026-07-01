@@ -79,6 +79,15 @@ export class LogicNode extends Node {
         "{ \"or\": [{ \"var\": \"$isAdmin\" }, { \"var\": \"$isModerator\" }] }",
       ],
     },
+    coalesce: {
+      type: "array",
+      output: "any",
+      markdownDescription: "Resolves values left to right, returning the first non-empty one — the value itself, not a boolean. Short-circuits, so later expressions are never resolved once a value is found. Use it to supply a fallback without repeating an expression across `if`/`then`.",
+      outputDescription: "The first value that is not empty (`null`, `undefined`, `\"\"`, `[]`, `{}` are skipped; `0` and `false` are kept — the same rule as `notEmpty`). If every value is empty, the LAST one is returned; an empty array yields `undefined`.",
+      examples: [
+        "{ \"coalesce\": [{ \"var\": \"$props.button.properties.size.type\" }, \"any\"] }",
+      ],
+    },
     not: {
       output: "boolean",
       markdownDescription: "Boolean negation of the resolved value's truthiness.",
@@ -178,8 +187,8 @@ export class LogicNode extends Node {
     },
 
     exec: {
-      markdownDescription: "Resolves its value, then executes the result as a step sequence. Useful for running dynamically resolved step arrays.",
-      outputDescription: "The value of the executed steps — the last step when the resolved value is an array, otherwise the resolved value itself.",
+      markdownDescription: "Resolves its value to a step sequence, then runs it. The steps are supplied as an expression — typically a `var` holding a step array (that is how you feed a step sequence in). The resolved array is executed as steps, so each step's `as` binding is visible to later steps.",
+      outputDescription: "The LAST step's value when the resolved value is an array; otherwise the resolved value itself.",
       examples: [
         "{ \"exec\": { \"var\": \"$steps\" } }",
       ],
@@ -281,6 +290,22 @@ export class LogicNode extends Node {
     return next();
   }
 
+  coalesce(def: Record<string, unknown>, context: Context): NodeValue {
+    const values = this.toArray(def.coalesce);
+    let i = 0;
+    let last: unknown = undefined;
+    const self = this;
+    function next(): unknown {
+      if (i >= values.length) return last;
+      return resolve(values[i++], context, v => {
+        last = v;
+        if (!self.isEmptyValue(v)) return v;
+        return next();
+      });
+    }
+    return next();
+  }
+
   not(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.not, context, v => !this.toBoolean(v));
   }
@@ -347,23 +372,21 @@ export class LogicNode extends Node {
   }
 
   empty(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.empty, context, value => {
-      if (value === null || value === undefined) return true;
-      if (typeof value === "string") return value === "";
-      if (Array.isArray(value)) return value.length === 0;
-      if (this.isObject(value)) return !hasAnyKey(value);
-      return false;
-    });
+    return resolve(def.empty, context, value => this.isEmptyValue(value));
   }
 
   notEmpty(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.notEmpty, context, value => {
-      if (value === null || value === undefined) return false;
-      if (typeof value === "string") return value !== "";
-      if (Array.isArray(value)) return value.length > 0;
-      if (this.isObject(value)) return hasAnyKey(value);
-      return true;
-    });
+    return resolve(def.notEmpty, context, value => !this.isEmptyValue(value));
+  }
+
+  // Shared emptiness rule for empty / notEmpty / coalesce: null, undefined, "",
+  // [], {} are empty; 0 and false (and other non-collections) are not.
+  private isEmptyValue(value: unknown): boolean {
+    if (value === null || value === undefined) return true;
+    if (typeof value === "string") return value === "";
+    if (Array.isArray(value)) return value.length === 0;
+    if (this.isObject(value)) return !hasAnyKey(value);
+    return false;
   }
 
   sleep(def: Record<string, unknown>, context: Context): NodeValue {
