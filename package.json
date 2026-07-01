@@ -10,10 +10,10 @@
     "create"
   ],
   "devDependencies": {
-    "typescript": "^5.3.0",
-    "esbuild": "^0.24.0",
+    "esbuild": "^0.28.1",
     "prettier": "^3.8.1",
-    "tsx": "^4.0.0"
+    "tsx": "^4.0.0",
+    "typescript": "^5.3.0"
   },
   "scripts": {
     "build": "tsc -b core physics client gl server mcp create --force && npm run build:schema",
