@@ -104,3 +104,22 @@ test("flat-output methods are unaffected (string slot still rejects boolean outp
   assert.equal(validAt("$defs/exprFlat", inItem({ eq: [1, 1] })), false);
   assert.equal(validAt("$defs/exprFlat", inItem({ var: "$dynamic" })), true);
 });
+
+// The runtime (`buildEventsAttr`) wraps a non-array `do` into a one-step array,
+// so a handler's `do` accepts either a step array OR a single expression.
+const withDo = (d: unknown) => ({ tag: "button", events: { click: { do: d } } });
+
+test("event handler `do` accepts a step array", () => {
+  assert.equal(validAt("$defs/_eventHandler", { do: [{ var: "$x" }] }), true);
+  assert.equal(validAt("$defs/exprFlat", withDo([{ var: "$x" }])), true);
+});
+
+test("event handler `do` accepts a single expression", () => {
+  assert.equal(validAt("$defs/_eventHandler", { do: { var: "$x" } }), true);
+  assert.equal(validAt("$defs/exprFlat", withDo({ var: "$x" })), true);
+});
+
+test("event handler `do` rejects a bare primitive (a no-op step)", () => {
+  assert.equal(validAt("$defs/_eventHandler", { do: 5 }), false);
+  assert.equal(validAt("$defs/exprFlat", withDo("noop")), false);
+});

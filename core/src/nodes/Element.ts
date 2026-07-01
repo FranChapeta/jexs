@@ -79,7 +79,16 @@ export class ElementNode extends Node {
       if: { type: "object" },
       then: {
         properties: {
-          do: { $ref: "#/$defs/steps", description: "Steps to run when the event fires (`$event`, `$target` in context)." },
+          // `do` is an array of steps, or a single expression the runtime
+          // (`buildEventsAttr`) wraps into a one-step array. Both branches require
+          // an expression object: a bare primitive step is a no-op, so it's
+          // rejected here (unlike `mapVal`, whose trailing `else` would allow it).
+          do: {
+            if: { type: "array" },
+            then: { items: { $ref: "#/$defs/exprFlat" } },
+            else: { $ref: "#/$defs/exprFlat" },
+            description: "Steps to run when the event fires (`$event`, `$target` in context). A single expression is also accepted.",
+          },
           preventDefault: { $ref: "#/$defs/boolOrExpr", description: "Call `preventDefault()` on the event." },
           stopPropagation: { $ref: "#/$defs/boolOrExpr", description: "Call `stopPropagation()` on the event." },
         },
