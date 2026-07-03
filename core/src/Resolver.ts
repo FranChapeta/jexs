@@ -12,6 +12,11 @@ let _keyMap: Map<string, Node> | null = null;
 const _lazyMap = new Map<string, () => Promise<void>>();
 const _pendingLoads = new Map<() => Promise<void>, Promise<void>>();
 
+// Global step keys handled by the resolver machinery, not by nodes: `as`
+// (storeAs), `return` (runSteps), `catch` (handleErr). They must never be
+// eagerly resolved as node inputs.
+const GLOBAL_STEP_KEYS = new Set(["as", "return", "catch"]);
+
 // Cleanup hooks called on destroyResolver() or when a new resolver replaces the old one
 const _cleanupHooks: (() => void)[] = [];
 
@@ -126,6 +131,11 @@ export function resolveObj(obj: Record<string, unknown>, context: Context, then:
   const pending: Promise<unknown>[] = [];
   const pendingKeys: string[] = [];
   for (const key of Object.keys(obj)) {
+    // Never eagerly resolve the global step keys — they belong to the resolver's
+    // step machinery (`as`/`return` via runSteps, `catch` via handleErr). Resolving
+    // a `catch: [...]` array here would execute the error handler on success. Kept
+    // raw so the object shape is preserved for callers that pass `r` through.
+    if (GLOBAL_STEP_KEYS.has(key)) { result[key] = obj[key]; continue; }
     const r = _resolve ? _resolve(obj[key], context) : obj[key];
     if (r instanceof Promise) { pending.push(r); pendingKeys.push(key); }
     else result[key] = r;
