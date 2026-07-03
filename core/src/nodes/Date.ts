@@ -55,6 +55,123 @@ export class DateNode extends Node {
         },
       },
     },
+    dateParse: {
+      output: "number",
+      markdownDescription: "Parses a date string into a Unix-ms timestamp — the inverse of `dateFormat`. Accepts anything `Date.parse` understands (ISO-8601 recommended). A number passes through unchanged.",
+      outputDescription: "A **number** (Unix milliseconds), or `null` if the value cannot be parsed.",
+      examples: [
+        "{ \"dateParse\": \"2026-07-01T12:00:00Z\" }",
+      ],
+    },
+    dateDiff: {
+      tuple: 2,
+      output: "number",
+      markdownDescription: "Difference between two Unix-ms timestamps as `[from, to]`, in whole `unit`s (default `ms`). Positive when `to` is later than `from`. Units are fixed-length: `\"ms\"`, `\"second\"`, `\"minute\"`, `\"hour\"`, `\"day\"`, `\"week\"` (calendar months/years are not supported — extract parts with `datePart`).",
+      outputDescription: "A **number** of whole units, truncated toward zero and signed. `null` if fewer than two args are given or the unit is unknown.",
+      examples: [
+        "{ \"dateDiff\": [{ \"var\": \"$start\" }, { \"var\": \"$end\" }], \"unit\": \"day\" }",
+      ],
+      siblings: {
+        unit: {
+          type: "string",
+          enum: [
+            "ms",
+            "second",
+            "minute",
+            "hour",
+            "day",
+            "week",
+          ],
+          description: "Unit of the result (default `\"ms\"`).",
+        },
+      },
+    },
+    datePart: {
+      output: "number",
+      markdownDescription: "Extracts a single component from a Unix-ms timestamp, in UTC. Choose the component with the `part` sibling.",
+      outputDescription: "A **number** — `month` is 1-12, `day` is 1-31, `weekday` is 0-6 (0 = Sunday). `null` if `part` is missing or unknown.",
+      examples: [
+        "{ \"datePart\": { \"var\": \"$ts\" }, \"part\": \"weekday\" }",
+      ],
+      siblings: {
+        part: {
+          type: "string",
+          enum: [
+            "year",
+            "month",
+            "day",
+            "hour",
+            "minute",
+            "second",
+            "ms",
+            "weekday",
+          ],
+          description: "Component to extract (required).",
+        },
+      },
+    },
+    dateStartOf: {
+      markdownDescription: "Snaps a Unix-ms timestamp down to the start of a `unit` (default `\"day\"`), in UTC. Weeks start on Monday (ISO-8601).",
+      outputDescription: "The boundary timestamp in the `format` (default `ms`): a **number** for `ms`, else a formatted **string**.",
+      examples: [
+        "{ \"dateStartOf\": { \"var\": \"$ts\" }, \"unit\": \"month\", \"format\": \"iso\" }",
+      ],
+      siblings: {
+        unit: {
+          type: "string",
+          enum: [
+            "second",
+            "minute",
+            "hour",
+            "day",
+            "week",
+            "month",
+            "year",
+          ],
+          description: "Boundary unit (default `\"day\"`).",
+        },
+        format: {
+          type: "string",
+          enum: [
+            "ms",
+            "iso",
+            "datetime",
+          ],
+          description: "Output format (default `\"ms\"`).",
+        },
+      },
+    },
+    dateEndOf: {
+      markdownDescription: "Snaps a Unix-ms timestamp up to the last millisecond of a `unit` (default `\"day\"`), in UTC. Weeks start on Monday (ISO-8601).",
+      outputDescription: "The boundary timestamp in the `format` (default `ms`): a **number** for `ms`, else a formatted **string**.",
+      examples: [
+        "{ \"dateEndOf\": { \"var\": \"$ts\" }, \"unit\": \"day\" }",
+      ],
+      siblings: {
+        unit: {
+          type: "string",
+          enum: [
+            "second",
+            "minute",
+            "hour",
+            "day",
+            "week",
+            "month",
+            "year",
+          ],
+          description: "Boundary unit (default `\"day\"`).",
+        },
+        format: {
+          type: "string",
+          enum: [
+            "ms",
+            "iso",
+            "datetime",
+          ],
+          description: "Output format (default `\"ms\"`).",
+        },
+      },
+    },
   };
 
   dateNow(def: Record<string, unknown>, context: Context): NodeValue {
@@ -71,16 +188,68 @@ export class DateNode extends Node {
       const base = this.toNumber(a[0]);
       const interval = String(a[1]);
       const result = base + parseInterval(interval);
-      if (!def.format) return formatDate(result, "ms");
-      return resolve(def.format, context, fmt => formatDate(result, String(fmt)));
+      return this.emit(result, def, context, "ms");
     });
   }
 
   dateFormat(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.dateFormat, context, ms => {
-      if (!def.format) return formatDate(this.toNumber(ms), "datetime");
-      return resolve(def.format, context, fmt => formatDate(this.toNumber(ms), String(fmt)));
+    return resolve(def.dateFormat, context, ms =>
+      this.emit(this.toNumber(ms), def, context, "datetime")
+    );
+  }
+
+  dateParse(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.dateParse, context, v => {
+      if (typeof v === "number") return v;
+      const ms = Date.parse(String(v));
+      return Number.isNaN(ms) ? null : ms;
     });
+  }
+
+  dateDiff(def: Record<string, unknown>, context: Context): NodeValue {
+    const args = this.toArray(def.dateDiff);
+    if (args.length < 2) return null;
+    return resolve(def.dateDiff, context, resolvedArgs => {
+      const a = this.toArray(resolvedArgs);
+      const from = this.toNumber(a[0]);
+      const to = this.toNumber(a[1]);
+      if (!def.unit) return diff(from, to, "ms");
+      return resolve(def.unit, context, u => diff(from, to, String(u)));
+    });
+  }
+
+  datePart(def: Record<string, unknown>, context: Context): NodeValue {
+    if (def.part == null) return null;
+    return resolve(def.datePart, context, ts =>
+      resolve(def.part, context, part => extractPart(this.toNumber(ts), String(part)))
+    );
+  }
+
+  dateStartOf(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.dateStartOf, context, ts => {
+      const base = this.toNumber(ts);
+      if (!def.unit) return this.emit(boundary(base, "day", false), def, context, "ms");
+      return resolve(def.unit, context, u =>
+        this.emit(boundary(base, String(u), false), def, context, "ms")
+      );
+    });
+  }
+
+  dateEndOf(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.dateEndOf, context, ts => {
+      const base = this.toNumber(ts);
+      if (!def.unit) return this.emit(boundary(base, "day", true), def, context, "ms");
+      return resolve(def.unit, context, u =>
+        this.emit(boundary(base, String(u), true), def, context, "ms")
+      );
+    });
+  }
+
+  /** Emit a computed timestamp through the `format` sibling (or a default). */
+  private emit(ms: number | null, def: Record<string, unknown>, context: Context, fallback: string): NodeValue {
+    if (ms === null) return null;
+    if (!def.format) return formatDate(ms, fallback);
+    return resolve(def.format, context, fmt => formatDate(ms, String(fmt)));
   }
 }
 
@@ -90,4 +259,74 @@ function formatDate(ms: number, format: string): string | number {
   if (format === "iso") return d.toISOString();
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+}
+
+// Fixed-length units in milliseconds (matches the `unit` enum). Calendar
+// months/years are intentionally excluded — their length varies, so `dateDiff`
+// stays a pure division.
+const UNIT_MS: Record<string, number> = {
+  ms: 1, second: 1000, minute: 60_000, hour: 3_600_000, day: 86_400_000, week: 604_800_000,
+};
+
+const DAY_MS = 86_400_000;
+
+function diff(from: number, to: number, unit: string): number | null {
+  const ms = UNIT_MS[unit];
+  if (!ms) return null;
+  return Math.trunc((to - from) / ms);
+}
+
+function extractPart(ms: number, part: string): number | null {
+  const d = new Date(ms);
+  switch (part) {
+    case "year": return d.getUTCFullYear();
+    case "month": return d.getUTCMonth() + 1;
+    case "day": return d.getUTCDate();
+    case "hour": return d.getUTCHours();
+    case "minute": return d.getUTCMinutes();
+    case "second": return d.getUTCSeconds();
+    case "ms": return d.getUTCMilliseconds();
+    case "weekday": return d.getUTCDay();
+    default: return null;
+  }
+}
+
+/** Start (or end) boundary of the UTC calendar unit containing `ms`. */
+function boundary(ms: number, unit: string, end: boolean): number | null {
+  const d = new Date(ms);
+  const y = d.getUTCFullYear();
+  const mo = d.getUTCMonth();
+  const da = d.getUTCDate();
+  const h = d.getUTCHours();
+  const mi = d.getUTCMinutes();
+  const s = d.getUTCSeconds();
+
+  switch (unit) {
+    case "year":
+      return end ? Date.UTC(y + 1, 0, 1) - 1 : Date.UTC(y, 0, 1);
+    case "month":
+      return end ? Date.UTC(y, mo + 1, 1) - 1 : Date.UTC(y, mo, 1);
+    case "week": {
+      // Monday-start (ISO): getUTCDay is 0=Sun..6=Sat.
+      const start = Date.UTC(y, mo, da) - ((d.getUTCDay() + 6) % 7) * DAY_MS;
+      return end ? start + 7 * DAY_MS - 1 : start;
+    }
+    case "day": {
+      const start = Date.UTC(y, mo, da);
+      return end ? start + DAY_MS - 1 : start;
+    }
+    case "hour": {
+      const start = Date.UTC(y, mo, da, h);
+      return end ? start + 3_600_000 - 1 : start;
+    }
+    case "minute": {
+      const start = Date.UTC(y, mo, da, h, mi);
+      return end ? start + 60_000 - 1 : start;
+    }
+    case "second": {
+      const start = Date.UTC(y, mo, da, h, mi, s);
+      return end ? start + 1000 - 1 : start;
+    }
+    default: return null;
+  }
 }
