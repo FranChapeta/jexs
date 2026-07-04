@@ -32,6 +32,7 @@ import { ElementNode } from "./nodes/Element.js";
 import { LogicNode } from "./nodes/Logic.js";
 import { StringNode } from "./nodes/Strings.js";
 import { ArrayNode } from "./nodes/Arrays.js";
+import { ObjectNode } from "./nodes/Object.js";
 import { MathNode } from "./nodes/Math.js";
 import { TimerNode } from "./nodes/Timer.js";
 import { DateNode } from "./nodes/Date.js";
@@ -45,6 +46,7 @@ export const coreNodes: Node[] = [
   new LogicNode(),
   new StringNode(),
   new ArrayNode(),
+  new ObjectNode(),
   new MathNode(),
   new TimerNode(),
   new DateNode(),

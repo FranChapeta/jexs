@@ -1,7 +1,7 @@
 import { Node, Context } from "./Node.js";
 import { resolve, resolveAll } from "../Resolver.js";
 import { getNestedValue } from "../helpers.js";
-import type { JexsNodeSchema } from "../schema.js";
+import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
 
 export class ArrayNode extends Node {
   static schema: JexsNodeSchema = {
@@ -24,20 +24,6 @@ export class ArrayNode extends Node {
       markdownDescription: "Returns the length of an array, object (key count), or string.",
       examples: [
         "{ \"count\": { \"var\": \"$items\" } }",
-      ],
-    },
-    keys: {
-      output: "array",
-      markdownDescription: "Returns the keys of an object, or string indices of an array.",
-      examples: [
-        "{ \"keys\": { \"var\": \"$obj\" } }",
-      ],
-    },
-    values: {
-      output: "array",
-      markdownDescription: "Returns the values of an object as an array.",
-      examples: [
-        "{ \"values\": { \"var\": \"$obj\" } }",
       ],
     },
     reverse: {
@@ -106,7 +92,8 @@ export class ArrayNode extends Node {
     push: {
       tuple: 2,
       output: "array",
-      markdownDescription: "Returns a new array with an item appended.",
+      markdownDescription: "Appends an item to an array **in place** and returns that array. The array referenced by the first argument is mutated — point it at a `var` (e.g. `{ \"var\": \"$items\" }`), not a literal. If the first argument is not an array, returns a new single-element array. For a non-mutating append use `{ \"merge\": [arr, [item]] }`.",
+      outputDescription: "The same (now longer) array; or a new `[item]` when the target is not an array.",
       examples: [
         "{ \"push\": [{ \"var\": \"$items\" }, \"new\"] }",
       ],
@@ -114,9 +101,50 @@ export class ArrayNode extends Node {
     unshift: {
       tuple: 2,
       output: "array",
-      markdownDescription: "Returns a new array with an item prepended.",
+      markdownDescription: "Prepends an item to an array **in place** and returns that array. Mutates the array referenced by the first argument — point it at a `var`, not a literal. If the first argument is not an array, returns a new single-element array.",
+      outputDescription: "The same (now longer) array; or a new `[item]` when the target is not an array.",
       examples: [
         "{ \"unshift\": [{ \"var\": \"$items\" }, \"first\"] }",
+      ],
+    },
+    pop: {
+      markdownDescription: "Removes the **last** element of an array **in place** and returns it.",
+      outputDescription: "The removed element (any type), or `undefined` if the array is empty or not an array.",
+      examples: [
+        "{ \"pop\": { \"var\": \"$items\" } }",
+      ],
+    },
+    shift: {
+      markdownDescription: "Removes the **first** element of an array **in place** and returns it.",
+      outputDescription: "The removed element (any type), or `undefined` if the array is empty or not an array.",
+      examples: [
+        "{ \"shift\": { \"var\": \"$items\" } }",
+      ],
+    },
+    remove: {
+      tuple: 2,
+      markdownDescription: "Removes the element at an index **in place** and returns it. (For predicate/value removal use `filter`.)",
+      outputDescription: "The removed element (any type), or `undefined` if the index is out of range.",
+      examples: [
+        "{ \"remove\": [{ \"var\": \"$items\" }, 2] }",
+      ],
+    },
+    insert: {
+      tuple: 3,
+      output: "array",
+      markdownDescription: "Inserts a value at an index **in place** (clamped to the array bounds) and returns the array.",
+      outputDescription: "The same (now longer) array.",
+      examples: [
+        "{ \"insert\": [{ \"var\": \"$items\" }, 0, \"first\"] }",
+      ],
+    },
+    move: {
+      tuple: 3,
+      output: "array",
+      markdownDescription: "Moves the element at `from` to index `to` **in place** and returns the array. Out-of-range `from` is a no-op; `to` is clamped to bounds.",
+      outputDescription: "The same array, reordered.",
+      examples: [
+        "{ \"move\": [{ \"var\": \"$items\" }, 2, 0] }",
       ],
     },
     merge: {
@@ -209,6 +237,13 @@ export class ArrayNode extends Node {
         "{ \"groupBy\": [{ \"var\": \"$users\" }, \"role\"] }",
       ],
     },
+    fromEntries: {
+      output: "object",
+      markdownDescription: "Builds an object from `[{ key, value }]` pairs (the inverse of `entries` in the object node). Also accepts `[key, value]` tuple arrays.",
+      examples: [
+        "{ \"fromEntries\": { \"var\": \"$pairs\" } }",
+      ],
+    },
     includes: {
       tuple: [
         2,
@@ -239,14 +274,21 @@ export class ArrayNode extends Node {
         "{ \"range\": [1, 5] }",
       ],
     },
-    entries: {
-      output: "array",
-      markdownDescription: "Returns `[{ key, value }]` pairs from an object or array.",
-      examples: [
-        "{ \"entries\": { \"var\": \"$obj\" } }",
-      ],
+  };
+
+  static commonSiblings: Record<string, JexsPropertySchema> = {
+    clone: {
+      type: "boolean",
+      description: "Operate on a shallow copy and return it, leaving the source array unchanged (default `false`). Applies to the mutating/reordering verbs (`sort`, `reverse`, `unique`, `flatten`, `push`, `unshift`, `pop`, `shift`, `remove`, `insert`, `move`); the pure verbs (`map`, `filter`, `slice`, …) always return a new array regardless.",
     },
   };
+
+  /** The array to edit in place — the source itself, or a shallow copy when
+   *  `clone`. A non-array is wrapped into a fresh array (nothing to mutate). */
+  private mutArr(value: unknown, clone: boolean): unknown[] {
+    if (!Array.isArray(value)) return value != null ? [value] : [];
+    return clone ? [...value] : value;
+  }
 
   first(def: Record<string, unknown>, c: Context) {
     return resolve(def.first, c, v => this.toArray(v)[0]);
@@ -265,53 +307,59 @@ export class ArrayNode extends Node {
     });
   }
 
-  keys(def: Record<string, unknown>, c: Context) {
-    return resolve(def.keys, c, value => {
-      if (this.isObject(value)) return Object.keys(value);
-      if (Array.isArray(value)) return value.map((_, i) => String(i));
-      return [];
-    });
-  }
-
-  values(def: Record<string, unknown>, c: Context) {
-    return resolve(def.values, c, value => {
-      if (this.isObject(value)) return Object.values(value);
-      if (Array.isArray(value)) return value;
-      return [];
-    });
-  }
-
   reverse(def: Record<string, unknown>, c: Context) {
-    return resolve(def.reverse, c, v => [...this.toArray(v)].reverse());
+    return resolve(def.clone, c, cl =>
+      resolve(def.reverse, c, v => this.mutArr(v, this.toBoolean(cl)).reverse()));
   }
 
   unique(def: Record<string, unknown>, c: Context) {
-    return resolve(def.unique, c, v => [...new Set(this.toArray(v))]);
+    return resolve(def.clone, c, cl => {
+      const clone = this.toBoolean(cl);
+      return resolve(def.unique, c, v => {
+        const u = [...new Set(this.toArray(v))];
+        if (clone || !Array.isArray(v)) return u;
+        v.splice(0, v.length, ...u);
+        return v;
+      });
+    });
   }
 
   flatten(def: Record<string, unknown>, c: Context) {
-    return resolve(def.flatten, c, v => this.toArray(v).flat(Infinity));
+    return resolve(def.clone, c, cl => {
+      const clone = this.toBoolean(cl);
+      return resolve(def.flatten, c, v => {
+        const f = this.toArray(v).flat(Infinity);
+        if (clone || !Array.isArray(v)) return f;
+        v.splice(0, v.length, ...f);
+        return v;
+      });
+    });
   }
 
   sort(def: Record<string, unknown>, c: Context) {
-    return resolve(def.sort, c, v => doSort(v, false));
+    return resolve(def.clone, c, cl =>
+      resolve(def.sort, c, v => sortInPlace(this.mutArr(v, this.toBoolean(cl)), false)));
   }
 
   sortDesc(def: Record<string, unknown>, c: Context) {
-    return resolve(def.sortDesc, c, v => doSort(v, true));
+    return resolve(def.clone, c, cl =>
+      resolve(def.sortDesc, c, v => sortInPlace(this.mutArr(v, this.toBoolean(cl)), true)));
   }
 
   sortBy(def: Record<string, unknown>, c: Context) {
-    return resolve(def.sortBy, c, args => {
-      const a = this.toArray(args);
-      const arr = this.toArray(a[0]);
-      const key = this.toString(a[1]);
-      const direction = a.length > 2 && a[2] === "desc" ? -1 : 1;
-      return [...arr].sort((x, y) => {
-        const xVal = this.isObject(x) ? (x as Record<string, unknown>)[key] : undefined;
-        const yVal = this.isObject(y) ? (y as Record<string, unknown>)[key] : undefined;
-        if (typeof xVal === "number" && typeof yVal === "number") return (xVal - yVal) * direction;
-        return this.toString(xVal).localeCompare(this.toString(yVal)) * direction;
+    return resolve(def.clone, c, cl => {
+      const clone = this.toBoolean(cl);
+      return resolve(def.sortBy, c, args => {
+        const a = this.toArray(args);
+        const arr = this.mutArr(a[0], clone);
+        const key = this.toString(a[1]);
+        const direction = a.length > 2 && a[2] === "desc" ? -1 : 1;
+        return arr.sort((x, y) => {
+          const xVal = this.isObject(x) ? (x as Record<string, unknown>)[key] : undefined;
+          const yVal = this.isObject(y) ? (y as Record<string, unknown>)[key] : undefined;
+          if (typeof xVal === "number" && typeof yVal === "number") return (xVal - yVal) * direction;
+          return this.toString(xVal).localeCompare(this.toString(yVal)) * direction;
+        });
       });
     });
   }
@@ -336,16 +384,95 @@ export class ArrayNode extends Node {
   }
 
   push(def: Record<string, unknown>, c: Context) {
-    return resolve(def.push, c, args => {
-      const a = this.toArray(args);
-      return [...this.toArray(a[0]), a.length > 1 ? a[1] : undefined];
+    return resolve(def.clone, c, cl => {
+      const clone = this.toBoolean(cl);
+      return resolve(def.push, c, args => {
+        const a = this.toArray(args);
+        const item = a.length > 1 ? a[1] : undefined;
+        if (!Array.isArray(a[0])) return [item];
+        const arr = clone ? [...a[0]] : a[0];
+        arr.push(item);
+        return arr;
+      });
     });
   }
 
   unshift(def: Record<string, unknown>, c: Context) {
-    return resolve(def.unshift, c, args => {
-      const a = this.toArray(args);
-      return [a.length > 1 ? a[1] : undefined, ...this.toArray(a[0])];
+    return resolve(def.clone, c, cl => {
+      const clone = this.toBoolean(cl);
+      return resolve(def.unshift, c, args => {
+        const a = this.toArray(args);
+        const item = a.length > 1 ? a[1] : undefined;
+        if (!Array.isArray(a[0])) return [item];
+        const arr = clone ? [...a[0]] : a[0];
+        arr.unshift(item);
+        return arr;
+      });
+    });
+  }
+
+  pop(def: Record<string, unknown>, c: Context) {
+    return resolve(def.clone, c, cl => {
+      const clone = this.toBoolean(cl);
+      return resolve(def.pop, c, v => {
+        if (!Array.isArray(v)) return undefined;
+        return clone ? v[v.length - 1] : v.pop();
+      });
+    });
+  }
+
+  shift(def: Record<string, unknown>, c: Context) {
+    return resolve(def.clone, c, cl => {
+      const clone = this.toBoolean(cl);
+      return resolve(def.shift, c, v => {
+        if (!Array.isArray(v)) return undefined;
+        return clone ? v[0] : v.shift();
+      });
+    });
+  }
+
+  remove(def: Record<string, unknown>, c: Context) {
+    return resolve(def.clone, c, cl => {
+      const clone = this.toBoolean(cl);
+      return resolve(def.remove, c, args => {
+        const a = this.toArray(args);
+        const arr = a[0];
+        if (!Array.isArray(arr)) return undefined;
+        const i = this.toNumber(a[1]);
+        if (i < 0 || i >= arr.length) return undefined;
+        return clone ? arr[i] : arr.splice(i, 1)[0];
+      });
+    });
+  }
+
+  insert(def: Record<string, unknown>, c: Context) {
+    return resolve(def.clone, c, cl => {
+      const clone = this.toBoolean(cl);
+      return resolve(def.insert, c, args => {
+        const a = this.toArray(args);
+        if (!Array.isArray(a[0])) return a[0];
+        const arr = clone ? [...a[0]] : a[0];
+        const i = Math.max(0, Math.min(this.toNumber(a[1]), arr.length));
+        arr.splice(i, 0, a[2]);
+        return arr;
+      });
+    });
+  }
+
+  move(def: Record<string, unknown>, c: Context) {
+    return resolve(def.clone, c, cl => {
+      const clone = this.toBoolean(cl);
+      return resolve(def.move, c, args => {
+        const a = this.toArray(args);
+        if (!Array.isArray(a[0])) return a[0];
+        const arr = clone ? [...a[0]] : a[0];
+        const from = this.toNumber(a[1]);
+        if (from < 0 || from >= arr.length) return arr;
+        const to = Math.max(0, Math.min(this.toNumber(a[2]), arr.length - 1));
+        const [item] = arr.splice(from, 1);
+        arr.splice(to, 0, item);
+        return arr;
+      });
     });
   }
 
@@ -482,6 +609,17 @@ export class ArrayNode extends Node {
     });
   }
 
+  fromEntries(def: Record<string, unknown>, c: Context) {
+    return resolve(def.fromEntries, c, value => {
+      const result: Record<string, unknown> = {};
+      for (const e of this.toArray(value)) {
+        if (this.isObject(e) && "key" in e) result[this.toString(e.key)] = e.value;
+        else if (Array.isArray(e)) result[this.toString(e[0])] = e[1];
+      }
+      return result;
+    });
+  }
+
   includes(def: Record<string, unknown>, c: Context) {
     return resolve(def.includes, c, args => {
       const a = this.toArray(args);
@@ -515,21 +653,12 @@ export class ArrayNode extends Node {
       return result;
     });
   }
-
-  entries(def: Record<string, unknown>, c: Context) {
-    return resolve(def.entries, c, value => {
-      if (this.isObject(value)) return Object.entries(value).map(([key, val]) => ({ key, value: val }));
-      if (Array.isArray(value)) return value.map((val, i) => ({ key: String(i), value: val }));
-      return [];
-    });
-  }
 }
 
-function doSort(value: unknown, desc: boolean): unknown[] {
-  const arr = Array.isArray(value) ? value : value != null ? [value] : [];
-  const sorted = [...arr].sort((a, b) => {
+function sortInPlace(arr: unknown[], desc: boolean): unknown[] {
+  arr.sort((a, b) => {
     if (typeof a === "number" && typeof b === "number") return a - b;
     return String(a ?? "").localeCompare(String(b ?? ""));
   });
-  return desc ? sorted.reverse() : sorted;
+  return desc ? arr.reverse() : arr;
 }
