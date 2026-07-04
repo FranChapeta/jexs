@@ -14,56 +14,106 @@ export function setInitEvents(fn: (root: HTMLElement) => void): void {
 
 /** Delta describes a single tree mutation */
 export interface TreeDelta {
+  /** insert/remove/set: the affected path. move: the SOURCE node path. */
   path: string;
   action: "insert" | "remove" | "set" | "move";
   value?: unknown;
-  from?: number;
+  /** move: destination parent-list path (may differ from the source's parent). */
+  toPath?: string;
+  /** move: destination index within `toPath`. */
   to?: number;
 }
 
-/** Per-instance state */
-interface TreeInstance {
-  data: unknown[];
+/**
+ * Per-tree runtime handles that can't live in serializable context — the DOM
+ * target, the collapsed set, drag listeners, the row template, and the hook
+ * steps. The tree DATA itself lives in the resolver context at `path`, so it is
+ * readable with `{ "var": "$<path>" }` and written by the `tree-*` ops.
+ *
+ * The store is keyed by the context object (scoped per-Client, GC'd with the
+ * context — no static registry to leak) then by the normalized context path.
+ */
+interface TreeRuntime {
+  context: Context;             // the live resolver context that owns the data
+  path: string;                 // normalized context dot-path to the data array
   target: HTMLElement;
-  row: unknown;               // JSON row template — resolved per node via the resolver
+  row: unknown;                 // JSON row template — resolved per node via the resolver
   selectedPath: string | null;
   collapsed: Set<string>;
   onChangeSteps: unknown[] | null;
   onSelectSteps: unknown[] | null;
-  baseContext: Context;
+}
+
+const stores = new WeakMap<Context, Map<string, TreeRuntime>>();
+
+function setRuntime(context: Context, path: string, rt: TreeRuntime): void {
+  let byPath = stores.get(context);
+  if (!byPath) { byPath = new Map(); stores.set(context, byPath); }
+  byPath.set(path, rt);
+}
+
+// Note: tree ops are expected to run against the context that owns the tree
+// (the client's single shared context). A derived context (e.g. inside a map)
+// would not find the runtime — tree mutation belongs in event steps, not loops.
+function getRuntime(context: Context, path: string): TreeRuntime | undefined {
+  return stores.get(context)?.get(path);
+}
+
+/** Strip a single leading `$` so `$editor` and `editor` resolve to one key. */
+function normalizePath(path: string): string {
+  return path.charCodeAt(0) === 36 ? path.slice(1) : path;
+}
+
+/** Read a value at a normalized dot-path in the context. */
+function readContextPath(context: Context, path: string): unknown {
+  let cur: unknown = context;
+  for (const part of path.split(".")) {
+    if (cur === null || typeof cur !== "object") return undefined;
+    cur = (cur as Record<string, unknown>)[part];
+  }
+  return cur;
+}
+
+/** The live tree data array at the runtime's context path (never a copy). */
+function getData(rt: TreeRuntime): unknown[] {
+  const d = readContextPath(rt.context, rt.path);
+  return Array.isArray(d) ? d : [];
 }
 
 /**
  * TreeNode — Client-side hierarchical JSON editor.
  *
- * Stores the actual JSON tree in memory and recursively renders it
- * using a JSON row template resolved by the resolver. The row template
- * defines the full element for each node — no hardcoded HTML tags.
- * Children are placed into data-children="key" containers within the
- * rendered row element.
+ * Stores the tree data in the resolver context at a caller-supplied dot-path and
+ * recursively renders it using a JSON row template resolved by the resolver. The
+ * row template defines the full element for each node — no hardcoded HTML tags.
+ * Children are placed into data-children="key" containers within the rendered
+ * row element.
  *
- * Operations:
- * - { "tree-init": "t", "target": "#el", "data": [], "row": {...}, "on-change": [], "on-select": [] }
- * - { "tree-insert": "t", "value": {...} }
- * - { "tree-remove": "t" }
- * - { "tree-update": "t", "key": "k", "value": "v" }
- * - { "tree-move": "t", "direction": "up"|"down" }
- * - { "tree-select": "t", "path": "0.content.1" }
- * - { "tree-toggle": "t", "path": "0" }
- * - { "tree-data": "t" }
- * - { "tree-node": "t" }
- * - { "tree-apply": "t", "delta": {...} }
- * - { "tree-set-data": "t", "data": [...] }
- * - { "tree-set-value": "t", "path": "0.tag", "value": "section" }
+ * Every op addresses its tree by the same context path it was initialized with:
+ * - { "tree-init": "$editor", "target": "#el", "data": [], "row": {...}, "on-change": [], "on-select": [] }
+ * - { "tree-render": "$editor", "path": "0.content" }         re-render (partial if path given)
+ * - { "tree-insert": "$editor", "value": {...} }              into the selected node / root
+ * - { "tree-remove": "$editor" }                              the selected node
+ * - { "tree-update": "$editor", "key": "k", "value": "v" }    a key on the selected node
+ * - { "tree-move": "$editor", "direction": "up"|"down" }      reorder the selected node
+ * - { "tree-move": "$editor", "to": "2.content", "index": 0 } relocate to any list path
+ * - { "tree-select": "$editor", "path": "0.content.1" }
+ * - { "tree-toggle": "$editor", "path": "0" }
+ * - { "tree-apply": "$editor", "delta": {...} }               replay a TreeDelta
+ *
+ * The data is plain context state: read it with `{ "var": "$editor" }`, replace it with
+ * `setVars` + `tree-render`, and edit it with the array mutators (`push`/`remove`/`move`/…)
+ * + `tree-render`. The ops above cover only the interactive, selection-aware editing that
+ * needs the runtime (selection, collapse, DOM) — everything else is plain context work.
  */
 export class TreeNode extends Node {
   static schema: JexsNodeSchema = {
     "tree-init": {
       type: "string",
       output: "null",
-      markdownDescription: "Initializes a JSON tree editor. Pass `id` as the primary key value, plus `target` (CSS selector), `data` (array), and `row` (JSON template).\nThe `row` template is resolved per node with context vars: `path`, `type`, `summary`, `depth`, `selected`, `expanded`.\nHook `on-change` steps receive `$delta` and `$editorData`; `on-select` receives `$selectedPath` and `$selectedNode`.",
+      markdownDescription: "Initializes a JSON tree editor. The primary key value is a context dot-path (`$editor`) where the tree data is stored — read it back with `{ \"var\": \"$editor\" }`. Also pass `target` (CSS selector), `data` (array; if omitted, adopts any array already at the path), and `row` (JSON template).\nThe `row` template is resolved per node with context vars: `path`, `type`, `summary`, `depth`, `selected`, `expanded`.\nHook `on-change` steps receive `$delta` and `$editorData`; `on-select` receives `$selectedPath` and `$selectedNode`.",
       examples: [
-        "{ \"tree-init\": \"t\", \"target\": \"#editor\", \"data\": [], \"row\": { \"tag\": \"div\", \"content\": [{ \"var\": \"path\" }] }, \"on-change\": [] }",
+        "{ \"tree-init\": \"$editor\", \"target\": \"#editor\", \"data\": [], \"row\": { \"tag\": \"div\", \"content\": [{ \"var\": \"path\" }] }, \"on-change\": [] }",
       ],
       siblings: {
         target: {
@@ -71,7 +121,7 @@ export class TreeNode extends Node {
           description: "CSS selector of the container element.",
         },
         data: {
-          description: "Initial data array or expression.",
+          description: "Initial data array or expression. If omitted, adopts any array already at the context path.",
         },
         row: {
           map: true,
@@ -87,11 +137,25 @@ export class TreeNode extends Node {
         },
       },
     },
+    "tree-render": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Re-renders the tree at the given context path from its current data. Pass `path` for a **partial** render: a child-list path (e.g. `\"0.content\"`, where you `push`ed/`remove`d) re-renders just that list's items; a node path (e.g. `\"0.content.1\"`, whose data you changed) replaces that node and its subtree. Omit `path` for a full render. Call after editing the data with `setVars` or the array mutators (`push`/`remove`/`insert`/`move`/…) — there is no automatic reactivity.",
+      examples: [
+        "{ \"tree-render\": \"$editor\", \"path\": \"0.content\" }",
+      ],
+      siblings: {
+        path: {
+          type: "string",
+          description: "Optional tree path to render partially (child-list path or node path). Omit for a full render.",
+        },
+      },
+    },
     "tree-insert": {
       type: "string",
-      markdownDescription: "Inserts a node into the tree. If `path` is omitted, inserts as a\nchild of the selected node (if it is a container) or appends to the root array.",
+      markdownDescription: "Inserts a node into the tree at the given context path. If `path` is omitted, inserts as a\nchild of the selected node (if it is a container) or appends to the root array.",
       examples: [
-        "{ \"tree-insert\": \"t\", \"value\": { \"tag\": \"p\", \"content\": [\"\"] } }",
+        "{ \"tree-insert\": \"$editor\", \"value\": { \"tag\": \"p\", \"content\": [\"\"] } }",
       ],
       siblings: {
         value: {
@@ -99,19 +163,22 @@ export class TreeNode extends Node {
         },
         path: {
           type: "string",
-          description: "Optional dot-path of the insertion target.",
+          description: "Optional dot-path of the insertion target (within the tree).",
         },
       },
     },
     "tree-remove": {
       type: "string",
-      markdownDescription: "Removes the currently selected node from the tree. Returns the removed node's `TreeDelta`.",
+      markdownDescription: "Removes the currently selected node from the tree at the given context path. Returns the removed node's `TreeDelta`.",
+      examples: [
+        "{ \"tree-remove\": \"$editor\" }",
+      ],
     },
     "tree-update": {
       type: "string",
       markdownDescription: "Updates a single key on the currently selected node.\nSetting `value` to `null`, `undefined`, or `\"\"` deletes the key.",
       examples: [
-        "{ \"tree-update\": \"t\", \"key\": \"class\", \"value\": { \"var\": \"$class\" } }",
+        "{ \"tree-update\": \"$editor\", \"key\": \"class\", \"value\": { \"var\": \"$class\" } }",
       ],
       siblings: {
         key: {
@@ -125,18 +192,33 @@ export class TreeNode extends Node {
     },
     "tree-move": {
       type: "string",
-      markdownDescription: "Moves the currently selected node up or down within its sibling array.",
+      markdownDescription: "Moves a node — either **reorder** the selected node among its siblings (`direction`) or **relocate** it to any list (`to`).",
       examples: [
-        "{ \"tree-move\": \"t\", \"direction\": \"up\" }",
+        "{ \"tree-move\": \"$editor\", \"direction\": \"up\" }",
+        "{ \"tree-move\": \"$editor\", \"to\": \"2.content\", \"index\": 0 }",
       ],
-      siblings: {
+      variants: {
         direction: {
           type: "string",
           enum: [
             "up",
             "down",
           ],
-          description: "Direction to move the selected node.",
+          markdownDescription: "Reorder the selected node up or down among its siblings.",
+        },
+        to: {
+          type: "string",
+          markdownDescription: "Relocate a node into the list at this path (any list in the tree). Pair with `index` (position) and `from` (a non-selected source node).",
+          siblings: {
+            index: {
+              type: "number",
+              description: "Insertion index within `to` (default: append to the end).",
+            },
+            from: {
+              type: "string",
+              description: "Source node path to move (default: the currently selected node).",
+            },
+          },
         },
       },
     },
@@ -144,7 +226,7 @@ export class TreeNode extends Node {
       type: "string",
       markdownDescription: "Selects a node by path, firing `on-select` steps with `$selectedPath` and `$selectedNode`.\nPass `path: null` to deselect. Returns the selected node data.",
       examples: [
-        "{ \"tree-select\": \"t\", \"path\": \"0.content.1\" }",
+        "{ \"tree-select\": \"$editor\", \"path\": \"0.content.1\" }",
       ],
       siblings: {
         path: {
@@ -157,25 +239,13 @@ export class TreeNode extends Node {
       type: "string",
       output: "boolean",
       markdownDescription: "Toggles the collapsed/expanded state of a node at the given `path`. Returns `true` if now expanded.",
+      examples: [
+        "{ \"tree-toggle\": \"$editor\", \"path\": \"0\" }",
+      ],
       siblings: {
         path: {
           type: "string",
           description: "Dot-path of the node to toggle.",
-        },
-      },
-    },
-    "tree-data": {
-      type: "string",
-      output: "string",
-      markdownDescription: "Returns the current tree data as a pretty-printed JSON string.",
-    },
-    "tree-node": {
-      type: "string",
-      markdownDescription: "Returns the data object at the given `path`, or the currently selected node if `path` is omitted.",
-      siblings: {
-        path: {
-          type: "string",
-          description: "Optional dot-path string.",
         },
       },
     },
@@ -184,7 +254,7 @@ export class TreeNode extends Node {
       output: "null",
       markdownDescription: "Applies a `TreeDelta` mutation (`insert` / `remove` / `set` / `move`) to the tree.\nUseful for replaying remote changes in collaborative editing scenarios.",
       examples: [
-        "{ \"tree-apply\": \"t\", \"delta\": { \"var\": \"$delta\" } }",
+        "{ \"tree-apply\": \"$editor\", \"delta\": { \"var\": \"$delta\" } }",
       ],
       siblings: {
         delta: {
@@ -192,55 +262,27 @@ export class TreeNode extends Node {
         },
       },
     },
-    "tree-set-data": {
-      type: "string",
-      output: "null",
-      markdownDescription: "Replaces the entire tree data and re-renders. Pass `data` as a JSON string or array. Clears the selection.",
-      examples: [
-        "{ \"tree-set-data\": \"t\", \"data\": { \"var\": \"$json\" } }",
-      ],
-      siblings: {
-        data: {
-          description: "JSON string or array to replace the tree data with.",
-        },
-      },
-    },
-    "tree-set-value": {
-      type: "string",
-      markdownDescription: "Sets a value at a specific path in the tree. Defaults to the currently selected node's path.\nFires `on-change` with the resulting delta.",
-      examples: [
-        "{ \"tree-set-value\": \"t\", \"path\": \"0.tag\", \"value\": \"section\" }",
-      ],
-      siblings: {
-        value: {
-          description: "New value to set.",
-        },
-        path: {
-          type: "string",
-          description: "Optional dot-path string (defaults to selected node's path).",
-        },
-      },
-    },
   };
-
-  private static instances = new Map<string, TreeInstance>();
 
   // ══════════════════════════════════════════════
   //  Data operations
   // ══════════════════════════════════════════════
 
   ["tree-init"](def: Record<string, unknown>, context: Context): NodeValue {
-    const id = String(def["tree-init"] ?? "default");
-
     // Extract row before resolution to prevent ElementNode from rendering it to HTML.
     const rawRow = def.row;
 
-    return resolveAll([def.target, def.data ?? null], context, async ([target, data]) => {
+    return resolveAll([def["tree-init"], def.target, def.data ?? null], context, async ([pathRaw, target, data]) => {
       const targetEl = document.querySelector(String(target)) as HTMLElement;
       if (!targetEl) return null;
 
+      const path = normalizePath(String(pathRaw ?? "default"));
+
+      // Resolve the data array: use `data` if given, else adopt what's already at
+      // the context path, else start empty. Then write it into the context so it
+      // is readable via `{ "var": "$<path>" }` and mutated in place by later ops.
       let dataArr: unknown[] = [];
-      if (data) {
+      if (data != null) {
         if (typeof data === "string") {
           try { dataArr = JSON.parse(data); } catch { dataArr = []; }
         } else if (Array.isArray(data)) {
@@ -248,22 +290,44 @@ export class TreeNode extends Node {
         } else {
           dataArr = [data];
         }
+      } else {
+        const existing = readContextPath(context, path);
+        if (Array.isArray(existing)) dataArr = existing;
       }
+      Node.setContextValue(context, path, dataArr);
 
-      const inst: TreeInstance = {
-        data: dataArr,
+      const rt: TreeRuntime = {
+        context,
+        path,
         target: targetEl,
         row: rawRow,
         selectedPath: null,
         collapsed: new Set(),
         onChangeSteps: Array.isArray(def["on-change"]) ? def["on-change"] : null,
         onSelectSteps: Array.isArray(def["on-select"]) ? def["on-select"] : null,
-        baseContext: { ...context },
       };
 
-      TreeNode.instances.set(id, inst);
-      await renderTree(inst);
-      setupDrag(inst);
+      setRuntime(context, path, rt);
+      await renderTree(rt);
+      setupDrag(rt);
+      return null;
+    });
+  }
+
+  ["tree-render"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def["tree-render"], def.path ?? null], context, async ([pathRaw, path]) => {
+      const rt = getRuntime(context, normalizePath(String(pathRaw)));
+      if (!rt) return null;
+      const p = path != null ? String(path) : "";
+      if (!p) {
+        await renderTree(rt);
+      } else if (Array.isArray(resolvePath(getData(rt), p))) {
+        // Path points at a child-list (e.g. "0.content") — re-render its items.
+        await renderSubtree(rt, p);
+      } else {
+        // Path points at a node — replace it and its subtree in place.
+        await renderNodeEl(rt, p);
+      }
       return null;
     });
   }
@@ -273,9 +337,9 @@ export class TreeNode extends Node {
     const rawValue = def.value;
     const isVarRef = this.isObject(rawValue) && "var" in rawValue;
 
-    return resolveAll([def["tree-insert"], def.path ?? null], context, ([id, path]) => {
-      const inst = TreeNode.instances.get(String(id));
-      if (!inst) return null;
+    return resolveAll([def["tree-insert"], def.path ?? null], context, ([pathRaw, path]) => {
+      const rt = getRuntime(context, normalizePath(String(pathRaw)));
+      if (!rt) return null;
 
       const doInsert = async (valueResolved: unknown) => {
         let value = valueResolved;
@@ -284,11 +348,11 @@ export class TreeNode extends Node {
         }
         value = JSON.parse(JSON.stringify(value));
         const targetPath = path ? String(path) : null;
-        const insertPath = targetPath ?? inst.selectedPath;
+        const insertPath = targetPath ?? rt.selectedPath;
         let parentArrayPath: string;
 
         if (insertPath) {
-          const parent = resolvePath(inst.data, insertPath);
+          const parent = resolvePath(getData(rt), insertPath);
           if (this.isObject(parent)) {
             const childKey = getChildArrayKey(parent);
             if (childKey) {
@@ -296,21 +360,21 @@ export class TreeNode extends Node {
               (parent[childKey] as unknown[]).push(value);
               parentArrayPath = insertPath + "." + childKey;
             } else {
-              inst.data.push(value);
+              getData(rt).push(value);
               parentArrayPath = "";
             }
           } else {
-            inst.data.push(value);
+            getData(rt).push(value);
             parentArrayPath = "";
           }
         } else {
-          inst.data.push(value);
+          getData(rt).push(value);
           parentArrayPath = "";
         }
 
-        await renderSubtree(inst, parentArrayPath);
+        await renderSubtree(rt, parentArrayPath);
         const delta: TreeDelta = { path: parentArrayPath, action: "insert", value };
-        fireChange(inst, delta);
+        fireChange(rt, delta);
         return delta;
       };
 
@@ -319,37 +383,37 @@ export class TreeNode extends Node {
   }
 
   ["tree-remove"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["tree-remove"], context, async id => {
-      const inst = TreeNode.instances.get(String(id));
-      if (!inst || !inst.selectedPath) return null;
+    return resolve(def["tree-remove"], context, async pathRaw => {
+      const rt = getRuntime(context, normalizePath(String(pathRaw)));
+      if (!rt || !rt.selectedPath) return null;
 
-      const parts = inst.selectedPath.split(".");
+      const parts = rt.selectedPath.split(".");
       const index = parseInt(parts[parts.length - 1]);
       if (isNaN(index)) return null;
 
       const parentPath = parts.slice(0, -1).join(".");
-      const parent = parentPath ? resolvePath(inst.data, parentPath) : inst.data;
+      const parent = parentPath ? resolvePath(getData(rt), parentPath) : getData(rt);
       if (!Array.isArray(parent) || index < 0 || index >= parent.length) return null;
 
       parent.splice(index, 1);
-      const removedPath = inst.selectedPath;
-      inst.selectedPath = null;
+      const removedPath = rt.selectedPath;
+      rt.selectedPath = null;
 
-      await renderSubtree(inst, parentPath);
-      await fireSelect(inst);
+      await renderSubtree(rt, parentPath);
+      await fireSelect(rt);
 
       const delta: TreeDelta = { path: removedPath, action: "remove" };
-      fireChange(inst, delta);
+      fireChange(rt, delta);
       return delta;
     });
   }
 
   ["tree-update"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["tree-update"], def.key, def.value ?? null], context, async ([id, key, value]) => {
-      const inst = TreeNode.instances.get(String(id));
-      if (!inst || !inst.selectedPath) return null;
+    return resolveAll([def["tree-update"], def.key, def.value ?? null], context, async ([pathRaw, key, value]) => {
+      const rt = getRuntime(context, normalizePath(String(pathRaw)));
+      if (!rt || !rt.selectedPath) return null;
 
-      const node = resolvePath(inst.data, inst.selectedPath);
+      const node = resolvePath(getData(rt), rt.selectedPath);
       if (!this.isObject(node)) return null;
 
       const k = String(key);
@@ -360,117 +424,116 @@ export class TreeNode extends Node {
         node[k] = value;
       }
 
-      await renderNodeEl(inst, inst.selectedPath);
+      await renderNodeEl(rt, rt.selectedPath);
 
-      const delta: TreeDelta = { path: inst.selectedPath + "." + k, action: "set", value };
-      fireChange(inst, delta);
+      const delta: TreeDelta = { path: rt.selectedPath + "." + k, action: "set", value };
+      fireChange(rt, delta);
       return delta;
     });
   }
 
   ["tree-move"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["tree-move"], def.direction], context, async ([id, direction]) => {
-      const inst = TreeNode.instances.get(String(id));
-      if (!inst || !inst.selectedPath) return null;
+    return resolveAll(
+      [def["tree-move"], def.direction ?? null, def.to ?? null, def.index ?? null, def.from ?? null],
+      context,
+      async ([pathRaw, direction, to, index, from]) => {
+        const rt = getRuntime(context, normalizePath(String(pathRaw)));
+        if (!rt) return null;
 
-      const dir = String(direction);
-      const parts = inst.selectedPath.split(".");
-      const index = parseInt(parts[parts.length - 1]);
-      if (isNaN(index)) return null;
+        // Relocation: move a node to any parent-list path (+ index; default append).
+        if (to != null) {
+          const sourcePath = from != null ? String(from) : rt.selectedPath;
+          if (!sourcePath) return null;
+          const toParent = String(to);
+          const toArr = resolvePath(getData(rt), toParent);
+          const toIndex = index != null ? this.toNumber(index) : (Array.isArray(toArr) ? toArr.length : 0);
+          return moveNodeTo(rt, sourcePath, toParent, toIndex);
+        }
 
-      const parentPath = parts.slice(0, -1).join(".");
-      const parent = parentPath ? resolvePath(inst.data, parentPath) : inst.data;
-      if (!Array.isArray(parent)) return null;
+        // Reorder: shift the selected node up/down among its siblings.
+        if (!rt.selectedPath) return null;
+        const dir = String(direction);
+        const parts = rt.selectedPath.split(".");
+        const idx = parseInt(parts[parts.length - 1]);
+        if (isNaN(idx)) return null;
 
-      const newIndex = dir === "up" ? index - 1 : index + 1;
-      if (newIndex < 0 || newIndex >= parent.length) return null;
+        const parentPath = parts.slice(0, -1).join(".");
+        const parent = parentPath ? resolvePath(getData(rt), parentPath) : getData(rt);
+        if (!Array.isArray(parent)) return null;
 
-      const item = parent.splice(index, 1)[0];
-      parent.splice(newIndex, 0, item);
+        const newIndex = dir === "up" ? idx - 1 : idx + 1;
+        if (newIndex < 0 || newIndex >= parent.length) return null;
 
-      parts[parts.length - 1] = String(newIndex);
-      inst.selectedPath = parts.join(".");
+        const sourcePath = rt.selectedPath;
+        const item = parent.splice(idx, 1)[0];
+        parent.splice(newIndex, 0, item);
 
-      await renderSubtree(inst, parentPath);
+        parts[parts.length - 1] = String(newIndex);
+        rt.selectedPath = parts.join(".");
 
-      const delta: TreeDelta = { path: parentPath, action: "move", from: index, to: newIndex };
-      fireChange(inst, delta);
-      return delta;
-    });
+        await renderSubtree(rt, parentPath);
+
+        const delta: TreeDelta = { path: sourcePath, action: "move", toPath: parentPath, to: newIndex, value: item };
+        fireChange(rt, delta);
+        return delta;
+      },
+    );
   }
 
   ["tree-select"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["tree-select"], def.path ?? null], context, async ([id, path]) => {
-      const inst = TreeNode.instances.get(String(id));
-      if (!inst) return null;
+    return resolveAll([def["tree-select"], def.path ?? null], context, async ([pathRaw, path]) => {
+      const rt = getRuntime(context, normalizePath(String(pathRaw)));
+      if (!rt) return null;
 
-      const oldPath = inst.selectedPath;
-      inst.selectedPath = path != null ? String(path) : null;
+      const oldPath = rt.selectedPath;
+      rt.selectedPath = path != null ? String(path) : null;
 
       // Toggle CSS class without re-rendering
       if (oldPath) {
-        const oldEl = findNode(inst, oldPath);
+        const oldEl = findNode(rt, oldPath);
         if (oldEl) oldEl.classList.remove("selected");
       }
-      if (inst.selectedPath) {
-        const newEl = findNode(inst, inst.selectedPath);
+      if (rt.selectedPath) {
+        const newEl = findNode(rt, rt.selectedPath);
         if (newEl) newEl.classList.add("selected");
       }
 
-      await fireSelect(inst);
-      return inst.selectedPath ? resolvePath(inst.data, inst.selectedPath) : null;
+      await fireSelect(rt);
+      return rt.selectedPath ? resolvePath(getData(rt), rt.selectedPath) : null;
     });
   }
 
   ["tree-toggle"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["tree-toggle"], def.path], context, async ([id, path]) => {
-      const inst = TreeNode.instances.get(String(id));
-      if (!inst) return null;
+    return resolveAll([def["tree-toggle"], def.path], context, async ([pathRaw, path]) => {
+      const rt = getRuntime(context, normalizePath(String(pathRaw)));
+      if (!rt) return null;
 
       const p = String(path);
-      if (inst.collapsed.has(p)) {
-        inst.collapsed.delete(p);
+      if (rt.collapsed.has(p)) {
+        rt.collapsed.delete(p);
       } else {
-        inst.collapsed.add(p);
+        rt.collapsed.add(p);
       }
 
-      await renderNodeEl(inst, p);
-      return !inst.collapsed.has(p);
-    });
-  }
-
-  ["tree-data"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["tree-data"], context, id => {
-      const inst = TreeNode.instances.get(String(id));
-      if (!inst) return null;
-      return JSON.stringify(inst.data, null, 2);
-    });
-  }
-
-  ["tree-node"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["tree-node"], def.path ?? null], context, ([id, path]) => {
-      const inst = TreeNode.instances.get(String(id));
-      if (!inst) return null;
-      const p = path != null ? String(path) : inst.selectedPath;
-      if (!p) return null;
-      return resolvePath(inst.data, p);
+      await renderNodeEl(rt, p);
+      return !rt.collapsed.has(p);
     });
   }
 
   ["tree-apply"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["tree-apply"], def.delta], context, async ([id, delta]) => {
-      const inst = TreeNode.instances.get(String(id));
-      if (!inst) return null;
+    return resolveAll([def["tree-apply"], def.delta], context, async ([pathRaw, delta]) => {
+      const rt = getRuntime(context, normalizePath(String(pathRaw)));
+      if (!rt) return null;
 
       const d = delta as TreeDelta;
       if (!d || !d.action) return null;
 
       switch (d.action) {
         case "insert": {
-          const arr = d.path ? resolvePath(inst.data, d.path) : inst.data;
+          const arr = d.path ? resolvePath(getData(rt), d.path) : getData(rt);
           if (Array.isArray(arr)) {
             arr.push(JSON.parse(JSON.stringify(d.value)));
-            await renderSubtree(inst, d.path);
+            await renderSubtree(rt, d.path);
           }
           break;
         }
@@ -478,11 +541,11 @@ export class TreeNode extends Node {
           const parts = d.path.split(".");
           const index = parseInt(parts[parts.length - 1]);
           const parentPath = parts.slice(0, -1).join(".");
-          const parent = parentPath ? resolvePath(inst.data, parentPath) : inst.data;
+          const parent = parentPath ? resolvePath(getData(rt), parentPath) : getData(rt);
           if (Array.isArray(parent) && !isNaN(index)) {
             parent.splice(index, 1);
-            if (inst.selectedPath?.startsWith(d.path)) inst.selectedPath = null;
-            await renderSubtree(inst, parentPath);
+            if (rt.selectedPath?.startsWith(d.path)) rt.selectedPath = null;
+            await renderSubtree(rt, parentPath);
           }
           break;
         }
@@ -490,20 +553,27 @@ export class TreeNode extends Node {
           const parts = d.path.split(".");
           const key = parts.pop()!;
           const nodePath = parts.join(".");
-          const node = nodePath ? resolvePath(inst.data, nodePath) : null;
+          const node = nodePath ? resolvePath(getData(rt), nodePath) : null;
           if (this.isObject(node)) {
             node[key] = d.value;
-            await renderNodeEl(inst, nodePath);
+            await renderNodeEl(rt, nodePath);
           }
           break;
         }
         case "move": {
-          const arr = d.path ? resolvePath(inst.data, d.path) : inst.data;
-          if (Array.isArray(arr) && d.from !== undefined && d.to !== undefined) {
-            const item = arr.splice(d.from, 1)[0];
-            arr.splice(d.to, 0, item);
-            await renderSubtree(inst, d.path);
+          // Remove the node at the source path, insert it into `toPath` at `to`.
+          const srcParts = d.path.split(".");
+          const srcIdx = parseInt(srcParts[srcParts.length - 1]);
+          const srcParent = srcParts.slice(0, -1).join(".");
+          const srcArr = srcParent ? resolvePath(getData(rt), srcParent) : getData(rt);
+          if (!Array.isArray(srcArr) || isNaN(srcIdx) || srcIdx < 0 || srcIdx >= srcArr.length) break;
+          const [node] = srcArr.splice(srcIdx, 1);
+          const dstArr = d.toPath ? resolvePath(getData(rt), d.toPath) : getData(rt);
+          if (Array.isArray(dstArr)) {
+            const at = d.to != null ? Math.max(0, Math.min(d.to, dstArr.length)) : dstArr.length;
+            dstArr.splice(at, 0, node);
           }
+          await renderTree(rt);
           break;
         }
       }
@@ -512,52 +582,6 @@ export class TreeNode extends Node {
     });
   }
 
-  ["tree-set-data"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["tree-set-data"], def.data], context, async ([id, data]) => {
-      const inst = TreeNode.instances.get(String(id));
-      if (!inst) return null;
-
-      if (typeof data === "string") {
-        try { inst.data = JSON.parse(data); } catch { return null; }
-      } else if (Array.isArray(data)) {
-        inst.data = data;
-      } else {
-        return null;
-      }
-
-      inst.selectedPath = null;
-      await renderTree(inst);
-      return null;
-    });
-  }
-
-  ["tree-set-value"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["tree-set-value"], def.path ?? null, def.value ?? null], context, async ([id, path, value]) => {
-      const inst = TreeNode.instances.get(String(id));
-      if (!inst) return null;
-
-      const p = path ? String(path) : inst.selectedPath;
-      if (!p) return null;
-
-      const parts = p.split(".");
-      const lastKey = parts.pop()!;
-      const parentPath = parts.join(".");
-
-      const parent = parentPath ? resolvePath(inst.data, parentPath) : inst.data;
-      if (Array.isArray(parent)) {
-        const idx = parseInt(lastKey);
-        if (!isNaN(idx)) parent[idx] = value;
-      } else if (this.isObject(parent)) {
-        parent[lastKey] = value;
-      }
-
-      await renderNodeEl(inst, p);
-
-      const delta: TreeDelta = { path: p, action: "set", value };
-      fireChange(inst, delta);
-      return delta;
-    });
-  }
 }
 
 // ══════════════════════════════════════════════
@@ -565,15 +589,16 @@ export class TreeNode extends Node {
 // ══════════════════════════════════════════════
 
 /** Full render of the entire tree */
-async function renderTree(inst: TreeInstance): Promise<void> {
-  inst.target.innerHTML = "";
+async function renderTree(rt: TreeRuntime): Promise<void> {
+  rt.target.innerHTML = "";
 
-  for (let i = 0; i < inst.data.length; i++) {
-    const el = await buildNodeEl(inst, inst.data[i], String(i), 0);
-    if (el) inst.target.appendChild(el);
+  const data = getData(rt);
+  for (let i = 0; i < data.length; i++) {
+    const el = await buildNodeEl(rt, data[i], String(i), 0);
+    if (el) rt.target.appendChild(el);
   }
 
-  if (initEventsFn) initEventsFn(inst.target);
+  if (initEventsFn) initEventsFn(rt.target);
 }
 
 /**
@@ -581,13 +606,13 @@ async function renderTree(inst: TreeInstance): Promise<void> {
  * Children are recursively rendered into data-children="key" containers.
  */
 async function buildNodeEl(
-  inst: TreeInstance, node: unknown, path: string, depth: number,
+  rt: TreeRuntime, node: unknown, path: string, depth: number,
 ): Promise<HTMLElement | null> {
   const { type, summary, color } = describeNode(node);
   const groups = getChildGroups(node);
   const hasChildren = groups.some(g => g.items.length > 0);
-  const expanded = !inst.collapsed.has(path);
-  const selected = path === inst.selectedPath;
+  const expanded = !rt.collapsed.has(path);
+  const selected = path === rt.selectedPath;
   const childKeys = groups.map(g => g.key);
 
   const editMode = getEditMode(node);
@@ -606,7 +631,7 @@ async function buildNodeEl(
   }
 
   const ctx: Context = {
-    ...inst.baseContext,
+    ...rt.context,
     treeNode: node,
     path, type, summary, color,
     depth, hasChildren, expanded, selected,
@@ -616,7 +641,7 @@ async function buildNodeEl(
     isString,
   };
 
-  const rowHtml = String(await resolve(inst.row, ctx) ?? "");
+  const rowHtml = String(await resolve(rt.row, ctx) ?? "");
 
   // Parse row HTML — use <template> to avoid side effects (no img loads, no script eval)
   const tpl = document.createElement("template");
@@ -647,7 +672,7 @@ async function buildNodeEl(
       if (!container) continue;
       for (let i = 0; i < items.length; i++) {
         const childPath = `${path}.${key}.${i}`;
-        const childEl = await buildNodeEl(inst, items[i], childPath, depth + 1);
+        const childEl = await buildNodeEl(rt, items[i], childPath, depth + 1);
         if (childEl) container.appendChild(childEl);
       }
     }
@@ -657,9 +682,9 @@ async function buildNodeEl(
 }
 
 /** Re-render the children inside a parent's data-children container */
-async function renderSubtree(inst: TreeInstance, parentPath: string): Promise<void> {
+async function renderSubtree(rt: TreeRuntime, parentPath: string): Promise<void> {
   if (!parentPath) {
-    await renderTree(inst);
+    await renderTree(rt);
     return;
   }
 
@@ -669,9 +694,9 @@ async function renderSubtree(inst: TreeInstance, parentPath: string): Promise<vo
   const nodePath = parts.join(".");
 
   // Find the node element in the DOM
-  const nodeEl = nodePath ? findNode(inst, nodePath) : inst.target;
+  const nodeEl = nodePath ? findNode(rt, nodePath) : rt.target;
   if (!nodeEl) {
-    await renderTree(inst);
+    await renderTree(rt);
     return;
   }
 
@@ -684,7 +709,7 @@ async function renderSubtree(inst: TreeInstance, parentPath: string): Promise<vo
   container.innerHTML = "";
 
   // Get the data array at parentPath
-  const dataArray = resolvePath(inst.data, parentPath);
+  const dataArray = resolvePath(getData(rt), parentPath);
   if (!Array.isArray(dataArray)) return;
 
   const depth = nodePath
@@ -693,7 +718,7 @@ async function renderSubtree(inst: TreeInstance, parentPath: string): Promise<vo
 
   for (let i = 0; i < dataArray.length; i++) {
     const childPath = `${parentPath}.${i}`;
-    const el = await buildNodeEl(inst, dataArray[i], childPath, depth);
+    const el = await buildNodeEl(rt, dataArray[i], childPath, depth);
     if (el) container.appendChild(el);
   }
 
@@ -701,14 +726,14 @@ async function renderSubtree(inst: TreeInstance, parentPath: string): Promise<vo
 }
 
 /** Re-render a single node element (replace in-place) */
-async function renderNodeEl(inst: TreeInstance, path: string): Promise<void> {
-  const oldEl = findNode(inst, path);
+async function renderNodeEl(rt: TreeRuntime, path: string): Promise<void> {
+  const oldEl = findNode(rt, path);
   if (!oldEl) return;
 
-  const node = resolvePath(inst.data, path);
+  const node = resolvePath(getData(rt), path);
   const depth = path.split(".").filter(p => /^\d+$/.test(p)).length - 1;
 
-  const newEl = await buildNodeEl(inst, node, path, Math.max(0, depth));
+  const newEl = await buildNodeEl(rt, node, path, Math.max(0, depth));
   if (!newEl) return;
 
   oldEl.replaceWith(newEl);
@@ -726,9 +751,9 @@ async function renderNodeEl(inst: TreeInstance, path: string): Promise<void> {
  *   - numeric parts → nth child element of the current container
  *   - key parts → querySelector("[data-children=key]")
  */
-function findNode(inst: TreeInstance, path: string): HTMLElement | null {
+function findNode(rt: TreeRuntime, path: string): HTMLElement | null {
   const parts = path.split(".");
-  let current: HTMLElement = inst.target;
+  let current: HTMLElement = rt.target;
   let i = 0;
 
   while (i < parts.length) {
@@ -757,21 +782,21 @@ function findNode(inst: TreeInstance, path: string): HTMLElement | null {
 //  Callbacks
 // ══════════════════════════════════════════════
 
-function fireChange(inst: TreeInstance, delta: TreeDelta): void {
-  if (!inst.onChangeSteps) return;
-  Promise.resolve(runSteps(inst.onChangeSteps, {
-    ...inst.baseContext,
+function fireChange(rt: TreeRuntime, delta: TreeDelta): void {
+  if (!rt.onChangeSteps) return;
+  Promise.resolve(runSteps(rt.onChangeSteps, {
+    ...rt.context,
     delta,
-    editorData: JSON.stringify(inst.data, null, 2),
+    editorData: JSON.stringify(getData(rt), null, 2),
   })).catch(err => console.error("[TreeNode] onChange error:", err));
 }
 
-function fireSelect(inst: TreeInstance): unknown {
-  if (!inst.onSelectSteps) return;
-  const node = inst.selectedPath ? resolvePath(inst.data, inst.selectedPath) : null;
-  return runSteps(inst.onSelectSteps, {
-    ...inst.baseContext,
-    selectedPath: inst.selectedPath,
+function fireSelect(rt: TreeRuntime): unknown {
+  if (!rt.onSelectSteps) return;
+  const node = rt.selectedPath ? resolvePath(getData(rt), rt.selectedPath) : null;
+  return runSteps(rt.onSelectSteps, {
+    ...rt.context,
+    selectedPath: rt.selectedPath,
     selectedNode: node,
     selectedEditMode: node ? getEditMode(node) : null,
   });
@@ -781,8 +806,8 @@ function fireSelect(inst: TreeInstance): unknown {
 //  Drag & Drop — event delegation on tree target
 // ══════════════════════════════════════════════
 
-function setupDrag(inst: TreeInstance): void {
-  const target = inst.target;
+function setupDrag(rt: TreeRuntime): void {
+  const target = rt.target;
   if (target.hasAttribute("data-tree-drag")) return;
   target.setAttribute("data-tree-drag", "");
 
@@ -803,7 +828,7 @@ function setupDrag(inst: TreeInstance): void {
 
     const wrapper = pt.closest("[data-path]") as HTMLElement;
     if (!wrapper || !target.contains(wrapper)) {
-      return { parentPath: "", index: inst.data.length, container: target, isInto: false, listOnly: false, textOnly: false };
+      return { parentPath: "", index: getData(rt).length, container: target, isInto: false, listOnly: false, textOnly: false };
     }
 
     const wrapperPath = wrapper.getAttribute("data-path")!;
@@ -818,7 +843,7 @@ function setupDrag(inst: TreeInstance): void {
     const parentContainer = wrapper.parentElement!;
 
     // Check if element can have children
-    const nodeData = resolvePath(inst.data, wrapperPath);
+    const nodeData = resolvePath(getData(rt), wrapperPath);
     const editMode = getEditMode(nodeData);
     const isContainer = editMode === "children" || editMode === "list";
     const isTextContainer = editMode === "text" || editMode === "textarea";
@@ -828,7 +853,7 @@ function setupDrag(inst: TreeInstance): void {
         ? getChildArrayKey(nodeData as Record<string, unknown>) ?? "content"
         : "content";
       const childContainer = wrapper.querySelector(`[data-children="${childKey}"]`) as HTMLElement;
-      const arr = resolvePath(inst.data, wrapperPath + "." + childKey);
+      const arr = resolvePath(getData(rt), wrapperPath + "." + childKey);
       return {
         parentPath: wrapperPath + "." + childKey,
         index: Array.isArray(arr) ? arr.length : 0,
@@ -888,7 +913,7 @@ function setupDrag(inst: TreeInstance): void {
 
     // List-only validation: ul/ol only accept li children
     if (info.listOnly) {
-      const sourceNode = resolvePath(inst.data, sourcePath);
+      const sourceNode = resolvePath(getData(rt), sourcePath);
       const isLi = sourceNode && typeof sourceNode === "object" && !Array.isArray(sourceNode)
         && "tag" in (sourceNode as Record<string, unknown>)
         && String((sourceNode as Record<string, unknown>).tag).toLowerCase() === "li";
@@ -897,7 +922,7 @@ function setupDrag(inst: TreeInstance): void {
 
     // Text-only validation: text/textarea elements reject layout containers and lists
     if (info.textOnly) {
-      const sourceNode = resolvePath(inst.data, sourcePath);
+      const sourceNode = resolvePath(getData(rt), sourcePath);
       const sourceMode = getEditMode(sourceNode);
       if (sourceMode === "children" || sourceMode === "list") return;
     }
@@ -947,7 +972,7 @@ function setupDrag(inst: TreeInstance): void {
 
     // List-only validation on drop too
     if (info.listOnly) {
-      const sourceNode = resolvePath(inst.data, fromPath);
+      const sourceNode = resolvePath(getData(rt), fromPath);
       const isLi = sourceNode && typeof sourceNode === "object" && !Array.isArray(sourceNode)
         && "tag" in (sourceNode as Record<string, unknown>)
         && String((sourceNode as Record<string, unknown>).tag).toLowerCase() === "li";
@@ -956,31 +981,35 @@ function setupDrag(inst: TreeInstance): void {
 
     // Text-only validation on drop too
     if (info.textOnly) {
-      const sourceNode = resolvePath(inst.data, fromPath);
+      const sourceNode = resolvePath(getData(rt), fromPath);
       const sourceMode = getEditMode(sourceNode);
       if (sourceMode === "children" || sourceMode === "list") return;
     }
 
-    await moveNodeTo(inst, fromPath, info.parentPath, info.index);
+    await moveNodeTo(rt, fromPath, info.parentPath, info.index);
   });
 }
 
-/** Move a node from one location to another in the tree */
+/**
+ * Move a node from one path to another (any parent, any index). Returns the
+ * replayable move delta, or `null` if the move couldn't be performed. Pass
+ * `fire: false` to suppress the `on-change` hook (used when replaying a delta).
+ */
 async function moveNodeTo(
-  inst: TreeInstance, fromPath: string, toParentPath: string, toIndex: number,
-): Promise<void> {
-  const sourceNode = resolvePath(inst.data, fromPath);
-  if (sourceNode === undefined) return;
+  rt: TreeRuntime, fromPath: string, toParentPath: string, toIndex: number, fire = true,
+): Promise<TreeDelta | null> {
+  const sourceNode = resolvePath(getData(rt), fromPath);
+  if (sourceNode === undefined) return null;
   const copy = JSON.parse(JSON.stringify(sourceNode));
 
   // Parse source location
   const fromParts = fromPath.split(".");
   const fromIdx = parseInt(fromParts[fromParts.length - 1]);
   const fromParent = fromParts.slice(0, -1).join(".");
-  if (isNaN(fromIdx)) return;
+  if (isNaN(fromIdx)) return null;
 
-  const fromArr = (fromParent ? resolvePath(inst.data, fromParent) : inst.data) as unknown[];
-  if (!Array.isArray(fromArr)) return;
+  const fromArr = (fromParent ? resolvePath(getData(rt), fromParent) : getData(rt)) as unknown[];
+  if (!Array.isArray(fromArr)) return null;
 
   // Remove source
   fromArr.splice(fromIdx, 1);
@@ -991,27 +1020,30 @@ async function moveNodeTo(
   if (fromParent === adjParent && fromIdx < toIndex) adjIndex--;
 
   // Get or create target array
-  let toArr = (adjParent ? resolvePath(inst.data, adjParent) : inst.data) as unknown[];
+  let toArr = (adjParent ? resolvePath(getData(rt), adjParent) : getData(rt)) as unknown[];
   if (!Array.isArray(toArr)) {
     const pp = adjParent.split(".");
     const key = pp.pop()!;
     const nodePath = pp.join(".");
-    const node = nodePath ? resolvePath(inst.data, nodePath) : null;
+    const node = nodePath ? resolvePath(getData(rt), nodePath) : null;
     if (node && typeof node === "object" && !Array.isArray(node)) {
       (node as Record<string, unknown>)[key] = [];
       toArr = (node as Record<string, unknown>)[key] as unknown[];
-    } else return;
+    } else return null;
   }
 
   adjIndex = Math.max(0, Math.min(adjIndex, toArr.length));
   toArr.splice(adjIndex, 0, copy);
 
-  inst.selectedPath = adjParent ? `${adjParent}.${adjIndex}` : String(adjIndex);
+  rt.selectedPath = adjParent ? `${adjParent}.${adjIndex}` : String(adjIndex);
 
-  await renderTree(inst);
+  await renderTree(rt);
 
-  const delta: TreeDelta = { path: inst.selectedPath, action: "move", value: copy };
-  fireChange(inst, delta);
+  // The delta is self-contained and replayable: remove `path`, insert into
+  // `toPath` at `to` (already adjusted for the removal).
+  const delta: TreeDelta = { path: fromPath, action: "move", toPath: adjParent, to: adjIndex, value: copy };
+  if (fire) fireChange(rt, delta);
+  return delta;
 }
 
 // Pure utility functions imported from ./treeUtils.ts
