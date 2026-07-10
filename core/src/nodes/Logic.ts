@@ -160,6 +160,23 @@ export class LogicNode extends Node {
         "{ \"between\": [{ \"var\": \"$age\" }, 18, 65] }",
       ],
     },
+    typeof: {
+      output: "string",
+      markdownDescription: "Resolves a value and returns its Jexs type name as a string.",
+      outputDescription: "One of `\"null\"`, `\"undefined\"`, `\"array\"`, `\"object\"`, `\"number\"`, `\"string\"`, `\"boolean\"`. Arrays report `\"array\"` (not `\"object\"`); `null` and `undefined` are distinct.",
+      examples: [
+        "{ \"typeof\": { \"var\": \"$value\" } }",
+      ],
+    },
+    isType: {
+      tuple: 2,
+      output: "boolean",
+      markdownDescription: "Tests whether a value's type matches a type name. Tuple form `[value, type]` where `type` is one of `\"null\"`, `\"undefined\"`, `\"array\"`, `\"object\"`, `\"number\"`, `\"string\"`, `\"boolean\"`. Equivalent to `{ eq: [{ typeof: value }, type] }`.",
+      outputDescription: "`true` when `typeof(value) === type`, otherwise `false`.",
+      examples: [
+        "{ \"isType\": [{ \"var\": \"$roles\" }, \"array\"] }",
+      ],
+    },
     empty: {
       output: "boolean",
       markdownDescription: "Tests whether the resolved value is empty.",
@@ -369,6 +386,26 @@ export class LogicNode extends Node {
     return resolveAll([arr[0], arr[1], arr[2]], context, ([value, min, max]) =>
       this.toNumber(value) >= this.toNumber(min) && this.toNumber(value) <= this.toNumber(max)
     );
+  }
+
+  typeof(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.typeof, context, value => this.typeName(value));
+  }
+
+  isType(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.isType, context, args => {
+      const [value, type] = this.toArray(args);
+      return this.typeName(value) === this.toString(type);
+    });
+  }
+
+  // Jexs type name: arrays report "array" (not "object"), and null/undefined are
+  // distinct. Everything else follows JS `typeof`.
+  private typeName(value: unknown): string {
+    if (value === null) return "null";
+    if (value === undefined) return "undefined";
+    if (Array.isArray(value)) return "array";
+    return typeof value;
   }
 
   empty(def: Record<string, unknown>, context: Context): NodeValue {

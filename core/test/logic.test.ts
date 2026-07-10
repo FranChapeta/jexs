@@ -78,3 +78,28 @@ test("exec: yields the last step's value, not the whole array", () => {
 test("exec: a non-array resolved value is returned as-is", () => {
   assert.equal(resolve({ exec: { concat: ["Hi ", { var: "$name" }] } }, { name: "Ada" }), "Hi Ada");
 });
+
+// typeof — Jexs type name; arrays are "array" (not "object"), null vs undefined distinct.
+
+test("typeof: reports the Jexs type name", () => {
+  assert.equal(resolve({ typeof: null }, {}), "null");
+  assert.equal(resolve({ typeof: { var: "$missing" } }, {}), "undefined");
+  assert.equal(resolve({ typeof: { var: "$arr" } }, { arr: [1, 2] }), "array");
+  assert.equal(resolve({ typeof: { var: "$obj" } }, { obj: { a: 1 } }), "object");
+  assert.equal(resolve({ typeof: 42 }, {}), "number");
+  assert.equal(resolve({ typeof: "x" }, {}), "string");
+  assert.equal(resolve({ typeof: true }, {}), "boolean");
+});
+
+// isType — tuple [value, type]; true iff typeof(value) === type.
+
+test("isType: matches the type name in the tuple", () => {
+  assert.equal(resolve({ isType: [{ var: "$roles" }, "array"] }, { roles: ["admin"] }), true);
+  assert.equal(resolve({ isType: [5, "array"] }, {}), false);
+  assert.equal(resolve({ isType: [null, "null"] }, {}), true);
+  assert.equal(resolve({ isType: [{ var: "$missing" }, "undefined"] }, {}), true);
+  assert.equal(resolve({ isType: [{ var: "$obj" }, "object"] }, { obj: {} }), true);
+  assert.equal(resolve({ isType: ["hi", "string"] }, {}), true);
+  // null must not read as "object"
+  assert.equal(resolve({ isType: [null, "object"] }, {}), false);
+});
