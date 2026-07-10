@@ -197,6 +197,49 @@ export class StringNode extends Node {
         "{ \"match\": [\"a1 b2\", \"/\\\\d/g\"] }",
       ],
     },
+    normalize: {
+      output: "string",
+      markdownDescription: "Unicode-normalizes a string (default `\"NFC\"`). Apply before comparing, sorting, or hashing text that may carry combining marks or compatibility forms so equivalent strings share one representation.",
+      examples: [
+        "{ \"normalize\": { \"var\": \"$name\" } }",
+      ],
+      siblings: {
+        form: {
+          type: "string",
+          enum: [
+            "NFC",
+            "NFD",
+            "NFKC",
+            "NFKD",
+          ],
+          description: "Normalization form (default `\"NFC\"`).",
+        },
+      },
+    },
+    segment: {
+      output: "array",
+      markdownDescription: "Splits a string into Unicode-correct segments via `Intl.Segmenter`, unlike the code-unit `split`. `\"grapheme\"` (default) yields user-perceived characters — emoji and combining marks stay whole, where `length` and index-based ops treat them as several UTF-16 units. `\"word\"` yields locale-aware word boundaries (works for scripts without spaces, e.g. Chinese/Japanese/Thai). `\"sentence\"` yields sentences.",
+      outputDescription: "An array of segment strings. `\"word\"`/`\"sentence\"` granularity includes the whitespace and punctuation segments between words.",
+      examples: [
+        "{ \"segment\": \"a\\ud83d\\udc4db\" }",
+        "{ \"segment\": { \"var\": \"$text\" }, \"granularity\": \"word\" }",
+      ],
+      siblings: {
+        granularity: {
+          type: "string",
+          enum: [
+            "grapheme",
+            "word",
+            "sentence",
+          ],
+          description: "Segment boundary type (default `\"grapheme\"`).",
+        },
+        locale: {
+          type: "string",
+          description: "BCP-47 locale tag for word/sentence boundaries (default: the runtime locale).",
+        },
+      },
+    },
   };
 
   concat(def: Record<string, unknown>, c: Context) {
@@ -347,7 +390,27 @@ export class StringNode extends Node {
       return this.toString(a[0]).match(re ?? this.toString(a[1]));
     });
   }
+
+  normalize(def: Record<string, unknown>, c: Context) {
+    return resolveAll([def.normalize, def.form], c, ([v, form]) => {
+      const f = NORMALIZE_FORMS.has(String(form)) ? String(form) as NormalizationForm : "NFC";
+      return this.toString(v).normalize(f);
+    });
+  }
+
+  segment(def: Record<string, unknown>, c: Context) {
+    return resolveAll([def.segment, def.granularity, def.locale], c, ([v, gran, locale]) => {
+      const granularity = gran === "word" || gran === "sentence" ? gran : "grapheme";
+      const seg = new Intl.Segmenter(locale != null ? this.toString(locale) : undefined, { granularity });
+      const out: string[] = [];
+      for (const s of seg.segment(this.toString(v))) out.push(s.segment);
+      return out;
+    });
+  }
 }
+
+type NormalizationForm = "NFC" | "NFD" | "NFKC" | "NFKD";
+const NORMALIZE_FORMS = new Set<string>(["NFC", "NFD", "NFKC", "NFKD"]);
 
 function doReplace(args: unknown, all: boolean | undefined): string {
   const a = Array.isArray(args) ? (args as unknown[]) : args != null ? [args] : [];
