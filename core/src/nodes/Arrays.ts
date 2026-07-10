@@ -1,6 +1,7 @@
 import { Node, Context } from "./Node.js";
 import { resolve, resolveAll } from "../Resolver.js";
 import { getNestedValue } from "../helpers.js";
+import { nextRandom } from "./Math.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
 
 export class ArrayNode extends Node {
@@ -59,6 +60,13 @@ export class ArrayNode extends Node {
       markdownDescription: "Sorts an array descending.",
       examples: [
         "{ \"sortDesc\": [3, 1, 2] }",
+      ],
+    },
+    shuffle: {
+      output: "array",
+      markdownDescription: "Randomly reorders an array **in place** (Fisher-Yates) and returns it. Draws from the seeded RNG when `randomSeed` has been set (reproducible), otherwise `Math.random`. Pass `clone: true` to shuffle a copy and leave the source unchanged.",
+      examples: [
+        "{ \"shuffle\": { \"var\": \"$deck\" } }",
       ],
     },
     sortBy: {
@@ -313,7 +321,7 @@ export class ArrayNode extends Node {
   static commonSiblings: Record<string, JexsPropertySchema> = {
     clone: {
       type: "boolean",
-      description: "Operate on a shallow copy and return it, leaving the source array unchanged (default `false`). Applies to the mutating/reordering verbs (`sort`, `reverse`, `unique`, `flatten`, `push`, `unshift`, `pop`, `shift`, `remove`, `insert`, `move`); the pure verbs (`map`, `filter`, `slice`, …) always return a new array regardless.",
+      description: "Operate on a shallow copy and return it, leaving the source array unchanged (default `false`). Applies to the mutating/reordering verbs (`sort`, `reverse`, `unique`, `flatten`, `shuffle`, `push`, `unshift`, `pop`, `shift`, `remove`, `insert`, `move`); the pure verbs (`map`, `filter`, `slice`, …) always return a new array regardless.",
     },
   };
 
@@ -378,6 +386,11 @@ export class ArrayNode extends Node {
   sortDesc(def: Record<string, unknown>, c: Context) {
     return resolve(def.clone, c, cl =>
       resolve(def.sortDesc, c, v => sortInPlace(this.mutArr(v, this.toBoolean(cl)), true)));
+  }
+
+  shuffle(def: Record<string, unknown>, c: Context) {
+    return resolve(def.clone, c, cl =>
+      resolve(def.shuffle, c, v => shuffleInPlace(this.mutArr(v, this.toBoolean(cl)))));
   }
 
   sortBy(def: Record<string, unknown>, c: Context) {
@@ -705,4 +718,13 @@ function sortInPlace(arr: unknown[], desc: boolean): unknown[] {
     return String(a ?? "").localeCompare(String(b ?? ""));
   });
   return desc ? arr.reverse() : arr;
+}
+
+/** Fisher-Yates shuffle in place, drawing from the shared (seedable) RNG. */
+function shuffleInPlace(arr: unknown[]): unknown[] {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(nextRandom() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
 }

@@ -15,6 +15,13 @@ function seededRandom(): number {
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
 
+/** Next random float in `[0, 1)` — drawn from the seeded RNG when `randomSeed`
+ *  is active, otherwise `Math.random`. Shared so other nodes (e.g. ArrayNode's
+ *  `shuffle`) draw from the same reproducible stream. */
+export function nextRandom(): number {
+  return _seed !== null ? seededRandom() : Math.random();
+}
+
 function hashString(str: string): number {
   let h = 0;
   for (let i = 0; i < str.length; i++) {
@@ -592,12 +599,11 @@ export class MathNode extends Node {
   random(def: Record<string, unknown>, c: Context) {
     return resolve(def.random, c, values => {
       const arr = this.toArray(values);
-      const rng = _seed !== null ? seededRandom : Math.random;
-      if (arr.length === 0) return rng();
+      if (arr.length === 0) return nextRandom();
       // One arg n → integer in [0, n]; two args → integer in [min, max].
       const min = arr.length > 1 ? this.toNumber(arr[0]) : 0;
       const max = arr.length > 1 ? this.toNumber(arr[1]) : this.toNumber(arr[0]);
-      return Math.floor(rng() * (max - min + 1)) + min;
+      return Math.floor(nextRandom() * (max - min + 1)) + min;
     });
   }
 

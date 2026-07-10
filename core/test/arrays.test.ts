@@ -143,3 +143,38 @@ test("listFormat: coerces non-string elements to strings", () => {
 test("listFormat: resolves a nested-expression array", () => {
   assert.equal(resolve({ listFormat: { var: "$tags" }, locale: "en-US" }, { tags: ["x", "y"] }), "x and y");
 });
+
+// ── shuffle — Fisher-Yates in place, seedable for reproducibility ──
+
+const asc = (a: number, b: number) => a - b;
+
+test("shuffle: mutates in place and returns a permutation", () => {
+  resolve({ randomSeed: 1 }, {});
+  const ctx = { items: [1, 2, 3, 4, 5] };
+  const out = resolve({ shuffle: { var: "$items" } }, ctx);
+  assert.equal(out, ctx.items);                                  // same reference (in place)
+  assert.deepEqual([...(out as number[])].sort(asc), [1, 2, 3, 4, 5]); // still all elements
+});
+
+test("shuffle: clone leaves the source unchanged", () => {
+  resolve({ randomSeed: 1 }, {});
+  const ctx = { items: [1, 2, 3, 4, 5] };
+  const out = resolve({ shuffle: { var: "$items" }, clone: true }, ctx);
+  assert.notEqual(out, ctx.items);
+  assert.deepEqual(ctx.items, [1, 2, 3, 4, 5]);                  // source untouched
+  assert.deepEqual([...(out as number[])].sort(asc), [1, 2, 3, 4, 5]);
+});
+
+test("shuffle: seeded runs reproduce the same order", () => {
+  resolve({ randomSeed: 7 }, {});
+  const a = resolve({ shuffle: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] }, {});
+  resolve({ randomSeed: 7 }, {});
+  const b = resolve({ shuffle: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] }, {});
+  assert.deepEqual(a, b);
+  resolve({ randomSeed: null }, {});                             // reset so later tests are unaffected
+});
+
+test("shuffle: empty and single-element arrays are stable", () => {
+  assert.deepEqual(resolve({ shuffle: [] }, {}), []);
+  assert.deepEqual(resolve({ shuffle: [42] }, {}), [42]);
+});
