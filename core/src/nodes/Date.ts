@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue } from "./Node.js";
-import { resolve } from "../Resolver.js";
+import { resolve, resolveAll } from "../Resolver.js";
 import { parseInterval } from "./Timer.js";
 import type { JexsNodeSchema } from "../schema.js";
 
@@ -172,6 +172,55 @@ export class DateNode extends Node {
         },
       },
     },
+    dateRelative: {
+      tuple: [
+        1,
+        2,
+      ],
+      output: "string",
+      markdownDescription: "Formats a Unix-ms timestamp as a locale-aware relative-time string via `Intl.RelativeTimeFormat`. Tuple form `[target, base]`: `target` is phrased relative to `base`, which defaults to now (matching date-fns `intlFormatDistance` and moment `.from()`). Auto-selects the largest fitting unit (second through year) unless `unit` forces one; month and year use approximate 30-day / 365-day lengths, so long spans are rounded.",
+      outputDescription: "A **string** like `\"3 hours ago\"` or `\"in 5 minutes\"` — a past `target` reads \"... ago\", a future one \"in ...\".",
+      examples: [
+        "{ \"dateRelative\": [{ \"var\": \"$createdAt\" }] }",
+        "{ \"dateRelative\": [{ \"var\": \"$ts\" }, { \"var\": \"$now\" }], \"style\": \"short\" }",
+      ],
+      siblings: {
+        unit: {
+          type: "string",
+          enum: [
+            "second",
+            "minute",
+            "hour",
+            "day",
+            "week",
+            "month",
+            "year",
+          ],
+          description: "Force the display unit instead of auto-selecting the largest fitting one.",
+        },
+        locale: {
+          type: "string",
+          description: "BCP-47 locale tag (default: the runtime locale).",
+        },
+        numeric: {
+          type: "string",
+          enum: [
+            "always",
+            "auto",
+          ],
+          description: "`\"always\"` (default, e.g. \"1 day ago\") or `\"auto\"` (uses \"yesterday\"/\"tomorrow\" where available).",
+        },
+        style: {
+          type: "string",
+          enum: [
+            "long",
+            "short",
+            "narrow",
+          ],
+          description: "Length of the phrasing (default `\"long\"`).",
+        },
+      },
+    },
   };
 
   dateNow(def: Record<string, unknown>, context: Context): NodeValue {
@@ -245,6 +294,31 @@ export class DateNode extends Node {
     });
   }
 
+  dateRelative(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def.dateRelative, def.unit, def.locale, def.numeric, def.style], context,
+      ([args, unitRaw, locale, numeric, style]) => {
+        const a = this.toArray(args);
+        const base = a.length > 1 && a[1] != null ? this.toNumber(a[1]) : Date.now();
+        const deltaSec = (this.toNumber(a[0]) - base) / 1000;
+
+        const forced = unitRaw != null ? this.toString(unitRaw) : null;
+        let unit: Intl.RelativeTimeFormatUnit;
+        let value: number;
+        if (forced && forced in REL_UNIT_SEC) {
+          unit = forced as Intl.RelativeTimeFormatUnit;
+          value = deltaSec / REL_UNIT_SEC[forced];
+        } else {
+          ({ unit, value } = pickRelUnit(deltaSec));
+        }
+
+        const opts: Intl.RelativeTimeFormatOptions = {};
+        if (numeric != null) opts.numeric = this.toString(numeric) as Intl.RelativeTimeFormatNumeric;
+        if (style != null) opts.style = this.toString(style) as Intl.RelativeTimeFormatStyle;
+        const rtf = new Intl.RelativeTimeFormat(locale != null ? this.toString(locale) : undefined, opts);
+        return rtf.format(Math.round(value), unit);
+      });
+  }
+
   /** Emit a computed timestamp through the `format` sibling (or a default). */
   private emit(ms: number | null, def: Record<string, unknown>, context: Context, fallback: string): NodeValue {
     if (ms === null) return null;
@@ -269,6 +343,25 @@ const UNIT_MS: Record<string, number> = {
 };
 
 const DAY_MS = 86_400_000;
+
+// Seconds per unit for relative-time formatting. Month/year are approximate
+// (30-day / 365-day) — documented on `dateRelative`. Ordered largest-first so
+// pickRelUnit selects the biggest unit the delta clears.
+const REL_UNIT_SEC: Record<string, number> = {
+  year: 31_536_000, month: 2_592_000, week: 604_800,
+  day: 86_400, hour: 3_600, minute: 60, second: 1,
+};
+
+/** Choose the largest relative-time unit whose length the delta reaches, and
+ *  express the (signed) delta in that unit. Sub-second deltas fall back to seconds. */
+function pickRelUnit(deltaSec: number): { unit: Intl.RelativeTimeFormatUnit; value: number } {
+  const abs = Math.abs(deltaSec);
+  for (const unit of Object.keys(REL_UNIT_SEC) as Intl.RelativeTimeFormatUnit[]) {
+    const sec = REL_UNIT_SEC[unit];
+    if (abs >= sec) return { unit, value: deltaSec / sec };
+  }
+  return { unit: "second", value: deltaSec };
+}
 
 function diff(from: number, to: number, unit: string): number | null {
   const ms = UNIT_MS[unit];

@@ -113,3 +113,34 @@ test("date ops resolve nested-expression arguments", () => {
     2,
   );
 });
+
+// ── dateRelative — Intl relative-time, pinned to a fixed `base` for determinism ──
+
+const HOUR = 3_600_000;
+const DAY = 86_400_000;
+const MIN = 60_000;
+
+test("dateRelative: past reads 'ago', future reads 'in'", () => {
+  assert.equal(resolve({ dateRelative: [TS - 3 * HOUR, TS], locale: "en-US" }, {}), "3 hours ago");
+  assert.equal(resolve({ dateRelative: [TS + 5 * MIN, TS], locale: "en-US" }, {}), "in 5 minutes");
+});
+
+test("dateRelative: auto-selects the largest fitting unit", () => {
+  assert.equal(resolve({ dateRelative: [TS - 45 * MIN, TS], locale: "en-US" }, {}), "45 minutes ago");
+  assert.equal(resolve({ dateRelative: [TS - 2 * DAY, TS], locale: "en-US" }, {}), "2 days ago");
+  // 400 days clears the 365-day year threshold -> "1 year ago".
+  assert.equal(resolve({ dateRelative: [TS - 400 * DAY, TS], locale: "en-US" }, {}), "1 year ago");
+});
+
+test("dateRelative: unit forces the display unit", () => {
+  assert.equal(resolve({ dateRelative: [TS - 2 * DAY, TS], unit: "hour", locale: "en-US" }, {}), "48 hours ago");
+});
+
+test("dateRelative: numeric 'auto' uses named terms", () => {
+  assert.equal(resolve({ dateRelative: [TS - 1 * DAY, TS], numeric: "auto", locale: "en-US" }, {}), "yesterday");
+});
+
+test("dateRelative: base defaults to now when the tuple omits it", () => {
+  const out = resolve({ dateRelative: [Date.now() - 3 * HOUR], locale: "en-US" }, {});
+  assert.match(String(out), /hours? ago/);
+});
