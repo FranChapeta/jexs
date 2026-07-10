@@ -34,6 +34,7 @@ import { StringNode } from "./nodes/Strings.js";
 import { ArrayNode } from "./nodes/Arrays.js";
 import { ObjectNode } from "./nodes/Object.js";
 import { MathNode } from "./nodes/Math.js";
+import { ColorNode } from "./nodes/Color.js";
 import { TimerNode } from "./nodes/Timer.js";
 import { DateNode } from "./nodes/Date.js";
 
@@ -48,6 +49,7 @@ export const coreNodes: Node[] = [
   new ArrayNode(),
   new ObjectNode(),
   new MathNode(),
+  new ColorNode(),
   new TimerNode(),
   new DateNode(),
   new ErrorNode(),
