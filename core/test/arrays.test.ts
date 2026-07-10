@@ -124,3 +124,22 @@ test("clone: pop/remove peek without removing from the source", () => {
   assert.equal(resolve({ remove: [{ var: "$items" }, 0], clone: true }, ctx), "a");
   assert.deepEqual(ctx.items, ["a", "b", "c"]); // nothing removed
 });
+
+// ── listFormat — Intl.ListFormat over an array input (explicit locale) ──
+
+test("listFormat: joins with a locale-aware conjunction by default", () => {
+  assert.equal(resolve({ listFormat: ["a", "b", "c"], locale: "en-US" }, {}), "a, b, and c");
+  assert.equal(resolve({ listFormat: ["a"], locale: "en-US" }, {}), "a");
+});
+
+test("listFormat: disjunction type", () => {
+  assert.equal(resolve({ listFormat: ["a", "b"], locale: "en-US", type: "disjunction" }, {}), "a or b");
+});
+
+test("listFormat: coerces non-string elements to strings", () => {
+  assert.equal(resolve({ listFormat: [1, 2, 3], locale: "en-US" }, {}), "1, 2, and 3");
+});
+
+test("listFormat: resolves a nested-expression array", () => {
+  assert.equal(resolve({ listFormat: { var: "$tags" }, locale: "en-US" }, { tags: ["x", "y"] }), "x and y");
+});

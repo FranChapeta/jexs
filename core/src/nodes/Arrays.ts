@@ -274,6 +274,40 @@ export class ArrayNode extends Node {
         "{ \"range\": [1, 5] }",
       ],
     },
+    listFormat: {
+      type: "array",
+      output: "string",
+      markdownDescription: "Joins an array into a locale-aware list string via `Intl.ListFormat`. Each element is coerced to a string.",
+      outputDescription: "A single string, e.g. `[\"a\", \"b\", \"c\"]` -> `\"a, b, and c\"` (defaults: `conjunction`, `long`).",
+      examples: [
+        "{ \"listFormat\": [\"a\", \"b\", \"c\"] }",
+        "{ \"listFormat\": { \"var\": \"$tags\" }, \"type\": \"disjunction\" }",
+      ],
+      siblings: {
+        locale: {
+          type: "string",
+          description: "BCP-47 locale tag (default: the runtime locale).",
+        },
+        type: {
+          type: "string",
+          enum: [
+            "conjunction",
+            "disjunction",
+            "unit",
+          ],
+          description: "Grouping relation: `\"conjunction\"` (and, default), `\"disjunction\"` (or), or `\"unit\"`.",
+        },
+        style: {
+          type: "string",
+          enum: [
+            "long",
+            "short",
+            "narrow",
+          ],
+          description: "Length of the connector words (default `\"long\"`).",
+        },
+      },
+    },
   };
 
   static commonSiblings: Record<string, JexsPropertySchema> = {
@@ -651,6 +685,16 @@ export class ArrayNode extends Node {
       if (step > 0) { for (let i = start; i <= end; i += step) result.push(i); }
       else { for (let i = start; i >= end; i += step) result.push(i); }
       return result;
+    });
+  }
+
+  listFormat(def: Record<string, unknown>, c: Context) {
+    return resolveAll([def.listFormat, def.locale, def.type, def.style], c, ([value, locale, type, style]) => {
+      const opts: Intl.ListFormatOptions = {};
+      if (type != null) opts.type = this.toString(type) as Intl.ListFormatType;
+      if (style != null) opts.style = this.toString(style) as Intl.ListFormatStyle;
+      const list = new Intl.ListFormat(locale != null ? this.toString(locale) : undefined, opts);
+      return list.format(this.toArray(value).map(v => this.toString(v)));
     });
   }
 }
