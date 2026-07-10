@@ -1,5 +1,5 @@
 import { Node, Context } from "./Node.js";
-import { resolve, onResolverDestroy } from "../Resolver.js";
+import { resolve, resolveAll, onResolverDestroy } from "../Resolver.js";
 import type { JexsNodeSchema } from "../schema.js";
 
 // ── Seeded PRNG (mulberry32) ─────────────────────────────────────────────────
@@ -22,6 +22,12 @@ function hashString(str: string): number {
   }
   return h;
 }
+
+// English ordinal suffixes keyed by Intl.PluralRules ordinal category. The
+// plural category is locale-aware; the suffix strings themselves are English.
+const ORDINAL_SUFFIX: Record<string, string> = {
+  one: "st", two: "nd", few: "rd", other: "th",
+};
 
 export class MathNode extends Node {
   static schema: JexsNodeSchema = {
@@ -87,6 +93,110 @@ export class MathNode extends Node {
       examples: [
         "{ \"cos\": 0 }",
       ],
+    },
+    tan: {
+      output: "number",
+      markdownDescription: "Tangent of an angle in degrees.",
+      examples: [
+        "{ \"tan\": 45 }",
+      ],
+    },
+    asin: {
+      output: "number",
+      markdownDescription: "Arcsine of a value, returned in degrees. Input outside `[-1, 1]` yields `NaN`.",
+      examples: [
+        "{ \"asin\": 1 }",
+      ],
+    },
+    acos: {
+      output: "number",
+      markdownDescription: "Arccosine of a value, returned in degrees. Input outside `[-1, 1]` yields `NaN`.",
+      examples: [
+        "{ \"acos\": 0 }",
+      ],
+    },
+    atan: {
+      output: "number",
+      markdownDescription: "Arctangent of a value, returned in degrees. For a two-argument form use `atan2`.",
+      examples: [
+        "{ \"atan\": 1 }",
+      ],
+    },
+    log: {
+      output: "number",
+      markdownDescription: "Natural logarithm (base `e`) of a number.",
+      examples: [
+        "{ \"log\": 2.718281828 }",
+      ],
+    },
+    log2: {
+      output: "number",
+      markdownDescription: "Base-2 logarithm of a number.",
+      examples: [
+        "{ \"log2\": 8 }",
+      ],
+    },
+    log10: {
+      output: "number",
+      markdownDescription: "Base-10 logarithm of a number.",
+      examples: [
+        "{ \"log10\": 1000 }",
+      ],
+    },
+    exp: {
+      output: "number",
+      markdownDescription: "Returns `e` raised to the given power.",
+      examples: [
+        "{ \"exp\": 1 }",
+      ],
+    },
+    sign: {
+      output: "number",
+      markdownDescription: "Sign of a number: `-1`, `0`, or `1`.",
+      examples: [
+        "{ \"sign\": -42 }",
+      ],
+    },
+    trunc: {
+      output: "number",
+      markdownDescription: "Removes the fractional part of a number, truncating toward zero.",
+      examples: [
+        "{ \"trunc\": -3.9 }",
+      ],
+    },
+    hypot: {
+      type: "array",
+      items: {
+        type: "number",
+      },
+      output: "number",
+      markdownDescription: "Euclidean norm — the square root of the sum of squares of an array of numbers.",
+      examples: [
+        "{ \"hypot\": [3, 4] }",
+      ],
+    },
+    lerp: {
+      tuple: 3,
+      output: "number",
+      markdownDescription: "Linear interpolation between `a` and `b` by fraction `t`: `a + (b - a) * t`. Tuple form `[a, b, t]`. Extrapolates when `t` is outside `[0, 1]`.",
+      examples: [
+        "{ \"lerp\": [0, 100, 0.5] }",
+      ],
+    },
+    mapRange: {
+      tuple: 5,
+      output: "number",
+      markdownDescription: "Linearly remaps a value from one range to another: `[value, inMin, inMax, outMin, outMax]`. Extrapolates by default; set `clampToRange: true` to bound the result to `[outMin, outMax]`. When `inMin === inMax` it returns `outMin`.",
+      examples: [
+        "{ \"mapRange\": [5, 0, 10, 0, 100] }",
+        "{ \"mapRange\": [15, 0, 10, 0, 100], \"clampToRange\": true }",
+      ],
+      siblings: {
+        clampToRange: {
+          type: "boolean",
+          description: "Clamp the result to `[outMin, outMax]` instead of extrapolating (default `false`). Named to avoid colliding with the `clamp` op.",
+        },
+      },
     },
     sum: {
       type: "array",
@@ -208,6 +318,42 @@ export class MathNode extends Node {
         "{ \"toFixed\": [3.14159, 2] }",
       ],
     },
+    numberFormat: {
+      type: "number",
+      output: "string",
+      markdownDescription: "Formats a number as a locale-aware decimal string via `Intl.NumberFormat` (grouping separators, fraction-digit control). Currency and percent formatting compose from this plus `concat`.",
+      examples: [
+        "{ \"numberFormat\": 1234.5, \"maximumFractionDigits\": 1 }",
+      ],
+      siblings: {
+        locale: {
+          type: "string",
+          description: "BCP-47 locale tag (default: the runtime locale).",
+        },
+        minimumFractionDigits: {
+          type: "number",
+          description: "Minimum digits after the decimal point.",
+        },
+        maximumFractionDigits: {
+          type: "number",
+          description: "Maximum digits after the decimal point.",
+        },
+      },
+    },
+    ordinal: {
+      type: "number",
+      output: "string",
+      markdownDescription: "Formats an integer as an English ordinal (`1` -> `\"1st\"`, `2` -> `\"2nd\"`, `3` -> `\"3rd\"`, `11` -> `\"11th\"`). Uses `Intl.PluralRules` for the plural category with an English suffix map; the suffixes are English-only regardless of `locale`.",
+      examples: [
+        "{ \"ordinal\": 1 }",
+      ],
+      siblings: {
+        locale: {
+          type: "string",
+          description: "BCP-47 locale tag for the plural-category selection (default: the runtime locale). Suffixes remain English.",
+        },
+      },
+    },
     atan2: {
       tuple: 2,
       output: "number",
@@ -263,6 +409,68 @@ export class MathNode extends Node {
   }
   cos(d: Record<string, unknown>, c: Context) {
     return resolve(d.cos, c, v => Math.cos(this.toNumber(v) * Math.PI / 180));
+  }
+  tan(d: Record<string, unknown>, c: Context) {
+    return resolve(d.tan, c, v => Math.tan(this.toNumber(v) * Math.PI / 180));
+  }
+  asin(d: Record<string, unknown>, c: Context) {
+    return resolve(d.asin, c, v => Math.asin(this.toNumber(v)) * 180 / Math.PI);
+  }
+  acos(d: Record<string, unknown>, c: Context) {
+    return resolve(d.acos, c, v => Math.acos(this.toNumber(v)) * 180 / Math.PI);
+  }
+  atan(d: Record<string, unknown>, c: Context) {
+    return resolve(d.atan, c, v => Math.atan(this.toNumber(v)) * 180 / Math.PI);
+  }
+  log(d: Record<string, unknown>, c: Context) {
+    return resolve(d.log, c, v => Math.log(this.toNumber(v)));
+  }
+  log2(d: Record<string, unknown>, c: Context) {
+    return resolve(d.log2, c, v => Math.log2(this.toNumber(v)));
+  }
+  log10(d: Record<string, unknown>, c: Context) {
+    return resolve(d.log10, c, v => Math.log10(this.toNumber(v)));
+  }
+  exp(d: Record<string, unknown>, c: Context) {
+    return resolve(d.exp, c, v => Math.exp(this.toNumber(v)));
+  }
+  sign(d: Record<string, unknown>, c: Context) {
+    return resolve(d.sign, c, v => Math.sign(this.toNumber(v)));
+  }
+  trunc(d: Record<string, unknown>, c: Context) {
+    return resolve(d.trunc, c, v => Math.trunc(this.toNumber(v)));
+  }
+
+  hypot(def: Record<string, unknown>, c: Context) {
+    return resolve(def.hypot, c, arr => Math.hypot(...this.toArray(arr).map(v => this.toNumber(v))));
+  }
+
+  lerp(def: Record<string, unknown>, c: Context) {
+    return resolve(def.lerp, c, values => {
+      const a = this.toArray(values);
+      if (a.length < 3) return 0;
+      const start = this.toNumber(a[0]);
+      const end = this.toNumber(a[1]);
+      return start + (end - start) * this.toNumber(a[2]);
+    });
+  }
+
+  mapRange(def: Record<string, unknown>, c: Context) {
+    return resolveAll([def.mapRange, def.clampToRange], c, ([values, clampRaw]) => {
+      const a = this.toArray(values);
+      if (a.length < 5) return 0;
+      const value = this.toNumber(a[0]);
+      const inMin = this.toNumber(a[1]);
+      const inMax = this.toNumber(a[2]);
+      const outMin = this.toNumber(a[3]);
+      const outMax = this.toNumber(a[4]);
+      if (inMax === inMin) return outMin;
+      const result = outMin + ((value - inMin) / (inMax - inMin)) * (outMax - outMin);
+      if (!this.toBoolean(clampRaw)) return result;
+      const lo = Math.min(outMin, outMax);
+      const hi = Math.max(outMin, outMax);
+      return Math.max(lo, Math.min(hi, result));
+    });
   }
 
   sum(def: Record<string, unknown>, c: Context) {
@@ -352,6 +560,24 @@ export class MathNode extends Node {
       const value = this.toNumber(arr[0]);
       const decimals = arr.length > 1 ? this.toNumber(arr[1]) : 2;
       return value.toFixed(Math.max(0, Math.min(20, decimals)));
+    });
+  }
+
+  numberFormat(def: Record<string, unknown>, c: Context) {
+    return resolveAll([def.numberFormat, def.locale, def.minimumFractionDigits, def.maximumFractionDigits], c,
+      ([value, locale, minF, maxF]) => {
+        const opts: Intl.NumberFormatOptions = {};
+        if (minF != null) opts.minimumFractionDigits = this.toNumber(minF);
+        if (maxF != null) opts.maximumFractionDigits = this.toNumber(maxF);
+        return new Intl.NumberFormat(locale != null ? this.toString(locale) : undefined, opts).format(this.toNumber(value));
+      });
+  }
+
+  ordinal(def: Record<string, unknown>, c: Context) {
+    return resolveAll([def.ordinal, def.locale], c, ([value, locale]) => {
+      const n = this.toNumber(value);
+      const rules = new Intl.PluralRules(locale != null ? this.toString(locale) : undefined, { type: "ordinal" });
+      return `${n}${ORDINAL_SUFFIX[rules.select(n)] ?? "th"}`;
     });
   }
 
