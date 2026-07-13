@@ -1,6 +1,6 @@
 {
   "name": "@jexs/server",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "license": "MIT",
   "description": "Node.js server runtime for Jexs — HTTP, routing, SQLite/MySQL, sessions, OAuth, email, web-push, WebSocket",
   "keywords": [
@@ -36,7 +36,7 @@
     "dist"
   ],
   "peerDependencies": {
-    "@jexs/core": "^0.8.0",
+    "@jexs/core": "^0.9.0",
     "@jexs/physics": "^0.5.0"
   },
   "dependencies": {

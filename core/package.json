@@ -1,6 +1,6 @@
 {
   "name": "@jexs/core",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "license": "MIT",
   "description": "JSON expression resolver engine and pure-logic nodes (var, if, foreach, math, strings, arrays, dates) for Jexs",
   "keywords": ["jexs", "json", "expression", "resolver", "declarative", "interpreter", "logic", "template"],
