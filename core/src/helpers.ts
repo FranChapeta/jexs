@@ -156,6 +156,35 @@ export function escapeHtml(str: string): string {
   return str.replace(HTML_ESCAPE_RE, (char) => HTML_ENTITIES[char] || char);
 }
 
+// Escape a JSON string for safe embedding inside a <script> element. The HTML
+// tokenizer ends a <script> at a literal "</script>" regardless of the script's
+// `type`, so any "<" in a serialized value could break out (or inject markup).
+// These characters never appear in JSON structure — only inside string values —
+// so replacing them with their \uXXXX JSON escapes is lossless: a JSON parser
+// decodes them back to the originals. U+2028/U+2029 are valid in JSON but are
+// line terminators that break inline scripts, so they are escaped too. This is
+// the same set used by battle-tested serializers (e.g. Next.js, serialize-js).
+// Built via RegExp/charCode so the invisible U+2028/U+2029 chars never appear
+// literally in this source. `/g` is only used with String.replace (resets lastIndex).
+const SCRIPT_JSON_RE = new RegExp("[<>&\\u2028\\u2029]", "g");
+
+export function escapeScriptJson(json: string): string {
+  return json.replace(SCRIPT_JSON_RE, (char) => {
+    switch (char.charCodeAt(0)) {
+      case 0x3c:
+        return "\\u003c";
+      case 0x3e:
+        return "\\u003e";
+      case 0x26:
+        return "\\u0026";
+      case 0x2028:
+        return "\\u2028";
+      default:
+        return "\\u2029";
+    }
+  });
+}
+
 /**
  * Generate a random string
  */

@@ -1,7 +1,7 @@
 import { Node, Context, NodeValue } from "./Node.js";
 import { resolve, resolveAll, translate } from "../Resolver.js";
 import { hasVariables, interpolate } from "./Variables.js";
-import { escapeHtml, isObject } from "../helpers.js";
+import { escapeHtml, escapeScriptJson, isObject } from "../helpers.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
 
 // Compact attribute-schema builders for the per-tag variants below. HTML
@@ -110,7 +110,7 @@ export class ElementNode extends Node {
       // `variants`, but custom elements and arbitrary attributes still validate
       // (the variants only ADD known-attribute hints, never restrict).
       variantBy: "value",
-      markdownDescription: "Renders an HTML element. Attributes are flat keys on the object; `content` holds children.\r\n`class` accepts a string, array, or `{ className: bool }` map. `style` accepts a camel- or kebab-case object.\r\nFor `<style>`/`<script>` the `content` is emitted as literal text (no escaping/translation); a `<style>` object `content` is compiled to CSS.\r\nAdd an `\"if\"` key to conditionally render. Wire DOM events via an `\"events\"` object.",
+      markdownDescription: "Renders an HTML element. Attributes are flat keys on the object; `content` holds children.\r\n`class` accepts a string, array, or `{ className: bool }` map. `style` accepts a camel- or kebab-case object.\r\nFor `<style>`/`<script>` the `content` is emitted as literal text (no escaping/translation); a `<style>` object `content` is compiled to CSS, and a `<script>` with a JSON `type` (`application/json` or a `+json` media type such as `application/ld+json`) has its `content` resolved and serialized to safely-escaped JSON.\r\nAdd an `\"if\"` key to conditionally render. Wire DOM events via an `\"events\"` object.",
       outputDescription: "An HTML **string**. When an `\"if\"` key is present and falsy, renders to an empty string `\"\"`. String content has `$identifier` tokens interpolated — wrap literal `$` content in `{ \"raw\": \"…\" }`.",
       examples: [
         "{ \"tag\": \"button\", \"class\": \"btn\", \"events\": { \"click\": { \"do\": [...] } }, \"content\": [\"Submit\"] }",
@@ -181,15 +181,35 @@ function renderElement(def: Record<string, unknown>, context: Context): unknown 
     const injected = buildInjections(tag, def, context);
     // <style>/<script> are raw-text elements: their content is CSS/JS, not HTML
     // children, so it skips escaping and i18n translation. <style> resolves its
-    // content and compiles a CSS-in-JSON object to a stylesheet; <script> (and
-    // any other raw-text tag) is emitted verbatim.
+    // content and compiles a CSS-in-JSON object to a stylesheet; a <script> with
+    // a JSON `type` serializes its content to escaped JSON (see below); every
+    // other <script> (and any other raw-text tag) is emitted verbatim.
     let contentResult: string | Promise<string>;
     if (tag === "style") {
       contentResult = resolve(def.content, context, val =>
         isObject(val) ? compileCss(val, context) : String(val ?? ""),
       ) as string | Promise<string>;
     } else if (tag === "script") {
-      contentResult = typeof def.content === "string" ? def.content : String(def.content ?? "");
+      // Resolve `type` first (it may be an expression), then decide how to treat
+      // the content. A JSON data block (type `application/json` or any `+json`
+      // media type, e.g. `application/ld+json`) carries data, not executable JS:
+      // resolve its content and serialize to JSON, escaping the characters that
+      // would let a value break out of the <script> — the HTML tokenizer ends the
+      // element at a literal "</script>" regardless of the `type`. Every other
+      // script keeps the raw-text contract (content emitted verbatim, and only
+      // when it is already a string). Nesting the content resolve inside the type
+      // resolve keeps it correct on the async path (Promise.then flattens).
+      contentResult = resolve(def.type, context, rawType => {
+        const type = typeof rawType === "string" ? rawType.toLowerCase() : "";
+        if (type === "application/json" || type.endsWith("+json")) {
+          return resolve(def.content, context, val => {
+            if (val == null) return "";
+            const json = typeof val === "string" ? val : JSON.stringify(val);
+            return escapeScriptJson(json);
+          });
+        }
+        return typeof def.content === "string" ? def.content : String(def.content ?? "");
+      }) as string | Promise<string>;
     } else {
       contentResult = renderContent(def.content, context);
     }

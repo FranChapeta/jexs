@@ -1,9 +1,18 @@
 {
   "name": "@jexs/core",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "license": "MIT",
   "description": "JSON expression resolver engine and pure-logic nodes (var, if, foreach, math, strings, arrays, dates) for Jexs",
-  "keywords": ["jexs", "json", "expression", "resolver", "declarative", "interpreter", "logic", "template"],
+  "keywords": [
+    "jexs",
+    "json",
+    "expression",
+    "resolver",
+    "declarative",
+    "interpreter",
+    "logic",
+    "template"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/FranChapeta/jexs.git",
@@ -15,7 +24,12 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
-    ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts" }
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
   },
-  "files": ["dist"]
+  "files": [
+    "dist"
+  ]
 }
