@@ -366,10 +366,14 @@ async function main(): Promise<void> {
     }, null, 2) + "\n",
   );
 
-  // .gitignore — public/styles.css is a build artifact (tailwind output).
+  // .gitignore — node_modules and the tailwind CSS build artifact (public/styles.css).
+  // .jexs-schema.json is deliberately NOT ignored: it's a static $ref that the
+  // committed .vscode/settings.json depends on, so it must be tracked or a fresh
+  // clone loses editor autocomplete/validation (the schema content it points to
+  // still lives in gitignored node_modules).
   writeFileSync(
     join(dir, ".gitignore"),
-    ".jexs-schema.json\nnode_modules/\n" + (useTailwind ? "public/styles.css\n" : ""),
+    "node_modules/\n" + (useTailwind ? "public/styles.css\n" : ""),
   );
 
   // .gitattributes — GitHub Linguist treats JSON as a "data" language by default
