@@ -148,8 +148,16 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
       type: "array",
       minItems: min,
       maxItems: max,
-      items: { ...REF.anyVal },
     };
+    // `prefixItems` types each slot by index (draft 2020-12). Slots past the
+    // list — a variadic tail, when `max` exceeds its length — fall back to anyVal;
+    // without a prefix, every slot is anyVal (any literal OR expression).
+    if (prop.prefixItems) {
+      out.prefixItems = prop.prefixItems.map(expandProperty);
+      if (max > prop.prefixItems.length) out.items = { ...REF.anyVal };
+    } else {
+      out.items = { ...REF.anyVal };
+    }
     liftMetadata(prop, out);
     return out;
   }

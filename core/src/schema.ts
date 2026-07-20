@@ -37,6 +37,11 @@ export interface JexsPropertySchema {
   literal?: boolean;
   /** Fixed-arity tuple. Items default to anyVal (any literal OR expression). */
   tuple?: number | readonly [number, number];
+  /** Per-position schemas for a tuple (draft 2020-12 `prefixItems`): each entry
+   *  types one slot by index, letting a tuple carry e.g. an `enum` on one position.
+   *  Pairs with `tuple` for arity; slots past the list (when `tuple`'s max exceeds
+   *  its length) fall back to anyVal. */
+  prefixItems?: readonly JexsPropertySchema[];
   /** Object whose values are themselves expressions / step arrays / primitives. */
   map?: boolean;
   /** Strictly an array of step expressions. */

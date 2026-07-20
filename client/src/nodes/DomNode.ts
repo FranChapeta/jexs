@@ -2,45 +2,62 @@ import { Node, Context, NodeValue } from "@jexs/core";
 import { resolve, resolveAll } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
-/**
- * DomNode — Client-side DOM operations.
- *
- * Operations:
- * - { "show": "#selector" }
- * - { "hide": "#selector" }
- * - { "toggle": "#selector" }
- * - { "enable": "#selector" }
- * - { "disable": "#selector" }
- * - { "addClass": ["#selector", "className"] }
- * - { "removeClass": ["#selector", "className"] }
- * - { "toggleClass": ["#selector", "className"] }
- * - { "setAttr": ["#selector", "attrName", "value"] }
- * - { "getElementById": "id" }
- * - { "querySelector": "selector" }
- * - { "querySelectorAll": "selector" }
- * - { "closest": [element, "selector"] }
- * - { "scrollTo": "#selector" }                                   — scroll element to its bottom
- * - { "scrollIntoView": "#selector", "block": "center" }          — scroll element into view
- * - { "pointerLock": "#selector" }   — request pointer lock on element
- * - { "pointerUnlock": true }         — exit pointer lock
- */
-
 let pointerLockListenerAdded = false;
+
+// Live DOM properties addressable by getProp/setProp, used to constrain the
+// property slot of each tuple. Read-only metrics are gettable only, so they're
+// absent from the settable list.
+const WRITABLE_PROPS = [
+  "scrollTop", "scrollLeft", "selectedIndex", "currentTime", "volume", "playbackRate",
+  "checked", "indeterminate", "muted",
+];
+const READONLY_METRICS = [
+  "scrollHeight", "scrollWidth", "clientHeight", "clientWidth",
+  "offsetHeight", "offsetWidth", "offsetTop", "offsetLeft",
+];
+const GETTABLE_PROPS = [...WRITABLE_PROPS, ...READONLY_METRICS, "disabled"];
+
+// Ops that act on a target element return that element (an actual HTMLElement),
+// enabling chaining. Declared via `output: "object"` + this description.
+const RETURNS_TARGET = "The element operated on (an HTMLElement), for chaining.";
+
 export class DomNode extends Node {
+  // getProp/setProp accept a plain property name OR a dot-path to a nested one
+  // (e.g. "style.color"), like setVars. The `enum` lists common flat props for
+  // autocomplete WITHOUT restricting — the strOrExpr branch admits any string
+  // (incl. dot-paths) or a string-valued expression.
+  static schemaDefs: Record<string, Record<string, unknown>> = {
+    _gettableProp: {
+      anyOf: [
+        { type: "string", enum: GETTABLE_PROPS },
+        { $ref: "#/$defs/strOrExpr" },
+      ],
+    },
+    _writableProp: {
+      anyOf: [
+        { type: "string", enum: WRITABLE_PROPS },
+        { $ref: "#/$defs/strOrExpr" },
+      ],
+    },
+  };
+
   static schema: JexsNodeSchema = {
     show: {
       type: "string",
       output: "object",
+      outputDescription: RETURNS_TARGET,
       markdownDescription: "Shows an element by clearing its inline `display` style. Accepts a CSS selector or HTMLElement.",
     },
     hide: {
       type: "string",
       output: "object",
+      outputDescription: RETURNS_TARGET,
       markdownDescription: "Hides an element by setting `display: none`. Accepts a CSS selector or HTMLElement.",
     },
     toggle: {
       type: "string",
       output: "object",
+      outputDescription: RETURNS_TARGET,
       markdownDescription: "Toggles `display: none` on an element.",
     },
     showAll: {
@@ -53,15 +70,33 @@ export class DomNode extends Node {
     },
     enable: {
       output: "object",
+      outputDescription: RETURNS_TARGET,
       markdownDescription: "Enables a form input by setting `disabled = false`.",
     },
     disable: {
       output: "object",
+      outputDescription: RETURNS_TARGET,
       markdownDescription: "Disables a form input by setting `disabled = true`.",
+    },
+    focus: {
+      output: "object",
+      outputDescription: RETURNS_TARGET,
+      markdownDescription: "Focuses an element via `HTMLElement.focus()`. Accepts a CSS selector or HTMLElement.",
+    },
+    blur: {
+      output: "object",
+      outputDescription: RETURNS_TARGET,
+      markdownDescription: "Removes focus from an element via `HTMLElement.blur()`. Accepts a CSS selector or HTMLElement.",
+    },
+    click: {
+      output: "object",
+      outputDescription: RETURNS_TARGET,
+      markdownDescription: "Dispatches a click on an element via `HTMLElement.click()` (e.g. to trigger a hidden file input). Accepts a CSS selector or HTMLElement.",
     },
     addClass: {
       tuple: 2,
       output: "object",
+      outputDescription: RETURNS_TARGET,
       markdownDescription: "Adds a CSS class to an element. Pass `[selectorOrElement, className]`.",
       examples: [
         "{ \"addClass\": [\"#btn\", \"active\"] }",
@@ -70,16 +105,19 @@ export class DomNode extends Node {
     removeClass: {
       tuple: 2,
       output: "object",
+      outputDescription: RETURNS_TARGET,
       markdownDescription: "Removes a CSS class from an element. Pass `[selectorOrElement, className]`.",
     },
     toggleClass: {
       tuple: 2,
       output: "object",
+      outputDescription: RETURNS_TARGET,
       markdownDescription: "Toggles a CSS class on an element. Pass `[selectorOrElement, className]`.",
     },
     setAttr: {
       tuple: 3,
       output: "object",
+      outputDescription: RETURNS_TARGET,
       markdownDescription: "Sets an attribute on an element. Pass `[selectorOrElement, attrName, value]`.",
     },
     getAttr: {
@@ -87,9 +125,70 @@ export class DomNode extends Node {
       output: "string",
       markdownDescription: "Gets an attribute value from an element. Pass `[selectorOrElement, attrName]`.",
     },
+    getProp: {
+      tuple: 2,
+      prefixItems: [
+        { description: "The element: a CSS selector or an HTMLElement." },
+        { $ref: "#/$defs/_gettableProp", description: "The DOM property to read, or a dot-path to a nested one (e.g. \"style.color\")." },
+      ],
+      output: "any",
+      markdownDescription: "Reads a live DOM property from an element (the JS property, not the HTML attribute) — e.g. `scrollTop`, `scrollHeight`, `checked`. Supports dot-paths for nested props, e.g. `style.color`. Pass `[selectorOrElement, propName]`.",
+      examples: [
+        "{ \"getProp\": [\"#log\", \"scrollTop\"] }",
+        "{ \"getProp\": [\"#box\", \"style.color\"] }",
+      ],
+    },
+    setProp: {
+      tuple: 3,
+      prefixItems: [
+        { description: "The element: a CSS selector or an HTMLElement." },
+        { $ref: "#/$defs/_writableProp", description: "The DOM property to write, or a dot-path to a nested one (e.g. \"style.color\")." },
+        { description: "The value to assign." },
+      ],
+      output: "object",
+      outputDescription: RETURNS_TARGET,
+      markdownDescription: "Writes a live DOM property on an element (the JS property, not the HTML attribute) — e.g. `scrollTop`, `checked`, `selectedIndex`. Supports dot-paths for nested props (e.g. `style.color`), traversed like `setVars`. Pass `[selectorOrElement, propName, value]`. Returns the element.",
+      examples: [
+        "{ \"setProp\": [\"#log\", \"scrollTop\", 99999] }",
+        "{ \"setProp\": [\"#box\", \"style.color\", \"red\"] }",
+      ],
+    },
     submit: {
       output: "null",
       markdownDescription: "Submits a form. Pass `\"form\"` to submit the closest ancestor form of the event target, or a CSS selector.",
+    },
+    copy: {
+      type: "string",
+      output: "string",
+      outputDescription: "The text that was written to the clipboard (once the async write resolves).",
+      markdownDescription: "Copies text to the clipboard via `navigator.clipboard.writeText()`. Pass the text or an expression resolving to it. Requires a secure context and a user gesture (e.g. inside a click handler).",
+      examples: [
+        "{ \"copy\": { \"var\": \"$shareUrl\" } }",
+      ],
+    },
+    showModal: {
+      output: "object",
+      outputDescription: RETURNS_TARGET,
+      markdownDescription: "Opens a `<dialog>` as a modal via `HTMLDialogElement.showModal()`. Accepts a CSS selector or HTMLElement.",
+    },
+    closeModal: {
+      output: "object",
+      outputDescription: RETURNS_TARGET,
+      markdownDescription: "Closes a `<dialog>` via `HTMLDialogElement.close()`. Accepts a CSS selector or HTMLElement.",
+    },
+    preventDefault: {
+      output: "null",
+      markdownDescription: "Calls `preventDefault()` on the current event (`$event` in context) from inside an event handler's steps. Use this for conditional prevention; the `preventDefault` flag on an `events` handler is the unconditional form that runs before the steps.",
+      examples: [
+        "{ \"if\": { \"var\": \"$someCondition\" }, \"then\": { \"preventDefault\": true } }",
+      ],
+    },
+    stopPropagation: {
+      output: "null",
+      markdownDescription: "Calls `stopPropagation()` on the current event (`$event` in context) from inside an event handler's steps. Use this for conditional stopping; the `stopPropagation` flag on an `events` handler is the unconditional form that runs before the steps.",
+      examples: [
+        "{ \"if\": { \"var\": \"$someCondition\" }, \"then\": { \"stopPropagation\": true } }",
+      ],
     },
     getElementById: {
       type: "string",
@@ -111,6 +210,14 @@ export class DomNode extends Node {
       output: "object",
       markdownDescription: "Walks up from an element to the nearest ancestor matching a selector. Pass `[element, selector]`.",
     },
+    getBoundingClientRect: {
+      output: "object",
+      outputDescription: "A plain `{ x, y, width, height, top, right, bottom, left }` object (numbers, CSS pixels relative to the viewport).",
+      markdownDescription: "Returns the element's size and viewport position via `Element.getBoundingClientRect()`, as a plain serializable object. Accepts a CSS selector or HTMLElement.",
+      examples: [
+        "{ \"getBoundingClientRect\": \"#box\" }",
+      ],
+    },
     getValue: {
       output: "string",
       markdownDescription: "Gets the current `.value` of an input element.",
@@ -118,29 +225,61 @@ export class DomNode extends Node {
     setValue: {
       tuple: 2,
       output: "object",
+      outputDescription: RETURNS_TARGET,
       markdownDescription: "Sets the `.value` of an input element. Pass `[selectorOrElement, value]`.",
+    },
+    setRangeText: {
+      tuple: [2, 5],
+      prefixItems: [
+        { description: "The `<input>`/`<textarea>`: a CSS selector or an HTMLElement." },
+        { type: "string", description: "The replacement text." },
+        { type: "number", description: "Start offset of the range to replace (pass with `end`)." },
+        { type: "number", description: "End offset of the range to replace (pass with `start`)." },
+        { type: "string", enum: ["select", "start", "end", "preserve"], description: "Where the selection lands afterward. Defaults to \"preserve\"." },
+      ],
+      output: "object",
+      outputDescription: RETURNS_TARGET,
+      markdownDescription: "Replaces text in an `<input>`/`<textarea>` via `setRangeText()`, preserving the browser's native undo history (unlike setting `.value`, which clears it). Pass `[selectorOrElement, replacement]` to replace the current selection, or `[selectorOrElement, replacement, start, end, selectMode?]` to replace a specific range.",
+      examples: [
+        "{ \"setRangeText\": [\"#note\", \"hello\"] }",
+        "{ \"setRangeText\": [\"#note\", \"redo\", 0, 4, \"end\"] }",
+      ],
+    },
+    select: {
+      output: "object",
+      outputDescription: RETURNS_TARGET,
+      markdownDescription: "Selects all text in an `<input>`/`<textarea>` via `.select()`. Accepts a CSS selector or HTMLElement.",
     },
     setHtml: {
       tuple: 2,
       output: "object",
+      outputDescription: RETURNS_TARGET,
       markdownDescription: "Sets the `innerHTML` of an element. Pass `[selectorOrElement, html]`.",
     },
     setText: {
       tuple: 2,
       output: "object",
+      outputDescription: RETURNS_TARGET,
       markdownDescription: "Sets the `textContent` of an element. Pass `[selectorOrElement, text]`.",
     },
     append: {
       tuple: 2,
       output: "object",
+      outputDescription: RETURNS_TARGET,
       markdownDescription: "Appends HTML to an element (`insertAdjacentHTML(\"beforeend\")`) and scrolls to the bottom. Pass `[selectorOrElement, html]`.",
     },
-    scrollTo: {
+    removeEl: {
       output: "null",
+      markdownDescription: "Removes an element from the DOM via `Element.remove()`. Accepts a CSS selector or HTMLElement. (Named `removeEl` because `remove` is ArrayNode's element-removal op.)",
+    },
+    scrollTo: {
+      output: "object",
+      outputDescription: RETURNS_TARGET,
       markdownDescription: "Scrolls an element to its bottom by setting `scrollTop = scrollHeight`. Useful for chat containers.",
     },
     scrollIntoView: {
       output: "object",
+      outputDescription: RETURNS_TARGET,
       markdownDescription: "Scrolls an element into view via `Element.scrollIntoView`. Accepts a CSS selector or HTMLElement.\nOptional siblings: `block` (`\"start\"` | `\"center\"` | `\"end\"` | `\"nearest\"`, default `\"center\"`) for vertical alignment, and `behavior` (`\"auto\"` | `\"smooth\"`, default `\"auto\"`) for animation.",
       examples: [
         "{ \"scrollIntoView\": \"#active\" }",
@@ -156,6 +295,16 @@ export class DomNode extends Node {
           description: "Scroll behavior: \"auto\" (instant) or \"smooth\". Defaults to \"auto\".",
         },
       },
+    },
+    play: {
+      output: "object",
+      outputDescription: RETURNS_TARGET,
+      markdownDescription: "Plays an `<audio>`/`<video>` media element via `HTMLMediaElement.play()`. Accepts a CSS selector or HTMLElement. (For Web Audio sound effects, see the `audio-*` ops.)",
+    },
+    pause: {
+      output: "object",
+      outputDescription: RETURNS_TARGET,
+      markdownDescription: "Pauses an `<audio>`/`<video>` media element via `HTMLMediaElement.pause()`. Accepts a CSS selector or HTMLElement.",
     },
     pointerLock: {
       output: "null",
@@ -263,6 +412,144 @@ export class DomNode extends Node {
         if (el) return el.getAttribute(String(args[1]));
       }
       return null;
+    });
+  }
+  getProp(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.getProp, context, args => {
+      if (Array.isArray(args) && args.length >= 2) {
+        const el = getElement(args[0]);
+        if (el) return getPropPath(el, String(args[1]));
+      }
+      return null;
+    });
+  }
+  setProp(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.setProp, context, args => {
+      if (Array.isArray(args) && args.length >= 3) {
+        const el = getElement(args[0]);
+        if (el) setPropPath(el, String(args[1]), args[2]);
+        return el;
+      }
+      return null;
+    });
+  }
+  focus(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.focus, context, v => {
+      const el = getElement(v);
+      if (el) el.focus();
+      return el;
+    });
+  }
+  blur(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.blur, context, v => {
+      const el = getElement(v);
+      if (el) el.blur();
+      return el;
+    });
+  }
+  getBoundingClientRect(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.getBoundingClientRect, context, v => {
+      const el = getElement(v);
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: r.x, y: r.y, width: r.width, height: r.height, top: r.top, right: r.right, bottom: r.bottom, left: r.left };
+    });
+  }
+  setRangeText(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.setRangeText, context, args => {
+      if (!Array.isArray(args) || args.length < 2) return null;
+      const el = getElement(args[0]);
+      if (!el) return null;
+      const fn = Reflect.get(el, "setRangeText");
+      if (typeof fn !== "function") return null;
+      const replacement = String(args[1] ?? "");
+      if (args.length >= 4) {
+        const mode = typeof args[4] === "string" ? args[4] : "preserve";
+        fn.call(el, replacement, Number(args[2]), Number(args[3]), mode);
+      } else {
+        fn.call(el, replacement);
+      }
+      return el;
+    });
+  }
+  preventDefault(_def: Record<string, unknown>, context: Context): NodeValue {
+    const event = context.event;
+    if (event instanceof Event) event.preventDefault();
+    return null;
+  }
+  stopPropagation(_def: Record<string, unknown>, context: Context): NodeValue {
+    const event = context.event;
+    if (event instanceof Event) event.stopPropagation();
+    return null;
+  }
+  click(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.click, context, v => {
+      const el = getElement(v);
+      if (el) el.click();
+      return el;
+    });
+  }
+  removeEl(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.removeEl, context, v => {
+      const el = getElement(v);
+      if (el) el.remove();
+      return null;
+    });
+  }
+  select(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.select, context, v => {
+      const el = getElement(v);
+      if (!el) return null;
+      const fn = Reflect.get(el, "select");
+      if (typeof fn === "function") fn.call(el);
+      return el;
+    });
+  }
+  copy(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.copy, context, text => {
+      const str = String(text ?? "");
+      const clip = navigator.clipboard;
+      if (!clip) return null;
+      return clip.writeText(str).then(() => str);
+    });
+  }
+  showModal(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.showModal, context, v => {
+      const el = getElement(v);
+      if (!el) return null;
+      const fn = Reflect.get(el, "showModal");
+      if (typeof fn === "function") fn.call(el);
+      return el;
+    });
+  }
+  closeModal(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.closeModal, context, v => {
+      const el = getElement(v);
+      if (!el) return null;
+      const fn = Reflect.get(el, "close");
+      if (typeof fn === "function") fn.call(el);
+      return el;
+    });
+  }
+  play(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.play, context, v => {
+      const el = getElement(v);
+      if (!el) return null;
+      const fn = Reflect.get(el, "play");
+      if (typeof fn === "function") {
+        const r = fn.call(el);
+        if (r && typeof r.then === "function") r.catch(() => { /* autoplay policy may reject */ });
+      }
+      return el;
+    });
+  }
+  pause(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.pause, context, v => {
+      const el = getElement(v);
+      if (!el) return null;
+      const fn = Reflect.get(el, "pause");
+      if (typeof fn === "function") fn.call(el);
+      return el;
     });
   }
   submit(def: Record<string, unknown>, context: Context): NodeValue {
@@ -386,4 +673,33 @@ function getElement(ref: unknown): HTMLElement | null {
   if (ref instanceof HTMLElement) return ref;
   if (typeof ref === "string") return document.querySelector(ref);
   return null;
+}
+
+function isTraversable(v: unknown): v is object {
+  return v !== null && (typeof v === "object" || typeof v === "function");
+}
+
+// Read a property off an object by name, or by dot-path for a nested one
+// (e.g. "style.color"). Returns undefined if the path breaks on a non-object.
+function getPropPath(obj: object, path: string): unknown {
+  const keys = path.split(".");
+  let cur: unknown = obj;
+  for (const k of keys) {
+    if (!isTraversable(cur)) return undefined;
+    cur = Reflect.get(cur, k);
+  }
+  return cur;
+}
+
+// Write a property by name or dot-path. Walks EXISTING objects only — never
+// creates intermediates (unlike setVars), since DOM sub-objects like `style`
+// already exist; a broken path is a no-op.
+function setPropPath(obj: object, path: string, value: unknown): void {
+  const keys = path.split(".");
+  let cur: unknown = obj;
+  for (let i = 0; i < keys.length - 1; i++) {
+    if (!isTraversable(cur)) return;
+    cur = Reflect.get(cur, keys[i]);
+  }
+  if (isTraversable(cur)) Reflect.set(cur, keys[keys.length - 1], value);
 }
