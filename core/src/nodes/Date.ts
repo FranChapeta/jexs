@@ -20,6 +20,10 @@ export class DateNode extends Node {
     },
     dateAdd: {
       tuple: 2,
+      prefixItems: [
+        { type: "number", description: "The base Unix-ms timestamp." },
+        { type: "string", description: "The interval to add, e.g. `\"500ms\"`, `\"30s\"`, `\"5m\"`, `\"1h\"`, `\"7d\"`." },
+      ],
       markdownDescription: "Adds a duration to a Unix-ms timestamp. Interval formats: `\"500ms\"`, `\"30s\"`, `\"5m\"`, `\"1h\"`, `\"7d\"`.",
       outputDescription: "The shifted timestamp in the `format` (default `ms`): a **number** for `ms`, else a formatted **string**. `null` if fewer than two args are given.",
       examples: [
@@ -65,6 +69,10 @@ export class DateNode extends Node {
     },
     dateDiff: {
       tuple: 2,
+      prefixItems: [
+        { type: "number", description: "The `from` Unix-ms timestamp." },
+        { type: "number", description: "The `to` Unix-ms timestamp." },
+      ],
       output: "number",
       markdownDescription: "Difference between two Unix-ms timestamps as `[from, to]`, in whole `unit`s (default `ms`). Positive when `to` is later than `from`. Units are fixed-length: `\"ms\"`, `\"second\"`, `\"minute\"`, `\"hour\"`, `\"day\"`, `\"week\"` (calendar months/years are not supported — extract parts with `datePart`).",
       outputDescription: "A **number** of whole units, truncated toward zero and signed. `null` if fewer than two args are given or the unit is unknown.",
@@ -176,6 +184,10 @@ export class DateNode extends Node {
       tuple: [
         1,
         2,
+      ],
+      prefixItems: [
+        { type: "number", description: "The `target` Unix-ms timestamp to phrase." },
+        { type: "number", description: "The `base` Unix-ms timestamp to phrase against (defaults to now)." },
       ],
       output: "string",
       markdownDescription: "Formats a Unix-ms timestamp as a locale-aware relative-time string via `Intl.RelativeTimeFormat`. Tuple form `[target, base]`: `target` is phrased relative to `base`, which defaults to now (matching date-fns `intlFormatDistance` and moment `.from()`). Auto-selects the largest fitting unit (second through year) unless `unit` forces one; month and year use approximate 30-day / 365-day lengths, so long spans are rounded.",

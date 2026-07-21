@@ -121,6 +121,10 @@ export class VectorNode extends Node {
   static schema: JexsNodeSchema = {
     "v-distance": {
       tuple: 2,
+      prefixItems: [
+        { type: "object", description: "First vector `a` (`{ x, y, z? }`)." },
+        { type: "object", description: "Second vector `b` (`{ x, y, z? }`)." },
+      ],
       output: "number",
       markdownDescription: "Returns the Euclidean distance between two vectors. Pass `[a, b]`.",
       examples: [
@@ -129,6 +133,11 @@ export class VectorNode extends Node {
     },
     "v-lerp": {
       tuple: 3,
+      prefixItems: [
+        { type: "object", description: "Start vector `a` (`{ x, y, z? }`)." },
+        { type: "object", description: "End vector `b` (`{ x, y, z? }`)." },
+        { type: "number", description: "Interpolation fraction `t` (0-1)." },
+      ],
       output: "object",
       markdownDescription: "Linearly interpolates between two vectors. Pass `[a, b, t]` where `t` is 0–1.",
       examples: [
@@ -137,6 +146,11 @@ export class VectorNode extends Node {
     },
     "v-toward": {
       tuple: 3,
+      prefixItems: [
+        { type: "object", description: "The starting vector `a` (`{ x, y, z? }`)." },
+        { type: "object", description: "The target vector `b` (`{ x, y, z? }`)." },
+        { type: "number", description: "Maximum distance to move toward `b`." },
+      ],
       output: "object",
       markdownDescription: "Moves vector `a` toward `b` by at most `maxDist`. Returns `b` if already within range. Pass `[a, b, maxDist]`.",
       examples: [
@@ -149,31 +163,55 @@ export class VectorNode extends Node {
     },
     "v-scale": {
       tuple: 2,
+      prefixItems: [
+        { type: "object", description: "The vector to scale (`{ x, y, z? }`)." },
+        { type: "number", description: "The scalar multiplier." },
+      ],
       output: "object",
       markdownDescription: "Multiplies a vector by a scalar. Pass `[vector, scalar]`. Works in 2D and 3D.",
     },
     "v-add": {
       tuple: 2,
+      prefixItems: [
+        { type: "object", description: "First vector `a` (`{ x, y, z? }`)." },
+        { type: "object", description: "Second vector `b` (`{ x, y, z? }`)." },
+      ],
       output: "object",
       markdownDescription: "Adds two vectors component-wise. Pass `[a, b]`. Works in 2D and 3D.",
     },
     "v-sub": {
       tuple: 2,
+      prefixItems: [
+        { type: "object", description: "The minuend vector `a` (`{ x, y, z? }`)." },
+        { type: "object", description: "The subtrahend vector `b` (`{ x, y, z? }`)." },
+      ],
       output: "object",
       markdownDescription: "Subtracts vector `b` from `a`. Pass `[a, b]`. Works in 2D and 3D.",
     },
     "v-direction": {
       tuple: 2,
+      prefixItems: [
+        { type: "object", description: "The `from` vector (`{ x, y, z? }`)." },
+        { type: "object", description: "The `to` vector (`{ x, y, z? }`)." },
+      ],
       output: "object",
       markdownDescription: "Returns the unit vector from `a` pointing toward `b`. Pass `[from, to]`.",
     },
     "v-cross": {
       tuple: 2,
+      prefixItems: [
+        { type: "object", description: "First vector `a` (`{ x, y, z? }`)." },
+        { type: "object", description: "Second vector `b` (`{ x, y, z? }`)." },
+      ],
       output: "object",
       markdownDescription: "Returns the cross product of two vectors as a 3D vector. Pass `[a, b]`.",
     },
     "v-dot": {
       tuple: 2,
+      prefixItems: [
+        { type: "object", description: "First vector `a` (`{ x, y, z? }`)." },
+        { type: "object", description: "Second vector `b` (`{ x, y, z? }`)." },
+      ],
       output: "number",
       markdownDescription: "Returns the scalar dot product of two vectors. Pass `[a, b]`. Works in 2D and 3D.",
     },

@@ -83,6 +83,10 @@ export class StringNode extends Node {
         1,
         2,
       ],
+      prefixItems: [
+        { description: "The value to serialize." },
+        { type: "number", description: "Indentation width for pretty-printing." },
+      ],
       output: "string",
       markdownDescription: "Serializes a value to a JSON string. Pass `[value, indent]` to pretty-print.",
       examples: [
@@ -94,6 +98,11 @@ export class StringNode extends Node {
         2,
         3,
       ],
+      prefixItems: [
+        { type: "string", description: "The source string." },
+        { type: "number", description: "Start index (inclusive)." },
+        { type: "number", description: "End index (exclusive). Defaults to the end of the string." },
+      ],
       output: "string",
       markdownDescription: "Extracts a substring.",
       examples: [
@@ -102,6 +111,11 @@ export class StringNode extends Node {
     },
     replace: {
       tuple: 3,
+      prefixItems: [
+        { type: "string", description: "The input string." },
+        { type: "string", description: "The search string, or a `/pattern/flags` regular expression." },
+        { type: "string", description: "The replacement string (`$1`/`$&` group refs work for regex searches)." },
+      ],
       output: "string",
       markdownDescription: "Replaces occurrences in `[input, search, replacement]`. A `search` of the form `/pattern/flags` is treated as a regular expression (so `$1`/`$&` group refs work in the replacement); any other string is matched literally. Replaces all occurrences by default — set `all: false` for only the first (literal), or omit the `g` flag (regex).",
       examples: [
@@ -117,6 +131,10 @@ export class StringNode extends Node {
     },
     split: {
       tuple: 2,
+      prefixItems: [
+        { type: "string", description: "The string to split." },
+        { type: "string", description: "The separator, or a `/pattern/flags` regular expression." },
+      ],
       output: "array",
       markdownDescription: "Splits a string into an array. A `/pattern/flags` separator splits on a regular expression.",
       examples: [
@@ -127,6 +145,10 @@ export class StringNode extends Node {
       tuple: [
         1,
         2,
+      ],
+      prefixItems: [
+        { type: "array", description: "The array to join." },
+        { type: "string", description: "The separator (default `\",\"`)." },
       ],
       output: "string",
       markdownDescription: "Joins an array into a string with a separator (default `\",\"`).",
@@ -139,6 +161,11 @@ export class StringNode extends Node {
         2,
         3,
       ],
+      prefixItems: [
+        { type: "string", description: "The string to pad." },
+        { type: "number", description: "Target total length." },
+        { type: "string", description: "Pad string (default `\" \"`)." },
+      ],
       output: "string",
       markdownDescription: "Pads the start of a string to a target length.",
       examples: [
@@ -150,6 +177,11 @@ export class StringNode extends Node {
         2,
         3,
       ],
+      prefixItems: [
+        { type: "string", description: "The string to pad." },
+        { type: "number", description: "Target total length." },
+        { type: "string", description: "Pad string (default `\" \"`)." },
+      ],
       output: "string",
       markdownDescription: "Pads the end of a string to a target length.",
       examples: [
@@ -158,6 +190,10 @@ export class StringNode extends Node {
     },
     repeat: {
       tuple: 2,
+      prefixItems: [
+        { type: "string", description: "The string to repeat." },
+        { type: "number", description: "Number of repetitions." },
+      ],
       output: "string",
       markdownDescription: "Repeats a string N times.",
       examples: [
@@ -166,6 +202,10 @@ export class StringNode extends Node {
     },
     startsWith: {
       tuple: 2,
+      prefixItems: [
+        { type: "string", description: "The string to test." },
+        { type: "string", description: "The prefix to look for." },
+      ],
       output: "boolean",
       markdownDescription: "Returns `true` if a string starts with the given prefix.",
       examples: [
@@ -174,6 +214,10 @@ export class StringNode extends Node {
     },
     endsWith: {
       tuple: 2,
+      prefixItems: [
+        { type: "string", description: "The string to test." },
+        { type: "string", description: "The suffix to look for." },
+      ],
       output: "boolean",
       markdownDescription: "Returns `true` if a string ends with the given suffix.",
       examples: [
@@ -182,6 +226,10 @@ export class StringNode extends Node {
     },
     contains: {
       tuple: 2,
+      prefixItems: [
+        { type: "string", description: "The string to test." },
+        { type: "string", description: "The substring to look for, or a `/pattern/flags` regular expression." },
+      ],
       output: "boolean",
       markdownDescription: "Returns `true` if a string contains the given substring. A `/pattern/flags` needle tests a regular expression instead.",
       examples: [
@@ -190,6 +238,10 @@ export class StringNode extends Node {
     },
     match: {
       tuple: 2,
+      prefixItems: [
+        { type: "string", description: "The string to match against." },
+        { type: "string", description: "The pattern: `/pattern/flags` or a bare pattern." },
+      ],
       output: "array",
       outputDescription: "Array of matches, or `null` when nothing matches. With the `g` flag every match; otherwise the first match plus capture groups.",
       markdownDescription: "Matches a regular expression against a string. The pattern may be `/pattern/flags` or a bare pattern.",

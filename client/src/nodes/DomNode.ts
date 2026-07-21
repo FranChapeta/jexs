@@ -43,58 +43,69 @@ export class DomNode extends Node {
 
   static schema: JexsNodeSchema = {
     show: {
-      type: "string",
+      type: ["string", "object"],
       output: "object",
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Shows an element by clearing its inline `display` style. Accepts a CSS selector or HTMLElement.",
     },
     hide: {
-      type: "string",
+      type: ["string", "object"],
       output: "object",
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Hides an element by setting `display: none`. Accepts a CSS selector or HTMLElement.",
     },
     toggle: {
-      type: "string",
+      type: ["string", "object"],
       output: "object",
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Toggles `display: none` on an element.",
     },
     showAll: {
+      type: "string",
       output: "number",
       markdownDescription: "Shows all elements matching a CSS selector. Returns the count of matched elements.",
     },
     hideAll: {
+      type: "string",
       output: "number",
       markdownDescription: "Hides all elements matching a CSS selector. Returns the count of matched elements.",
     },
     enable: {
+      type: ["string", "object"],
       output: "object",
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Enables a form input by setting `disabled = false`.",
     },
     disable: {
+      type: ["string", "object"],
       output: "object",
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Disables a form input by setting `disabled = true`.",
     },
     focus: {
+      type: ["string", "object"],
       output: "object",
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Focuses an element via `HTMLElement.focus()`. Accepts a CSS selector or HTMLElement.",
     },
     blur: {
+      type: ["string", "object"],
       output: "object",
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Removes focus from an element via `HTMLElement.blur()`. Accepts a CSS selector or HTMLElement.",
     },
     click: {
+      type: ["string", "object"],
       output: "object",
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Dispatches a click on an element via `HTMLElement.click()` (e.g. to trigger a hidden file input). Accepts a CSS selector or HTMLElement.",
     },
     addClass: {
       tuple: 2,
+      prefixItems: [
+        { type: ["string", "object"], description: "The element: a CSS selector or an HTMLElement." },
+        { type: "string", description: "The CSS class name to add." },
+      ],
       output: "object",
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Adds a CSS class to an element. Pass `[selectorOrElement, className]`.",
@@ -104,31 +115,48 @@ export class DomNode extends Node {
     },
     removeClass: {
       tuple: 2,
+      prefixItems: [
+        { type: ["string", "object"], description: "The element: a CSS selector or an HTMLElement." },
+        { type: "string", description: "The CSS class name to remove." },
+      ],
       output: "object",
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Removes a CSS class from an element. Pass `[selectorOrElement, className]`.",
     },
     toggleClass: {
       tuple: 2,
+      prefixItems: [
+        { type: ["string", "object"], description: "The element: a CSS selector or an HTMLElement." },
+        { type: "string", description: "The CSS class name to toggle." },
+      ],
       output: "object",
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Toggles a CSS class on an element. Pass `[selectorOrElement, className]`.",
     },
     setAttr: {
       tuple: 3,
+      prefixItems: [
+        { type: ["string", "object"], description: "The element: a CSS selector or an HTMLElement." },
+        { type: "string", description: "The attribute name." },
+        { description: "The attribute value (coerced to a string)." },
+      ],
       output: "object",
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Sets an attribute on an element. Pass `[selectorOrElement, attrName, value]`.",
     },
     getAttr: {
       tuple: 2,
+      prefixItems: [
+        { type: ["string", "object"], description: "The element: a CSS selector or an HTMLElement." },
+        { type: "string", description: "The attribute name." },
+      ],
       output: "string",
       markdownDescription: "Gets an attribute value from an element. Pass `[selectorOrElement, attrName]`.",
     },
     getProp: {
       tuple: 2,
       prefixItems: [
-        { description: "The element: a CSS selector or an HTMLElement." },
+        { type: ["string", "object"], description: "The element: a CSS selector or an HTMLElement." },
         { $ref: "#/$defs/_gettableProp", description: "The DOM property to read, or a dot-path to a nested one (e.g. \"style.color\")." },
       ],
       output: "any",
@@ -141,7 +169,7 @@ export class DomNode extends Node {
     setProp: {
       tuple: 3,
       prefixItems: [
-        { description: "The element: a CSS selector or an HTMLElement." },
+        { type: ["string", "object"], description: "The element: a CSS selector or an HTMLElement." },
         { $ref: "#/$defs/_writableProp", description: "The DOM property to write, or a dot-path to a nested one (e.g. \"style.color\")." },
         { description: "The value to assign." },
       ],
@@ -154,6 +182,7 @@ export class DomNode extends Node {
       ],
     },
     submit: {
+      type: ["string", "object"],
       output: "null",
       markdownDescription: "Submits a form. Pass `\"form\"` to submit the closest ancestor form of the event target, or a CSS selector.",
     },
@@ -167,16 +196,19 @@ export class DomNode extends Node {
       ],
     },
     showModal: {
+      type: ["string", "object"],
       output: "object",
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Opens a `<dialog>` as a modal via `HTMLDialogElement.showModal()`. Accepts a CSS selector or HTMLElement.",
     },
     closeModal: {
+      type: ["string", "object"],
       output: "object",
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Closes a `<dialog>` via `HTMLDialogElement.close()`. Accepts a CSS selector or HTMLElement.",
     },
     preventDefault: {
+      type: "boolean",
       output: "null",
       markdownDescription: "Calls `preventDefault()` on the current event (`$event` in context) from inside an event handler's steps. Use this for conditional prevention; the `preventDefault` flag on an `events` handler is the unconditional form that runs before the steps.",
       examples: [
@@ -184,6 +216,7 @@ export class DomNode extends Node {
       ],
     },
     stopPropagation: {
+      type: "boolean",
       output: "null",
       markdownDescription: "Calls `stopPropagation()` on the current event (`$event` in context) from inside an event handler's steps. Use this for conditional stopping; the `stopPropagation` flag on an `events` handler is the unconditional form that runs before the steps.",
       examples: [
@@ -207,10 +240,15 @@ export class DomNode extends Node {
     },
     closest: {
       tuple: 2,
+      prefixItems: [
+        { type: ["string", "object"], description: "The starting element: a CSS selector or an HTMLElement." },
+        { type: "string", description: "The ancestor selector to match." },
+      ],
       output: "object",
       markdownDescription: "Walks up from an element to the nearest ancestor matching a selector. Pass `[element, selector]`.",
     },
     getBoundingClientRect: {
+      type: ["string", "object"],
       output: "object",
       outputDescription: "A plain `{ x, y, width, height, top, right, bottom, left }` object (numbers, CSS pixels relative to the viewport).",
       markdownDescription: "Returns the element's size and viewport position via `Element.getBoundingClientRect()`, as a plain serializable object. Accepts a CSS selector or HTMLElement.",
@@ -218,12 +256,30 @@ export class DomNode extends Node {
         "{ \"getBoundingClientRect\": \"#box\" }",
       ],
     },
+    caretFromPoint: {
+      tuple: 2,
+      prefixItems: [
+        { type: "number", description: "The x coordinate, in CSS pixels relative to the viewport." },
+        { type: "number", description: "The y coordinate, in CSS pixels relative to the viewport." },
+      ],
+      output: "object",
+      outputDescription: "A plain `{ offsetNode, offset }` object — the live DOM node under the point and the caret's character offset within it — or null if the point misses the document or no supporting API exists.",
+      markdownDescription: "Finds the caret position at a viewport point, returning `{ offsetNode, offset }`. Uses the standards-track `Document.caretPositionFromPoint` (Firefox, modern Chromium) and falls back to the WebKit/Blink `Document.caretRangeFromPoint` (Safari, older Chromium), so it works across browsers. Pass `[x, y]`.",
+      examples: [
+        "{ \"caretFromPoint\": [120, 40] }",
+      ],
+    },
     getValue: {
+      type: ["string", "object"],
       output: "string",
       markdownDescription: "Gets the current `.value` of an input element.",
     },
     setValue: {
       tuple: 2,
+      prefixItems: [
+        { type: ["string", "object"], description: "The input element: a CSS selector or an HTMLElement." },
+        { description: "The value to set (assigned to `.value`, coerced to a string)." },
+      ],
       output: "object",
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Sets the `.value` of an input element. Pass `[selectorOrElement, value]`.",
@@ -231,7 +287,7 @@ export class DomNode extends Node {
     setRangeText: {
       tuple: [2, 5],
       prefixItems: [
-        { description: "The `<input>`/`<textarea>`: a CSS selector or an HTMLElement." },
+        { type: ["string", "object"], description: "The `<input>`/`<textarea>`: a CSS selector or an HTMLElement." },
         { type: "string", description: "The replacement text." },
         { type: "number", description: "Start offset of the range to replace (pass with `end`)." },
         { type: "number", description: "End offset of the range to replace (pass with `start`)." },
@@ -246,38 +302,54 @@ export class DomNode extends Node {
       ],
     },
     select: {
+      type: ["string", "object"],
       output: "object",
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Selects all text in an `<input>`/`<textarea>` via `.select()`. Accepts a CSS selector or HTMLElement.",
     },
     setHtml: {
       tuple: 2,
+      prefixItems: [
+        { type: ["string", "object"], description: "The element: a CSS selector or an HTMLElement." },
+        { type: "string", description: "The HTML string to set as `innerHTML`." },
+      ],
       output: "object",
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Sets the `innerHTML` of an element. Pass `[selectorOrElement, html]`.",
     },
     setText: {
       tuple: 2,
+      prefixItems: [
+        { type: ["string", "object"], description: "The element: a CSS selector or an HTMLElement." },
+        { type: "string", description: "The text to set as `textContent`." },
+      ],
       output: "object",
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Sets the `textContent` of an element. Pass `[selectorOrElement, text]`.",
     },
     append: {
       tuple: 2,
+      prefixItems: [
+        { type: ["string", "object"], description: "The element: a CSS selector or an HTMLElement." },
+        { type: "string", description: "The HTML string to append." },
+      ],
       output: "object",
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Appends HTML to an element (`insertAdjacentHTML(\"beforeend\")`) and scrolls to the bottom. Pass `[selectorOrElement, html]`.",
     },
     removeEl: {
+      type: ["string", "object"],
       output: "null",
       markdownDescription: "Removes an element from the DOM via `Element.remove()`. Accepts a CSS selector or HTMLElement. (Named `removeEl` because `remove` is ArrayNode's element-removal op.)",
     },
     scrollTo: {
+      type: ["string", "object"],
       output: "object",
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Scrolls an element to its bottom by setting `scrollTop = scrollHeight`. Useful for chat containers.",
     },
     scrollIntoView: {
+      type: ["string", "object"],
       output: "object",
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Scrolls an element into view via `Element.scrollIntoView`. Accepts a CSS selector or HTMLElement.\nOptional siblings: `block` (`\"start\"` | `\"center\"` | `\"end\"` | `\"nearest\"`, default `\"center\"`) for vertical alignment, and `behavior` (`\"auto\"` | `\"smooth\"`, default `\"auto\"`) for animation.",
@@ -297,20 +369,24 @@ export class DomNode extends Node {
       },
     },
     play: {
+      type: ["string", "object"],
       output: "object",
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Plays an `<audio>`/`<video>` media element via `HTMLMediaElement.play()`. Accepts a CSS selector or HTMLElement. (For Web Audio sound effects, see the `audio-*` ops.)",
     },
     pause: {
+      type: ["string", "object"],
       output: "object",
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Pauses an `<audio>`/`<video>` media element via `HTMLMediaElement.pause()`. Accepts a CSS selector or HTMLElement.",
     },
     pointerLock: {
+      type: ["string", "object"],
       output: "null",
       markdownDescription: "Requests pointer lock on an element. Updates `context.pointerLocked` on lock state changes.",
     },
     pointerUnlock: {
+      type: "boolean",
       output: "null",
       markdownDescription: "Exits pointer lock via `document.exitPointerLock()`.",
     },
@@ -453,6 +529,25 @@ export class DomNode extends Node {
       if (!el) return null;
       const r = el.getBoundingClientRect();
       return { x: r.x, y: r.y, width: r.width, height: r.height, top: r.top, right: r.right, bottom: r.bottom, left: r.left };
+    });
+  }
+  caretFromPoint(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.caretFromPoint, context, args => {
+      if (!Array.isArray(args) || args.length < 2) return null;
+      const x = Number(args[0]), y = Number(args[1]);
+      // Standards-track path (Firefox, modern Chromium).
+      if (typeof document.caretPositionFromPoint === "function") {
+        const pos = document.caretPositionFromPoint(x, y);
+        return pos ? { offsetNode: pos.offsetNode, offset: pos.offset } : null;
+      }
+      // WebKit/Blink fallback (Safari, older Chromium): a collapsed Range whose
+      // start is the same node/offset a CaretPosition would report. Non-standard
+      // and deprecated in the typed signature, so reach for it via Reflect.
+      const fn = Reflect.get(document, "caretRangeFromPoint");
+      if (typeof fn !== "function") return null;
+      const range = fn.call(document, x, y);
+      if (!range || typeof range !== "object") return null;
+      return { offsetNode: Reflect.get(range, "startContainer"), offset: Reflect.get(range, "startOffset") };
     });
   }
   setRangeText(def: Record<string, unknown>, context: Context): NodeValue {

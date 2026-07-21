@@ -842,6 +842,10 @@ export class CollisionNode extends Node {
       siblings: {
         groups: {
           tuple: 2,
+          prefixItems: [
+            { type: "string", description: "First collision group name (`groupA`)." },
+            { type: "string", description: "Second collision group name (`groupB`)." },
+          ],
           description: "Two-element array of group names: `[groupA, groupB]`.",
         },
         id: {

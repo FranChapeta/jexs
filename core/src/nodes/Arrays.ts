@@ -79,6 +79,10 @@ export class ArrayNode extends Node {
     },
     pluck: {
       tuple: 2,
+      prefixItems: [
+        { type: "array", description: "The array of objects to read from." },
+        { type: "string", description: "The key (dot-path) to extract from each object." },
+      ],
       output: "array",
       markdownDescription: "Extracts the value of a key (dot-path) from each object in an array.",
       outputDescription: "An array of each object's value at the key — `undefined` in slots where the object lacks it.",
@@ -91,6 +95,11 @@ export class ArrayNode extends Node {
         2,
         3,
       ],
+      prefixItems: [
+        { type: "array", description: "The array to slice." },
+        { type: "number", description: "Start index (inclusive)." },
+        { type: "number", description: "End index (exclusive). Defaults to the end of the array." },
+      ],
       output: "array",
       markdownDescription: "Returns a portion of an array.",
       examples: [
@@ -99,6 +108,10 @@ export class ArrayNode extends Node {
     },
     push: {
       tuple: 2,
+      prefixItems: [
+        { type: "array", description: "The array to append to (mutated in place)." },
+        { description: "The item to append." },
+      ],
       output: "array",
       markdownDescription: "Appends an item to an array **in place** and returns that array. The array referenced by the first argument is mutated — point it at a `var` (e.g. `{ \"var\": \"$items\" }`), not a literal. If the first argument is not an array, returns a new single-element array. For a non-mutating append use `{ \"merge\": [arr, [item]] }`.",
       outputDescription: "The same (now longer) array; or a new `[item]` when the target is not an array.",
@@ -108,6 +121,10 @@ export class ArrayNode extends Node {
     },
     unshift: {
       tuple: 2,
+      prefixItems: [
+        { type: "array", description: "The array to prepend to (mutated in place)." },
+        { description: "The item to prepend." },
+      ],
       output: "array",
       markdownDescription: "Prepends an item to an array **in place** and returns that array. Mutates the array referenced by the first argument — point it at a `var`, not a literal. If the first argument is not an array, returns a new single-element array.",
       outputDescription: "The same (now longer) array; or a new `[item]` when the target is not an array.",
@@ -131,6 +148,10 @@ export class ArrayNode extends Node {
     },
     remove: {
       tuple: 2,
+      prefixItems: [
+        { type: "array", description: "The array to remove from (mutated in place)." },
+        { type: "number", description: "Index of the element to remove." },
+      ],
       markdownDescription: "Removes the element at an index **in place** and returns it. (For predicate/value removal use `filter`.)",
       outputDescription: "The removed element (any type), or `undefined` if the index is out of range.",
       examples: [
@@ -139,6 +160,11 @@ export class ArrayNode extends Node {
     },
     insert: {
       tuple: 3,
+      prefixItems: [
+        { type: "array", description: "The array to insert into (mutated in place)." },
+        { type: "number", description: "Index to insert at (clamped to the array bounds)." },
+        { description: "The value to insert." },
+      ],
       output: "array",
       markdownDescription: "Inserts a value at an index **in place** (clamped to the array bounds) and returns the array.",
       outputDescription: "The same (now longer) array.",
@@ -148,6 +174,11 @@ export class ArrayNode extends Node {
     },
     move: {
       tuple: 3,
+      prefixItems: [
+        { type: "array", description: "The array to reorder (mutated in place)." },
+        { type: "number", description: "Index of the element to move (`from`)." },
+        { type: "number", description: "Destination index (`to`, clamped to bounds)." },
+      ],
       output: "array",
       markdownDescription: "Moves the element at `from` to index `to` **in place** and returns the array. Out-of-range `from` is a no-op; `to` is clamped to bounds.",
       outputDescription: "The same array, reordered.",
@@ -238,6 +269,10 @@ export class ArrayNode extends Node {
     },
     groupBy: {
       tuple: 2,
+      prefixItems: [
+        { type: "array", description: "The array of objects to group." },
+        { type: "string", description: "The key to group by." },
+      ],
       output: "object",
       markdownDescription: "Groups an array of objects by a key. Returns an object keyed by group values.",
       outputDescription: "An object mapping each distinct group-key (stringified) to the **array** of items in that group.",
@@ -257,6 +292,11 @@ export class ArrayNode extends Node {
         2,
         3,
       ],
+      prefixItems: [
+        { type: "array", description: "The array to search." },
+        { description: "The value to find; or, with a third argument, the object key to match." },
+        { description: "With a key in the second slot, the value that key must equal." },
+      ],
       output: "boolean",
       markdownDescription: "Checks if an array contains a value: `[arr, value]`.\nWith three arguments `[arr, key, value]`, checks if any object has that key-value pair.",
       examples: [
@@ -265,6 +305,10 @@ export class ArrayNode extends Node {
     },
     index: {
       tuple: 2,
+      prefixItems: [
+        { type: "array", description: "The array to read from." },
+        { type: "number", description: "The index to read." },
+      ],
       markdownDescription: "Returns the element at a given index.",
       outputDescription: "The element at the index (any type), or `undefined` if out of range.",
       examples: [
@@ -275,6 +319,11 @@ export class ArrayNode extends Node {
       tuple: [
         2,
         3,
+      ],
+      prefixItems: [
+        { type: "number", description: "Start of the sequence (inclusive)." },
+        { type: "number", description: "End of the sequence (inclusive)." },
+        { type: "number", description: "Step between values (default 1)." },
       ],
       output: "array",
       markdownDescription: "Generates a numeric sequence. Inclusive on both ends.",

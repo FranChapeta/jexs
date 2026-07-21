@@ -5,6 +5,7 @@ import type { JexsNodeSchema } from "@jexs/core";
 export class WebPushNode extends Node {
   static schema: JexsNodeSchema = {
     webpush: {
+      type: "boolean",
       output: "object",
       markdownDescription: "Sends a Web Push notification to a browser subscription using VAPID.\nRequires `\"subject\"` (a `mailto:` URL), `\"publicKey\"`, `\"privateKey\"`, `\"to\"` (PushSubscription object), and `\"title\"`.\nOptional: `\"body\"`, `\"icon\"`, `\"badge\"`, `\"data\"`, `\"ttl\"`, `\"urgency\"`, `\"topic\"`.",
       outputDescription: "A delivery result object (e.g. `{ statusCode }`) from the push service. Errors if the subscription is invalid or expired (status 404/410) — handle with `catch` to prune dead subscriptions.",

@@ -77,6 +77,7 @@ export class FileNode extends Node {
       },
     },
     disk: {
+      type: ["string", "boolean"],
       output: "object",
       markdownDescription: "Reports disk usage for a path. Pass a path string or `true` to use the current working directory.",
       outputDescription: "`{ total, free, used }` in bytes, or `null` on error.",

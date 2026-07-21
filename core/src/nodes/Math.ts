@@ -184,6 +184,11 @@ export class MathNode extends Node {
     },
     lerp: {
       tuple: 3,
+      prefixItems: [
+        { type: "number", description: "Start value (`a`), returned when `t` is 0." },
+        { type: "number", description: "End value (`b`), returned when `t` is 1." },
+        { type: "number", description: "Interpolation fraction `t` (0-1; extrapolates outside)." },
+      ],
       output: "number",
       markdownDescription: "Linear interpolation between `a` and `b` by fraction `t`: `a + (b - a) * t`. Tuple form `[a, b, t]`. Extrapolates when `t` is outside `[0, 1]`.",
       examples: [
@@ -192,6 +197,13 @@ export class MathNode extends Node {
     },
     mapRange: {
       tuple: 5,
+      prefixItems: [
+        { type: "number", description: "The input value to remap." },
+        { type: "number", description: "Lower bound of the input range." },
+        { type: "number", description: "Upper bound of the input range." },
+        { type: "number", description: "Lower bound of the output range." },
+        { type: "number", description: "Upper bound of the output range." },
+      ],
       output: "number",
       markdownDescription: "Linearly remaps a value from one range to another: `[value, inMin, inMax, outMin, outMax]`. Extrapolates by default; set `clampToRange: true` to bound the result to `[outMin, outMax]`. When `inMin === inMax` it returns `outMin`.",
       examples: [
@@ -262,6 +274,10 @@ export class MathNode extends Node {
     },
     divide: {
       tuple: 2,
+      prefixItems: [
+        { type: "number", description: "The dividend." },
+        { type: "number", description: "The divisor (returns `0` when zero)." },
+      ],
       output: "number",
       markdownDescription: "Divides the first value by the second; returns `0` on division by zero.",
       examples: [
@@ -270,6 +286,10 @@ export class MathNode extends Node {
     },
     mod: {
       tuple: 2,
+      prefixItems: [
+        { type: "number", description: "The dividend (`a`)." },
+        { type: "number", description: "The divisor (`b`; returns `0` when zero)." },
+      ],
       output: "number",
       markdownDescription: "Remainder of `a % b`; returns `0` if `b` is zero.",
       examples: [
@@ -278,6 +298,10 @@ export class MathNode extends Node {
     },
     power: {
       tuple: 2,
+      prefixItems: [
+        { type: "number", description: "The base." },
+        { type: "number", description: "The exponent." },
+      ],
       output: "number",
       markdownDescription: "Raises `base` to `exponent`.",
       examples: [
@@ -308,6 +332,11 @@ export class MathNode extends Node {
     },
     clamp: {
       tuple: 3,
+      prefixItems: [
+        { type: "number", description: "The value to clamp." },
+        { type: "number", description: "Lower bound." },
+        { type: "number", description: "Upper bound." },
+      ],
       output: "number",
       markdownDescription: "Clamps a value between min and max.",
       examples: [
@@ -318,6 +347,10 @@ export class MathNode extends Node {
       tuple: [
         1,
         2,
+      ],
+      prefixItems: [
+        { type: "number", description: "The number to format." },
+        { type: "number", description: "Decimal places (default 2)." },
       ],
       output: "string",
       markdownDescription: "Formats a number to a fixed number of decimal places (default 2). Returns a string.",
@@ -363,6 +396,10 @@ export class MathNode extends Node {
     },
     atan2: {
       tuple: 2,
+      prefixItems: [
+        { type: "number", description: "The y coordinate." },
+        { type: "number", description: "The x coordinate." },
+      ],
       output: "number",
       markdownDescription: "Returns the angle in degrees between the positive x-axis and the point `[y, x]`.",
       examples: [
@@ -373,6 +410,10 @@ export class MathNode extends Node {
       tuple: [
         0,
         2,
+      ],
+      prefixItems: [
+        { type: "number", description: "With one arg, the inclusive max `n` (integer in `[0, n]`); with two, the inclusive `min`." },
+        { type: "number", description: "The inclusive `max` (integer in `[min, max]`)." },
       ],
       output: "number",
       markdownDescription: "Generates a random number, using the seeded RNG when `randomSeed` has been set, otherwise `Math.random`.",

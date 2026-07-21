@@ -27,6 +27,10 @@ export class StorageNode extends Node {
     },
     "storage-set": {
       tuple: 2,
+      prefixItems: [
+        { type: "string", description: "The storage key." },
+        { description: "The value to store. Non-string values are JSON-encoded." },
+      ],
       markdownDescription: "Writes a value under a key. Pass `[\"key\", value]`. Non-string values are JSON-encoded. Returns the stored value.",
       examples: [
         "{ \"storage-set\": [\"username\", \"Alice\"] }",

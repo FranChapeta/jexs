@@ -154,6 +154,11 @@ export class LogicNode extends Node {
     },
     between: {
       tuple: 3,
+      prefixItems: [
+        { type: "number", description: "The value to test." },
+        { type: "number", description: "Lower bound (inclusive)." },
+        { type: "number", description: "Upper bound (inclusive)." },
+      ],
       output: "boolean",
       markdownDescription: "Inclusive range check: `min <= value <= max`.",
       examples: [
@@ -170,6 +175,22 @@ export class LogicNode extends Node {
     },
     isType: {
       tuple: 2,
+      prefixItems: [
+        { description: "The value whose type to test." },
+        {
+          type: "string",
+          enum: [
+            "null",
+            "undefined",
+            "array",
+            "object",
+            "number",
+            "string",
+            "boolean",
+          ],
+          description: "The type name to match against.",
+        },
+      ],
       output: "boolean",
       markdownDescription: "Tests whether a value's type matches a type name. Tuple form `[value, type]` where `type` is one of `\"null\"`, `\"undefined\"`, `\"array\"`, `\"object\"`, `\"number\"`, `\"string\"`, `\"boolean\"`. Equivalent to `{ eq: [{ typeof: value }, type] }`.",
       outputDescription: "`true` when `typeof(value) === type`, otherwise `false`.",

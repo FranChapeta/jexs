@@ -33,7 +33,7 @@ const COOKIE_NAME = "sid";
 export class SessionNode extends Node {
   static schema: JexsNodeSchema = {
     session: {
-      type: "string",
+      type: ["string", "object"],
       enum: [
         "load",
         "create",

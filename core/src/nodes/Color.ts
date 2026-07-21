@@ -61,6 +61,10 @@ export class ColorNode extends Node {
     },
     lighten: {
       tuple: 2,
+      prefixItems: [
+        { type: ["string", "array"], description: "The color: a hex string or an array in the `format` space." },
+        { type: "number", description: "Amount to lighten (0..1 fraction of the full range)." },
+      ],
       output: "array",
       markdownDescription: "Raises a color's HSL lightness by `amount` (a 0..1 fraction of the full range; `0.1` adds 10 lightness points). Tuple form `[color, amount]`. Returns a color in the `format` space.",
       examples: [
@@ -69,6 +73,10 @@ export class ColorNode extends Node {
     },
     darken: {
       tuple: 2,
+      prefixItems: [
+        { type: ["string", "array"], description: "The color: a hex string or an array in the `format` space." },
+        { type: "number", description: "Amount to darken (0..1 fraction of the full range)." },
+      ],
       output: "array",
       markdownDescription: "Lowers a color's HSL lightness by `amount` (a 0..1 fraction of the full range). Tuple form `[color, amount]`. Returns a color in the `format` space.",
       examples: [
@@ -77,6 +85,11 @@ export class ColorNode extends Node {
     },
     mix: {
       tuple: 3,
+      prefixItems: [
+        { type: ["string", "array"], description: "First color `a` (returned when `t` is 0)." },
+        { type: ["string", "array"], description: "Second color `b` (returned when `t` is 1)." },
+        { type: "number", description: "Blend fraction `t` (0..1)." },
+      ],
       output: "array",
       markdownDescription: "Blends two colors component-wise by fraction `t` (0 = all `a`, 1 = all `b`). Tuple form `[a, b, t]`. The blend runs in the `format` space and returns a color there. In `hsl` the hue is interpolated naively (it does not take the shortest arc around the wheel), so `rgb` is the safer default.",
       examples: [
@@ -96,6 +109,10 @@ export class ColorNode extends Node {
     },
     contrast: {
       tuple: 2,
+      prefixItems: [
+        { type: ["string", "array"], description: "First color: a hex string or an array in the `format` space." },
+        { type: ["string", "array"], description: "Second color: a hex string or an array in the `format` space." },
+      ],
       output: "number",
       markdownDescription: "WCAG contrast ratio between two colors: `(Llighter + 0.05) / (Ldarker + 0.05)`, from 1 (identical) to 21 (black on white). Tuple form `[a, b]` — order does not matter.",
       examples: [

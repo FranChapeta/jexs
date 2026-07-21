@@ -111,6 +111,7 @@ export class WebSocketNode extends Node {
       markdownDescription: "Closes the current connection.",
     },
     "socket-count": {
+      type: ["string", "boolean"],
       output: "number",
       markdownDescription: "Counts connections in a room (pass the room name) or on the current route path (pass `true`).",
       outputDescription: "The connection count as a number.",

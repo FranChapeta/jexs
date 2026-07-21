@@ -19,7 +19,16 @@
 
 import { Node, Context, NodeValue } from "./Node.js";
 import { resolve, resolveAll, onResolverDestroy, runSteps } from "../Resolver.js";
-import type { JexsNodeSchema } from "../schema.js";
+import type { JexsNodeSchema, JexsMethodSchema } from "../schema.js";
+
+// Lifecycle ops shared by `tick` and `cron`. `start` differs per timer kind (its
+// extra inputs), so each method supplies its own; stop/pause/resume are identical
+// and take only `id` (the common sibling), inheriting the method's `output: "null"`.
+const LIFECYCLE_OPS: Record<string, JexsMethodSchema> = {
+  stop:   { markdownDescription: "Stops the timer and clears its state." },
+  pause:  { markdownDescription: "Pauses the timer; its state is kept so `resume` continues where it left off." },
+  resume: { markdownDescription: "Resumes a paused timer." },
+};
 // ─── Shared state ───────────────────────────────────────────────────────────
 
 interface TimerState {
@@ -55,8 +64,8 @@ export class TimerNode extends Node {
         "pause",
         "resume",
       ],
+      output: "null",
       markdownDescription: "Drift-compensating fixed-rate loop. Steps receive `tick.count`, `tick.dt`, `tick.elapsed` in context.",
-      outputDescription: "The timer `id` (string) on `start`; `null` for `stop`/`pause`/`resume` (and for unknown ops). The loop runs in the background — the `do` steps' values are not returned here.",
       examples: [
         "{ \"tick\": \"start\", \"id\": \"game\", \"rate\": 60, \"detach\": true, \"do\": [{ \"var\": \"tick.dt\" }] }",
       ],
@@ -65,18 +74,27 @@ export class TimerNode extends Node {
           type: "string",
           description: "Unique timer identifier.",
         },
-        rate: {
-          type: "number",
-          description: "Tick rate in Hz (default `60`). Used on `\"start\"`.",
+      },
+      variants: {
+        start: {
+          output: "string",
+          markdownDescription: "Begins the loop, returning the timer `id`. The `do` steps run in the background — their values are not returned here.",
+          siblings: {
+            rate: {
+              type: "number",
+              description: "Tick rate in Hz (default `60`).",
+            },
+            detach: {
+              type: "boolean",
+              description: "Run `do` steps fire-and-forget each tick without waiting for completion.",
+            },
+            do: {
+              steps: true,
+              description: "Steps to execute on each tick.",
+            },
+          },
         },
-        detach: {
-          type: "boolean",
-          description: "Run `do` steps fire-and-forget each tick without waiting for completion.",
-        },
-        do: {
-          steps: true,
-          description: "Steps to execute on each tick. Used on `\"start\"`.",
-        },
+        ...LIFECYCLE_OPS,
       },
     },
     cron: {
@@ -87,8 +105,8 @@ export class TimerNode extends Node {
         "pause",
         "resume",
       ],
+      output: "null",
       markdownDescription: "Interval-based scheduled task. Steps receive `cron.runCount`, `cron.lastRun`, `cron.elapsed` in context.\r\nInterval formats: `\"500ms\"`, `\"30s\"`, `\"5m\"`, `\"1h\"`, `\"1d\"`.",
-      outputDescription: "The timer `id` (string) on `start`; `null` for `stop`/`pause`/`resume`. Scheduled `do` steps run in the background — their values are not returned here.",
       examples: [
         "{ \"cron\": \"start\", \"id\": \"poll\", \"every\": \"30s\", \"do\": [{ \"fetch\": \"/api/status\" }] }",
       ],
@@ -97,14 +115,23 @@ export class TimerNode extends Node {
           type: "string",
           description: "Unique timer identifier.",
         },
-        every: {
-          type: "string",
-          description: "Interval string (e.g. `\"5m\"`, `\"30s\"`). Used on `\"start\"`.",
+      },
+      variants: {
+        start: {
+          output: "string",
+          markdownDescription: "Begins the scheduled task, returning the timer `id`. The `do` steps run in the background — their values are not returned here.",
+          siblings: {
+            every: {
+              type: "string",
+              description: "Interval string (e.g. `\"5m\"`, `\"30s\"`).",
+            },
+            do: {
+              steps: true,
+              description: "Steps to execute on each interval.",
+            },
+          },
         },
-        do: {
-          steps: true,
-          description: "Steps to execute on each interval. Used on `\"start\"`.",
-        },
+        ...LIFECYCLE_OPS,
       },
     },
   };

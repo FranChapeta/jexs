@@ -114,6 +114,10 @@ export class CryptoNode extends Node {
     },
     verify: {
       tuple: 2,
+      prefixItems: [
+        { type: "string", description: "The plaintext password to check." },
+        { type: "string", description: "The stored bcrypt hash to compare against." },
+      ],
       output: "boolean",
       markdownDescription: "Compares a plaintext password against a bcrypt hash.",
       outputDescription: "`true` if the password matches the hash, otherwise `false` (also `false` if fewer than two args are given).",
