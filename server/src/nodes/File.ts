@@ -75,6 +75,13 @@ export class FileNode extends Node {
           description: "Filter by file extension(s), e.g. `\"json\"`.",
         },
       },
+      variants: {
+        create: {
+          type: "boolean",
+          output: "boolean",
+          markdownDescription: "Creates the directory, auto-creating any missing parent directories (no error if it already exists). Returns `true`/`false` for success.",
+        },
+      },
     },
     disk: {
       type: ["string", "boolean"],
@@ -102,6 +109,8 @@ export class FileNode extends Node {
   }
 
   directory(def: Record<string, unknown>, context: Context): NodeValue {
+    if ("create" in def) return createDir(def, context, this.appDir);
+
     return resolveAll(
       [def.directory, def.recursive ?? null, def.extension ?? null],
       context,
@@ -256,6 +265,25 @@ function writeFile(
     } catch (error) {
       const e = error as Error;
       console.error(`[FileNode] Error writing file ${filePath}:`, e.message);
+      return false;
+    }
+  });
+}
+
+function createDir(
+  def: Record<string, unknown>,
+  context: Context,
+  appDir: string,
+): unknown {
+  return resolve(def.directory, context, async dirPathValue => {
+    const dirPath = resolvePath(dirPathValue, appDir);
+
+    try {
+      await fs.mkdir(dirPath, { recursive: true });
+      return true;
+    } catch (error) {
+      const e = error as Error;
+      console.error(`[FileNode] Error creating directory ${dirPath}:`, e.message);
       return false;
     }
   });
