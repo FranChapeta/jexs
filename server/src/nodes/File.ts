@@ -61,10 +61,11 @@ export class FileNode extends Node {
     directory: {
       type: "string",
       output: "array",
-      markdownDescription: "Lists directory contents relative to `app/`.",
-      outputDescription: "An array of `{ name, path, size, modified }` entries (filtered by `extension` when given); `[]` if the directory can't be read.",
+      markdownDescription: "Lists directory contents relative to `app/`. Lists files by default; pass `\"subdirectories\": true` to list the folders instead.",
+      outputDescription: "An array of `{ name, path, size, modified }` entries — files by default, or subdirectories when `subdirectories` is set (filtered by `extension` when given); `[]` if the directory can't be read.",
       examples: [
         "{ \"directory\": \"data/posts\", \"extension\": \"json\", \"recursive\": true }",
+        "{ \"directory\": \"node_modules/@jexs\", \"subdirectories\": true }",
       ],
       siblings: {
         recursive: {
@@ -73,6 +74,10 @@ export class FileNode extends Node {
         },
         extension: {
           description: "Filter by file extension(s), e.g. `\"json\"`.",
+        },
+        subdirectories: {
+          type: "boolean",
+          description: "List subdirectories instead of files. Combine with `recursive` to walk the whole folder tree.",
         },
       },
       variants: {
@@ -112,14 +117,15 @@ export class FileNode extends Node {
     if ("create" in def) return createDir(def, context, this.appDir);
 
     return resolveAll(
-      [def.directory, def.recursive ?? null, def.extension ?? null],
+      [def.directory, def.recursive ?? null, def.extension ?? null, def.subdirectories ?? null],
       context,
-      async ([dirPathValue, recursiveRaw, extensionValue]) => {
+      async ([dirPathValue, recursiveRaw, extensionValue, subdirsRaw]) => {
         const recursive = toBoolean(recursiveRaw);
+        const subdirs = toBoolean(subdirsRaw);
         const dirPath = resolvePath(dirPathValue, this.appDir);
 
         try {
-          const entries = await listDir(dirPath, recursive);
+          const entries = await listDir(dirPath, recursive, subdirs);
 
           if (extensionValue) {
             const exts = Array.isArray(extensionValue)
@@ -292,6 +298,7 @@ function createDir(
 async function listDir(
   dirPath: string,
   recursive: boolean,
+  subdirs: boolean,
 ): Promise<FileInfo[]> {
   const entries = await fs.readdir(dirPath, { withFileTypes: true });
   const results: FileInfo[] = [];
@@ -299,9 +306,33 @@ async function listDir(
   for (const entry of entries) {
     const fullPath = path.join(dirPath, entry.name);
 
-    if (entry.isDirectory()) {
-      if (recursive) {
-        const subEntries = await listDir(fullPath, true);
+    // Classify following symlinks, so workspace/pnpm node_modules — which symlink
+    // package folders — are seen as the directories they point at.
+    let isDir = entry.isDirectory();
+    if (!isDir && entry.isSymbolicLink()) {
+      try {
+        isDir = (await fs.stat(fullPath)).isDirectory();
+      } catch {
+        continue; // dangling symlink
+      }
+    }
+
+    if (isDir) {
+      // `subdirs` lists the directories themselves; the default lists files.
+      if (subdirs) {
+        const stat = await fs.stat(fullPath);
+        results.push({
+          name: entry.name,
+          path: entry.name,
+          size: stat.size,
+          modified: stat.mtimeMs,
+        });
+      }
+      // Descend into real directories only — never follow a symlink recursively,
+      // which guards against cycles and escaping the tree (both common under
+      // node_modules).
+      if (recursive && entry.isDirectory()) {
+        const subEntries = await listDir(fullPath, true, subdirs);
         results.push(
           ...subEntries.map((e) => ({
             ...e,
@@ -309,7 +340,7 @@ async function listDir(
           })),
         );
       }
-    } else {
+    } else if (!subdirs) {
       const stat = await fs.stat(fullPath);
       results.push({
         name: entry.name,
