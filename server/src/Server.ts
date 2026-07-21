@@ -37,6 +37,15 @@ const HOST_INFO = {
   cpus: os.cpus().length,
 };
 
+export interface ServerOptions {
+  /**
+   * Directory served for static asset fallbacks. Defaults to `public/` under the
+   * cwd (the scaffolded layout, where `public/` sits beside `app/`). Pass an
+   * absolute or cwd-relative path to serve assets from elsewhere.
+   */
+  publicDir?: string;
+}
+
 export class Server {
   private httpServer: http.Server;
   private wss: WebSocketServer;
@@ -48,9 +57,11 @@ export class Server {
   private maxBodySize: number = 1_048_576; // 1 MB default
   private staticDirs: Map<string, string> = new Map();
   private swConfig: { path: string; content: string } | null = null;
+  private publicDir: string;
 
-  constructor(resolve: ResolverFn) {
+  constructor(resolve: ResolverFn, options: ServerOptions = {}) {
     this.resolve = resolve;
+    this.publicDir = path.resolve(options.publicDir ?? path.resolve(process.cwd(), "public"));
     this.httpServer = http.createServer(this.handleRequest.bind(this));
     this.wss = new WebSocketServer({ noServer: true });
   }
@@ -487,8 +498,8 @@ export class Server {
       }
     }
 
-    // Fall back to public/ directory
-    const publicDir = path.resolve(process.cwd(), "public");
+    // Fall back to the configured public/ directory
+    const publicDir = this.publicDir;
     const filePath = path.resolve(publicDir, requestPath.replace(/^\/+/, ""));
 
     // Prevent path traversal — resolved path must be within publicDir

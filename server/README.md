@@ -83,7 +83,7 @@ Run with `tsx src/index.ts` (or whatever entry boots `Server`):
 import { createResolver, coreNodes } from "@jexs/core";
 import { Server, serverNodes } from "@jexs/server";
 
-const resolve = createResolver([...coreNodes, ...serverNodes]);
+const resolve = createResolver([...coreNodes, ...serverNodes({ root: "app" })]);
 const server = new Server(resolve);
 server.setEntryFile("/app.json");
 await server.start();

@@ -8,7 +8,7 @@
  * so `serverNodes` can construct `new WorkerNode(makeThreadWorker(thisUrl))` and
  * the worker re-enters this same file without spawning a second worker.
  */
-import { isMainThread, parentPort } from "node:worker_threads";
+import { isMainThread, parentPort, workerData } from "node:worker_threads";
 import { createResolver, coreNodes, runSteps, collectTransferables } from "@jexs/core";
 import { serverNodes } from "./index.js";
 
@@ -16,7 +16,12 @@ interface ThreadRequest { rid: number; steps: unknown; params: Record<string, un
 
 if (!isMainThread && parentPort) {
   const port = parentPort;
-  createResolver([...coreNodes, ...serverNodes]);
+  // The spawning serverNodes() set passes its `root` via workerData, so file ops
+  // in `thread` steps resolve against the same base as the main thread.
+  const root = workerData && typeof workerData === "object" && "root" in workerData
+    ? String((workerData as { root: unknown }).root)
+    : "app";
+  createResolver([...coreNodes, ...serverNodes({ root })]);
   port.on("message", (req: ThreadRequest) => {
     const { rid, steps, params } = req;
     // `.then(() => runSteps(...))` so a SYNC throw from runSteps is caught too.

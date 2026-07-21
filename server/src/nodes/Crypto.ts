@@ -10,8 +10,17 @@ export function sha256(input: string): string {
   return createHash("sha256").update(input).digest("hex");
 }
 
-const KEY_FILE = path.join("app", "secret.key");
+// The encryption key is process-global (it's THE app secret). APP_SECRET env is
+// the primary source; the `secret.key` file is a dev fallback, resolved under the
+// root a CryptoNode is constructed with (default "app"). If several node sets with
+// different roots are built in one process, the last constructed wins here — fine,
+// since the secret is a single per-process value.
+let keyFileDir = "app";
 let cachedKey: Buffer | null = null;
+
+function keyFilePath(): string {
+  return path.join(keyFileDir, "secret.key");
+}
 
 /** Derive a 32-byte key from APP_SECRET env var, key file, or auto-generated key file */
 function getEncryptionKey(): Buffer {
@@ -23,13 +32,14 @@ function getEncryptionKey(): Buffer {
     return cachedKey;
   }
 
-  if (existsSync(KEY_FILE)) {
-    cachedKey = Buffer.from(readFileSync(KEY_FILE, "utf8").trim(), "hex");
+  const keyFile = keyFilePath();
+  if (existsSync(keyFile)) {
+    cachedKey = Buffer.from(readFileSync(keyFile, "utf8").trim(), "hex");
     return cachedKey;
   }
 
   const key = randomBytes(32);
-  writeFileSync(KEY_FILE, key.toString("hex"), "utf8");
+  writeFileSync(keyFile, key.toString("hex"), "utf8");
   cachedKey = key;
   return cachedKey;
 }
@@ -135,6 +145,11 @@ export class CryptoNode extends Node {
       ],
     },
   };
+
+  constructor(root: string = "app") {
+    super();
+    keyFileDir = root;
+  }
 
   sha256(def: Record<string, unknown>, context: Context) {
     return resolve(def.sha256, context, v => sha256(this.toString(v)));

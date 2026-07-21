@@ -165,7 +165,7 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean): string {
   if (useServer) {
     lines.push(`- \`app/\` — JSON templates the resolver loads. FileNode's default base directory.`);
     lines.push(`- \`public/\` — static assets (CSS, images, favicons, fonts). Auto-served by the HTTP server for any GET on a static-extension URL.`);
-    lines.push(`- \`index.js\` — bootstrap: \`createResolver([...coreNodes, ...serverNodes])\` then \`new Server(resolve).start()\`.`);
+    lines.push(`- \`index.js\` — bootstrap: \`createResolver([...coreNodes, ...serverNodes({ root: "app" })])\` then \`new Server(resolve).start()\`.`);
     if (useTailwind) {
       lines.push(`- \`input.css\` — Tailwind entry. Add custom styles here (\`@layer base { ... }\`, \`@apply\`, etc.).`);
       lines.push(`- \`tailwind.config.js\` — scans \`./app/**/*.json\` for class names.`);
@@ -420,14 +420,15 @@ async function main(): Promise<void> {
 
   if (useServer) {
     // index.js — bootstrap at the project root. Wires the resolver and starts
-    // the server. Server.start() resolves app/index.json by default (FileNode's
-    // base directory is "app"). Plain ESM — Node runs it without a build step.
+    // the server. Server.start() resolves app/index.json by default; the file
+    // nodes read from the `root` passed to serverNodes ("app" here — change it to
+    // point elsewhere). Plain ESM — Node runs it without a build step.
     writeFileSync(
       join(dir, "index.js"),
       `import { createResolver, coreNodes } from "@jexs/core";\n` +
       `import { serverNodes, Server } from "@jexs/server";\n\n` +
       `if (process.argv.includes("--prod")) process.env.prod = "1";\n\n` +
-      `const resolve = createResolver([...coreNodes, ...serverNodes]);\n` +
+      `const resolve = createResolver([...coreNodes, ...serverNodes({ root: "app" })]);\n` +
       `new Server(resolve).start();\n`,
     );
 

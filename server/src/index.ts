@@ -18,30 +18,50 @@ import { WebSocketNode } from "./nodes/WebSocket.js";
 import { DeferNode } from "./nodes/Defer.js";
 import { StdioNode } from "./nodes/Stdio.js";
 
-/** Server-specific nodes. Combine with coreNodes for a full resolver: [...coreNodes, ...serverNodes] */
-export const serverNodes: Node[] = [
-  new CryptoNode(),
-  new FileNode(),
-  new DeferNode(),
-  new RouterNode(),
-  new SessionNode(),
-  new DatabaseNode(),
-  new QueryNode(),
-  new CacheNode(),
-  new TailwindNode(),
-  new OAuthNode(),
-  new EmailNode(),
-  new WebPushNode(),
-  new ListenNode(),
-  new TranslationNode(),
-  new SchemaNode(),
-  new WebSocketNode(),
-  new StdioNode(),
-  // `thread` node — runs `do` steps on a worker_threads resolver. The worker
-  // re-enters resolverWorker.js (no-op on the main thread); spawned lazily on
-  // the first `thread` step.
-  new WorkerNode(makeThreadWorker(new URL("./resolverWorker.js", import.meta.url))),
-];
+/** Options for the {@link serverNodes} factory. */
+export interface ServerNodesOptions {
+  /**
+   * Base directory the file-reading nodes resolve against: FileNode's app JSON,
+   * SchemaNode's schema directories, and CryptoNode's `secret.key` fallback.
+   * Defaults to `"app"` (the server layout). Pass `"."` to root at the cwd — e.g.
+   * a build script authored in JSON that needs to reach `node_modules` or
+   * `package.json`.
+   */
+  root?: string;
+}
+
+/**
+ * Server-specific nodes, built fresh per call so each set can target its own
+ * `root`. Combine with coreNodes for a full resolver:
+ * `[...coreNodes, ...serverNodes()]`. Individual node classes are exported below
+ * for custom wiring.
+ */
+export function serverNodes({ root = "app" }: ServerNodesOptions = {}): Node[] {
+  return [
+    new CryptoNode(root),
+    new FileNode(root),
+    new DeferNode(),
+    new RouterNode(),
+    new SessionNode(),
+    new DatabaseNode(),
+    new QueryNode(),
+    new CacheNode(),
+    new TailwindNode(),
+    new OAuthNode(),
+    new EmailNode(),
+    new WebPushNode(),
+    new ListenNode(),
+    new TranslationNode(),
+    new SchemaNode(root),
+    new WebSocketNode(),
+    new StdioNode(),
+    // `thread` node — runs `do` steps on a worker_threads resolver. The worker
+    // re-enters resolverWorker.js (no-op on the main thread); spawned lazily on
+    // the first `thread` step. `root` crosses via workerData so file ops in a
+    // thread resolve against the same base as the main thread.
+    new WorkerNode(makeThreadWorker(new URL("./resolverWorker.js", import.meta.url), { root })),
+  ];
+}
 
 export { Server } from "./Server.js";
 export { makePhysicsWorker } from "./physicsWorker.js";

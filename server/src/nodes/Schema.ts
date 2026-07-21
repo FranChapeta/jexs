@@ -92,6 +92,13 @@ export class SchemaNode extends Node {
     }
   }
 
+  private root: string;
+
+  constructor(root: string = "app") {
+    super();
+    this.root = root;
+  }
+
   schema(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.schema, context, op => {
       if (op === "get") {
@@ -106,7 +113,7 @@ export class SchemaNode extends Node {
         }
         return null;
       }
-      return doRegister(def);
+      return doRegister(def, this.root);
     });
   }
 
@@ -307,7 +314,7 @@ export class SchemaNode extends Node {
   }
 }
 
-async function doRegister(def: Record<string, unknown>): Promise<unknown> {
+async function doRegister(def: Record<string, unknown>, root: string): Promise<unknown> {
   // Inline schema document
   if (def.table && typeof def.table === "object") {
     const schema = def.table as TableJsonSchema;
@@ -318,7 +325,7 @@ async function doRegister(def: Record<string, unknown>): Promise<unknown> {
 
   // Directory path
   if (def.path && typeof def.path === "string") {
-    const dirPath = path.join("app", def.path);
+    const dirPath = path.join(root, def.path);
     const registered: string[] = [];
 
     try {

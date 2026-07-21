@@ -99,7 +99,7 @@ const packages: string[] = [];
 let globalKeys: Record<string, GlobalKeyDoc> = {};
 
 // Core nodes first — server/client/etc. build on top of them and the resolver
-// must include them (the real bootstrap is `[...coreNodes, ...serverNodes]`).
+// must include them (the real bootstrap is `[...coreNodes, ...serverNodes()]`).
 // Without these, list_nodes/describe_op/resolve_expression are blind to the
 // most-used ops (var, if, map, foreach, tag, concat, …).
 try {
@@ -113,7 +113,7 @@ try {
 // Server nodes (HTTP routing, sessions, SQL, file, …)
 try {
   const server = await importJexs<typeof import("@jexs/server")>("@jexs/server");
-  nodes.push(...server.serverNodes);
+  nodes.push(...server.serverNodes());
   packages.push("@jexs/server");
 } catch { /* not installed */ }
 
