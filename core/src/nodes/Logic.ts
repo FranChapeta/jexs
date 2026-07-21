@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue } from "./Node.js";
-import { resolve, resolveAll } from "../Resolver.js";
+import { resolve, resolveAll, resolveObj } from "../Resolver.js";
 import { runSteps, resolveSteps } from "../Resolver.js";
 import { hasAnyKey } from "../helpers.js";
 import type { JexsNodeSchema } from "../schema.js";
@@ -225,11 +225,18 @@ export class LogicNode extends Node {
     },
 
     exec: {
-      markdownDescription: "Resolves its value to a step sequence, then runs it. The steps are supplied as an expression — typically a `var` holding a step array (that is how you feed a step sequence in). The resolved array is executed as steps, so each step's `as` binding is visible to later steps.",
+      markdownDescription: "Resolves its value to a step sequence, then runs it. The steps are supplied as an expression — typically a `var` holding a step array (that is how you feed a step sequence in). The resolved array is executed as steps, so each step's `as` binding is visible to later steps.\nPass `\"params\"` to run the steps against a shallow copy of the context with those scoped variables merged in — the parent context is left untouched.",
       outputDescription: "The LAST step's value when the resolved value is an array; otherwise the resolved value itself.",
       examples: [
         "{ \"exec\": { \"var\": \"$steps\" } }",
+        "{ \"exec\": { \"var\": \"$steps\" }, \"params\": { \"title\": \"Home\" } }",
       ],
+      siblings: {
+        params: {
+          map: true,
+          description: "Scoped variables merged into a shallow copy of the context for the steps.",
+        },
+      },
     },
   };
 
@@ -456,6 +463,15 @@ export class LogicNode extends Node {
   }
 
   exec(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.exec, context, value => resolveSteps(value, context));
+    return resolve(def.exec, context, value => {
+      // With `params`, run the steps against a shallow copy of the context with
+      // the resolved params merged in — the caller's context stays untouched.
+      if ("params" in def && this.isObject(def.params)) {
+        return resolveObj(def.params, context, resolved =>
+          resolveSteps(value, { ...context, ...resolved })
+        );
+      }
+      return resolveSteps(value, context);
+    });
   }
 }

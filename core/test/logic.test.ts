@@ -79,6 +79,23 @@ test("exec: a non-array resolved value is returned as-is", () => {
   assert.equal(resolve({ exec: { concat: ["Hi ", { var: "$name" }] } }, { name: "Ada" }), "Hi Ada");
 });
 
+test("exec: params are merged into a shallow context copy for the steps", () => {
+  const steps = [{ concat: ["Hello, ", { var: "$title" }, "!"] }];
+  assert.equal(
+    resolve({ exec: { var: "$steps" }, params: { title: "Home" } }, { steps }),
+    "Hello, Home!",
+  );
+});
+
+test("exec: params are resolved before merging and don't mutate the caller's context", () => {
+  const ctx = { steps: [{ var: "$who" }], name: "Ada" };
+  assert.equal(
+    resolve({ exec: { var: "$steps" }, params: { who: { var: "$name" } } }, ctx),
+    "Ada",
+  );
+  assert.equal("who" in ctx, false);
+});
+
 // typeof — Jexs type name; arrays are "array" (not "object"), null vs undefined distinct.
 
 test("typeof: reports the Jexs type name", () => {
