@@ -14,6 +14,27 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+// The directory of the file currently being resolved. Tracked under a private
+// symbol on the context — NOT a readable `$var`: templates can't read it via
+// `var`, and request data / `as` (string keys only) can't inject it, so it can't
+// be used to redirect file resolution. Object spread copies it, so child scopes
+// (map/foreach/if) inherit it; JSON and structuredClone drop it, so it never
+// leaks to logs or the `thread` worker.
+const FILE_DIR = Symbol("jexs.fileDir");
+
+function getFileDir(context: Context): string | undefined {
+  return (context as Record<symbol, unknown>)[FILE_DIR] as string | undefined;
+}
+
+/**
+ * Seed a context with an entry file's directory so the entry's relative loads
+ * resolve against it, wherever it sits relative to the resolver root. Used by the
+ * app runner to bootstrap an entry (JS-only — templates cannot reach the symbol).
+ */
+export function entryContext(dir: string): Context {
+  return { [FILE_DIR]: dir } as Context;
+}
+
 /**
  * FileNode - Handles file operations in JSON.
  *
@@ -32,7 +53,7 @@ export class FileNode extends Node {
     file: {
       type: "string",
       output: "any",
-      markdownDescription: "Loads a JSON file relative to the `app/` directory and resolves it as a Jexs expression.\nArrays are executed as step sequences; objects are resolved as a single expression.\nPass `\"data\": true` to skip resolution and get the raw parsed JSON (use for data files, route trees, and anywhere you want the resolver to leave the file alone).\nPass `\"raw\": true` for the raw string content with no JSON parse.\nPass `\"params\"` to merge scoped variables into the file's resolution context, or `\"write\"` to write data to the file.",
+      markdownDescription: "Loads a JSON file and resolves it as a Jexs expression. Paths resolve like a filesystem: relative to the file doing the loading (`\"nav.json\"`, `\"../shared/x.json\"`), while a leading `/` anchors at the resolver root (`\"/data/site.json\"`).\nArrays are executed as step sequences; objects are resolved as a single expression.\nPass `\"data\": true` to skip resolution and get the raw parsed JSON (use for data files, route trees, and anywhere you want the resolver to leave the file alone).\nPass `\"raw\": true` for the raw string content with no JSON parse.\nPass `\"params\"` to merge scoped variables into the file's resolution context, or `\"write\"` to write data to the file.",
       outputDescription: "Default: the file resolved as a Jexs expression (a JSON array runs as steps → its last value; a JSON object resolves to its value). With `data: true`, the raw parsed JSON; with `raw: true`, the file as a string; non-JSON text files return their string and binaries a Buffer. `null` if the file can't be read or parsed.",
       examples: [
         "{ \"file\": \"pages/home.json\", \"params\": { \"title\": \"Home\" } }",
@@ -61,7 +82,7 @@ export class FileNode extends Node {
     directory: {
       type: "string",
       output: "array",
-      markdownDescription: "Lists directory contents relative to `app/`. Lists files by default; pass `\"subdirectories\": true` to list the folders instead.",
+      markdownDescription: "Lists directory contents. The path resolves relative to the file doing the loading; a leading `/` anchors at the resolver root. Lists files by default; pass `\"subdirectories\": true` to list the folders instead.",
       outputDescription: "An array of `{ name, path, size, modified }` entries — files by default, or subdirectories when `subdirectories` is set (filtered by `extension` when given); `[]` if the directory can't be read.",
       examples: [
         "{ \"directory\": \"data/posts\", \"extension\": \"json\", \"recursive\": true }",
@@ -99,22 +120,23 @@ export class FileNode extends Node {
     },
   };
 
-  private appDir: string;
+  private rootAbs: string;
 
-  constructor(appDir: string = "app") {
-
+  constructor(root: string = "app") {
     super();
-    this.appDir = appDir;
+    // Absolute resolver root: `/`-prefixed paths resolve against it; everything
+    // else resolves relative to the file doing the loading.
+    this.rootAbs = path.resolve(root);
   }
 
   file(def: Record<string, unknown>, context: Context): NodeValue {
     return "write" in def
-      ? writeFile(def, context, this.appDir)
-      : loadFile(def, context, this.appDir);
+      ? writeFile(def, context, this.rootAbs)
+      : loadFile(def, context, this.rootAbs);
   }
 
   directory(def: Record<string, unknown>, context: Context): NodeValue {
-    if ("create" in def) return createDir(def, context, this.appDir);
+    if ("create" in def) return createDir(def, context, this.rootAbs);
 
     return resolveAll(
       [def.directory, def.recursive ?? null, def.extension ?? null, def.subdirectories ?? null],
@@ -122,7 +144,7 @@ export class FileNode extends Node {
       async ([dirPathValue, recursiveRaw, extensionValue, subdirsRaw]) => {
         const recursive = toBoolean(recursiveRaw);
         const subdirs = toBoolean(subdirsRaw);
-        const dirPath = resolvePath(dirPathValue, this.appDir);
+        const dirPath = resolvePath(dirPathValue, this.rootAbs, getFileDir(context));
 
         try {
           const entries = await listDir(dirPath, recursive, subdirs);
@@ -168,10 +190,14 @@ export class FileNode extends Node {
   }
 }
 
-function resolvePath(pathValue: unknown, appDir: string): string {
-  let p = String(pathValue);
-  if (p.startsWith("/")) p = p.slice(1);
-  return path.join(appDir, p);
+// Resolve a path the way a filesystem/URL does: a leading `/` is anchored at the
+// resolver root; everything else is relative to the file currently loading (the
+// `fileDir`), falling back to the root when there is no current file (the entry).
+function resolvePath(pathValue: unknown, rootAbs: string, fileDir?: string): string {
+  const p = String(pathValue);
+  if (p.startsWith("/")) return path.join(rootAbs, p.slice(1));
+  if (fileDir !== undefined) return path.resolve(fileDir, p);
+  return path.join(rootAbs, p);
 }
 
 const TEXT_EXT = new Set([
@@ -192,12 +218,12 @@ function classifyExt(filePath: string): "json" | "text" | "binary" {
 function loadFile(
   def: Record<string, unknown>,
   context: Context,
-  appDir: string,
+  rootAbs: string,
 ): unknown {
   return resolveAll([def.file, def.raw ?? null, def.data ?? null], context, async ([filePathValue, rawRaw, dataRaw]) => {
     const raw = toBoolean(rawRaw);
     const data = toBoolean(dataRaw);
-    const filePath = resolvePath(filePathValue, appDir);
+    const filePath = resolvePath(filePathValue, rootAbs, getFileDir(context));
     const kind = classifyExt(filePath);
     const wantBuffer = kind === "binary" && !raw;
 
@@ -230,13 +256,15 @@ function loadFile(
 
     if (data) return parsed;
 
-    // Scoped context: if params provided, clone context and merge resolved params
-    let fileContext = context;
+    // Run the loaded file's steps against a context that records ITS directory,
+    // so nested relative `{ file }` / `{ directory }` loads resolve against this
+    // file (not the caller's). Params, if any, merge on top.
+    let fileContext: Context = { ...context, [FILE_DIR]: path.dirname(filePath) };
     if ("params" in def && isObject(def.params)) {
       const params = def.params;
       const pResolved = resolveObj(params, context, r => r);
       const resolved = (pResolved instanceof Promise ? await pResolved : pResolved) as Record<string, unknown>;
-      fileContext = { ...context, ...resolved };
+      fileContext = { ...fileContext, ...resolved };
     }
 
     // From here, anything that throws is application code — let it propagate.
@@ -258,10 +286,10 @@ function loadFile(
 function writeFile(
   def: Record<string, unknown>,
   context: Context,
-  appDir: string,
+  rootAbs: string,
 ): unknown {
   return resolveAll([def.file, def.write], context, async ([filePathValue, data]) => {
-    const filePath = resolvePath(filePathValue, appDir);
+    const filePath = resolvePath(filePathValue, rootAbs, getFileDir(context));
 
     try {
       const content =
@@ -279,10 +307,10 @@ function writeFile(
 function createDir(
   def: Record<string, unknown>,
   context: Context,
-  appDir: string,
+  rootAbs: string,
 ): unknown {
   return resolve(def.directory, context, async dirPathValue => {
-    const dirPath = resolvePath(dirPathValue, appDir);
+    const dirPath = resolvePath(dirPathValue, rootAbs, getFileDir(context));
 
     try {
       await fs.mkdir(dirPath, { recursive: true });
