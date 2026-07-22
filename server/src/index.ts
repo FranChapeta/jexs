@@ -1,7 +1,8 @@
-import { Node, WorkerNode } from "@jexs/core";
+import { Node, WorkerNode, createResolver, coreNodes } from "@jexs/core";
+import path from "node:path";
 import { makeThreadWorker } from "./makeWorker.js";
 import { CryptoNode } from "./nodes/Crypto.js";
-import { FileNode } from "./nodes/File.js";
+import { FileNode, entryContext } from "./nodes/File.js";
 import { RouterNode } from "./nodes/Router.js";
 import { SessionNode } from "./nodes/Session.js";
 import { DatabaseNode } from "./nodes/Database.js";
@@ -61,6 +62,25 @@ export function serverNodes({ root = "app" }: ServerNodesOptions = {}): Node[] {
     // thread resolve against the same base as the main thread.
     new WorkerNode(makeThreadWorker(new URL("./resolverWorker.js", import.meta.url), { root })),
   ];
+}
+
+export interface RunAppOptions {
+  /** Resolver root (where FileNode reads from). Default the cwd (`"."`). */
+  root?: string;
+}
+
+/**
+ * Build a core+server resolver and run a JSON template `entry` through it. The
+ * shared runner behind `jexs run`: seeds the entry's own directory so its
+ * relative `{ file }` loads resolve against it (a `/`-prefixed path anchors at
+ * `root`), then runs the entry as steps and returns its result. Used for
+ * stdio/CLI apps (e.g. an MCP server); for HTTP apps use {@link Server}.
+ */
+export function runApp(entry: string, options: RunAppOptions = {}): unknown {
+  const root = options.root ?? ".";
+  const abs = path.resolve(entry);
+  const resolve = createResolver([...coreNodes, ...serverNodes({ root })]);
+  return resolve({ file: path.basename(abs) }, entryContext(path.dirname(abs)));
 }
 
 export { Server } from "./Server.js";

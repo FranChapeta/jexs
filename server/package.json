@@ -26,6 +26,9 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "jexs": "dist/cli.js"
+  },
   "exports": {
     ".": {
       "import": "./dist/index.js",
