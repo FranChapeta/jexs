@@ -1,15 +1,20 @@
 #!/usr/bin/env node
 // jexs — the Jexs CLI. Two subcommands:
 //
-//   jexs run <entry.json> [root]     run a JSON template (stdio/CLI apps)
+//   jexs run <entry|package> [root]  run a JSON template (stdio/CLI apps)
 //   jexs serve [root] [--prod] [--watch]   boot the HTTP Server for a web app
 //
-// `run` resolves `entry` as steps relative to its own directory (a `/`-prefixed
-// path inside anchors at `root`, default cwd). `serve` roots at `root` (default
-// "app") and starts the HTTP Server (which resolves its entry file, whose
-// `listen` binds the port). `--prod` sets process.env.prod; `--watch` restarts
-// the server when files under `root` change.
+// `run` takes a file path OR an installed package name: a package is resolved
+// via its package.json `"jexs"` entry field, so a pure-JSON package (no bin, no
+// JS) is launched with `jexs run <package>`. The entry runs as steps relative to
+// its own directory (a `/`-prefixed path anchors at `root`, default cwd). `serve`
+// roots at `root` (default "app") and starts the HTTP Server (which resolves its
+// entry file, whose `listen` binds the port). `--prod` sets process.env.prod;
+// `--watch` restarts the server when files under `root` change.
 import { createResolver, coreNodes } from "@jexs/core";
+import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
 import { runApp, serverNodes, Server } from "./index.js";
 
 const [cmd, ...rest] = process.argv.slice(2);
@@ -60,11 +65,31 @@ async function serve(args: string[]): Promise<void> {
   await new Server(resolve).start();
 }
 
+// Resolve a `run` target to an entry file path: a local file/dir is used as-is;
+// anything else is treated as an installed package and resolved via its
+// package.json `"jexs"` field (relative to that package).
+function resolveEntry(target: string): string {
+  if (existsSync(path.resolve(target))) return target;
+  let pkgJson: string;
+  try {
+    pkgJson = createRequire(import.meta.url).resolve(`${target}/package.json`);
+  } catch {
+    process.stderr.write(`jexs run: "${target}" is not a file or an installed package\n`);
+    process.exit(1);
+  }
+  const pkg = JSON.parse(readFileSync(pkgJson, "utf8")) as { jexs?: unknown };
+  if (typeof pkg.jexs !== "string") {
+    process.stderr.write(`jexs run: package "${target}" has no string "jexs" entry in its package.json\n`);
+    process.exit(1);
+  }
+  return path.join(path.dirname(pkgJson), pkg.jexs);
+}
+
 if (cmd === "run") {
   const positional = rest.filter((a) => !a.startsWith("--"));
-  const [entry, root] = positional;
-  if (!entry) usage(1);
-  await Promise.resolve(runApp(entry, { root: root ?? "." }));
+  const [target, root] = positional;
+  if (!target) usage(1);
+  await Promise.resolve(runApp(resolveEntry(target), { root: root ?? "." }));
 } else if (cmd === "serve") {
   await serve(rest);
 } else {
