@@ -34,7 +34,7 @@
     "dist"
   ],
   "scripts": {
-    "build:browser": "esbuild client=src/index.ts sw=src/sw.ts --bundle --format=esm --splitting --outdir=dist/browser --entry-names=[name] --chunk-names=chunks/[hash] --minify --sourcemap --target=es2022",
+    "build:browser": "node -e \"require('fs').rmSync('dist/browser',{recursive:true,force:true})\" && esbuild client=src/index.ts sw=src/sw.ts physicsWorker=src/physicsWorker.ts resolverWorker=src/resolverWorker.ts --bundle --format=esm --splitting --outdir=dist/browser --entry-names=[name] --chunk-names=chunks/[hash] --minify --target=es2022",
     "prepublishOnly": "npm run build:browser"
   },
   "peerDependencies": {
