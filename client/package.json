@@ -1,6 +1,6 @@
 {
   "name": "@jexs/client",
-  "version": "0.7.6",
+  "version": "0.7.7",
   "license": "MIT",
   "description": "Browser runtime for Jexs — DOM, fetch, audio, WebSocket, push, and WebRTC nodes",
   "keywords": [

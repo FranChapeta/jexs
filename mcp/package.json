@@ -14,6 +14,7 @@
   "jexs": "src/index.json",
   "files": ["src"],
   "peerDependencies": {
-    "@jexs/server": "^0.7.0"
+    "@jexs/core": "^0.9.3",
+    "@jexs/server": "^0.7.6"
   }
 }
