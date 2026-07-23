@@ -165,7 +165,7 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean): string {
   if (useServer) {
     lines.push(`- \`app/\` — JSON templates the resolver loads. FileNode's default base directory.`);
     lines.push(`- \`public/\` — static assets (CSS, images, favicons, fonts). Auto-served by the HTTP server for any GET on a static-extension URL.`);
-    lines.push(`- \`index.js\` — bootstrap: \`createResolver([...coreNodes, ...serverNodes({ root: "app" })])\` then \`new Server(resolve).start()\`.`);
+    lines.push(`- No JS bootstrap — \`npm run dev\` / \`npm start\` run \`jexs serve\` (the \`jexs\` CLI from @jexs/server), which boots the HTTP Server against \`app/\` (resolving \`app/index.json\`).`);
     if (useTailwind) {
       lines.push(`- \`input.css\` — Tailwind entry. Add custom styles here (\`@layer base { ... }\`, \`@apply\`, etc.).`);
       lines.push(`- \`tailwind.config.js\` — scans \`./app/**/*.json\` for class names.`);
@@ -178,11 +178,11 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean): string {
   if (useServer) {
     lines.push(`## Scripts`);
     lines.push(``);
-    lines.push(`- \`npm run dev\` — \`node --watch index.js\`${useTailwind ? ` + \`tailwindcss --watch\` in parallel via \`concurrently\`` : ``}.`);
+    lines.push(`- \`npm run dev\` — \`jexs serve --watch\` (restarts on changes under \`app/\`)${useTailwind ? ` + \`tailwindcss --watch\` in parallel via \`concurrently\`` : ``}.`);
     if (useTailwind) {
-      lines.push(`- \`npm run build\` — compiles Tailwind (minified). The JS bootstrap is plain ESM and runs as-is, so there's no transpile step.`);
+      lines.push(`- \`npm run build\` — compiles Tailwind (minified). There's no JS build — the app is JSON run by \`jexs serve\`.`);
     }
-    lines.push(`- \`npm start\` — \`node index.js --prod\`. Run from the project root so FileNode and the static server find \`app/\` and \`public/\`. The \`--prod\` flag sets \`process.env.prod = "1"\`, so JSON templates can branch on \`{ "var": "$env.prod" }\` (e.g. picking port 80 in prod vs 3000 in dev).`);
+    lines.push(`- \`npm start\` — \`jexs serve --prod\`. Run from the project root so FileNode and the static server find \`app/\` and \`public/\`. The \`--prod\` flag sets \`process.env.prod = "1"\`, so JSON templates can branch on \`{ "var": "$env.prod" }\` (e.g. picking port 80 in prod vs 3000 in dev).`);
     lines.push(`- \`npm run format\` — Prettier sweep over JSON templates.`);
     lines.push(``);
   }
@@ -292,26 +292,23 @@ async function main(): Promise<void> {
 
   const scripts: Record<string, string> = {};
   if (useServer) {
-    // The bootstrap is plain ESM JavaScript (`index.js`), so there's no
-    // transpile step. Node runs it as-is.
-    // dev: `node --watch index.js` re-runs on file change. With tailwind, the
-    //      CSS compiler runs in --watch alongside it via concurrently, so JSON
-    //      edits that introduce new class names produce updated CSS.
-    // build: only the CSS step (when tailwind is on). No JS build — `index.js`
-    //        ships as source. The data file glob under app/ and the static
-    //        assets under public/ are read at runtime from the project root.
-    // start: `node index.js --prod`. cwd = project root, so FileNode and the
-    //        static server find app/ and public/ where they live.
+    // There is no JS bootstrap — `jexs serve` (the `jexs` CLI from @jexs/server) builds the
+    // resolver and boots the HTTP Server against app/. cwd = project root, so
+    // FileNode and the static server find app/ and public/ where they live.
+    // dev:    `jexs serve --watch` restarts the server on changes under app/.
+    //         With tailwind, the CSS compiler runs in --watch alongside it via
+    //         concurrently, so new class names in JSON produce updated CSS.
+    // build:  only the CSS step (when tailwind is on). No JS build.
+    // start:  `jexs serve --prod`.
     // format: prettier sweep over the JSON templates — the bulk of a Jexs app.
     const tailwindWatch = "tailwindcss -i input.css -o public/styles.css --watch --minify";
     const tailwindBuild = "tailwindcss -i input.css -o public/styles.css --minify";
-    const nodeWatch     = "node --watch index.js";
 
     scripts.dev = useTailwind
-      ? `concurrently -k -n css,app -c blue,green "${tailwindWatch}" "${nodeWatch}"`
-      : nodeWatch;
+      ? `concurrently -k -n css,app -c blue,green "${tailwindWatch}" "jexs serve --watch"`
+      : "jexs serve --watch";
     if (useTailwind) scripts.build = tailwindBuild;
-    scripts.start  = "node index.js --prod";
+    scripts.start  = "jexs serve --prod";
     scripts.format = "prettier --write \"app/**/*.json\"";
   } else {
     scripts.format = "prettier --write \"src/**/*.json\"";
@@ -390,11 +387,14 @@ async function main(): Promise<void> {
 
   // .mcp.json — registers @jexs/mcp so MCP-compatible AI clients (Claude Code,
   // Claude Desktop, etc.) can introspect this project's Jexs node registry.
+  // @jexs/mcp is a 100% JSON package (no bin), so it's launched via the `jexs`
+  // CLI from @jexs/server: `jexs run @jexs/mcp` resolves the package's `jexs`
+  // entry and runs it, rooted at the project (cwd) for schema discovery.
   writeFileSync(
     join(dir, ".mcp.json"),
     JSON.stringify({
       mcpServers: {
-        "jexs-dev": { command: "npx", args: ["-y", "@jexs/mcp"] },
+        "jexs-dev": { command: "npx", args: ["-y", "-p", "@jexs/server", "-p", "@jexs/mcp", "jexs", "run", "@jexs/mcp"] },
       },
     }, null, 2) + "\n",
   );
@@ -419,18 +419,9 @@ async function main(): Promise<void> {
   );
 
   if (useServer) {
-    // index.js — bootstrap at the project root. Wires the resolver and starts
-    // the server. Server.start() resolves app/index.json by default; the file
-    // nodes read from the `root` passed to serverNodes ("app" here — change it to
-    // point elsewhere). Plain ESM — Node runs it without a build step.
-    writeFileSync(
-      join(dir, "index.js"),
-      `import { createResolver, coreNodes } from "@jexs/core";\n` +
-      `import { serverNodes, Server } from "@jexs/server";\n\n` +
-      `if (process.argv.includes("--prod")) process.env.prod = "1";\n\n` +
-      `const resolve = createResolver([...coreNodes, ...serverNodes({ root: "app" })]);\n` +
-      `new Server(resolve).start();\n`,
-    );
+    // No JS bootstrap: `npm run dev` / `npm start` invoke `jexs serve` (the `jexs`
+    // CLI from @jexs/server) which builds the resolver, roots FileNode at app/, and starts
+    // the HTTP Server — it resolves app/index.json, whose `listen` binds the port.
 
     // app/index.json — minimal listener that returns a greeting from query string.
     writeFileSync(
@@ -461,12 +452,12 @@ async function main(): Promise<void> {
       );
 
       // tailwind.config.js — ESM (package.json has "type":"module"). Scans the
-      // JSON templates the resolver renders, plus the bootstrap JS.
+      // JSON templates the resolver renders.
       writeFileSync(
         join(dir, "tailwind.config.js"),
         `/** @type {import('tailwindcss').Config} */\n` +
         `export default {\n` +
-        `  content: ["./app/**/*.json", "./index.js"],\n` +
+        `  content: ["./app/**/*.json"],\n` +
         `  darkMode: "class",\n` +
         `  theme: { extend: {} },\n` +
         `  plugins: [],\n` +
@@ -492,7 +483,6 @@ async function main(): Promise<void> {
   console.log(`  .gitattributes`);
   console.log(`  CLAUDE.md`);
   if (useServer) {
-    console.log(`  index.js`);
     console.log(`  app/index.json`);
     console.log(`  public/.gitkeep`);
     if (useTailwind) {

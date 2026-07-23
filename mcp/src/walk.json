@@ -1,0 +1,26 @@
+[
+  {
+    "if": { "isType": [{ "var": "$node" }, "array"] },
+    "then": {
+      "return": {
+        "map": { "var": "$node" },
+        "do": { "exec": { "var": "$walk" }, "params": { "node": { "var": "$item" } } }
+      }
+    }
+  },
+  {
+    "if": { "isType": [{ "var": "$node" }, "object"] },
+    "then": {
+      "return": {
+        "merge": [
+          { "keys": { "var": "$node" } },
+          {
+            "map": { "values": { "var": "$node" } },
+            "do": { "exec": { "var": "$walk" }, "params": { "node": { "var": "$item" } } }
+          }
+        ]
+      }
+    }
+  },
+  []
+]

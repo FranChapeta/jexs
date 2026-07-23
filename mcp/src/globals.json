@@ -1,0 +1,16 @@
+{
+  "keys": {
+    "as": {
+      "markdownDescription": "Store this step's result in a named context variable, read later via `{ \"var\": \"name\" }`. Works on any step.",
+      "examples": ["{ \"var\": \"$user.name\", \"as\": \"name\" }"]
+    },
+    "return": {
+      "markdownDescription": "In a step array, a step that resolves to `{ \"return\": X }` stops the array early and yields `X`. Escapes only the current array — nest the wrapper to exit outer arrays.",
+      "examples": ["{ \"if\": { \"empty\": { \"var\": \"$name\" } }, \"then\": { \"return\": \"Hello, world!\" } }"]
+    },
+    "catch": {
+      "markdownDescription": "Step array to run if this expression throws an HTTP error. The `$error` context variable carries `{ status, message }`.",
+      "examples": ["{ \"query-select\": \"users\", \"catch\": [{ \"var\": \"$error.message\" }] }"]
+    }
+  }
+}

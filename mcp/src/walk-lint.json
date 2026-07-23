@@ -1,0 +1,48 @@
+[
+  {
+    "if": { "isType": [{ "var": "$node" }, "array"] },
+    "then": {
+      "return": {
+        "flatten": {
+          "map": { "var": "$node" },
+          "do": { "exec": { "var": "$walkLint" }, "params": { "node": { "var": "$item" }, "path": { "concat": [{ "var": "$path" }, "[]"] } } }
+        }
+      }
+    }
+  },
+  { "if": { "not": { "isType": [{ "var": "$node" }, "object"] } }, "then": { "return": [] } },
+
+  { "as": "keys", "keys": { "var": "$node" } },
+  { "as": "nonGlobal", "filter": [{ "var": "$keys" }, { "not": { "includes": [{ "var": "$globalNames" }, { "var": "$item" }] } }] },
+  { "as": "handlerKeys", "filter": [{ "var": "$nonGlobal" }, { "includes": [{ "var": "$opNames" }, { "var": "$item" }] }] },
+  { "as": "where", "if": { "empty": { "var": "$path" } }, "then": "(root)", "else": { "var": "$path" } },
+
+  {
+    "as": "warn",
+    "if": { "gt": [{ "count": { "var": "$handlerKeys" } }, 1] },
+    "then": { "concat": [{ "var": "$where" }, ": ambiguous — multiple handler keys (", { "join": [{ "var": "$handlerKeys" }, ", "] }, "); only the first one dispatches."] },
+    "else": {
+      "if": {
+        "and": [
+          { "eq": [{ "count": { "var": "$handlerKeys" } }, 1] },
+          { "notEmpty": { "var": "$nonGlobal" } },
+          { "neq": [{ "first": { "var": "$nonGlobal" } }, { "first": { "var": "$handlerKeys" } }] }
+        ]
+      },
+      "then": { "concat": [{ "var": "$where" }, ": collision risk — first key \"", { "first": { "var": "$nonGlobal" } }, "\" isn't a handler but \"", { "first": { "var": "$handlerKeys" } }, "\" is, so this object dispatches as \"", { "first": { "var": "$handlerKeys" } }, "\". If it is data, load it with { \"data\": true } or rename the key."] },
+      "else": ""
+    }
+  },
+
+  {
+    "as": "childWarns",
+    "flatten": {
+      "map": { "entries": { "var": "$node" } },
+      "item": "e",
+      "do": { "exec": { "var": "$walkLint" }, "params": { "node": { "var": "$e.value" }, "path": { "concat": [{ "if": { "empty": { "var": "$path" } }, "then": "", "else": { "concat": [{ "var": "$path" }, "."] } }, { "var": "$e.key" }] } } }
+    }
+  },
+
+  { "as": "all", "if": { "notEmpty": { "var": "$warn" } }, "then": { "merge": [[{ "var": "$warn" }], { "var": "$childWarns" }] }, "else": { "var": "$childWarns" } },
+  { "var": "$all" }
+]

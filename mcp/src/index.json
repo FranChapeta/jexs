@@ -1,0 +1,263 @@
+[
+  "// Startup: discover installed @jexs packages and merge their dist/schema.json.",
+  { "as": "pkgs", "directory": "/node_modules/@jexs", "subdirectories": true },
+  { "as": "paths", "map": { "var": "$pkgs" }, "do": { "concat": ["/node_modules/@jexs/", { "var": "$item.name" }, "/dist/schema.json"] } },
+  { "as": "raw", "map": { "var": "$paths" }, "do": { "file": { "var": "$item" }, "data": true } },
+  { "as": "schemas", "filter": [{ "var": "$raw" }, { "notEmpty": { "var": "$item" } }] },
+  { "as": "byNode", "deepMerge": { "map": { "var": "$schemas" }, "do": { "var": "$item.byNode" } } },
+  { "as": "byKey", "deepMerge": { "map": { "var": "$schemas" }, "do": { "var": "$item.byKey" } } },
+  { "as": "extraDefs", "deepMerge": { "map": { "var": "$schemas" }, "do": { "var": "$item.extraDefs" } } },
+  { "as": "opNames", "keys": { "var": "$byKey" } },
+  { "as": "pkgNames", "map": { "var": "$schemas" }, "do": { "var": "$item.packageName" } },
+  { "as": "globals", "file": "globals.json", "data": true },
+  { "as": "globalNames", "keys": { "var": "$globals.keys" } },
+  { "as": "toolDefs", "file": "tools.json", "data": true },
+  { "as": "walk", "file": "walk.json", "data": true },
+  { "as": "walkLint", "file": "walk-lint.json", "data": true },
+
+  {
+    "stdio-listen": true,
+    "on-message": [
+      { "as": "id", "var": "$message.id" },
+      {
+        "switch": { "var": "$message.method" },
+        "cases": {
+          "initialize": {
+            "stdio-write": {
+              "jsonrpc": "2.0",
+              "id": { "var": "$id" },
+              "result": {
+                "protocolVersion": { "if": { "empty": { "var": "$message.params.protocolVersion" } }, "then": "2024-11-05", "else": { "var": "$message.params.protocolVersion" } },
+                "capabilities": { "tools": {} },
+                "serverInfo": { "name": "jexs-dev (jexs-native)", "version": "0.1.0" }
+              }
+            }
+          },
+          "notifications/initialized": [],
+          "notifications/cancelled": [],
+          "ping": { "stdio-write": { "jsonrpc": "2.0", "id": { "var": "$id" }, "result": {} } },
+          "tools/list": { "stdio-write": { "jsonrpc": "2.0", "id": { "var": "$id" }, "result": { "tools": { "var": "$toolDefs" } } } },
+          "tools/call": [
+            { "as": "tool", "var": "$message.params.name" },
+            { "as": "args", "var": "$message.params.arguments" },
+            {
+              "as": "result",
+              "switch": { "var": "$tool" },
+              "cases": {
+                "resolve_expression": [
+                  { "as": "out", "exec": { "var": "$args.expression" }, "catch": [{ "content": [{ "type": "text", "text": { "concat": ["Error: ", { "var": "$error.message" }] } }], "isError": true }] },
+                  { "content": [{ "type": "text", "text": { "stringify": [{ "var": "$out" }, 2] } }] }
+                ],
+
+                "list_nodes": [
+                  {
+                    "as": "classLines",
+                    "map": { "entries": { "var": "$byNode" } },
+                    "item": "cls",
+                    "do": {
+                      "concat": [
+                        { "var": "$cls.key" }, ": ",
+                        {
+                          "join": [
+                            {
+                              "map": { "var": "$cls.value" },
+                              "item": "op",
+                              "do": {
+                                "concat": [
+                                  { "var": "$op" },
+                                  {
+                                    "if": { "notEmpty": { "var": { "concat": ["$byKey.", { "var": "$op" }, ".variantDocs"] } } },
+                                    "then": { "concat": [" (ops: ", { "join": [{ "map": { "var": { "concat": ["$byKey.", { "var": "$op" }, ".variantDocs"] } }, "item": "v", "do": { "var": "$v.key" } }, ", "] }, ")"] },
+                                    "else": ""
+                                  }
+                                ]
+                              }
+                            },
+                            ", "
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "content": [{
+                      "type": "text",
+                      "text": {
+                        "concat": [
+                          "Packages: ", { "join": [{ "var": "$pkgNames" }, ", "] }, "\n\n",
+                          { "join": [{ "var": "$classLines" }, "\n"] },
+                          "\n\nGlobal step keys (handled by the resolver, usable on any step): ",
+                          { "join": [{ "var": "$globalNames" }, ", "] }
+                        ]
+                      }
+                    }]
+                  }
+                ],
+
+                "describe_op": [
+                  { "as": "op", "var": "$args.op" },
+                  { "as": "entry", "var": { "concat": ["$byKey.", { "var": "$op" }] } },
+                  {
+                    "if": { "notEmpty": { "var": "$entry" } },
+                    "then": [
+                      { "as": "primary", "var": { "concat": ["$byKey.", { "var": "$op" }, ".properties.", { "var": "$op" }] } },
+                      { "as": "clsEntry", "find": [{ "entries": { "var": "$byNode" } }, { "includes": [{ "var": "$item.value" }, { "var": "$op" }] }] },
+                      { "as": "cls", "if": { "notEmpty": { "var": "$clsEntry" } }, "then": { "var": "$clsEntry.key" }, "else": "?" },
+                      { "as": "desc", "if": { "notEmpty": { "var": "$primary.markdownDescription" } }, "then": { "var": "$primary.markdownDescription" }, "else": { "if": { "notEmpty": { "var": "$primary.description" } }, "then": { "var": "$primary.description" }, "else": "" } },
+                      { "as": "returns", "if": { "notEmpty": { "var": "$entry.outputDescription" } }, "then": { "concat": ["Returns", { "if": { "notEmpty": { "var": "$entry.output" } }, "then": { "concat": [" (", { "var": "$entry.output" }, ")"] }, "else": "" }, ": ", { "var": "$entry.outputDescription" }] }, "else": "" },
+                      { "as": "vdKeys", "if": { "notEmpty": { "var": "$entry.variantDocs" } }, "then": { "map": { "var": "$entry.variantDocs" }, "item": "v", "do": { "var": "$v.key" } }, "else": [] },
+                      { "as": "sib1", "filter": [{ "keys": { "var": "$entry.properties" } }, { "not": { "eq": [{ "var": "$item" }, { "var": "$op" }] } }] },
+                      { "as": "sibNames", "filter": [{ "var": "$sib1" }, { "not": { "includes": [{ "var": "$vdKeys" }, { "var": "$item" }] } }] },
+                      {
+                        "as": "sibBlock",
+                        "if": { "notEmpty": { "var": "$sibNames" } },
+                        "then": {
+                          "concat": [
+                            "Siblings:\n",
+                            {
+                              "join": [
+                                {
+                                  "map": { "var": "$sibNames" },
+                                  "item": "sn",
+                                  "do": {
+                                    "concat": [
+                                      "  - ", { "var": "$sn" },
+                                      {
+                                        "if": { "notEmpty": { "var": { "concat": ["$entry.properties.", { "var": "$sn" }, ".description"] } } },
+                                        "then": { "concat": [" — ", { "var": { "concat": ["$entry.properties.", { "var": "$sn" }, ".description"] } }] },
+                                        "else": ""
+                                      }
+                                    ]
+                                  }
+                                },
+                                "\n"
+                              ]
+                            }
+                          ]
+                        },
+                        "else": ""
+                      },
+                      {
+                        "as": "opsBlock",
+                        "if": { "notEmpty": { "var": "$entry.variantDocs" } },
+                        "then": {
+                          "concat": [
+                            "Operations (value of this key):\n",
+                            {
+                              "join": [
+                                {
+                                  "map": { "var": "$entry.variantDocs" },
+                                  "item": "v",
+                                  "do": {
+                                    "concat": [
+                                      "  - `", { "var": "$v.key" }, "`",
+                                      { "if": { "notEmpty": { "var": "$v.output" } }, "then": { "concat": [" → ", { "var": "$v.output" }] }, "else": "" },
+                                      { "if": { "notEmpty": { "var": "$v.description" } }, "then": { "concat": [" — ", { "var": "$v.description" }] }, "else": "" }
+                                    ]
+                                  }
+                                },
+                                "\n"
+                              ]
+                            },
+                            "\n\nTip: run describe_op on an op value (e.g. \"",
+                            { "first": { "map": { "var": "$entry.variantDocs" }, "item": "v", "do": { "var": "$v.key" } } },
+                            "\") for its details."
+                          ]
+                        },
+                        "else": ""
+                      },
+                      {
+                        "as": "exBlock",
+                        "if": { "notEmpty": { "var": "$primary.examples" } },
+                        "then": { "concat": ["Examples:\n", { "join": [{ "map": { "var": "$primary.examples" }, "item": "ex", "do": { "concat": ["  ", { "var": "$ex" }] } }, "\n"] }] },
+                        "else": ""
+                      },
+                      {
+                        "content": [{
+                          "type": "text",
+                          "text": {
+                            "join": [
+                              {
+                                "filter": [
+                                  [
+                                    { "concat": [{ "var": "$cls" }, ".", { "var": "$op" }] },
+                                    { "var": "$desc" },
+                                    { "var": "$returns" },
+                                    { "var": "$sibBlock" },
+                                    { "var": "$opsBlock" },
+                                    { "var": "$exBlock" }
+                                  ],
+                                  { "notEmpty": { "var": "$item" } }
+                                ]
+                              },
+                              "\n\n"
+                            ]
+                          }
+                        }]
+                      }
+                    ],
+                    "else": [
+                      { "as": "g", "var": { "concat": ["$globals.keys.", { "var": "$op" }] } },
+                      {
+                        "if": { "notEmpty": { "var": "$g" } },
+                        "then": { "content": [{ "type": "text", "text": { "concat": ["(global step key) ", { "var": "$op" }, "\n\n", { "var": "$g.markdownDescription" }] } }] },
+                        "else": { "content": [{ "type": "text", "text": { "concat": ["Unknown op: ", { "var": "$op" }, "\nRun list_nodes to see available operations."] } }], "isError": true }
+                      }
+                    ]
+                  }
+                ],
+
+                "describe_def": [
+                  { "as": "name", "replace": [{ "var": "$args.name" }, "#/$defs/", ""] },
+                  { "as": "def", "var": { "concat": ["$extraDefs.", { "var": "$name" }] } },
+                  {
+                    "if": { "notEmpty": { "var": "$def" } },
+                    "then": { "content": [{ "type": "text", "text": { "concat": [{ "var": "$name" }, "\n\n", { "stringify": [{ "var": "$def" }, 2] }] } }] },
+                    "else": { "content": [{ "type": "text", "text": { "concat": ["Unknown $defs: ", { "var": "$name" }, "\n\nAvailable: ", { "join": [{ "sort": { "keys": { "var": "$extraDefs" } } }, ", "] }] } }], "isError": true }
+                  }
+                ],
+
+                "inspect_file": [
+                  { "as": "parsed", "file": { "concat": ["/", { "var": "$args.filePath" }] }, "data": true },
+                  {
+                    "if": { "empty": { "var": "$parsed" } },
+                    "then": { "content": [{ "type": "text", "text": { "concat": ["Error: could not read or parse ", { "var": "$args.filePath" }] } }], "isError": true },
+                    "else": [
+                      { "as": "allKeys", "unique": { "flatten": { "exec": { "var": "$walk" }, "params": { "node": { "var": "$parsed" } } } } },
+                      { "as": "usedKeys", "sort": { "filter": [{ "var": "$allKeys" }, { "includes": [{ "var": "$opNames" }, { "var": "$item" }] }] } },
+                      { "as": "warnings", "exec": { "var": "$walkLint" }, "params": { "node": { "var": "$parsed" }, "path": "" } },
+                      { "as": "lintText", "if": { "notEmpty": { "var": "$warnings" } }, "then": { "join": [{ "map": { "var": "$warnings" }, "item": "w", "do": { "concat": ["  - ", { "var": "$w" }] } }, "\n"] }, "else": "  none" },
+                      {
+                        "content": [{
+                          "type": "text",
+                          "text": {
+                            "concat": [
+                              "File: ", { "var": "$args.filePath" }, "\n",
+                              "Packages: ", { "join": [{ "var": "$pkgNames" }, ", "] }, "\n",
+                              "Node keys used: ", { "join": [{ "var": "$usedKeys" }, ", "] }, "\n\n",
+                              "Lint (advisory):\n", { "var": "$lintText" }, "\n\n",
+                              "JSON structure:\n", { "substring": [{ "stringify": [{ "var": "$parsed" }, 2] }, 0, 2000] }
+                            ]
+                          }
+                        }]
+                      }
+                    ]
+                  }
+                ]
+              },
+              "default": { "content": [{ "type": "text", "text": { "concat": ["Unknown tool: ", { "var": "$tool" }] } }], "isError": true }
+            },
+            { "stdio-write": { "jsonrpc": "2.0", "id": { "var": "$id" }, "result": { "var": "$result" } } }
+          ]
+        },
+        "default": [
+          {
+            "if": { "notEmpty": { "var": "$id" } },
+            "then": { "stdio-write": { "fromEntries": [["jsonrpc", "2.0"], ["id", { "var": "$id" }], ["error", { "code": -32601, "message": { "concat": ["Method not found: ", { "var": "$message.method" }] } }]] } },
+            "else": null
+          }
+        ]
+      }
+    ]
+  }
+]

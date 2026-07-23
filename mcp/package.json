@@ -1,8 +1,8 @@
 {
   "name": "@jexs/mcp",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "license": "MIT",
-  "description": "MCP server exposing Jexs node introspection and expression evaluation to Claude Code and Claude Desktop",
+  "description": "The jexs-dev MCP server (node introspection + expression evaluation for Claude Code / Claude Desktop), authored as a 100% JSON Jexs app",
   "keywords": ["jexs", "mcp", "model-context-protocol", "claude", "claude-code", "ai", "llm"],
   "repository": {
     "type": "git",
@@ -11,31 +11,9 @@
   },
   "homepage": "https://github.com/FranChapeta/jexs#readme",
   "bugs": "https://github.com/FranChapeta/jexs/issues",
-  "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "exports": {
-    ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts" }
-  },
-  "bin": {
-    "jexs-mcp": "dist/index.js"
-  },
-  "files": ["dist"],
+  "jexs": "src/index.json",
+  "files": ["src"],
   "peerDependencies": {
-    "@jexs/core": "^0.9.0",
-    "@jexs/server": "^0.7.0",
-    "@jexs/client": "^0.7.0",
-    "@jexs/physics": "^0.5.0",
-    "@jexs/gl": "^0.5.0"
-  },
-  "peerDependenciesMeta": {
-    "@jexs/core": { "optional": true },
-    "@jexs/server": { "optional": true },
-    "@jexs/client": { "optional": true },
-    "@jexs/physics": { "optional": true },
-    "@jexs/gl": { "optional": true }
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0"
+    "@jexs/server": "^0.7.0"
   }
 }

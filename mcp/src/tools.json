@@ -1,0 +1,51 @@
+[
+  {
+    "name": "resolve_expression",
+    "description": "Resolve a Jexs JSON expression through the live resolver and return the result. Pass the expression as JSON (object/array/value), not a string.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "expression": { "description": "A Jexs JSON expression to resolve, e.g. { \"concat\": [\"a\", \"b\"] }." }
+      },
+      "required": ["expression"]
+    }
+  },
+  {
+    "name": "list_nodes",
+    "description": "List every registered Jexs node class and its operation keys (variant ops shown inline), plus the global step keys.",
+    "inputSchema": { "type": "object", "properties": {} }
+  },
+  {
+    "name": "describe_op",
+    "description": "Show the schema for a Jexs operation: description, return type, siblings, variant ops, examples, and the raw schema entry.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "op": { "type": "string", "description": "Operation key, e.g. \"if\", \"foreach\", \"directory\"." }
+      },
+      "required": ["op"]
+    }
+  },
+  {
+    "name": "describe_def",
+    "description": "Show a $defs shape contributed by a node (e.g. \"routeNode\"). Accepts a bare name or a #/$defs/<name> ref.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The $defs name, e.g. \"routeNode\" or \"_routeHandler\"." }
+      },
+      "required": ["name"]
+    }
+  },
+  {
+    "name": "inspect_file",
+    "description": "Read a Jexs JSON file and report which node operation keys it uses, plus its structure.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "filePath": { "type": "string", "description": "Path to the JSON file, relative to the resolver root." }
+      },
+      "required": ["filePath"]
+    }
+  }
+]
