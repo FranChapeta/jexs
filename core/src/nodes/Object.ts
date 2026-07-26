@@ -1,4 +1,4 @@
-import { Node, Context } from "./Node.js";
+import { Node, Context, childContext } from "./Node.js";
 import { resolve } from "../Resolver.js";
 import type { JexsNodeSchema } from "../schema.js";
 
@@ -129,12 +129,11 @@ export class ObjectNode extends Node {
         const idx = i++;
         const key = keys[idx];
         const item = record[key];
-        const itemCtx: Context = {
-          ...context,
+        const itemCtx: Context = childContext(context, {
           [itemName]: item,
           key,
           loop: { item, index: idx, key, first: idx === 0, last: idx === keys.length - 1, length: keys.length },
-        };
+        });
         return resolve(template, itemCtx, v => { result[key] = v; return next(); });
       }
       return next();

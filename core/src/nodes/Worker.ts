@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue } from "./Node.js";
+import { Node, Context, NodeValue, childContext } from "./Node.js";
 import { resolve, resolveSteps, runSteps, handleErr } from "../Resolver.js";
 import { collectTransferables } from "../helpers.js";
 import { acquireWorker, releaseWorker, type TaskWorkerLike } from "../workerPool.js";
@@ -109,7 +109,7 @@ export class WorkerNode extends Node {
         // the worker settles, but DO NOT return the Promise — the caller must not
         // block on the worker. Errors route through the standard `catch`.
         void promise
-          .then((result) => runSteps(def.then as unknown[], { ...context, result }))
+          .then((result) => runSteps(def.then as unknown[], childContext(context, { result })))
           .catch((err) => handleErr(err, def, context));
         return undefined;
       }
@@ -129,7 +129,7 @@ export class WorkerNode extends Node {
   ): NodeValue {
     const r = resolveSteps(steps, params as Context);
     if (!hasThen) return r;
-    const run = (result: unknown) => runSteps(def.then as unknown[], { ...context, result });
+    const run = (result: unknown) => runSteps(def.then as unknown[], childContext(context, { result }));
     if (r instanceof Promise) { void r.then(run).catch((err) => handleErr(err, def, context)); return undefined; }
     try { run(r); } catch (err) { handleErr(err, def, context); }
     return undefined;

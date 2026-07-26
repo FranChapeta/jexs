@@ -15,7 +15,7 @@ export class VariablesNode extends Node {
     setVars: {
       map: true,
       output: "null",
-      markdownDescription: "Resolves each value in the map and writes the result back into the context (supports dot-paths, e.g. `\"request.body.id\"`).\nPass `\"raw\": true` to skip resolving values.",
+      markdownDescription: "Resolves each value in the map and writes the result back into the context (supports dot-paths, e.g. `\"request.body.id\"`).\nPass `\"raw\": true` to skip resolving values.\nPass `\"bubble\": true` to also write into every enclosing scope, so the values survive after the current file/loop/branch returns.",
       outputDescription: "Always `null` — `setVars` is used for its side-effect of writing into the context, which later steps read via `{ \"var\": \"…\" }`.",
       examples: [
         "{ \"setVars\": { \"count\": 0, \"name\": { \"var\": \"$user.name\" } } }",
@@ -24,6 +24,10 @@ export class VariablesNode extends Node {
         raw: {
           type: "boolean",
           description: "Skip resolving values and write them directly.",
+        },
+        bubble: {
+          type: "boolean",
+          description: "Also write each value into every enclosing scope (parent contexts), so it survives after the current file/loop/branch returns.",
         },
       },
     },
@@ -42,15 +46,20 @@ export class VariablesNode extends Node {
     const vars = def.setVars;
     if (!vars || typeof vars !== "object" || Array.isArray(vars)) return null;
     const raw = !!def.raw;
-    const entries = Object.entries(vars as Record<string, unknown>);
-    let i = 0;
-    function next(): unknown {
-      if (i >= entries.length) return null;
-      const [key, value] = entries[i++];
-      if (raw) { Node.setContextValue(context, key, value); return next(); }
-      return resolve(value, context, v => { Node.setContextValue(context, key, v); return next(); });
-    }
-    return next();
+    // `bubble` may be an expression (schema: boolOrExpr) — resolve it once, then
+    // coerce with the shared node truthiness rules before writing the entries.
+    return resolve(def.bubble, context, bubbleRaw => {
+      const bubble = this.toBoolean(bubbleRaw);
+      const entries = Object.entries(vars as Record<string, unknown>);
+      let i = 0;
+      function next(): unknown {
+        if (i >= entries.length) return null;
+        const [key, value] = entries[i++];
+        if (raw) { Node.setContextValue(context, key, value, bubble); return next(); }
+        return resolve(value, context, v => { Node.setContextValue(context, key, v, bubble); return next(); });
+      }
+      return next();
+    });
   }
 }
 

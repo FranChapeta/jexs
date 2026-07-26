@@ -1,4 +1,4 @@
-import { Node, Context } from "./Node.js";
+import { Node, Context, childContext } from "./Node.js";
 import { resolve, resolveAll } from "../Resolver.js";
 import { getNestedValue } from "../helpers.js";
 import { nextRandom } from "./Math.js";
@@ -599,10 +599,10 @@ export class ArrayNode extends Node {
           if (i >= items.length) return results;
           const idx = i++;
           const item = items[idx];
-          const itemCtx: Context = {
-            ...context, [itemName]: item, [indexName]: idx,
+          const itemCtx: Context = childContext(context, {
+            [itemName]: item, [indexName]: idx,
             loop: { item, index: idx, key: idx, first: idx === 0, last: idx === items.length - 1, length: items.length },
-          };
+          });
           return resolve(condition, itemCtx, v => {
             if (self.toBoolean(v)) results.push(item);
             return next();
@@ -627,10 +627,10 @@ export class ArrayNode extends Node {
           if (i >= items.length) return undefined;
           const idx = i++;
           const item = items[idx];
-          const itemCtx: Context = {
-            ...context, [itemName]: item, [indexName]: idx,
+          const itemCtx: Context = childContext(context, {
+            [itemName]: item, [indexName]: idx,
             loop: { item, index: idx, key: idx, first: idx === 0, last: idx === items.length - 1, length: items.length },
-          };
+          });
           return resolve(condition, itemCtx, v => {
             if (self.toBoolean(v)) return item;
             return next();
@@ -652,11 +652,10 @@ export class ArrayNode extends Node {
         if (i >= items.length) return results;
         const idx = i++;
         const item = items[idx];
-        const itemCtx: Context = {
-          ...context,
+        const itemCtx: Context = childContext(context, {
           [itemName]: item,
           loop: { item, index: idx, key: idx, first: idx === 0, last: idx === items.length - 1, length: items.length },
-        };
+        });
         return resolve(template, itemCtx, v => { results.push(v); return next(); });
       }
       return next();
@@ -678,10 +677,10 @@ export class ArrayNode extends Node {
             if (i >= items.length) return accumulator;
             const idx = i++;
             const item = items[idx];
-            const itemCtx: Context = {
-              ...context, [itemName]: item, [indexName]: idx, accumulator,
+            const itemCtx: Context = childContext(context, {
+              [itemName]: item, [indexName]: idx, accumulator,
               loop: { item, index: idx, key: idx, first: idx === 0, last: idx === items.length - 1, length: items.length },
-            };
+            });
             return resolve(reducer, itemCtx, v => { accumulator = v; return next(); });
           }
           return next();

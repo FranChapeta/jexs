@@ -1,5 +1,5 @@
 // ── Node system ──
-export { Node, type Context, type NodeValue } from "./nodes/Node.js";
+export { Node, childContext, type Context, type NodeValue } from "./nodes/Node.js";
 
 // ── Schema types ──
 export type {

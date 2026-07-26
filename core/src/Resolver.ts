@@ -1,4 +1,4 @@
-import { Context, Node } from "./nodes/Node.js";
+import { Context, Node, childContext } from "./nodes/Node.js";
 import { isHttpError } from "./errors.js";
 
 export type ResolverFn = (value: unknown, context: Context) => unknown;
@@ -13,9 +13,10 @@ const _lazyMap = new Map<string, () => Promise<void>>();
 const _pendingLoads = new Map<() => Promise<void>, Promise<void>>();
 
 // Global step keys handled by the resolver machinery, not by nodes: `as`
-// (storeAs), `return` (runSteps), `catch` (handleErr). They must never be
-// eagerly resolved as node inputs.
-const GLOBAL_STEP_KEYS = new Set(["as", "return", "catch"]);
+// (storeAs), `return` (runSteps), `catch` (handleErr), `bubble` (a modifier
+// read by storeAs alongside `as`). They must never be eagerly resolved as node
+// inputs.
+const GLOBAL_STEP_KEYS = new Set(["as", "return", "catch", "bubble"]);
 
 // Cleanup hooks called on destroyResolver() or when a new resolver replaces the old one
 const _cleanupHooks: (() => void)[] = [];
@@ -65,10 +66,18 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
-function storeAs(step: unknown, value: unknown, context: Context): void {
-  if (isObject(step) && "as" in step) {
-    Node.setContextValue(context, String((step as Record<string, unknown>).as), value);
-  }
+function storeAs(step: unknown, value: unknown, context: Context): unknown {
+  if (!isObject(step) || !("as" in step)) return undefined;
+  const s = step as Record<string, unknown>;
+  const name = String(s.as);
+  // `bubble` alongside `as` also writes the value up the parent-context chain,
+  // so it survives the current file/loop/branch scope. It may be a literal or an
+  // expression, so resolve it first — a dynamic `{ "bubble": { "var": "$x" } }`
+  // is honored. Returns the resolve result so `runSteps` can await an async flag.
+  if (!("bubble" in s)) { Node.setContextValue(context, name, value); return undefined; }
+  return resolve(s.bubble, context, b =>
+    Node.setContextValue(context, name, value, Node.toBooleanValue(b)),
+  );
 }
 
 /**
@@ -87,7 +96,7 @@ export function handleErr(err: unknown, value: unknown, context: Context): unkno
     const error = isHttpError(err)
       ? { status: err.status, message: err.message }
       : { message: err instanceof Error ? err.message : String(err) };
-    const catchCtx = { ...context, error };
+    const catchCtx = childContext(context, { error });
     return runSteps(catchSteps, catchCtx);
   }
   throw err;
@@ -182,10 +191,15 @@ export function runSteps(steps: unknown[], context: Context): unknown {
     const step = steps[i++];
     const isLast = i >= steps.length;
     return resolve(step, context, v => {
-      storeAs(step, v, context);
-      if (isObject(v) && "return" in v) return v.return;
-      if (isLast) return v;
-      return next();
+      const after = (): unknown => {
+        if (isObject(v) && "return" in v) return v.return;
+        if (isLast) return v;
+        return next();
+      };
+      // storeAs is sync unless a `bubble` expression resolves async; in that case
+      // wait for the write before the next step so it observes the bubbled value.
+      const stored = storeAs(step, v, context);
+      return stored instanceof Promise ? stored.then(after) : after();
     });
   }
   return next();

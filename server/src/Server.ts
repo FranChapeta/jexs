@@ -277,7 +277,7 @@ export class Server {
       let result: unknown = null;
       for (const step of this.requestSteps ?? []) {
         result = await this.resolve(step, context);
-        this.storeStepAs(step, result, context);
+        await this.storeStepAs(step, result, context);
         if (this.isReturn(result)) {
           result = (result as Record<string, unknown>).return ?? null;
           break;
@@ -346,9 +346,12 @@ export class Server {
    * but never store `page`. Writes into the shared request context so later
    * steps can read `{ "var": "$page" }`.
    */
-  private storeStepAs(step: unknown, value: unknown, context: Context): void {
+  private async storeStepAs(step: unknown, value: unknown, context: Context): Promise<void> {
     if (step && typeof step === "object" && !Array.isArray(step) && "as" in step) {
-      Node.setContextValue(context, String((step as Record<string, unknown>).as), value);
+      const s = step as Record<string, unknown>;
+      // `bubble` may be an expression — resolve it (mirrors core `storeAs`).
+      const bubble = "bubble" in s ? Node.toBooleanValue(await this.resolve(s.bubble, context)) : false;
+      Node.setContextValue(context, String(s.as), value, bubble);
     }
   }
 

@@ -696,13 +696,19 @@ export const GLOBAL_KEYS: Record<string, { markdownDescription: string; examples
       "Step array to run if this expression throws an HTTP error. The `$error` context variable carries `{ status, message }`.",
     examples: ["{ \"query-select\": \"users\", \"catch\": [{ \"var\": \"$error.message\" }] }"],
   },
+  bubble: {
+    markdownDescription:
+      "Modifier for a write — only valid alongside `as` or `setVars`. Also writes the result up into every enclosing scope, so it survives after the current file / loop / branch returns. Without it, writes are scoped to the copied context and lost on return.",
+    examples: ["{ \"var\": \"$total\", \"as\": \"total\", \"bubble\": true }"],
+  },
 };
 
 /** Universal keys (`as`, `return`, `catch`) declared once at the top of exprFlat. */
 const UNIVERSAL: Record<string, { ref: EmittedSchema; markdownDescription: string }> = {
-  as:     { ref: { ...REF.strOrExpr }, markdownDescription: GLOBAL_KEYS.as.markdownDescription },
-  return: { ref: { ...REF.anyVal },    markdownDescription: GLOBAL_KEYS.return.markdownDescription },
-  catch:  { ref: { ...REF.steps },     markdownDescription: GLOBAL_KEYS.catch.markdownDescription },
+  as:     { ref: { ...REF.strOrExpr },  markdownDescription: GLOBAL_KEYS.as.markdownDescription },
+  return: { ref: { ...REF.anyVal },     markdownDescription: GLOBAL_KEYS.return.markdownDescription },
+  catch:  { ref: { ...REF.steps },      markdownDescription: GLOBAL_KEYS.catch.markdownDescription },
+  bubble: { ref: { ...REF.boolOrExpr }, markdownDescription: GLOBAL_KEYS.bubble.markdownDescription },
 };
 
 export interface CombinedSchema {
@@ -818,6 +824,17 @@ export function mergePackageSchemas(packages: PackageSchema[]): CombinedSchema {
       markdownDescription: info.markdownDescription,
     };
   }
+
+  // `bubble` is a modifier on a write, meaningless on its own. Gate it so the
+  // schema only accepts it when the step also carries `as` or is a `setVars` —
+  // i.e. `{ ..., "as": "x", "bubble": true }` or `{ "setVars": {...}, "bubble":
+  // true }` validate, but a bare `{ "concat": [...], "bubble": true }` does not.
+  // A `dependentSchemas` co-occurrence check keeps the flat authoring shape (a
+  // literal nested key can't live inside `setVars`, which is a value map) and is
+  // non-recursive, so it doesn't feed the anti-cascade blow-up.
+  exprFlatDependentSchemas.bubble = {
+    anyOf: [{ required: ["as"] }, { required: ["setVars"] }],
+  };
 
   // Default schema for keys not enumerated in `properties` — i.e. siblings of
   // a declared handler key, and any custom user keys. A sibling value may be a

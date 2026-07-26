@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue } from "./Node.js";
+import { Node, Context, NodeValue, childContext } from "./Node.js";
 import { resolve, resolveAll, resolveObj } from "../Resolver.js";
 import { runSteps, resolveSteps } from "../Resolver.js";
 import { hasAnyKey } from "../helpers.js";
@@ -272,8 +272,7 @@ export class LogicNode extends Node {
       // result (e.g. rendering N elements from a collection).
       if (template === undefined || arr.length === 0) return null;
 
-      const buildContext = (item: unknown, i: number): Context => ({
-        ...context,
+      const buildContext = (item: unknown, i: number): Context => childContext(context, {
         [itemName]: item,
         ...(keyName ? { [keyName]: i } : {}),
         loop: {
@@ -468,7 +467,7 @@ export class LogicNode extends Node {
       // the resolved params merged in — the caller's context stays untouched.
       if ("params" in def && this.isObject(def.params)) {
         return resolveObj(def.params, context, resolved =>
-          resolveSteps(value, { ...context, ...resolved })
+          resolveSteps(value, childContext(context, resolved))
         );
       }
       return resolveSteps(value, context);

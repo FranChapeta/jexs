@@ -123,3 +123,12 @@ test("event handler `do` rejects a bare primitive (a no-op step)", () => {
   assert.equal(validAt("$defs/_eventHandler", { do: 5 }), false);
   assert.equal(validAt("$defs/exprFlat", withDo("noop")), false);
 });
+
+test("`bubble` is only valid alongside `as` or `setVars`", () => {
+  // valid: modifies a write
+  assert.equal(validAt("$defs/exprFlat", { var: "$x", as: "x", bubble: true }), true);
+  assert.equal(validAt("$defs/exprFlat", { setVars: { x: 1 }, bubble: true }), true);
+  // invalid: nothing to bubble
+  assert.equal(validAt("$defs/exprFlat", { concat: ["a"], bubble: true }), false);
+  assert.equal(validAt("$defs/exprFlat", { bubble: true }), false);
+});

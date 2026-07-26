@@ -7,7 +7,7 @@
  */
 
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
-import { splitPath, hasAnyKey } from "../helpers.js";
+import { splitPath, hasAnyKey, isObject } from "../helpers.js";
 
 export interface Context {
   [key: string]: unknown;
@@ -35,6 +35,36 @@ export interface Context {
 }
 
 export type NodeValue = unknown;
+
+/**
+ * Links a derived (child) scope back to the context it was spread from, so a
+ * write can travel upward past the copy that made it (see `setContextValue`'s
+ * `bubble`). Symbol-keyed AND non-enumerable, on purpose:
+ *  - templates can't read it as a `$var`, and request data / `as` (string keys
+ *    only) can't forge it;
+ *  - JSON and structuredClone drop symbols, so the chain never serializes to a
+ *    worker or a log;
+ *  - being NON-enumerable, object spread `{ ...ctx }` does NOT copy it. A scope
+ *    only gains a parent link when a site explicitly derives one via
+ *    `childContext`. This is deliberate: it means a plain spread — e.g. the
+ *    server's per-request context spread from the shared startup context — never
+ *    inherits a stale link and can never leak a `bubble` write into an
+ *    unrelated scope. Untouched child-context sites are simply bubble
+ *    boundaries, never mis-routes.
+ */
+export const PARENT = Symbol("jexs.parent");
+
+/**
+ * Derive a child scope from `parent`, linked back via PARENT so `setVars` / `as`
+ * with `bubble` can write through to it. `extra` is merged on top (loop
+ * bindings, fileDir, params) and may carry symbol keys (e.g. the fileDir marker).
+ * The link is non-enumerable, so it never shows up in a later spread/serialize.
+ */
+export function childContext(parent: Context, extra?: Record<PropertyKey, unknown>): Context {
+  const child: Context = extra ? { ...parent, ...(extra as Record<string, unknown>) } : { ...parent };
+  Object.defineProperty(child, PARENT, { value: parent, writable: true, configurable: true });
+  return child;
+}
 
 export abstract class Node {
   /**
@@ -98,25 +128,19 @@ export abstract class Node {
   /**
    * Helper: Set nested value in context using dot notation for "as" support.
    * e.g. setContextValue(ctx, "request.body.value", hash) sets ctx.request.body.value
+   *
+   * With `bubble`, the same write is also applied to every enclosing scope up
+   * the PARENT chain, so the value survives after the current file/loop/branch
+   * (each a copied context) returns — this is how state moves upward.
    */
-  static setContextValue(context: Context, varName: string, value: unknown): void {
-    // Strip a leading `$` (charCode 36) so "$a.b" and "a.b" share one cache key.
-    const normalized = varName.charCodeAt(0) === 36 ? varName.slice(1) : varName;
-    const parts = splitPath(normalized);
-    if (parts.length === 1) {
-      context[parts[0]] = value;
-      return;
+  static setContextValue(context: Context, varName: string, value: unknown, bubble = false): void {
+    writeContextValue(context, varName, value);
+    if (!bubble) return;
+    let ancestor = (context as { [PARENT]?: Context })[PARENT];
+    while (ancestor) {
+      writeContextValue(ancestor, varName, value);
+      ancestor = (ancestor as { [PARENT]?: Context })[PARENT];
     }
-    let target: Record<string, unknown> = context;
-    for (let i = 0; i < parts.length - 1; i++) {
-      if (target[parts[i]] && typeof target[parts[i]] === "object") {
-        target = target[parts[i]] as Record<string, unknown>;
-      } else {
-        target[parts[i]] = {};
-        target = target[parts[i]] as Record<string, unknown>;
-      }
-    }
-    target[parts[parts.length - 1]] = value;
   }
 
   /**
@@ -144,20 +168,27 @@ export abstract class Node {
   }
 
   /**
-   * Helper: Convert value to boolean
+   * Helper: Convert value to boolean. Static so resolver machinery (e.g. the
+   * global `bubble` modifier) can coerce a resolved flag with the exact same
+   * rules the instance helper gives every node's condition inputs.
    */
-  protected toBoolean(value: unknown): boolean {
+  static toBooleanValue(value: unknown): boolean {
     if (typeof value === "boolean") return value;
     if (typeof value === "number") return value !== 0;
     if (typeof value === "string") {
       return value !== "" && value !== "0" && value.toLowerCase() !== "false";
     }
     if (Array.isArray(value)) return value.length > 0;
-    if (this.isObject(value)) {
+    if (isObject(value)) {
       if ("nodeType" in value) return true; // DOM nodes are truthy
       return hasAnyKey(value);
     }
     return value !== null && value !== undefined;
+  }
+
+  /** Helper: Convert value to boolean (instance sugar for `toBooleanValue`). */
+  protected toBoolean(value: unknown): boolean {
+    return Node.toBooleanValue(value);
   }
 
   /**
@@ -171,3 +202,24 @@ export abstract class Node {
 }
 
 const nodeProtoKeys = new Set(Object.getOwnPropertyNames(Node.prototype));
+
+/** Write a single dot-path value into one context (no propagation). */
+function writeContextValue(context: Context, varName: string, value: unknown): void {
+  // Strip a leading `$` (charCode 36) so "$a.b" and "a.b" share one cache key.
+  const normalized = varName.charCodeAt(0) === 36 ? varName.slice(1) : varName;
+  const parts = splitPath(normalized);
+  if (parts.length === 1) {
+    context[parts[0]] = value;
+    return;
+  }
+  let target: Record<string, unknown> = context;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (target[parts[i]] && typeof target[parts[i]] === "object") {
+      target = target[parts[i]] as Record<string, unknown>;
+    } else {
+      target[parts[i]] = {};
+      target = target[parts[i]] as Record<string, unknown>;
+    }
+  }
+  target[parts[parts.length - 1]] = value;
+}

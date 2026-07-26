@@ -1,6 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
-import { Node, Context, NodeValue, resolve, resolveAll, resolveObj, runSteps } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll, resolveObj, runSteps, childContext } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
 function toBoolean(value: unknown): boolean {
@@ -258,13 +258,18 @@ function loadFile(
 
     // Run the loaded file's steps against a context that records ITS directory,
     // so nested relative `{ file }` / `{ directory }` loads resolve against this
-    // file (not the caller's). Params, if any, merge on top.
-    let fileContext: Context = { ...context, [FILE_DIR]: path.dirname(filePath) };
+    // file (not the caller's). Params, if any, merge on top. The context is
+    // linked back to the caller (via `childContext`) so `setVars` / `as` with
+    // `bubble` inside the file can write state upward past the file boundary.
+    const fileDir = path.dirname(filePath);
+    let fileContext: Context = childContext(context, { [FILE_DIR]: fileDir });
     if ("params" in def && isObject(def.params)) {
       const params = def.params;
       const pResolved = resolveObj(params, context, r => r);
       const resolved = (pResolved instanceof Promise ? await pResolved : pResolved) as Record<string, unknown>;
-      fileContext = { ...fileContext, ...resolved };
+      // Re-derive from the caller so params merge on top AND the parent link
+      // (non-enumerable, so dropped by a plain spread) still points at the caller.
+      fileContext = childContext(context, { [FILE_DIR]: fileDir, ...resolved });
     }
 
     // From here, anything that throws is application code — let it propagate.
