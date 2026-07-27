@@ -31,7 +31,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/**/*.map"
   ],
   "scripts": {
     "build:browser": "node -e \"require('fs').rmSync('dist/browser',{recursive:true,force:true})\" && esbuild client=src/index.ts sw=src/sw.ts physicsWorker=src/physicsWorker.ts resolverWorker=src/resolverWorker.ts --bundle --format=esm --splitting --outdir=dist/browser --entry-names=[name] --chunk-names=chunks/[hash] --minify --target=es2022",

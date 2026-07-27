@@ -36,7 +36,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/**/*.map"
   ],
   "peerDependencies": {
     "@jexs/core": "^0.9.0",
