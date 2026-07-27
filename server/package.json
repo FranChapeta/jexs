@@ -1,6 +1,6 @@
 {
   "name": "@jexs/server",
-  "version": "0.7.6",
+  "version": "0.8.0",
   "license": "MIT",
   "description": "Node.js server runtime for Jexs — HTTP, routing, SQLite/MySQL, sessions, OAuth, email, web-push, WebSocket",
   "keywords": [
