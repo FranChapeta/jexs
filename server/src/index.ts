@@ -1,8 +1,7 @@
-import { Node, WorkerNode, createResolver, coreNodes } from "@jexs/core";
-import path from "node:path";
+import { Node, WorkerNode } from "@jexs/core";
 import { makeThreadWorker } from "./makeWorker.js";
 import { CryptoNode } from "./nodes/Crypto.js";
-import { FileNode, entryContext } from "./nodes/File.js";
+import { FileNode } from "./nodes/File.js";
 import { RouterNode } from "./nodes/Router.js";
 import { SessionNode } from "./nodes/Session.js";
 import { DatabaseNode } from "./nodes/Database.js";
@@ -12,7 +11,7 @@ import { TailwindNode } from "./nodes/Tailwind.js";
 import { OAuthNode } from "./nodes/OAuth.js";
 import { EmailNode } from "./nodes/Email.js";
 import { WebPushNode } from "./nodes/PushNode.js";
-import { ListenNode } from "./nodes/Listen.js";
+import { ServerNode } from "./nodes/Server.js";
 import { SchemaNode } from "./nodes/Schema.js";
 import { TranslationNode } from "./nodes/Translation.js";
 import { WebSocketNode } from "./nodes/WebSocket.js";
@@ -51,7 +50,7 @@ export function serverNodes({ root = "app" }: ServerNodesOptions = {}): Node[] {
     new OAuthNode(),
     new EmailNode(),
     new WebPushNode(),
-    new ListenNode(),
+    new ServerNode(),
     new TranslationNode(),
     new SchemaNode(root),
     new WebSocketNode(),
@@ -64,26 +63,6 @@ export function serverNodes({ root = "app" }: ServerNodesOptions = {}): Node[] {
   ];
 }
 
-export interface RunAppOptions {
-  /** Resolver root (where FileNode reads from). Default the cwd (`"."`). */
-  root?: string;
-}
-
-/**
- * Build a core+server resolver and run a JSON template `entry` through it. The
- * shared runner behind `jexs run`: seeds the entry's own directory so its
- * relative `{ file }` loads resolve against it (a `/`-prefixed path anchors at
- * `root`), then runs the entry as steps and returns its result. Used for
- * stdio/CLI apps (e.g. an MCP server); for HTTP apps use {@link Server}.
- */
-export function runApp(entry: string, options: RunAppOptions = {}): unknown {
-  const root = options.root ?? ".";
-  const abs = path.resolve(entry);
-  const resolve = createResolver([...coreNodes, ...serverNodes({ root })]);
-  return resolve({ file: path.basename(abs) }, entryContext(path.dirname(abs)));
-}
-
-export { Server } from "./Server.js";
 export { makePhysicsWorker } from "./physicsWorker.js";
 export { DatabaseNode } from "./nodes/Database.js";
 export { QueryNode } from "./nodes/Query.js";
@@ -97,7 +76,7 @@ export { RouterNode } from "./nodes/Router.js";
 export { OAuthNode } from "./nodes/OAuth.js";
 export { EmailNode } from "./nodes/Email.js";
 export { WebPushNode } from "./nodes/PushNode.js";
-export { ListenNode } from "./nodes/Listen.js";
+export { ServerNode } from "./nodes/Server.js";
 export { TailwindNode } from "./nodes/Tailwind.js";
 export { DeferNode } from "./nodes/Defer.js";
 export { CacheNode } from "./nodes/Cache.js";

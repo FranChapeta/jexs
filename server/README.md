@@ -20,7 +20,7 @@ npm install @jexs/server @jexs/core
 
 | Node | Keys | Purpose |
 |---|---|---|
-| `ListenNode` | `listen` | Start the HTTP server; can auto-serve the `@jexs/client` bundle |
+| `ServerNode` | `listen` | Start an HTTP listener per `listen` step; can auto-serve the `@jexs/client` bundle |
 | `RouterNode` | `routes` | Path-based routing with `:param` capture |
 | `FileNode` | `file`, `directory` | Load JSON files as sub-templates, list/read/write files |
 | `DatabaseNode` | `database` | Configure named connections (SQLite, MySQL) |
@@ -77,16 +77,21 @@ npm install @jexs/server @jexs/core
 
 Routes are a tree, not flat path strings: `methods` handles the current path (keyed by HTTP verb), `children` nests path segments, `*` captures a single segment under `paramName` (constrained by an optional `paramRegex`), and `**` captures the remainder. A captured param is exposed to the handler as a top-level context var (`$id` above), the query string as `$request.query`, and the parsed body as `$request.body`. A handler may declare `query` and/or `body` JSON Schemas — validated against `$request.query` / `$request.body`, returning a 400 on failure.
 
-Run with `tsx src/index.ts` (or whatever entry boots `Server`):
+Run with the `jexs` CLI — it resolves the entry as steps, and each `listen` step in it binds a port (add more `listen` steps to serve more ports):
+
+```bash
+jexs run app/index.json app
+```
+
+Or programmatically — build a resolver and resolve the entry; an HTTP app is just an entry with `listen` step(s):
 
 ```ts
 import { createResolver, coreNodes } from "@jexs/core";
-import { Server, serverNodes } from "@jexs/server";
+import { serverNodes } from "@jexs/server";
 
 const resolve = createResolver([...coreNodes, ...serverNodes({ root: "app" })]);
-const server = new Server(resolve);
-server.setEntryFile("/app.json");
-await server.start();
+// resolves /index.json (anchored at the app/ root); its `listen` step(s) create the listeners
+await resolve({ file: "/index.json" }, { env: process.env });
 ```
 
 Or scaffold the whole thing with [`npm create @jexs my-app`](https://github.com/FranChapeta/jexs/tree/master/create).

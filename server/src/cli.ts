@@ -1,47 +1,50 @@
 #!/usr/bin/env node
-// jexs — the Jexs CLI. Two subcommands:
+// jexs — the Jexs CLI.
 //
-//   jexs run <entry|package> [root]  run a JSON template (stdio/CLI apps)
-//   jexs serve [root] [--prod] [--watch]   boot the HTTP Server for a web app
+//   jexs run <entry|package> [root] [--prod] [--watch]   run a JSON template
 //
-// `run` takes a file path OR an installed package name: a package is resolved
-// via its package.json `"jexs"` entry field, so a pure-JSON package (no bin, no
-// JS) is launched with `jexs run <package>`. The entry runs as steps relative to
-// its own directory (a `/`-prefixed path anchors at `root`, default cwd). `serve`
-// roots at `root` (default "app") and starts the HTTP Server (which resolves its
-// entry file, whose `listen` binds the port). `--prod` sets process.env.prod;
-// `--watch` restarts the server when files under `root` change.
-import { createResolver, coreNodes } from "@jexs/core";
+// `run` takes a file path OR an installed package name: a package is resolved via its
+// package.json `"jexs"` entry field, so a pure-JSON package (no bin, no JS) is launched with
+// `jexs run <package>`. The entry runs as steps relative to its own directory (a `/`-prefixed
+// path anchors at `root`, default cwd), with `env` seeded so templates can branch on `$env.*`.
+// An HTTP app is just an entry whose `listen` step(s) bind ports — one `http.Server` per `listen`.
+// `--prod` sets process.env.prod; `--watch` restarts the app when files under the app dir change.
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { runApp, serverNodes, Server } from "./index.js";
+import { createResolver, coreNodes, Context } from "@jexs/core";
+import { serverNodes } from "./index.js";
+import { entryContext } from "./nodes/File.js";
 
 const [cmd, ...rest] = process.argv.slice(2);
 
 function usage(code: number): never {
   process.stderr.write(
     "usage:\n" +
-    "  jexs run <entry.json> [root]\n" +
-    "  jexs serve [root] [--prod] [--watch]\n",
+    "  jexs run <entry.json|package> [root] [--prod] [--watch]\n",
   );
   process.exit(code);
 }
 
-async function serve(args: string[]): Promise<void> {
+async function run(args: string[]): Promise<void> {
   if (args.includes("--prod")) process.env.prod = "1";
-  const root = args.find((a) => !a.startsWith("--")) ?? "app";
+
+  const positional = args.filter((a) => !a.startsWith("--"));
+  const [target, root] = positional;
+  if (!target) usage(1);
+  const entry = resolveEntry(target);
 
   if (args.includes("--watch")) {
-    // Supervisor: run the server in a child and restart it on changes under
-    // `root` (templates are read at runtime, so a restart re-resolves them).
-    // Kept out of the child — which runs `serve` without --watch — so the port
-    // is fully released before the replacement binds.
+    // Supervisor: run the app in a child and restart it on changes under the app dir
+    // (templates are read at runtime, so a restart re-resolves them). Kept out of the
+    // child — which runs `run` without --watch — so a bound port is fully released before
+    // the replacement binds.
     const { spawn } = await import("node:child_process");
     const { watch } = await import("node:fs");
     const { fileURLToPath } = await import("node:url");
     const self = fileURLToPath(import.meta.url);
-    const childArgs = ["serve", ...args.filter((a) => a !== "--watch")];
+    const childArgs = ["run", ...args.filter((a) => a !== "--watch")];
+    const watchDir = root ?? path.dirname(entry);
 
     let child: import("node:child_process").ChildProcess | null = null;
     const start = () => {
@@ -51,7 +54,7 @@ async function serve(args: string[]): Promise<void> {
     start();
 
     let timer: NodeJS.Timeout | undefined;
-    watch(root, { recursive: true }, () => {
+    watch(watchDir, { recursive: true }, () => {
       clearTimeout(timer);
       timer = setTimeout(() => {
         if (child) { const c = child; child = null; c.once("exit", start); c.kill(); }
@@ -61,13 +64,18 @@ async function serve(args: string[]): Promise<void> {
     return;
   }
 
-  const resolve = createResolver([...coreNodes, ...serverNodes({ root })]);
-  await new Server(resolve).start();
+  // Build a core+server resolver and run the entry as steps, seeding the entry's own directory
+  // (relative `{ file }` loads resolve against it; a `/`-prefixed path anchors at `root`) and
+  // `env` (so templates can branch on `$env.*`). An HTTP app is just an entry with `listen` step(s).
+  const abs = path.resolve(entry);
+  const resolve = createResolver([...coreNodes, ...serverNodes({ root: root ?? "." })]);
+  const context: Context = { ...entryContext(path.dirname(abs)), env: process.env as Record<string, string> };
+  await Promise.resolve(resolve({ file: path.basename(abs) }, context));
 }
 
-// Resolve a `run` target to an entry file path: a local file/dir is used as-is;
-// anything else is treated as an installed package and resolved via its
-// package.json `"jexs"` field (relative to that package).
+// Resolve a `run` target to an entry file path: a local file/dir is used as-is; anything else is
+// treated as an installed package and resolved via its package.json `"jexs"` field (relative to
+// that package).
 function resolveEntry(target: string): string {
   if (existsSync(path.resolve(target))) return target;
   let pkgJson: string;
@@ -86,12 +94,7 @@ function resolveEntry(target: string): string {
 }
 
 if (cmd === "run") {
-  const positional = rest.filter((a) => !a.startsWith("--"));
-  const [target, root] = positional;
-  if (!target) usage(1);
-  await Promise.resolve(runApp(resolveEntry(target), { root: root ?? "." }));
-} else if (cmd === "serve") {
-  await serve(rest);
+  await run(rest);
 } else {
-  usage(cmd ? 1 : 1);
+  usage(1);
 }

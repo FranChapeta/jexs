@@ -2,7 +2,7 @@
   "mcpServers": {
     "jexs-dev": {
       "command": "node",
-      "args": ["mcp/dist/index.js"]
+      "args": ["server/dist/cli.js", "run", "@jexs/mcp"]
     }
   }
 }
