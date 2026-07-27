@@ -1,10 +1,53 @@
 import { Node, Context, NodeValue, resolve, runSteps } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
+import { createInterface } from "node:readline";
 
 let stdinAttached = false;
 
 function encode(value: unknown): string {
   return typeof value === "string" ? value : JSON.stringify(value);
+}
+
+interface LineReader {
+  ask(question: string): Promise<string>;
+  close(): void;
+}
+
+let reader: LineReader | null = null;
+
+function getReader(): LineReader {
+  if (reader) return reader;
+
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const lines: string[] = [];
+  const waiters: ((line: string) => void)[] = [];
+  let closed = false;
+
+  rl.on("line", line => {
+    // Strip the UTF-8 BOM (U+FEFF) PowerShell prepends to piped string input,
+    // which would otherwise corrupt the first answer (parseInt("﻿3") === NaN).
+    const cleaned = line.charCodeAt(0) === 0xFEFF ? line.slice(1) : line;
+    const waiter = waiters.shift();
+    if (waiter) waiter(cleaned);
+    else lines.push(cleaned);
+  });
+  rl.on("close", () => {
+    closed = true;
+    while (waiters.length > 0) waiters.shift()!("");
+  });
+
+  reader = {
+    ask(question: string): Promise<string> {
+      process.stdout.write(question);
+      if (lines.length > 0) return Promise.resolve(lines.shift()!);
+      if (closed) return Promise.resolve("");
+      return new Promise<string>(res => waiters.push(res));
+    },
+    close(): void {
+      rl.close();
+    },
+  };
+  return reader;
 }
 
 export class StdioNode extends Node {
@@ -35,6 +78,21 @@ export class StdioNode extends Node {
         "{ \"stdio-write\": \"hello\" }",
       ],
     },
+    "stdio-prompt": {
+      output: "string",
+      markdownDescription: "Writes a prompt to stdout and reads one line from stdin, resolving to the entered text (trailing newline stripped). Lines are buffered so piped/redirected input works, and resolves to `\"\"` at end of input (EOF) — a non-interactive run never hangs. For interactive CLIs; mutually exclusive with `stdio-listen`. Call `stdio-close` after the last prompt so the process can exit.",
+      examples: [
+        "{ \"stdio-prompt\": \"Project name: \", \"as\": \"name\" }",
+      ],
+    },
+    "stdio-close": {
+      type: "boolean",
+      output: "null",
+      markdownDescription: "Closes the interactive stdin reader opened by `stdio-prompt`, releasing stdin so the process can exit. Call once, after the final `stdio-prompt`.",
+      examples: [
+        "{ \"stdio-close\": true }",
+      ],
+    },
   };
 
   ["stdio-listen"](def: Record<string, unknown>, context: Context): NodeValue {
@@ -43,8 +101,8 @@ export class StdioNode extends Node {
       return null;
     }
 
-    if (stdinAttached) {
-      console.error("[StdioNode] stdio-listen already attached; ignoring duplicate call");
+    if (stdinAttached || reader) {
+      console.error("[StdioNode] stdin is already in use; ignoring stdio-listen");
       return null;
     }
     stdinAttached = true;
@@ -101,5 +159,21 @@ export class StdioNode extends Node {
       process.stdout.write(encode(value) + "\n");
       return null;
     });
+  }
+
+  ["stdio-prompt"](def: Record<string, unknown>, context: Context): NodeValue {
+    if (stdinAttached) {
+      console.error("[StdioNode] stdin is owned by stdio-listen; stdio-prompt cannot read it");
+      return null;
+    }
+    return resolve(def["stdio-prompt"], context, text => getReader().ask(String(text)));
+  }
+
+  ["stdio-close"](): NodeValue {
+    if (reader) {
+      reader.close();
+      reader = null;
+    }
+    return null;
   }
 }
