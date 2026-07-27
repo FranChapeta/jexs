@@ -1,6 +1,6 @@
-import { Node, Context, NodeValue } from "@jexs/core";
-import { resolveAll } from "@jexs/core";
-import type { JexsNodeSchema } from "@jexs/core";
+import { Node, Context, NodeValue } from "./Node.js";
+import { resolveAll } from "../Resolver.js";
+import type { JexsNodeSchema } from "../schema.js";
 
 const TEXT_EXT = new Set([
   "txt", "html", "htm", "css", "svg", "md", "js", "ts", "tsx", "jsx",
@@ -22,14 +22,6 @@ function classifyUrlExt(url: string): "json" | "text" | "binary" | "unknown" {
   return "unknown";
 }
 
-/**
- * FetchNode — Client-side HTTP fetch operations.
- *
- * Usage:
- * - { "fetch": "/api/endpoint", "method": "POST", "body": { ... } }
- * - { "fetch": "/models/duck.glb" }   // binary, returns ArrayBuffer (extension dispatch)
- * - { "fetch": "/api/endpoint" }      // defaults to GET
- */
 export class FetchNode extends Node {
   static schema: JexsNodeSchema = {
     fetch: {

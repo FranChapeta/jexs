@@ -10,7 +10,6 @@ export { Client, clientNodes } from "./Client.js";
 // on internal paths. `clientNodes` stays as the eager subset the runtime
 // registers immediately; the rest are lazy-loaded in the browser branch below.
 export { DomNode } from "./nodes/DomNode.js";
-export { FetchNode } from "./nodes/FetchNode.js";
 export { AudioNode } from "./nodes/AudioNode.js";
 export { TreeNode } from "./nodes/TreeNode.js";
 export { ListNode } from "./nodes/ListNode.js";

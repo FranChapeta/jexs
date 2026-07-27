@@ -1,6 +1,6 @@
 # @jexs/client
 
-Browser runtime for **Jexs** — DOM rendering, fetch, audio, WebSocket, web-push, WebRTC, and a service-worker entrypoint.
+Browser runtime for **Jexs** — DOM rendering, audio, WebSocket, web-push, WebRTC, and a service-worker entrypoint.
 
 The package ships both an ESM library (for bundling) and a pre-built browser bundle that [@jexs/server](https://github.com/FranChapeta/jexs/tree/master/server) can serve automatically.
 
@@ -21,7 +21,6 @@ npm install @jexs/client @jexs/core
 | Node | Keys | Purpose |
 |---|---|---|
 | `DomNode` | `dom-set`, `dom-get`, `dom-append`, `dom-remove`, `dom-query`, ... | Mutate the DOM |
-| `FetchNode` | `fetch` | HTTP requests |
 | `AudioNode` | `audio-play`, `audio-stop`, `audio-volume`, ... | Web Audio playback |
 
 **Lazy-loaded nodes** (only fetched when first used):

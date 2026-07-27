@@ -25,6 +25,7 @@ export { createHttpError, isHttpError } from "./errors.js";
 
 // ── Core nodes ──
 export { TimerNode } from "./nodes/Timer.js";
+export { FetchNode } from "./nodes/FetchNode.js";
 
 import { Node } from "./nodes/Node.js";
 import { VariablesNode } from "./nodes/Variables.js";
@@ -39,8 +40,9 @@ import { TimerNode } from "./nodes/Timer.js";
 import { DateNode } from "./nodes/Date.js";
 
 import { ErrorNode } from "./nodes/Error.js";
+import { FetchNode } from "./nodes/FetchNode.js";
 
-/** Core nodes — pure logic, no I/O. Safe for browser and server. */
+/** Core nodes — pure logic plus global-fetch HTTP; no DOM or Node.js APIs. Safe for browser, server, and workers. */
 export const coreNodes: Node[] = [
   new VariablesNode(),
   new ElementNode(),
@@ -53,6 +55,7 @@ export const coreNodes: Node[] = [
   new TimerNode(),
   new DateNode(),
   new ErrorNode(),
+  new FetchNode(),
 ];
 
 // ── Step runner ──

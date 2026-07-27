@@ -12,7 +12,7 @@
  *     just hold the CPU geometry + bounds).
  *
  * The parser is env-agnostic — it does no I/O. Callers pre-load bytes via
- * FileNode (server) or FetchNode (client).
+ * FileNode (server) or FetchNode (core).
  */
 
 import { Node, Context, NodeValue, resolveAll, resolveObj } from "@jexs/core";
