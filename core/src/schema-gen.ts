@@ -502,8 +502,36 @@ function collectMethodSiblings(method: JexsMethodSchema): string[] {
 }
 
 /**
+ * Options shared by {@link buildPackageSchema} and {@link mergePackageSchemas}
+ * for handling duplicate handler keys / node classes / `$defs` names.
+ */
+export interface SchemaBuildOptions {
+  /**
+   * `"throw"` (default) aborts on the first batch of collisions — correct for the
+   * curated in-repo build. `"skip"` keeps the first occurrence and reports the
+   * rest via {@link SchemaBuildOptions.onWarn}, mirroring the resolver's
+   * first-registration-wins semantics so a third-party package that redeclares an
+   * existing key degrades gracefully instead of breaking the whole schema.
+   */
+  onCollision?: "throw" | "skip";
+  /** Sink for collision messages when `onCollision` is `"skip"`. Defaults to `console.warn`. */
+  onWarn?: (message: string) => void;
+}
+
+function reportCollisions(collisions: string[], opts: SchemaBuildOptions, context: string): void {
+  if (collisions.length === 0) return;
+  if (opts.onCollision === "skip") {
+    const warn = opts.onWarn ?? ((m: string) => console.warn(m));
+    for (const c of collisions) warn(`${context}: ${c}`);
+    return;
+  }
+  throw new Error(`${context}: found ${collisions.length} collision(s):\n  ${collisions.join("\n  ")}`);
+}
+
+/**
  * Builds a PackageSchema from a list of Node classes or instances. Each Node's
- * `static schema` is collected; collisions across nodes throw.
+ * `static schema` is collected; collisions across nodes throw (or, with
+ * `onCollision: "skip"`, keep the first and warn).
  *
  * Accepts either Node classes (the typeof Node value) or Node instances. The
  * resolver builds with instances, so callers can pass `coreNodes` directly.
@@ -511,6 +539,7 @@ function collectMethodSiblings(method: JexsMethodSchema): string[] {
 export function buildPackageSchema(
   nodes: ReadonlyArray<Node | (typeof Node)>,
   packageName?: string,
+  opts: SchemaBuildOptions = {},
 ): PackageSchema {
   const compiled: Record<string, CompiledMethod> = {};
   const collisions: string[] = [];
@@ -575,11 +604,7 @@ export function buildPackageSchema(
     }
   }
 
-  if (collisions.length > 0) {
-    throw new Error(
-      `Found ${collisions.length} schema-collision(s):\n  ${collisions.join("\n  ")}`,
-    );
-  }
+  reportCollisions(collisions, opts, `buildPackageSchema(${packageName ?? "?"})`);
 
   // byKey is the canonical store; byNode is a compact index of method names per
   // Node class. Consumers wanting a full per-Node dispatch schema construct it
@@ -727,7 +752,7 @@ export interface CombinedSchema {
  * shared $defs, an exprFlat editor entry point, and the anti-cascade design
  * (every primary handler key listed flat in exprFlat.properties).
  */
-export function mergePackageSchemas(packages: PackageSchema[]): CombinedSchema {
+export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuildOptions = {}): CombinedSchema {
   const byKey: Record<string, EmittedMethodSchema> = {};
   const byNode: Record<string, EmittedNodeSchema> = {};
   const extraDefs: Record<string, EmittedSchema> = {};
@@ -760,9 +785,7 @@ export function mergePackageSchemas(packages: PackageSchema[]): CombinedSchema {
       extraDefs[defName] = defSchema;
     }
   }
-  if (collisions.length > 0) {
-    throw new Error(`Schema merge collisions:\n  ${collisions.join("\n  ")}`);
-  }
+  reportCollisions(collisions, opts, "mergePackageSchemas");
   // Underscore convention: non-underscored extraDefs entries are root-matchable.
   const rootMatches = Object.keys(extraDefs).filter(name => !name.startsWith("_"));
 

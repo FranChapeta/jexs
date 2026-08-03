@@ -2,7 +2,7 @@ import http from "node:http";
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
-import { URL, fileURLToPath } from "node:url";
+import { URL } from "node:url";
 import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
 import { Context, Node, NodeValue, TimerNode, isHttpError, resolve, resolveAll } from "@jexs/core";
@@ -636,12 +636,10 @@ function cacheControlFor(requestPath: string, filePath: string): string {
 }
 
 function resolveClientBrowserDir(): string | null {
-  try {
-    const clientEntry = import.meta.resolve("@jexs/client");
-    const clientDist = path.dirname(fileURLToPath(clientEntry));
-    const browserDir = path.join(clientDist, "browser");
-    if (fs.existsSync(browserDir)) return browserDir;
-  } catch { /* not installed */ }
+  // The browser bundle is built per-project by `jexs bundle` (into
+  // dist/browser) — it includes @jexs/client and third-party browser nodes.
+  const localBrowser = path.join(process.cwd(), "dist", "browser");
+  if (fs.existsSync(path.join(localBrowser, "client.js"))) return localBrowser;
   return null;
 }
 
@@ -710,7 +708,7 @@ export class ServerNode extends Node {
           serveStaticDir(listener, servePath, browserDir);
           context._clientScript = `${servePath}/client.js`;
         } else {
-          console.warn("[ServerNode] @jexs/client not found — client bundle will not be served");
+          console.warn("[ServerNode] no browser bundle at ./dist/browser — run `jexs bundle` to build the client (with any browser nodes); it will not be served until then");
         }
       }
 

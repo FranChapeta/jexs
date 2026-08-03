@@ -23,6 +23,7 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "jexs": { "nodes": "dist/index.js", "env": "both" },
   "exports": {
     ".": {
       "import": "./dist/index.js",

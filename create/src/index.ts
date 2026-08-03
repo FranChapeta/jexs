@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 interface CliFlags {
   projectName?: string;
-  env?: "server" | "client" | "both";
+  env?: "server" | "client" | "both" | "electron";
   physics?: boolean;
   css?: "tailwind" | "none";
   help?: boolean;
@@ -46,7 +46,7 @@ function printHelp(): void {
 Scaffolds a new Jexs project.
 
 Options:
-  --env <server|client|both>   Which environment to install (default: prompt)
+  --env <server|client|both|electron>   Which environment to install (default: prompt)
   --physics                    Include @jexs/physics and @jexs/gl (off by default)
   --css <tailwind|none>        Styling setup (default: tailwind on server projects)
   -h, --help                   Show this help
@@ -201,6 +201,24 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean): string {
   return lines.join("\n");
 }
 
+// ── Renderer page template ──────────────────────────────────────────────────
+//
+// The root UI as a JSON Element tree (body content). `jexs bundle` ships it raw;
+// the generated shell's #app has a `load` event that `file`-fetches and mounts it
+// at RUNTIME, so `{var: ...}`, `if`, and nested `{file: ...}` includes all resolve
+// with live context/params. Add interactivity with the `events` key; load nested
+// components with `{ "file": "components/card.json" }` inside your handlers.
+
+function pageTemplate(title: string, description: string): unknown {
+  return {
+    tag: "main",
+    content: [
+      { tag: "h1", content: title },
+      { tag: "p", content: description },
+    ],
+  };
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -218,20 +236,21 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  let env: "server" | "client" | "both";
-  if (flags.env === "server" || flags.env === "client" || flags.env === "both") {
+  let env: "server" | "client" | "both" | "electron";
+  if (flags.env === "server" || flags.env === "client" || flags.env === "both" || flags.env === "electron") {
     env = flags.env;
   } else {
     if (flags.env !== undefined) {
-      console.error(`Invalid --env value "${flags.env}". Expected server, client, or both.`);
+      console.error(`Invalid --env value "${flags.env}". Expected server, client, both, or electron.`);
       process.exit(1);
     }
     const idx = await chooseFromOptions(queue, "Which environment?", [
-      "Server  (HTTP, DB, auth, routing)",
-      "Client  (browser DOM, fetch, audio)",
+      "Server    (HTTP, DB, auth, routing)",
+      "Client    (browser DOM, fetch, audio)",
       "Both",
-    ], "--env <server|client|both>");
-    env = idx === 0 ? "server" : idx === 1 ? "client" : "both";
+      "Electron  (desktop app: window + IPC + client + server)",
+    ], "--env <server|client|both|electron>");
+    env = idx === 0 ? "server" : idx === 1 ? "client" : idx === 2 ? "both" : "electron";
   }
 
   // Physics + GL are off by default — most projects don't need a 3D engine.
@@ -240,8 +259,12 @@ async function main(): Promise<void> {
 
   queue.close();
 
-  const useServer = env === "server" || env === "both";
-  const useClient = env === "client" || env === "both";
+  // Electron needs both runtimes: the main-process resolver (server nodes: files,
+  // SQLite saves, ...) and the renderer bundle (client). It adds @jexs/electron
+  // (window/dialog/app nodes) and the jexs-electron runner on top.
+  const useElectron = env === "electron";
+  const useServer = env === "server" || env === "both" || useElectron;
+  const useClient = env === "client" || env === "both" || useElectron;
 
   // CSS: default to tailwind on server projects (since they serve HTML and need
   // a styles.css), default to none for client-only (which ships JSON-only). Flag
@@ -255,7 +278,7 @@ async function main(): Promise<void> {
     console.error(`Invalid --css value "${flags.css}". Expected tailwind or none.`);
     process.exit(1);
   } else {
-    useTailwind = useServer;
+    useTailwind = useServer && !useElectron;
   }
 
   const dir = join(process.cwd(), projectName);
@@ -267,7 +290,12 @@ async function main(): Promise<void> {
   mkdirSync(dir);
   mkdirSync(join(dir, ".vscode"));
   mkdirSync(join(dir, ".claude"));
-  if (useServer) {
+  if (useElectron) {
+    // src/ holds the renderer's page template (index.json), which `jexs bundle`
+    // renders to dist/browser/index.html. No app/ by default — the runner opens
+    // the window; add app/main.json only for custom main-process startup.
+    mkdirSync(join(dir, "src"));
+  } else if (useServer) {
     // app/ holds the JSON templates the resolver loads via FileNode (its default
     // base directory). public/ is auto-served by the HTTP server for static
     // assets (CSS, images, favicons, fonts). The TS bootstrap and tailwind
@@ -281,17 +309,31 @@ async function main(): Promise<void> {
   const deps: Record<string, string> = { "@jexs/core": "latest" };
   if (useServer) deps["@jexs/server"] = "latest";
   if (useClient) deps["@jexs/client"] = "latest";
+  if (useElectron) deps["@jexs/electron"] = "latest";
   if (usePhysics) { deps["@jexs/physics"] = "latest"; deps["@jexs/gl"] = "latest"; }
 
-  const devDeps: Record<string, string> = { "@jexs/create": "latest" };
-  devDeps.prettier = "^3.4.0";
-  if (useTailwind) {
-    devDeps.tailwindcss  = "^3.4.0";
-    devDeps.concurrently = "^8.2.0";
-  }
+  // The `jexs` CLI (from @jexs/server) provides `jexs schema` (autocomplete) and
+  // `jexs bundle` (the browser build). Server/both projects already depend on it;
+  // client-only projects pull it in as a devDep for those two commands.
+  const devDeps: Record<string, string> = { prettier: "^3.4.0" };
+  if (!useServer) devDeps["@jexs/server"] = "latest";
+  if (useServer && !useElectron) devDeps.concurrently = "^8.2.0";
+  if (useTailwind) devDeps.tailwindcss = "^3.4.0";
+  if (useElectron) { devDeps.electron = "^30.0.0"; devDeps["electron-builder"] = "^24.13.0"; }
 
   const scripts: Record<string, string> = {};
-  if (useServer) {
+  if (useElectron) {
+    // No JS bootstrap: `jexs bundle` builds the renderer (dist/browser, served
+    // over app://), then `jexs-electron` (from @jexs/electron) opens the window
+    // and runs app/main.json against the main-process resolver. `build` packages
+    // a distributable with electron-builder.
+    scripts.dev = "jexs bundle && jexs-electron";
+    scripts.bundle = "jexs bundle";
+    scripts.build = "jexs bundle && electron-builder";
+    scripts.schema = "jexs schema";
+    scripts.postinstall = "jexs schema";
+    scripts.format = "prettier --write \"app/**/*.json\"";
+  } else if (useServer) {
     // There is no JS bootstrap — `jexs run` (the `jexs` CLI from @jexs/server) resolves
     // app/index.json as steps; its `listen` step(s) bind the port(s). Passing `app` as the
     // resolver root makes `/`-anchored file loads resolve under app/. cwd = project root, so
@@ -305,13 +347,28 @@ async function main(): Promise<void> {
     const tailwindWatch = "tailwindcss -i input.css -o public/styles.css --watch --minify";
     const tailwindBuild = "tailwindcss -i input.css -o public/styles.css --minify";
 
-    scripts.dev = useTailwind
-      ? `concurrently -k -n css,app -c blue,green "${tailwindWatch}" "jexs run app/index.json app --watch"`
-      : "jexs run app/index.json app --watch";
-    if (useTailwind) scripts.build = tailwindBuild;
+    // dev builds the browser bundle once (so the server can serve it immediately),
+    // then runs the client bundler, the app, and (with tailwind) the CSS compiler
+    // in parallel. `jexs bundle` produces ./dist/browser (client + any browser
+    // nodes) served at /jexs — there is no prebuilt @jexs/client bundle.
+    const names = [useTailwind ? "css" : null, "bundle", "app"].filter(Boolean).join(",");
+    const cmds = [
+      useTailwind ? `"${tailwindWatch}"` : null,
+      `"jexs bundle --watch"`,
+      `"jexs run app/index.json app --watch"`,
+    ].filter(Boolean).join(" ");
+    scripts.dev = `jexs bundle && concurrently -k -n ${names} ${cmds}`;
+    scripts.bundle = "jexs bundle";
+    scripts.build = useTailwind ? `${tailwindBuild} && jexs bundle` : "jexs bundle";
     scripts.start  = "jexs run app/index.json app --prod";
+    scripts.schema = "jexs schema";
+    scripts.postinstall = "jexs schema";
     scripts.format = "prettier --write \"app/**/*.json\"";
   } else {
+    scripts.dev = "jexs bundle --watch";
+    scripts.build = "jexs bundle";
+    scripts.schema = "jexs schema";
+    scripts.postinstall = "jexs schema";
     scripts.format = "prettier --write \"src/**/*.json\"";
   }
 
@@ -321,21 +378,25 @@ async function main(): Promise<void> {
     JSON.stringify({
       name: projectName,
       type: "module",
+      ...(useElectron ? { main: "node_modules/@jexs/electron/dist/runner.js" } : {}),
       ...(Object.keys(scripts).length > 0 ? { scripts } : {}),
       dependencies: deps,
       devDependencies: devDeps,
     }, null, 2) + "\n",
   );
 
-  // .jexs-schema.json — single $ref to combined schema (lives in @jexs/create/dist)
+  // .jexs-schema.json — a stable $ref to the project-local schema that `jexs schema`
+  // generates into .jexs/ from the actually-installed packages (first- AND
+  // third-party). Regenerated by the `postinstall` hook on every `npm install`.
   writeFileSync(
     join(dir, ".jexs-schema.json"),
-    JSON.stringify({ $ref: "./node_modules/@jexs/create/dist/combined.schema.json" }, null, 2) + "\n",
+    JSON.stringify({ $ref: "./.jexs/combined.schema.json" }, null, 2) + "\n",
   );
 
   // .vscode/settings.json — wires JSON schema for autocomplete + disables VS Code's
   // built-in JSON formatter so prettier handles it (consistent with the `format` script).
-  const jsonGlob = useServer ? "/app/**/*.json" : "/src/**/*.json";
+  // electron/client author the renderer page in src/; server (and both) use app/.
+  const jsonGlobs = useElectron ? ["/src/**/*.json"] : useServer ? ["/app/**/*.json"] : ["/src/**/*.json"];
   writeFileSync(
     join(dir, ".vscode", "settings.json"),
     JSON.stringify({
@@ -343,7 +404,7 @@ async function main(): Promise<void> {
       "json.format.enable": false,
       "[json]":  { "editor.defaultFormatter": "esbenp.prettier-vscode" },
       "[jsonc]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
-      "json.schemas": [{ "fileMatch": [jsonGlob], "url": "./.jexs-schema.json" }],
+      "json.schemas": [{ "fileMatch": jsonGlobs, "url": "./.jexs-schema.json" }],
     }, null, 2) + "\n",
   );
 
@@ -364,14 +425,14 @@ async function main(): Promise<void> {
     }, null, 2) + "\n",
   );
 
-  // .gitignore — node_modules and the tailwind CSS build artifact (public/styles.css).
-  // .jexs-schema.json is deliberately NOT ignored: it's a static $ref that the
-  // committed .vscode/settings.json depends on, so it must be tracked or a fresh
-  // clone loses editor autocomplete/validation (the schema content it points to
-  // still lives in gitignored node_modules).
+  // .gitignore — node_modules, generated schema (.jexs/), the browser bundle
+  // (dist/), and the tailwind CSS artifact. .jexs-schema.json is deliberately NOT
+  // ignored: it's the stable $ref the committed .vscode/settings.json depends on,
+  // so it must be tracked or a fresh clone loses autocomplete until the first
+  // `npm install` regenerates the .jexs/ content it points to.
   writeFileSync(
     join(dir, ".gitignore"),
-    "node_modules/\n" + (useTailwind ? "public/styles.css\n" : ""),
+    "node_modules/\n.jexs/\ndist/\n" + (useTailwind ? "public/styles.css\n" : ""),
   );
 
   // .gitattributes — GitHub Linguist treats JSON as a "data" language by default
@@ -419,7 +480,36 @@ async function main(): Promise<void> {
     buildClaudeMd(useServer, useTailwind),
   );
 
-  if (useServer) {
+  if (useElectron) {
+    // Electron: jexs-electron opens the window and runs the main-process resolver;
+    // the renderer loads the bundle from dist/browser. The app is just the renderer
+    // page — src/index.json. For custom main-process startup (menus, extra windows,
+    // tray) add an optional app/main.json and the runner will run it instead.
+
+    // src/index.json — the renderer page, authored as a JSON Element tree. `jexs
+    // bundle` renders it to dist/browser/index.html at build time (ElementNode →
+    // HTML) and injects the client script; the client hydrates any `events`. Main-
+    // process nodes (query, file, dialog, …) are auto-forwarded, so call them
+    // directly from renderer JSON.
+    writeFileSync(
+      join(dir, "src", "index.json"),
+      JSON.stringify(
+        pageTemplate(projectName, "Edit src/index.json — the renderer page. Main-process nodes like query and dialog are auto-forwarded, so call them directly from here."),
+        null, 2,
+      ) + "\n",
+    );
+
+    // electron-builder.yml — packaging config. Native modules (better-sqlite3,
+    // bcrypt from @jexs/server) must be unpacked from the asar to load.
+    writeFileSync(
+      join(dir, "electron-builder.yml"),
+      `appId: com.example.${projectName.replace(/[^a-z0-9]/gi, "").toLowerCase() || "app"}\n` +
+      `productName: ${projectName}\n` +
+      `files:\n  - dist/browser/**\n  - src/**/*.json\n  - app/**/*.json\n  - node_modules/**\n` +
+      `asarUnpack:\n  - "**/*.node"\n` +
+      `directories:\n  output: release\n`,
+    );
+  } else if (useServer) {
     // No JS bootstrap: `npm run dev` / `npm start` invoke `jexs run app/index.json app` (the
     // `jexs` CLI from @jexs/server) which builds the resolver, roots FileNode at app/, and
     // resolves app/index.json — its `listen` step(s) bind the port(s).
@@ -466,10 +556,15 @@ async function main(): Promise<void> {
       );
     }
   } else {
-    // Client-only: just the example JSON, no Node bootstrap.
+    // Client-only: the page as a JSON Element tree. `jexs bundle` renders it to
+    // dist/browser/index.html (ElementNode → HTML) and injects the client script;
+    // the client hydrates any `events`.
     writeFileSync(
-      join(dir, "src", "app.json"),
-      JSON.stringify([{ concat: ["Hello, ", { var: "$name" }, "!"] }], null, 2) + "\n",
+      join(dir, "src", "index.json"),
+      JSON.stringify(
+        pageTemplate(projectName, "Edit src/index.json — it's rendered to HTML by `jexs bundle`. Add interactivity with the events key; the client hydrates it."),
+        null, 2,
+      ) + "\n",
     );
   }
 
@@ -483,7 +578,10 @@ async function main(): Promise<void> {
   console.log(`  .gitignore`);
   console.log(`  .gitattributes`);
   console.log(`  CLAUDE.md`);
-  if (useServer) {
+  if (useElectron) {
+    console.log(`  src/index.json`);
+    console.log(`  electron-builder.yml`);
+  } else if (useServer) {
     console.log(`  app/index.json`);
     console.log(`  public/.gitkeep`);
     if (useTailwind) {
@@ -491,7 +589,7 @@ async function main(): Promise<void> {
       console.log(`  tailwind.config.js`);
     }
   } else {
-    console.log(`  src/app.json`);
+    console.log(`  src/index.json`);
   }
   console.log(`\nDone. Run:\n  cd ${projectName} && npm install${useServer ? " && npm run dev" : ""}`);
 }

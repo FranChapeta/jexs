@@ -10,7 +10,7 @@ export type {
 export {
   buildPackageSchema, mergePackageSchemas, expandProperty, GLOBAL_KEYS,
   type PackageSchema, type CombinedSchema, type EmittedSchema,
-  type EmittedMethodSchema, type EmittedNodeSchema,
+  type EmittedMethodSchema, type EmittedNodeSchema, type SchemaBuildOptions,
 } from "./schema-gen.js";
 
 // ── Resolver ──
@@ -57,6 +57,10 @@ export const coreNodes: Node[] = [
   new ErrorNode(),
   new FetchNode(),
 ];
+
+/** Discovery alias: the `"jexs".nodes` manifest entry points at this module, and
+ *  node discovery consumes `mod.default ?? mod.nodes`. Same instances as {@link coreNodes}. */
+export const nodes = coreNodes;
 
 // ── Step runner ──
 // (runSteps and resolveSteps are already exported above via Resolver.js)

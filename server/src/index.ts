@@ -63,6 +63,11 @@ export function serverNodes({ root = "app" }: ServerNodesOptions = {}): Node[] {
   ];
 }
 
+/** Discovery alias: the `"jexs".nodes` manifest entry points at this module, and
+ *  node discovery consumes `mod.default ?? mod.nodes` — invoking it with `{ root }`
+ *  since it's a factory. Same as {@link serverNodes}. */
+export const nodes = serverNodes;
+
 export { makePhysicsWorker } from "./physicsWorker.js";
 export { DatabaseNode } from "./nodes/Database.js";
 export { QueryNode } from "./nodes/Query.js";
@@ -82,3 +87,10 @@ export { DeferNode } from "./nodes/Defer.js";
 export { CacheNode } from "./nodes/Cache.js";
 export { StdioNode } from "./nodes/Stdio.js";
 export { Cache } from "./cache/Cache.js";
+
+// ── Discovery + schema tooling (shared by the CLI, the electron runner, and any
+//    host that builds its own resolver from installed packages) ──
+export { walkJexsPackages, loadNodePackages, enumerateNodeClasses, type DiscoveredPackage } from "./discover.js";
+export { buildProjectSchema, collectPackageSchemas } from "./schema-build.js";
+export { entryContext } from "./nodes/File.js";
+export { manifestOf, contributesNodes, type JexsManifest, type JexsEnv } from "./manifest.js";

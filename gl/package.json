@@ -24,6 +24,7 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "jexs": { "env": "browser" },
   "exports": {
     ".": {
       "import": "./dist/index.js",

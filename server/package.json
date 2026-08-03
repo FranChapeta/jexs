@@ -26,6 +26,7 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "jexs": { "nodes": "dist/index.js", "env": "node" },
   "bin": {
     "jexs": "dist/cli.js"
   },

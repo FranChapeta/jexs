@@ -16,6 +16,10 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { createResolver, coreNodes, Context } from "@jexs/core";
 import { serverNodes } from "./index.js";
+import { manifestOf } from "./manifest.js";
+import { loadNodePackages } from "./discover.js";
+import { buildProjectSchema, buildPackageSchemaFile } from "./schema-build.js";
+import { bundleClient } from "./bundle.js";
 import { entryContext } from "./nodes/File.js";
 
 const [cmd, ...rest] = process.argv.slice(2);
@@ -23,7 +27,10 @@ const [cmd, ...rest] = process.argv.slice(2);
 function usage(code: number): never {
   process.stderr.write(
     "usage:\n" +
-    "  jexs run <entry.json|package> [root] [--prod] [--watch] [-- <app args>]\n",
+    "  jexs run <entry.json|package> [root] [--prod] [--watch] [-- <app args>]\n" +
+    "  jexs bundle [--watch]     build the project's browser bundle (client + discovered browser nodes)\n" +
+    "  jexs schema [dir]         regenerate .jexs/combined.schema.json for a project (autocomplete + MCP)\n" +
+    "  jexs build-schema [dir]   (authors) prebuild a package's dist/schema.json\n",
   );
   process.exit(code);
 }
@@ -110,7 +117,13 @@ async function run(args: string[]): Promise<void> {
   // (relative `{ file }` loads resolve against it; a `/`-prefixed path anchors at `root`) and
   // `env` (so templates can branch on `$env.*`). An HTTP app is just an entry with `listen` step(s).
   const abs = path.resolve(entry);
-  const resolve = createResolver([...coreNodes, ...serverNodes({ root: root ?? "." })]);
+  // Discover every installed node package (core, server, third-party) for the
+  // node runtime. Fall back to this package's own core+server set when discovery
+  // finds nothing — e.g. running from the monorepo itself, not an installed
+  // project; a scaffolded project always discovers @jexs/core + @jexs/server.
+  let nodes = await loadNodePackages(process.cwd(), { root: root ?? ".", env: "node" });
+  if (nodes.length === 0) nodes = [...coreNodes, ...serverNodes({ root: root ?? "." })];
+  const resolve = createResolver(nodes);
   const context: Context = { ...entryContext(path.dirname(abs)), env: process.env as Record<string, string>, args: parseArgs(appArgs) };
   await Promise.resolve(resolve({ file: path.basename(abs) }, context));
 }
@@ -127,16 +140,29 @@ function resolveEntry(target: string): string {
     process.stderr.write(`jexs run: "${target}" is not a file or an installed package\n`);
     process.exit(1);
   }
-  const pkg = JSON.parse(readFileSync(pkgJson, "utf8")) as { jexs?: unknown };
-  if (typeof pkg.jexs !== "string") {
-    process.stderr.write(`jexs run: package "${target}" has no string "jexs" entry in its package.json\n`);
+  const pkg = JSON.parse(readFileSync(pkgJson, "utf8"));
+  const manifest = manifestOf(pkg);
+  if (!manifest?.app) {
+    process.stderr.write(`jexs run: package "${target}" has no "jexs" app entry in its package.json\n`);
     process.exit(1);
   }
-  return path.join(path.dirname(pkgJson), pkg.jexs);
+  return path.join(path.dirname(pkgJson), manifest.app);
 }
 
 if (cmd === "run") {
   await run(rest);
+} else if (cmd === "bundle") {
+  await bundleClient(process.cwd(), { watch: rest.includes("--watch") });
+} else if (cmd === "schema") {
+  // Regenerate project-local autocomplete + MCP schema from installed packages.
+  const dir = rest.find((a) => !a.startsWith("-")) ?? process.cwd();
+  const { packages } = await buildProjectSchema(path.resolve(dir));
+  console.log(`jexs schema: merged ${packages} package(s) → ${path.join(dir, ".jexs", "combined.schema.json")}`);
+} else if (cmd === "build-schema") {
+  // Optional author-side prebuild of a single package's dist/schema.json.
+  const dir = rest.find((a) => !a.startsWith("-")) ?? process.cwd();
+  const { nodes, methods } = await buildPackageSchemaFile(path.resolve(dir));
+  console.log(`jexs build-schema: ${nodes} nodes, ${methods} methods → ${path.join(dir, "dist", "schema.json")}`);
 } else {
   usage(1);
 }
