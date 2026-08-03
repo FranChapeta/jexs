@@ -14,9 +14,21 @@ const _pendingLoads = new Map<() => Promise<void>, Promise<void>>();
 
 // Global step keys handled by the resolver machinery, not by nodes: `as`
 // (storeAs), `return` (runSteps), `catch` (handleErr), `bubble` (a modifier
-// read by storeAs alongside `as`). They must never be eagerly resolved as node
-// inputs.
-const GLOBAL_STEP_KEYS = new Set(["as", "return", "catch", "bubble"]);
+// read by storeAs alongside `as`), `then` (a fire-and-forget continuation,
+// applied in `resolve`). They must never be eagerly resolved as node inputs.
+const GLOBAL_STEP_KEYS = new Set(["as", "return", "catch", "bubble", "then"]);
+
+// Node keys that OWN `then` as their own sibling, shadowing the global `then`
+// continuation. Grandfathered: LogicNode's `if/then/else` predates `then` as a
+// global key and is too idiomatic to change, so when one of these is present
+// `then` is that node's branch, not a continuation. `if` is the only runtime
+// consumer of a `then` sibling.
+const THEN_OWNERS = new Set(["if"]);
+
+function ownsThen(obj: Record<string, unknown>): boolean {
+  for (const k of THEN_OWNERS) if (k in obj) return true;
+  return false;
+}
 
 // Cleanup hooks called on destroyResolver() or when a new resolver replaces the old one
 const _cleanupHooks: (() => void)[] = [];
@@ -107,15 +119,34 @@ export function handleErr(err: unknown, value: unknown, context: Context): unkno
  * Returns the resolved value synchronously, or a Promise if any part of the
  * expression tree is async (e.g. an I/O node).
  *
- * Optional continuation `then`: if provided, called with the resolved value.
- * On the sync path `then` is called immediately — no Promise created.
- * On the async path `then` is chained via .then() on the Promise.
+ * Optional continuation `cont`: if provided, called with the resolved value.
+ * On the sync path `cont` is called immediately — no Promise created.
+ * On the async path `cont` is chained via .then() on the Promise.
+ *
+ * A `"then"` array (except where a node owns `then` as its own sibling —
+ * LogicNode's `if/then/else`) makes the step FIRE-AND-FORGET: the work is kicked
+ * off, the sequence is handed `undefined` right away so it never blocks, and when
+ * the work settles the `then` steps run with the result bound as `$result`.
  *
  * If the step def has a `"catch"` array and an HTTP error is thrown,
  * the catch steps are run with `$error: { status, message }` in context.
  */
-export function resolve(value: unknown, context: Context, then?: (v: unknown) => unknown): unknown {
-  const hasCatch = isObject(value) && Array.isArray((value as Record<string, unknown>).catch);
+export function resolve(value: unknown, context: Context, cont?: (v: unknown) => unknown): unknown {
+  const obj = isObject(value) ? value : null;
+
+  // Fire-and-forget: dispatch off the caller's stack (so even synchronous setup
+  // doesn't block), run `then` with `$result` when it settles, and route errors
+  // through `catch` (unhandled if none, like any background task). Hand the
+  // sequence `undefined` immediately via `cont` so later steps run right away.
+  if (obj !== null && Array.isArray(obj.then) && !ownsThen(obj)) {
+    void Promise.resolve()
+      .then(() => (_resolve ? _resolve(value, context) : value))
+      .then(result => runSteps(obj.then as unknown[], childContext(context, { result })))
+      .catch(err => handleErr(err, obj, context));
+    return cont ? cont(undefined) : undefined;
+  }
+
+  const hasCatch = obj !== null && Array.isArray(obj.catch);
 
   let r: unknown;
   try {
@@ -126,8 +157,8 @@ export function resolve(value: unknown, context: Context, then?: (v: unknown) =>
   }
 
   if (r instanceof Promise && hasCatch) r = r.catch(err => handleErr(err, value, context));
-  if (!then) return r;
-  return r instanceof Promise ? r.then(then) : then(r);
+  if (!cont) return r;
+  return r instanceof Promise ? r.then(cont) : cont(r);
 }
 
 /**

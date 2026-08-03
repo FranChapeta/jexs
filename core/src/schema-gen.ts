@@ -721,6 +721,11 @@ export const GLOBAL_KEYS: Record<string, { markdownDescription: string; examples
       "Step array to run if this expression throws an HTTP error. The `$error` context variable carries `{ status, message }`.",
     examples: ["{ \"query-select\": \"users\", \"catch\": [{ \"var\": \"$error.message\" }] }"],
   },
+  then: {
+    markdownDescription:
+      "Run these steps as a FIRE-AND-FORGET continuation (like a Promise `.then`): the step returns immediately — later steps do NOT block on it — and once this expression settles, the steps run with the result bound as `$result`. A rejection runs `catch`. The step itself yields `null` (the result is delivered to `$result`, not returned), so a sibling `as` here would bind `null` — read the value via `$result` inside `then`. Works on ANY node; use it to kick off async I/O (`query`, `file`, a host `dialog`, `thread`) without stalling the sequence. (Under `if`, `then` is the branch, not a continuation.)",
+    examples: ["{ \"query-select\": \"saves\", \"then\": [{ \"set-html\": [\"#list\", { \"var\": \"$result\" }] }] }"],
+  },
   bubble: {
     markdownDescription:
       "Modifier for a write — only valid alongside `as` or `setVars`. Also writes the result up into every enclosing scope, so it survives after the current file / loop / branch returns. Without it, writes are scoped to the copied context and lost on return.",
@@ -728,11 +733,15 @@ export const GLOBAL_KEYS: Record<string, { markdownDescription: string; examples
   },
 };
 
-/** Universal keys (`as`, `return`, `catch`) declared once at the top of exprFlat. */
+/** Universal keys (`as`, `return`, `catch`, `then`) declared once at the top of
+ *  exprFlat. `then` is also a sibling of `if` (LogicNode's branch); the emission
+ *  loop gates it via `siblingHosts` so it validates as the branch under `if` and
+ *  as a continuation everywhere else. */
 const UNIVERSAL: Record<string, { ref: EmittedSchema; markdownDescription: string }> = {
   as:     { ref: { ...REF.strOrExpr },  markdownDescription: GLOBAL_KEYS.as.markdownDescription },
   return: { ref: { ...REF.anyVal },     markdownDescription: GLOBAL_KEYS.return.markdownDescription },
   catch:  { ref: { ...REF.steps },      markdownDescription: GLOBAL_KEYS.catch.markdownDescription },
+  then:   { ref: { ...REF.steps },      markdownDescription: GLOBAL_KEYS.then.markdownDescription },
   bubble: { ref: { ...REF.boolOrExpr }, markdownDescription: GLOBAL_KEYS.bubble.markdownDescription },
 };
 
@@ -842,10 +851,31 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
     }
   }
   for (const [name, info] of Object.entries(UNIVERSAL)) {
-    exprFlatProperties[name] = {
-      ...info.ref,
-      markdownDescription: info.markdownDescription,
-    };
+    // A universal key that a node ALSO declares as its own sibling (e.g. `then`,
+    // which LogicNode's `if` owns as a branch) must defer to that host op's
+    // validation when the host is present, and only apply the universal schema
+    // when used standalone — the same gating as a handler-key-named sibling
+    // (above). Otherwise `{ "if": ..., "then": "yes" }` would fail the universal
+    // (steps-array) constraint.
+    const hosts = [...(siblingHosts[name] ?? [])].filter(h => h in byKey);
+    if (hosts.length > 0) {
+      // The property carries only the docs (always shown); the VALUE constraint is
+      // gated: when a host op is present it's that op's sibling (host validates it,
+      // e.g. `if`'s scalar/array branch), otherwise it's the universal value (steps
+      // for `then`). `dependentSchemas` constrains the whole object, so the else
+      // wraps the constraint back onto this property, not the object.
+      exprFlatProperties[name] = { markdownDescription: info.markdownDescription };
+      exprFlatDependentSchemas[name] = {
+        if: { anyOf: hosts.map(h => ({ required: [h] })) },
+        then: true,
+        else: { properties: { [name]: { ...info.ref } } },
+      };
+    } else {
+      exprFlatProperties[name] = {
+        ...info.ref,
+        markdownDescription: info.markdownDescription,
+      };
+    }
   }
 
   // `bubble` is a modifier on a write, meaningless on its own. Gate it so the
@@ -950,7 +980,15 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
       }
     }
     const override: EmittedSchema = { properties: rejected };
-    if (Object.keys(gated).length > 0) override.dependentSchemas = gated;
+    const deps: Record<string, EmittedSchema> = { ...gated };
+    // A fire-and-forget `then` (present WITHOUT `if` — the branch form) makes the
+    // whole expression resolve to null, so it can't stand in a non-null-typed
+    // slot. Require `if` alongside `then` in these buckets: `{ node, then }`
+    // (fire-and-forget) is rejected where a real value is expected, while
+    // `{ if, then }` (the branch) still passes. `exprFlat_null` is left permissive
+    // (null output is exactly what a null slot wants).
+    if (target !== "null") deps.then = { required: ["if"] };
+    if (Object.keys(deps).length > 0) override.dependentSchemas = deps;
     filteredVariants[`exprFlat_${target}`] = {
       allOf: [{ $ref: "#/$defs/exprFlat" }, override],
     };

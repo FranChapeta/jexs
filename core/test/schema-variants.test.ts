@@ -124,6 +124,21 @@ test("event handler `do` rejects a bare primitive (a no-op step)", () => {
   assert.equal(validAt("$defs/exprFlat", withDo("noop")), false);
 });
 
+test("then: fire-and-forget (no `if`) is rejected in a typed value slot but valid as a step/expression", () => {
+  const fireAndForget = { concat: ["a"], then: [{ var: "$result" }] };
+  // Nested in a string-typed slot: a `then` node resolves to null -> rejected.
+  assert.equal(validAt("$defs/exprFlat", inItem(fireAndForget)), false);
+  // As a plain step/expression position (untyped): allowed.
+  assert.equal(validAt("$defs/exprFlat", fireAndForget), true);
+  // `if/then/else` (the branch form, not fire-and-forget) is still allowed nested.
+  assert.equal(validAt("$defs/exprFlat", inItem({ if: true, then: "yes", else: "no" })), true);
+});
+
+test("then: a standalone continuation must be a step array", () => {
+  assert.equal(validAt("$defs/exprFlat", { concat: ["a"], then: [{ var: "$result" }] }), true);
+  assert.equal(validAt("$defs/exprFlat", { concat: ["a"], then: "nope" }), false);
+});
+
 test("`bubble` is only valid alongside `as` or `setVars`", () => {
   // valid: modifies a write
   assert.equal(validAt("$defs/exprFlat", { var: "$x", as: "x", bubble: true }), true);
