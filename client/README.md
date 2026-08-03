@@ -49,16 +49,15 @@ Drop the bundle in a page and Jexs auto-initializes on `DOMContentLoaded`:
 }]'>Like</button>
 ```
 
-`window.Jexs` exposes the `Client` class; `window.jexs` is a pre-constructed instance.
+Importing `@jexs/client` in the browser builds the resolver and auto-hydrates the page. It also exposes `window.jexs = { context, hydrate }` — `context` for inspecting/seeding shared state, `hydrate` for (re)binding events after you inject content.
 
 ## Usage from JS
 
 ```ts
-import { Client } from "@jexs/client";
+import { hydrate } from "@jexs/client";
 
-const client = new Client();
-client.initEvents();              // scan whole document
-client.initEvents(myElement);     // or just a subtree
+hydrate();              // scan the whole document
+hydrate(myElement);     // or just a subtree
 ```
 
 The client shares its event context across handlers (so `$value`, `$target`, `$event` from the previous click are still available in the next), which lets you compose chains of handlers naturally.

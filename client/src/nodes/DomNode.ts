@@ -1,6 +1,7 @@
 import { Node, Context, NodeValue } from "@jexs/core";
 import { resolve, resolveAll } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
+import { hydrate } from "../events.js";
 
 let pointerLockListenerAdded = false;
 
@@ -698,7 +699,12 @@ export class DomNode extends Node {
     return resolve(def.setHtml, context, args => {
       if (Array.isArray(args) && args.length >= 2) {
         const el = getElement(args[0]);
-        if (el) el.innerHTML = String(args[1] ?? "");
+        if (el) {
+          el.innerHTML = String(args[1] ?? "");
+          // Bind data-jexs-events on the inserted content against the current
+          // context (loaded templates carry their loading context this way).
+          hydrate(el, context);
+        }
         return el;
       }
       return null;

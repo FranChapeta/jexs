@@ -1,5 +1,4 @@
 import { registerNode, registerLazy } from "@jexs/core";
-import type { Client } from "./Client.js";
 
 /**
  * Lazy node registrations, split by capability so the SAME blocks serve both the
@@ -8,10 +7,9 @@ import type { Client } from "./Client.js";
  *  - `registerComputeLazy()` — nodes that FUNCTION on a worker thread (pure
  *    compute, physics/entity/vector math, fetch-safe). The page and the worker
  *    both call this.
- *  - `registerDomLazy(client)` — nodes that need the DOM / main thread (tree,
- *    list, ws, push, rtc, gl). Only the page calls this; a worker must NOT
- *    register these (no `document`/canvas/`localStorage` there — the loader
- *    would only fail).
+ *  - `registerDomLazy()` — nodes that need the DOM / main thread (tree, list, ws,
+ *    push, rtc, gl). Only the page calls this; a worker must NOT register these
+ *    (no `document`/canvas/`localStorage` there — the loader would only fail).
  *
  * `registerLazy` loads a module the first time one of its keys is encountered,
  * then drops the keys; so registering a group is cheap and pays only on use.
@@ -46,22 +44,20 @@ export function registerComputeLazy(): void {
   );
 }
 
-/** DOM/main-thread-only groups: tree, list, ws, push, rtc, gl. The page passes
- *  its live `client` (tree/list wire DOM events through it). A worker must not
- *  call this. */
-export function registerDomLazy(client: Client): void {
+/** DOM/main-thread-only groups: tree, list, ws, push, rtc, gl. Each node hydrates
+ *  its own inserted content via the shared `hydrate` helper. A worker must not
+ *  call this (no `document`/canvas/`localStorage` there). */
+export function registerDomLazy(): void {
   registerLazy(
     ["tree-init", "tree-insert", "tree-remove", "tree-update", "tree-move"],
-    () => import("./nodes/TreeNode.js").then(({ TreeNode, setInitEvents }) => {
-      setInitEvents((root) => client.initEvents(root));
+    () => import("./nodes/TreeNode.js").then(({ TreeNode }) => {
       registerNode(new TreeNode());
     }),
   );
 
   registerLazy(
     ["list-add", "list-remove", "list-move-up", "list-move-down", "list-init", "list-sortable", "list-serialize"],
-    () => import("./nodes/ListNode.js").then(({ ListNode, setInitEvents }) => {
-      setInitEvents((root) => client.initEvents(root));
+    () => import("./nodes/ListNode.js").then(({ ListNode }) => {
       registerNode(new ListNode());
     }),
   );

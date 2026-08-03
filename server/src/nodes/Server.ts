@@ -506,7 +506,7 @@ async function sendStreamingResponse(
 
   // Inline helper script (runs once, defines the replacement function)
   res.write(
-    '<script>function __jexs_defer(i,h){var e=document.getElementById(i);if(!e)return;var t=document.createElement("template");t.innerHTML=h;e.replaceWith(t.content);if(window.jexs)window.jexs.initEvents()}</script>',
+    '<script>function __jexs_defer(i,h){var e=document.getElementById(i);if(!e)return;var t=document.createElement("template");t.innerHTML=h;e.replaceWith(t.content);if(window.jexs)window.jexs.hydrate()}</script>',
   );
 
   // Stream deferred content out-of-order as each resolves

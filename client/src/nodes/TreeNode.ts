@@ -5,12 +5,7 @@ import {
   getChildGroups, describeNode, getEditMode, getTextContent, getPotentialChildKeys,
 } from "../treeUtils.js";
 import type { JexsNodeSchema } from "@jexs/core";
-
-let initEventsFn: ((root: HTMLElement) => void) | null = null;
-
-export function setInitEvents(fn: (root: HTMLElement) => void): void {
-  initEventsFn = fn;
-}
+import { hydrate } from "../events.js";
 
 /** Delta describes a single tree mutation */
 export interface TreeDelta {
@@ -598,7 +593,7 @@ async function renderTree(rt: TreeRuntime): Promise<void> {
     if (el) rt.target.appendChild(el);
   }
 
-  if (initEventsFn) initEventsFn(rt.target);
+  hydrate(rt.target, rt.context);
 }
 
 /**
@@ -722,7 +717,7 @@ async function renderSubtree(rt: TreeRuntime, parentPath: string): Promise<void>
     if (el) container.appendChild(el);
   }
 
-  if (initEventsFn) initEventsFn(container);
+  hydrate(container, rt.context);
 }
 
 /** Re-render a single node element (replace in-place) */
@@ -737,7 +732,7 @@ async function renderNodeEl(rt: TreeRuntime, path: string): Promise<void> {
   if (!newEl) return;
 
   oldEl.replaceWith(newEl);
-  if (initEventsFn) initEventsFn(newEl);
+  hydrate(newEl, rt.context);
 }
 
 // ══════════════════════════════════════════════

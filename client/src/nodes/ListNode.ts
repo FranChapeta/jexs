@@ -1,12 +1,7 @@
 import { Node, Context, NodeValue } from "@jexs/core";
 import { resolve, resolveObj } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
-
-let initEventsFn: ((root: HTMLElement) => void) | null = null;
-
-export function setInitEvents(fn: (root: HTMLElement) => void): void {
-  initEventsFn = fn;
-}
+import { hydrate } from "../events.js";
 
 /**
  * ListNode — Client-side list management.
@@ -23,7 +18,7 @@ export class ListNode extends Node {
     "list-add": {
       type: "string",
       output: "object",
-      markdownDescription: "Clones a `<template>` element and appends the clone to a list container.\nWires up event handlers on the new element via `initEventsFn`. Returns the cloned element.",
+      markdownDescription: "Clones a `<template>` element and appends the clone to a list container.\nHydrates event handlers on the new element. Returns the cloned element.",
       examples: [
         "{ \"list-add\": \"#items\", \"template\": \"#item-template\" }",
       ],
@@ -113,7 +108,7 @@ export class ListNode extends Node {
         const clone = tmpl.content.cloneNode(true) as DocumentFragment;
         const firstEl = clone.firstElementChild as HTMLElement;
         list.appendChild(clone);
-        if (firstEl && initEventsFn) initEventsFn(firstEl);
+        if (firstEl) hydrate(firstEl, context);
         return firstEl;
       }
       return null;
@@ -198,7 +193,7 @@ export class ListNode extends Node {
           if (input && item[field] !== undefined) input.value = String(item[field]);
         }
         list.appendChild(clone);
-        if (firstEl && initEventsFn) initEventsFn(firstEl);
+        if (firstEl) hydrate(firstEl, context);
       }
 
       return items;
