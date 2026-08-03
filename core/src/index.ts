@@ -27,6 +27,11 @@ export { createHttpError, isHttpError } from "./errors.js";
 export { TimerNode } from "./nodes/Timer.js";
 export { FetchNode } from "./nodes/FetchNode.js";
 
+// Dynamic forwarder — construct with (keys, forwardFn) and registerNode() it to
+// proxy those keys to a remote resolver (e.g. Electron main over IPC). Not a
+// default coreNode; instantiated on-demand by the host.
+export { ProxyNode } from "./nodes/Proxy.js";
+
 import { Node } from "./nodes/Node.js";
 import { VariablesNode } from "./nodes/Variables.js";
 import { ElementNode } from "./nodes/Element.js";

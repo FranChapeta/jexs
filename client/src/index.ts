@@ -1,4 +1,4 @@
-import { registerNode, WorkerNode, createResolver, coreNodes, Node } from "@jexs/core";
+import { registerNode, WorkerNode, ProxyNode, createResolver, coreNodes, Node } from "@jexs/core";
 import { DomNode } from "./nodes/DomNode.js";
 import { AudioNode } from "./nodes/AudioNode.js";
 import { StorageNode } from "./nodes/StorageNode.js";
@@ -43,6 +43,19 @@ if (typeof window !== "undefined") {
   // `thread` node — runs `do` steps on a resolver Web Worker. The leaf bundle is
   // only FETCHED when the first `thread` step runs (URL resolved, not loaded).
   registerNode(new WorkerNode(makeModuleWorker(new URL("./resolverWorker.js", import.meta.url))));
+
+  // Auto-forward main-process node calls (query, file, dialog, window, …) to a
+  // native host over its IPC bridge, so they can be authored directly in renderer
+  // JSON. First-wins registration means only the keys the renderer LACKS are
+  // proxied; local nodes (dom, var, storage, …) stay local. Inert in a plain
+  // browser with no host bridge.
+  const host = (window as unknown as {
+    jexsHost?: { keys?: string[]; invoke?: (call: unknown) => Promise<unknown> };
+  }).jexsHost;
+  if (host?.keys && host.invoke) {
+    const invoke = host.invoke.bind(host);
+    registerNode(new ProxyNode(host.keys, (call) => invoke(call)));
+  }
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => hydrate());
