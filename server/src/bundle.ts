@@ -4,7 +4,7 @@
 // sharing one @jexs/core (a single bundle, so the resolver singleton is one). The
 // server prefers this local bundle over @jexs/client's prebuilt one when present.
 
-import { mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync, copyFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import * as esbuild from "esbuild";
@@ -23,6 +23,11 @@ function clientDistDir(): string {
  * are skipped since @jexs/client already wires them. esbuild config mirrors
  * @jexs/client's own `build:browser` (ESM + splitting + the shared workers), so
  * the worker/service-worker cross-references resolve in the output dir.
+ *
+ * Emits only compiled output (no HTML): pages are JSON templates in `src/`,
+ * resolved to HTML at runtime. The @jexs/server SSR path renders them directly,
+ * and the electron runner resolves a shell template that `{ file }`-imports the
+ * page over `app://` — neither needs a build-time page file.
  */
 export async function bundleClient(
   projectDir: string,
@@ -69,11 +74,6 @@ export async function bundleClient(
     minify: true,
     target: "es2022",
     absWorkingDir: projectDir,
-    // Re-emit the HTML shells + raw templates after every (re)build.
-    plugins: [{
-      name: "jexs-pages",
-      setup(build) { build.onEnd(() => { emitPages(projectDir, out); }); },
-    }],
   };
 
   if (watch) {
@@ -88,59 +88,3 @@ export async function bundleClient(
   console.log(`jexs bundle: ${pkgs.length} third-party browser package(s) → ${out}`);
 }
 
-/**
- * Emit the generated HTML shells — the only non-JS artifact in dist/browser.
- * There is NO build-time resolution: for each flat `src/*.json` (a window entry)
- * write a minimal shell whose #app has a `load` event that `file`-loads the
- * same-named template at runtime and sets it as innerHTML (DomNode hydrates it).
- * The templates themselves stay in src/ (source, read by the `file` node), so
- * dist/browser holds only compiled/generated output. A hand-written
- * public/index.html overrides the index shell.
- */
-function emitPages(projectDir: string, outDir: string): void {
-  mkdirSync(outDir, { recursive: true });
-  const srcDir = path.join(projectDir, "src");
-  const custom = path.join(projectDir, "public", "index.html");
-  const title = readPkgName(projectDir);
-
-  const flat = existsSync(srcDir) ? readdirSync(srcDir).filter((f) => f.endsWith(".json")) : [];
-  if (flat.length === 0) {
-    writeFileSync(path.join(outDir, "index.html"),
-      existsSync(custom) ? readFileSync(custom, "utf8") : shellHtml(null, title));
-    return;
-  }
-  for (const file of flat) {
-    const name = file.slice(0, -".json".length);
-    const dest = path.join(outDir, `${name}.html`);
-    if (name === "index" && existsSync(custom)) { copyFileSync(custom, dest); continue; }
-    writeFileSync(dest, shellHtml(name, title));
-  }
-}
-
-/**
- * A minimal shell. With a `page`, #app carries a `load` event that fetches
- * `<page>.json` at runtime and mounts it (so context/params/logic resolve live);
- * without one, just an empty #app.
- */
-function shellHtml(page: string | null, title: string): string {
-  const events = page
-    ? JSON.stringify([{ type: "load", do: [
-        { file: `${page}.json`, as: "__root" },
-        { setHtml: ["#app", { var: "$__root" }] },
-      ] }])
-    : null;
-  const app = events ? `<div id="app" data-jexs-events='${events}'></div>` : `<div id="app"></div>`;
-  return (
-    `<!doctype html>\n<html>\n<head>\n` +
-    `<meta charset="utf-8" />\n<meta name="viewport" content="width=device-width, initial-scale=1" />\n` +
-    `<title>${title}</title>\n<script type="module" src="./client.js"></script>\n</head>\n` +
-    `<body>${app}</body>\n</html>\n`
-  );
-}
-
-function readPkgName(projectDir: string): string {
-  try {
-    const pkg = JSON.parse(readFileSync(path.join(projectDir, "package.json"), "utf8")) as { name?: string };
-    return pkg.name ?? "Jexs";
-  } catch { return "Jexs"; }
-}

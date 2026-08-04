@@ -203,11 +203,12 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean): string {
 
 // ── Renderer page template ──────────────────────────────────────────────────
 //
-// The root UI as a JSON Element tree (body content). `jexs bundle` ships it raw;
-// the generated shell's #app has a `load` event that `file`-fetches and mounts it
-// at RUNTIME, so `{var: ...}`, `if`, and nested `{file: ...}` includes all resolve
-// with live context/params. Add interactivity with the `events` key; load nested
-// components with `{ "file": "components/card.json" }` inside your handlers.
+// The root UI as a JSON Element tree (body content). It stays raw JSON in src/;
+// a shell template `{ file }`-imports it and the whole document is resolved at
+// RUNTIME (in the electron main process, or the @jexs server), so `{var: ...}`,
+// `if`, and nested `{file: ...}` includes all resolve with live context/params.
+// The client then hydrates it. Add interactivity with the `events` key; load
+// nested components with `{ "file": "components/card.json" }`.
 
 function pageTemplate(title: string, description: string): unknown {
   return {
@@ -291,9 +292,10 @@ async function main(): Promise<void> {
   mkdirSync(join(dir, ".vscode"));
   mkdirSync(join(dir, ".claude"));
   if (useElectron) {
-    // src/ holds the renderer's page template (index.json), which `jexs bundle`
-    // renders to dist/browser/index.html. No app/ by default — the runner opens
-    // the window; add app/main.json only for custom main-process startup.
+    // src/ holds the renderer's page templates (index.json, …). `jexs bundle`
+    // compiles only JS; the runner serves a generated shell over app:// that mounts
+    // the template at runtime. No app/ by default — the runner opens the index.json
+    // window; add app/main.json only for custom main-process startup.
     mkdirSync(join(dir, "src"));
   } else if (useServer) {
     // app/ holds the JSON templates the resolver loads via FileNode (its default
@@ -325,8 +327,8 @@ async function main(): Promise<void> {
   if (useElectron) {
     // No JS bootstrap: `jexs bundle` builds the renderer (dist/browser, served
     // over app://), then `jexs-electron` (from @jexs/electron) opens the window
-    // and runs app/main.json against the main-process resolver. `build` packages
-    // a distributable with electron-builder.
+    // showing src/index.json — or runs app/main.json against the main-process
+    // resolver if present. `build` packages a distributable with electron-builder.
     scripts.dev = "jexs bundle && jexs-electron";
     scripts.bundle = "jexs bundle";
     scripts.build = "jexs bundle && electron-builder";
@@ -486,11 +488,11 @@ async function main(): Promise<void> {
     // page — src/index.json. For custom main-process startup (menus, extra windows,
     // tray) add an optional app/main.json and the runner will run it instead.
 
-    // src/index.json — the renderer page, authored as a JSON Element tree. `jexs
-    // bundle` renders it to dist/browser/index.html at build time (ElementNode →
-    // HTML) and injects the client script; the client hydrates any `events`. Main-
-    // process nodes (query, file, dialog, …) are auto-forwarded, so call them
-    // directly from renderer JSON.
+    // src/index.json — the renderer page, authored as a JSON Element tree. Opening
+    // a window resolves a shell that `{ file }`-imports this template in the main
+    // process (ElementNode → HTML, doctype + client script included) and serves it
+    // over app://; the client hydrates any `events`. Main-process nodes (query,
+    // file, dialog, …) are auto-forwarded, so call them directly from renderer JSON.
     writeFileSync(
       join(dir, "src", "index.json"),
       JSON.stringify(
@@ -556,13 +558,14 @@ async function main(): Promise<void> {
       );
     }
   } else {
-    // Client-only: the page as a JSON Element tree. `jexs bundle` renders it to
-    // dist/browser/index.html (ElementNode → HTML) and injects the client script;
-    // the client hydrates any `events`.
+    // Client-only: the page as a JSON Element tree. `jexs bundle` compiles the
+    // renderer to dist/browser (JS only); serve it behind a host that resolves the
+    // template into HTML and injects the client script (electron, or a @jexs
+    // server) — the client then hydrates it.
     writeFileSync(
       join(dir, "src", "index.json"),
       JSON.stringify(
-        pageTemplate(projectName, "Edit src/index.json — it's rendered to HTML by `jexs bundle`. Add interactivity with the events key; the client hydrates it."),
+        pageTemplate(projectName, "Edit src/index.json — the page template, resolved to HTML by the host and hydrated by the client. Add interactivity with the events key."),
         null, 2,
       ) + "\n",
     );
