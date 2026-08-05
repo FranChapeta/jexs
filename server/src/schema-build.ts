@@ -75,16 +75,19 @@ function mergeForMcp(schemas: PackageSchema[]): {
   byKey: Record<string, unknown>;
   byNode: Record<string, unknown>;
   extraDefs: Record<string, unknown>;
+  packages: string[];
 } {
   const byKey: Record<string, unknown> = {};
   const byNode: Record<string, unknown> = {};
   const extraDefs: Record<string, unknown> = {};
+  const packages: string[] = [];
   for (const s of schemas) {
     Object.assign(byKey, s.byKey);
     Object.assign(byNode, s.byNode);
     Object.assign(extraDefs, s.extraDefs ?? {});
+    if (s.packageName) packages.push(s.packageName);
   }
-  return { byKey, byNode, extraDefs };
+  return { byKey, byNode, extraDefs, packages };
 }
 
 /**
