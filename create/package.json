@@ -1,6 +1,6 @@
 {
   "name": "@jexs/create",
-  "version": "0.8.4",
+  "version": "0.8.6",
   "license": "MIT",
   "description": "Scaffold a new Jexs project",
   "keywords": [
