@@ -6,12 +6,14 @@
     "client",
     "gl",
     "server",
+    "electron",
     "mcp",
     "create"
   ],
   "devDependencies": {
     "@jexs/client": "*",
     "@jexs/core": "*",
+    "@jexs/electron": "*",
     "@jexs/gl": "*",
     "@jexs/physics": "*",
     "@jexs/server": "*",
@@ -21,8 +23,8 @@
     "typescript": "^5.3.0"
   },
   "scripts": {
-    "build": "tsc -b core physics client gl server create --force && npm run build:schema",
-    "build:clean": "tsc -b core physics client gl server create --clean",
+    "build": "tsc -b core physics client gl server electron create --force && npm run build:schema",
+    "build:clean": "tsc -b core physics client gl server electron create --clean",
     "build:schema": "jexs schema && tsx scripts/verify-schema.ts",
     "build:browser": "esbuild client=client/src/index.ts sw=client/src/sw.ts physicsWorker=client/src/physicsWorker.ts resolverWorker=client/src/resolverWorker.ts --bundle --format=esm --splitting --outdir=client/dist/browser --entry-names=[name] --chunk-names=chunks/[hash] --minify --sourcemap --target=es2022",
     "test": "node --import tsx --test core/test/*.test.ts"

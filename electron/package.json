@@ -3,7 +3,14 @@
   "version": "0.2.0",
   "license": "MIT",
   "description": "Electron runtime for Jexs — window/dialog/app nodes plus a JSON-driven main-process runner (jexs-electron)",
-  "keywords": ["jexs", "electron", "desktop", "steam", "ipc", "declarative"],
+  "keywords": [
+    "jexs",
+    "electron",
+    "desktop",
+    "steam",
+    "ipc",
+    "declarative"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/FranChapeta/jexs.git",
@@ -14,25 +21,37 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "jexs": { "nodes": "dist/index.js", "env": "node" },
-  "bin": { "jexs-electron": "dist/runner.js" },
-  "exports": {
-    ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts" }
+  "jexs": {
+    "nodes": "dist/index.js",
+    "env": "node"
   },
-  "files": ["dist", "preload.cjs", "!dist/**/*.map"],
+  "bin": {
+    "jexs-electron": "dist/runner.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "preload.cjs",
+    "!dist/**/*.map"
+  ],
   "scripts": {
     "build": "tsc -b"
   },
   "peerDependencies": {
+    "@jexs/client": "^0.8.0",
     "@jexs/core": "^1.0.0",
     "@jexs/server": "^0.8.5",
-    "@jexs/client": "^0.8.0",
     "electron": ">=28"
   },
   "optionalDependencies": {
     "steamworks.js": "^0.4.0"
   },
   "devDependencies": {
-    "electron": "^30.0.0"
+    "electron": "^43.3.0"
   }
 }
