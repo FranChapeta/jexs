@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
  * Throwaway verification script — validates a handful of sample expressions
- * against the generated combined.schema.json using AJV 2020.
+ * against the combined schema that `jexs schema` generates for this repo
+ * (.jexs/combined.schema.json) using AJV 2020.
  *
- * Run: tsx scripts/verify-schema.ts
+ * Run: `npm run build:schema` (builds the schema, then runs this).
  */
 
 import { readFileSync } from "node:fs";
@@ -15,7 +16,7 @@ import Ajv2020 from "ajv/dist/2020.js";
 const Ajv = (Ajv2020 as any).default ?? Ajv2020;
 
 const schema = JSON.parse(
-  readFileSync(resolve("create/dist/combined.schema.json"), "utf-8"),
+  readFileSync(resolve(".jexs/combined.schema.json"), "utf-8"),
 );
 
 const ajv = new Ajv({ strict: false, allErrors: true });

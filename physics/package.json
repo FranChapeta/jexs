@@ -18,7 +18,7 @@
   "exports": {
     ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts" }
   },
-  "files": ["dist"],
+  "files": ["dist", "!dist/schema.json"],
   "peerDependencies": {
     "@jexs/core": "^1.0.0"
   }

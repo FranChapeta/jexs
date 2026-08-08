@@ -33,6 +33,7 @@
   },
   "files": [
     "dist",
+    "!dist/schema.json",
     "!dist/**/*.map",
     "!dist/browser"
   ],
