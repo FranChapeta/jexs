@@ -321,7 +321,7 @@ async function main(): Promise<void> {
   if (!useServer) devDeps["@jexs/server"] = "latest";
   if (useServer && !useElectron) devDeps.concurrently = "^8.2.0";
   if (useTailwind) devDeps.tailwindcss = "^3.4.0";
-  if (useElectron) { devDeps.electron = "^30.0.0"; devDeps["electron-builder"] = "^24.13.0"; }
+  if (useElectron) { devDeps.electron = "^43.0.0"; devDeps["electron-builder"] = "^24.13.0"; }
 
   const scripts: Record<string, string> = {};
   if (useElectron) {

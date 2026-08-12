@@ -110,6 +110,7 @@ A few rules govern how every expression is resolved. Worth internalizing — the
 | [`@jexs/client`](client) | Browser DOM nodes, fetch, audio, WebSocket, lazy-loaded entrypoint | browser | [![npm](https://img.shields.io/npm/v/@jexs/client.svg)](https://www.npmjs.com/package/@jexs/client) |
 | [`@jexs/gl`](gl) | WebGL rendering — lighting, shadows, SSAO, particles, text, post-processing | browser | [![npm](https://img.shields.io/npm/v/@jexs/gl.svg)](https://www.npmjs.com/package/@jexs/gl) |
 | [`@jexs/server`](server) | HTTP, routing, DB (SQLite / MySQL), sessions, OAuth, email, web-push | Node.js | [![npm](https://img.shields.io/npm/v/@jexs/server.svg)](https://www.npmjs.com/package/@jexs/server) |
+| [`@jexs/electron`](electron) | Desktop shell — windows, native dialogs, app paths, and a JSON-driven main process | Node.js + browser | [![npm](https://img.shields.io/npm/v/@jexs/electron.svg)](https://www.npmjs.com/package/@jexs/electron) |
 | [`@jexs/mcp`](mcp) | MCP server exposing node introspection to Claude Code / Claude Desktop | Node.js | [![npm](https://img.shields.io/npm/v/@jexs/mcp.svg)](https://www.npmjs.com/package/@jexs/mcp) |
 | [`@jexs/create`](create) | `npm create jexs` project scaffolder | Node.js | [![npm](https://img.shields.io/npm/v/@jexs/create.svg)](https://www.npmjs.com/package/@jexs/create) |
 

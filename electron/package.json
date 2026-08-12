@@ -7,7 +7,6 @@
     "jexs",
     "electron",
     "desktop",
-    "steam",
     "ipc",
     "declarative"
   ],
@@ -47,9 +46,6 @@
     "@jexs/core": "^1.0.0",
     "@jexs/server": "^0.8.5",
     "electron": ">=28"
-  },
-  "optionalDependencies": {
-    "steamworks.js": "^0.4.0"
   },
   "devDependencies": {
     "electron": "^43.3.0"
