@@ -1,5 +1,7 @@
-import { Node, Context, NodeValue } from "@jexs/core";
+import { Node, Context, NodeValue, resolve } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
+
+type AppPathName = Parameters<Electron.App["getPath"]>[0];
 
 /** App lifecycle + well-known paths. */
 export class AppNode extends Node {
@@ -23,8 +25,11 @@ export class AppNode extends Node {
     return null;
   }
 
-  async "app-path"(def: Record<string, unknown>, _context: Context): Promise<NodeValue> {
-    const { app } = await import("electron");
-    return app.getPath(String(def["app-path"]) as Parameters<typeof app.getPath>[0]) as NodeValue;
+  // The path name may itself be an expression, so resolve the value first.
+  "app-path"(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def["app-path"], context, async (name) => {
+      const { app } = await import("electron");
+      return app.getPath(String(name) as AppPathName) as NodeValue;
+    });
   }
 }

@@ -1,8 +1,45 @@
-import { Node, Context, NodeValue } from "@jexs/core";
+import { Node, Context, NodeValue, resolveObj } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
 /** Element type of OpenDialogOptions.properties (the string-literal union). */
 type OpenProp = NonNullable<Electron.OpenDialogOptions["properties"]>[number];
+
+const MESSAGE_TYPES = ["none", "info", "error", "question", "warning"] as const;
+type MessageType = (typeof MESSAGE_TYPES)[number];
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Build OpenDialogOptions from resolved siblings. Pure — no electron runtime. */
+export function openDialogOptions(r: Record<string, unknown>): Electron.OpenDialogOptions {
+  const opts: Electron.OpenDialogOptions = {};
+  if (typeof r["dialog-open"] === "string") opts.title = r["dialog-open"];
+  if (typeof r.defaultPath === "string") opts.defaultPath = r.defaultPath;
+  if (Array.isArray(r.properties)) {
+    opts.properties = r.properties.filter((p): p is OpenProp => typeof p === "string");
+  }
+  if (Array.isArray(r.filters)) {
+    opts.filters = r.filters.flatMap((f) =>
+      isObject(f) && typeof f.name === "string" && Array.isArray(f.extensions)
+        ? [{ name: f.name, extensions: f.extensions.map(String) }]
+        : [],
+    );
+  }
+  return opts;
+}
+
+/** Build MessageBoxOptions from resolved siblings. Pure — no electron runtime. */
+export function messageBoxOptions(r: Record<string, unknown>): Electron.MessageBoxOptions {
+  const opts: Electron.MessageBoxOptions = {
+    message: typeof r["dialog-message"] === "string" ? r["dialog-message"] : "",
+  };
+  if (Array.isArray(r.buttons)) opts.buttons = r.buttons.map(String);
+  if (typeof r.title === "string") opts.title = r.title;
+  if (typeof r.detail === "string") opts.detail = r.detail;
+  if (MESSAGE_TYPES.includes(r.type as MessageType)) opts.type = r.type as MessageType;
+  return opts;
+}
 
 /**
  * Native file / message dialogs. The primary value is the dialog title / the
@@ -48,37 +85,20 @@ export class DialogNode extends Node {
     },
   };
 
-  async "dialog-open"(def: Record<string, unknown>, _context: Context): Promise<NodeValue> {
-    const { dialog } = await import("electron");
-    const opts: Electron.OpenDialogOptions = {};
-    if (typeof def["dialog-open"] === "string") opts.title = def["dialog-open"];
-    if (typeof def.defaultPath === "string") opts.defaultPath = def.defaultPath;
-    if (Array.isArray(def.properties)) {
-      opts.properties = def.properties.filter((p): p is OpenProp => typeof p === "string");
-    }
-    if (Array.isArray(def.filters)) {
-      opts.filters = def.filters.flatMap((f) =>
-        this.isObject(f) && typeof f.name === "string" && Array.isArray(f.extensions)
-          ? [{ name: f.name, extensions: f.extensions.map(String) }]
-          : [],
-      );
-    }
-    const res = await dialog.showOpenDialog(opts);
-    return res.filePaths as NodeValue;
+  // Siblings arrive unresolved, so resolve the whole def before building options.
+  ["dialog-open"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveObj(def, context, async (r) => {
+      const { dialog } = await import("electron");
+      const res = await dialog.showOpenDialog(openDialogOptions(r));
+      return res.filePaths as NodeValue;
+    });
   }
 
-  async "dialog-message"(def: Record<string, unknown>, _context: Context): Promise<NodeValue> {
-    const { dialog } = await import("electron");
-    const opts: Electron.MessageBoxOptions = {
-      message: typeof def["dialog-message"] === "string" ? def["dialog-message"] : "",
-    };
-    if (Array.isArray(def.buttons)) opts.buttons = def.buttons.map(String);
-    if (typeof def.title === "string") opts.title = def.title;
-    if (typeof def.detail === "string") opts.detail = def.detail;
-    if (def.type === "none" || def.type === "info" || def.type === "error" || def.type === "question" || def.type === "warning") {
-      opts.type = def.type;
-    }
-    const res = await dialog.showMessageBox(opts);
-    return res.response as NodeValue;
+  ["dialog-message"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveObj(def, context, async (r) => {
+      const { dialog } = await import("electron");
+      const res = await dialog.showMessageBox(messageBoxOptions(r));
+      return res.response as NodeValue;
+    });
   }
 }
