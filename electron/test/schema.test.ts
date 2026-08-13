@@ -22,10 +22,17 @@ function validAt(ref: string, expr: unknown): boolean {
   return ajv.compile({ $ref: `jexs://combined#/${ref}` })(expr);
 }
 
+const ELECTRON_OPS = [
+  "window-open", "window-close", "window-focus", "window-min", "window-max",
+  "window-restore", "window-reload", "window-devtools", "window-title",
+  "window-bounds", "window-list",
+  "dialog-open", "dialog-message", "app-quit", "app-path",
+];
+
 test("every electron op is present in byKey", () => {
   const byKey = (combined as unknown as { byKey: Record<string, unknown> }).byKey;
   assert.ok(byKey && Object.keys(byKey).length > 0, "combined schema has no byKey");
-  for (const op of ["window", "dialog-open", "dialog-message", "app-quit", "app-path"]) {
+  for (const op of ELECTRON_OPS) {
     assert.ok(op in byKey, `${op} missing from byKey`);
   }
 });
@@ -48,15 +55,52 @@ test("every declared example validates against the combined schema", () => {
   }
 });
 
-test("window accepts its declared siblings and expressions in them", () => {
-  assert.equal(validAt("$defs/exprFlat", { window: "settings.json" }), true);
+test("window-open accepts its declared siblings and expressions in them", () => {
+  assert.equal(validAt("$defs/exprFlat", { "window-open": "settings.json" }), true);
   assert.equal(
-    validAt("$defs/exprFlat", { window: "settings.json", width: 480, height: 320, title: "S" }),
+    validAt("$defs/exprFlat", { "window-open": "settings.json", width: 480, height: 320, title: "S" }),
     true,
   );
   // Siblings are resolved now, so an expression in one must validate.
   assert.equal(
-    validAt("$defs/exprFlat", { window: "settings.json", width: { var: "$w" } }),
+    validAt("$defs/exprFlat", { "window-open": "settings.json", width: { var: "$w" } }),
+    true,
+  );
+  assert.equal(
+    validAt("$defs/exprFlat", { "window-open": "settings.json", name: "cfg", frame: false, titleBarStyle: "hidden" }),
+    true,
+  );
+  assert.equal(
+    validAt("$defs/exprFlat", { "window-open": "settings.json", titleBarStyle: "nonsense" }),
+    false,
+  );
+});
+
+// Opening is `window-open`, so `window` is free to be a target sibling. If the
+// open op still owned the bare `window` key, {"window": ..., "window-title": ...}
+// would dispatch on whichever key came first in the object.
+test("window is a sibling, not a handler key", () => {
+  const byKey = (combined as unknown as { byKey: Record<string, unknown> }).byKey;
+  assert.ok(!("window" in byKey), "`window` must not be a dispatch key");
+});
+
+// No-arg ops carry the target in the primary slot; valued ops take their value
+// there and target through the `window` sibling.
+test("no-arg window ops accept a name or true", () => {
+  for (const op of ["window-close", "window-focus", "window-min", "window-max", "window-restore"]) {
+    assert.equal(validAt("$defs/exprFlat", { [op]: true }), true, `${op} true`);
+    assert.equal(validAt("$defs/exprFlat", { [op]: "settings" }), true, `${op} name`);
+  }
+});
+
+test("valued window ops target through the window sibling", () => {
+  assert.equal(validAt("$defs/exprFlat", { "window-title": "Untitled" }), true);
+  assert.equal(
+    validAt("$defs/exprFlat", { "window-title": "Untitled", window: "settings" }),
+    true,
+  );
+  assert.equal(
+    validAt("$defs/exprFlat", { "window-bounds": { width: 900, height: 600 }, window: "main" }),
     true,
   );
 });
