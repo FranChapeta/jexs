@@ -8,7 +8,7 @@ import path from "node:path";
 import { createResolver } from "@jexs/core";
 import type { Context } from "@jexs/core";
 import { loadNodePackages, entryContext } from "@jexs/server";
-import { openWindow, shellTemplate } from "./nodes/Window.js";
+import { openWindow, reopenPrimary, shellTemplate, windowNameOf } from "./nodes/Window.js";
 
 const projectDir = process.cwd();
 
@@ -38,9 +38,14 @@ async function main(): Promise<void> {
   const templatesDir = path.join(projectDir, "src");
   const browserDir = path.join(projectDir, "dist", "browser");
 
-  /** The one place a main-process context is built. */
-  function mainContext(dir: string = templatesDir): Context {
-    return entryContext(dir);
+  function mainContext(win?: BrowserWindow | null, dir: string = templatesDir): Context {
+    const ctx = entryContext(dir);
+    if (win) {
+      const name = windowNameOf(win);
+      if (name) ctx.windowName = name;
+      ctx.windowId = win.id;
+    }
+    return ctx;
   }
 
   protocol.handle("app", async (req) => {
@@ -62,8 +67,10 @@ async function main(): Promise<void> {
     return new Response("Not found", { status: 404 });
   });
 
-  ipcMain.handle("jexs:invoke", (_event, call: unknown) =>
-    Promise.resolve(resolve(call, mainContext())));
+  // The sender's window becomes the implicit target, so a page can say
+  // { "window-close": true } and mean its own window.
+  ipcMain.handle("jexs:invoke", (event, call: unknown) =>
+    Promise.resolve(resolve(call, mainContext(BrowserWindow.fromWebContents(event.sender)))));
 
   const mainKeys = [...new Set(nodes.flatMap((n) => n.handlerKeys ?? []))];
   ipcMain.on("jexs:keys", (event) => { event.returnValue = mainKeys; });
@@ -76,10 +83,10 @@ async function main(): Promise<void> {
   });
 
   // Dock click on macOS: the app is running but unreachable without a window.
-  // This reopens the default entry, not whatever `app/main.json` opened first —
-  // Phase 1's window registry is what will let it restore the real thing.
+  // Replays the primary window's options so a custom page or size comes back,
+  // rather than a bare default.
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) void openWindow({ title: app.getName() });
+    if (BrowserWindow.getAllWindows().length === 0) void reopenPrimary({ title: app.getName() });
   });
 
   // Global shortcuts are an OS-level registration; release them explicitly.
@@ -88,7 +95,7 @@ async function main(): Promise<void> {
   // `app/main.json` resolves against the project root (FileNode falls back to the
   // resolver root without FILE_DIR, then rebases to <proj>/app for its includes).
   if (existsSync(path.join(projectDir, "app", "main.json"))) {
-    await Promise.resolve(resolve({ file: "app/main.json" }, mainContext(projectDir)));
+    await Promise.resolve(resolve({ file: "app/main.json" }, mainContext(null, projectDir)));
   } else {
     await openWindow({ title: app.getName() });
   }
