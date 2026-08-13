@@ -6,9 +6,8 @@ export type {
   JexsType, JexsOutput, JexsPropertySchema, JexsMethodSchema, JexsNodeSchema,
 } from "./schema.js";
 
-// ── Schema generation (build-time only; not used by the runtime resolver) ──
 export {
-  buildPackageSchema, mergePackageSchemas, expandProperty, GLOBAL_KEYS,
+  buildPackageSchema, mergePackageSchemas,
   type PackageSchema, type CombinedSchema, type EmittedSchema,
   type EmittedMethodSchema, type EmittedNodeSchema, type SchemaBuildOptions,
 } from "./schema-gen.js";
@@ -82,11 +81,9 @@ export {
 } from "./workerRuntime.js";
 
 // ── Worker pool + the `thread` node (run resolver steps on another thread) ──
-// The pool (lazy-per-key + idle reaping) is shared with runOnWorker; WorkerNode
-// rides on it directly for one-shot request/response. The env worker constructor
-// is passed to `new WorkerNode(makeWorker)` in the client/server entry.
-export {
-  acquireWorker, releaseWorker, peekWorker, terminateWorker,
-  type PooledWorker, type TaskWorkerLike,
-} from "./workerPool.js";
+// The pool itself (lazy-per-key + idle reaping) is internal: runOnWorker and
+// WorkerNode ride on it, and nothing outside core drives it directly. Only the
+// worker shape a host must supply is public — the env worker constructor is
+// passed to `new WorkerNode(makeWorker)` in the client/server entry.
+export { type TaskWorkerLike } from "./workerPool.js";
 export { WorkerNode } from "./nodes/Worker.js";
