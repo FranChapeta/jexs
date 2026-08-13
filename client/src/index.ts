@@ -1,10 +1,53 @@
-import { registerNode, WorkerNode, ProxyNode, createResolver, coreNodes, Node } from "@jexs/core";
+import {
+  registerNode, WorkerNode, ProxyNode, createResolver, resolve, runSteps, childContext,
+  coreNodes, Node,
+} from "@jexs/core";
 import { DomNode } from "./nodes/DomNode.js";
 import { AudioNode } from "./nodes/AudioNode.js";
 import { StorageNode } from "./nodes/StorageNode.js";
 import { registerComputeLazy, registerDomLazy } from "./registerNodes.js";
 import { makeModuleWorker } from "./makeWorker.js";
 import { hydrate, pageContext } from "./events.js";
+import { serializable } from "./serializable.js";
+
+/**
+ * The bridge a native host (Electron main) injects. Every member is optional so
+ * an older host, or a plain browser, simply gets fewer capabilities rather than
+ * an error.
+ */
+/** A single node call to resolve here — one proxied op. */
+interface HostCall {
+  id: number;
+  call: unknown;
+}
+
+/** A step array to run here, with `params` scoped into it. */
+interface HostSteps {
+  id: number;
+  steps: unknown[];
+  params?: Record<string, unknown>;
+}
+
+/** Exactly one of the two, discriminated by the presence of `steps`. */
+type HostMessage = HostCall | HostSteps;
+
+interface JexsHost {
+  /** Handler keys the host owns, read synchronously before any step runs. */
+  keys?: string[];
+  /** Forward a locally-resolved call to the host. */
+  invoke?: (call: unknown) => Promise<unknown>;
+  /** Report which keys live here, so the host can proxy them back. */
+  announce?: (keys: string[]) => void;
+  /** Keys the host registered after this page loaded. */
+  onKeys?: (cb: (added: string[]) => void) => void;
+  /**
+   * Receive work pushed from the host. Either a single node call, or a step
+   * array with optional scoped params — never both.
+   */
+  onCall?: (cb: (message: HostMessage) => void) => void;
+  /** Answer a pushed call on its correlation id. */
+  reply?: (id: number, value: unknown, error?: string) => void;
+}
 
 /** Eager client node set, combined with coreNodes to build the browser resolver. */
 export const clientNodes: Node[] = [
@@ -29,7 +72,7 @@ export { ServiceWorkerNode } from "./nodes/ServiceWorkerNode.js";
 
 // Browser: build the resolver, expose a debug/hydration handle, and auto-hydrate.
 if (typeof window !== "undefined") {
-  createResolver([...coreNodes, ...clientNodes]);
+  const resolver = createResolver([...coreNodes, ...clientNodes]);
   // `window.jexs` is a small handle: `context` for inspecting/seeding shared state,
   // `hydrate` for (re)binding events on server-injected content (see Server SSR).
   (window as unknown as Record<string, unknown>).jexs = { context: pageContext, hydrate };
@@ -49,12 +92,56 @@ if (typeof window !== "undefined") {
   // JSON. First-wins registration means only the keys the renderer LACKS are
   // proxied; local nodes (dom, var, storage, …) stay local. Inert in a plain
   // browser with no host bridge.
-  const host = (window as unknown as {
-    jexsHost?: { keys?: string[]; invoke?: (call: unknown) => Promise<unknown> };
-  }).jexsHost;
+  const host = (window as unknown as { jexsHost?: JexsHost }).jexsHost;
   if (host?.keys && host.invoke) {
     const invoke = host.invoke.bind(host);
-    registerNode(new ProxyNode(host.keys, (call) => invoke(call)));
+    const toHost = new ProxyNode(host.keys, (call) => invoke(call));
+    registerNode(toHost);
+
+    // The host can register nodes after this page loaded, so its key set is not
+    // frozen at preload time. Re-registering installs the new keys; only ones
+    // the resolver lacks are added, so local handlers still win.
+    host.onKeys?.((added) => {
+      if (toHost.addKeys(added).length > 0) registerNode(toHost);
+    });
+
+    // The mirror direction: tell the host which keys live here, so it can proxy
+    // DOM ops back. Keys this renderer only holds VIA the host are excluded --
+    // announcing those would send a key back where it came from, and with more
+    // than one window that becomes an infinite forwarding loop.
+    if (host.announce) {
+      const announce = host.announce.bind(host);
+      const own = (ks: Iterable<string>) => [...ks].filter((k) => !toHost.claims(k));
+      announce(own(resolver.keys));
+      // registerNode can run at any time (a lazy module loading, a plugin), so
+      // the host is kept current rather than handed a boot-time snapshot.
+      resolver.onKeysChange((added) => {
+        const fresh = own(added);
+        if (fresh.length > 0) announce(fresh);
+      });
+    }
+
+    // Run work pushed from the host against the SAME pageContext DOM event
+    // handlers use, so host-driven state is visible to the page and vice versa.
+    // `steps` gets a child scope for its params, which also gives `as` + `bubble`
+    // write-through to pageContext, matching FileNode's params semantics.
+    if (host.onCall && host.reply) {
+      const reply = host.reply.bind(host);
+      host.onCall((message) => {
+        Promise.resolve()
+          .then(() => {
+            if (!("steps" in message)) return resolve(message.call, pageContext);
+            const scope = message.params
+              ? childContext(pageContext, message.params)
+              : pageContext;
+            return runSteps(message.steps, scope);
+          })
+          .then(
+            (value) => reply(message.id, serializable(value)),
+            (err) => reply(message.id, null, String((err as Error)?.message ?? err)),
+          );
+      });
+    }
   }
 
   if (document.readyState === "loading") {
