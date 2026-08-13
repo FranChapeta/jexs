@@ -108,6 +108,12 @@ export abstract class Node {
   }
 
   /**
+   * Release anything this node owns, called when a resolver it belongs to is
+   * destroyed or replaced.
+   */
+  dispose?(): void;
+
+  /**
    * Resolve this node to a concrete value.
    * matchedKey is the key that triggered dispatch (e.g. "concat", "if").
    * Default: calls this[matchedKey](definition, context) via prototype.

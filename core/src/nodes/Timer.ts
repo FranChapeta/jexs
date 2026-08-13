@@ -18,7 +18,7 @@
  */
 
 import { Node, Context, NodeValue } from "./Node.js";
-import { resolve, resolveAll, onResolverDestroy, runSteps } from "../Resolver.js";
+import { resolve, resolveAll, runSteps } from "../Resolver.js";
 import type { JexsNodeSchema, JexsMethodSchema } from "../schema.js";
 
 // Lifecycle ops shared by `tick` and `cron`. `start` differs per timer kind (its
@@ -48,9 +48,6 @@ interface TimerState {
 
 const ticks = new Map<string, TimerState>();
 const crons = new Map<string, TimerState>();
-
-// Auto-cleanup timers when the resolver is destroyed or replaced
-onResolverDestroy(() => TimerNode.stopAll());
 
 // ─── TimerNode ──────────────────────────────────────────────────────────────
 
@@ -149,6 +146,11 @@ export class TimerNode extends Node {
     for (const s of crons.values()) { if (s.timerId != null) clearInterval(s.timerId); }
     ticks.clear();
     crons.clear();
+  }
+
+  /** Timers outlive their resolver unless stopped, so tear them down with it. */
+  dispose(): void {
+    TimerNode.stopAll();
   }
 }
 

@@ -1,12 +1,9 @@
 import { Node, Context } from "./Node.js";
-import { resolve, resolveAll, onResolverDestroy } from "../Resolver.js";
+import { resolve, resolveAll } from "../Resolver.js";
 import type { JexsNodeSchema } from "../schema.js";
 
 // ── Seeded PRNG (mulberry32) ─────────────────────────────────────────────────
 let _seed: number | null = null;
-
-// Reset seed when resolver is destroyed so a fresh resolver starts unseeded
-onResolverDestroy(() => { _seed = null; });
 
 function seededRandom(): number {
   let t = (_seed = (_seed! + 0x6D2B79F5) | 0);
@@ -654,5 +651,10 @@ export class MathNode extends Node {
       _seed = typeof val === "number" ? val : hashString(String(val));
       return null;
     });
+  }
+
+  /** A seed set through one resolver must not leak into the next. */
+  dispose(): void {
+    _seed = null;
   }
 }
