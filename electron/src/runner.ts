@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 // jexs-electron
 
-import { app, protocol, net, ipcMain, BrowserWindow, globalShortcut } from "electron";
+import { app, protocol, net, BrowserWindow, globalShortcut } from "electron";
 import { pathToFileURL } from "node:url";
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { createResolver } from "@jexs/core";
 import type { Context } from "@jexs/core";
 import { loadNodePackages, entryContext } from "@jexs/server";
-import { openWindow, reopenPrimary, shellTemplate, windowNameOf } from "./nodes/Window.js";
+import { openWindow, reopenPrimary, shellTemplate, targetWindow, windowNameOf } from "./nodes/Window.js";
+import { installBridge, rejectAll } from "./bridge.js";
 
 const projectDir = process.cwd();
 
@@ -34,7 +35,7 @@ async function main(): Promise<void> {
   await app.whenReady();
 
   const nodes = await loadNodePackages(projectDir, { root: ".", env: "node" });
-  const resolve = createResolver(nodes);
+  const resolver = createResolver(nodes);
   const templatesDir = path.join(projectDir, "src");
   const browserDir = path.join(projectDir, "dist", "browser");
 
@@ -57,7 +58,7 @@ async function main(): Promise<void> {
       ctx._clientScript = "/client.js";
       ctx.page = rel || "index.json";
       ctx.title = app.getName();
-      const html = await Promise.resolve(resolve(shellTemplate(), ctx));
+      const html = await Promise.resolve(resolver(shellTemplate(), ctx));
       return new Response(String(html), { headers: { "content-type": "text/html; charset=utf-8" } });
     }
     const file = path.join(browserDir, rel);
@@ -67,18 +68,20 @@ async function main(): Promise<void> {
     return new Response("Not found", { status: 404 });
   });
 
-  // The sender's window becomes the implicit target, so a page can say
-  // { "window-close": true } and mean its own window.
-  ipcMain.handle("jexs:invoke", (event, call: unknown) =>
-    Promise.resolve(resolve(call, mainContext(BrowserWindow.fromWebContents(event.sender)))));
-
-  const mainKeys = [...new Set(nodes.flatMap((n) => n.handlerKeys ?? []))];
-  ipcMain.on("jexs:keys", (event) => { event.returnValue = mainKeys; });
+  // Everything that crosses the process boundary, in both directions.
+  await installBridge({
+    resolver,
+    contextFor: (win) => mainContext(win),
+    windowFor: (context) => targetWindow(undefined, context),
+  });
 
   // macOS keeps the app (and its menu bar) alive with no windows open; every
   // other platform expects the last window to end the process. Phase 3 makes
   // this conditional on an active tray, which must outlive its windows.
   app.on("window-all-closed", () => {
+    // A call in flight to a window that just vanished would never settle, and
+    // the step sequence that issued it would hang forever.
+    rejectAll("the window closed before the call completed");
     if (process.platform !== "darwin") app.quit();
   });
 
@@ -95,7 +98,7 @@ async function main(): Promise<void> {
   // `app/main.json` resolves against the project root (FileNode falls back to the
   // resolver root without FILE_DIR, then rebases to <proj>/app for its includes).
   if (existsSync(path.join(projectDir, "app", "main.json"))) {
-    await Promise.resolve(resolve({ file: "app/main.json" }, mainContext(null, projectDir)));
+    await Promise.resolve(resolver({ file: "app/main.json" }, mainContext(null, projectDir)));
   } else {
     await openWindow({ title: app.getName() });
   }
