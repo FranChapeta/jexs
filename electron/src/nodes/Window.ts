@@ -1,6 +1,7 @@
-import { Node, Context, NodeValue, resolve, resolveObj } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll, resolveObj } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { fileURLToPath } from "node:url";
+import { noWindowError, runInRenderer } from "../bridge.js";
 
 /** Absolute path to the shipped CJS preload. Compiled to dist/nodes/Window.js,
  *  so preload.cjs sits two levels up at the package root. */
@@ -310,6 +311,19 @@ export class WindowNode extends Node {
       outputDescription: "An array of `{ name, id, title, visible, minimized, maximized, focused, bounds }` objects, in the order the windows were opened.",
       examples: ["{ \"window-list\": true }"],
     },
+
+    "window-run": {
+      steps: true,
+      output: "any",
+      markdownDescription:
+        "Run steps inside a window's page, where the DOM lives.\nMost of the time this is unnecessary — a DOM op written in a main-process handler is forwarded to the default window automatically. Reach for this when you need a *specific* window, since a per-op `window` sibling is impossible: DOM ops are declared by `@jexs/client`, and one package cannot add a sibling to another package's op.\nSteps are sent unresolved and run in the target renderer against the page context, so they see the same state the page's own event handlers do.",
+      outputDescription: "Whatever the last step evaluates to, brought back across the bridge.",
+      examples: ["{ \"window-run\": [{ \"setText\": [\"#status\", \"Saved\"] }], \"window\": \"editor\" }"],
+      siblings: {
+        window: WINDOW_SIBLING,
+        params: { map: true, description: "Values merged into the steps' scope, resolved in the main process before they cross." },
+      },
+    },
   };
 
   // Siblings arrive unresolved (the resolver only routes on the matched key), so
@@ -406,6 +420,24 @@ export class WindowNode extends Node {
     });
   }
 
+  /**
+   * Ship a step array to a window and run it there.
+   *
+   * The steps are read RAW and never resolved here: resolving in main would turn
+   * `{"setText": ...}` into a plain object, because main has no DOM handler for
+   * it. Only `window` and `params` resolve, so main-side values can cross.
+   *
+   * The result comes back over the same correlation-id transport as any other
+   * proxied call.
+   */
+  ["window-run"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def.window ?? null, def.params ?? null], context, ([target, params]) => {
+      const win = targetWindow(target, context);
+      if (!win) throw noWindowError("window-run");
+      return runInRenderer(win, def["window-run"], params);
+    });
+  }
+
   ["window-list"](_def: Record<string, unknown>, _context: Context): NodeValue {
     const out: Record<string, unknown>[] = [];
     for (const [name, win] of windows) {
@@ -420,6 +452,6 @@ export class WindowNode extends Node {
         bounds: win.getBounds(),
       });
     }
-    return out as NodeValue;
+    return out;
   }
 }
