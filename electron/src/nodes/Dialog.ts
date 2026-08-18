@@ -29,6 +29,22 @@ export function openDialogOptions(r: Record<string, unknown>): Electron.OpenDial
   return opts;
 }
 
+/** Build SaveDialogOptions from resolved siblings. Pure — no electron runtime. */
+export function saveDialogOptions(r: Record<string, unknown>): Electron.SaveDialogOptions {
+  const opts: Electron.SaveDialogOptions = {};
+  if (typeof r["dialog-save"] === "string") opts.title = r["dialog-save"];
+  if (typeof r.defaultPath === "string") opts.defaultPath = r.defaultPath;
+  if (typeof r.buttonLabel === "string") opts.buttonLabel = r.buttonLabel;
+  if (Array.isArray(r.filters)) {
+    opts.filters = r.filters.flatMap((f) =>
+      isObject(f) && typeof f.name === "string" && Array.isArray(f.extensions)
+        ? [{ name: f.name, extensions: f.extensions.map(String) }]
+        : [],
+    );
+  }
+  return opts;
+}
+
 /** Build MessageBoxOptions from resolved siblings. Pure — no electron runtime. */
 export function messageBoxOptions(r: Record<string, unknown>): Electron.MessageBoxOptions {
   const opts: Electron.MessageBoxOptions = {
@@ -71,6 +87,27 @@ export class DialogNode extends Node {
         defaultPath: { type: "string", description: "Path the dialog opens at." },
       },
     },
+    "dialog-save": {
+      type: "string",
+      output: "string",
+      markdownDescription: "Show a native save dialog titled with the given string. Resolves to the chosen path, or an empty string if the user cancelled.",
+      outputDescription: "The path the user chose, or `\"\"` on cancel — so `empty` distinguishes the two without a separate flag.",
+      examples: ["{ \"dialog-save\": \"Save game\", \"defaultPath\": \"save.json\" }"],
+      siblings: {
+        defaultPath: { type: "string", description: "Path and filename the dialog opens with." },
+        buttonLabel: { type: "string", description: "Label for the confirm button." },
+        filters: {
+          type: "array",
+          items: {
+            properties: {
+              name: { type: "string", description: "Label shown in the dialog's format dropdown." },
+              extensions: { type: "array", items: { type: "string" }, description: "Matching extensions, no dot (\"*\" matches all)." },
+            },
+          },
+          description: "File-type filters that populate the dialog's format dropdown.",
+        },
+      },
+    },
     "dialog-message": {
       type: "string",
       output: "number",
@@ -91,6 +128,16 @@ export class DialogNode extends Node {
       const { dialog } = await import("electron");
       const res = await dialog.showOpenDialog(openDialogOptions(r));
       return res.filePaths as NodeValue;
+    });
+  }
+
+  ["dialog-save"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveObj(def, context, async (r) => {
+      const { dialog } = await import("electron");
+      const res = await dialog.showSaveDialog(saveDialogOptions(r));
+      // "" rather than null on cancel, so `empty` works and a path is always a
+      // string — callers pass it straight to `file` without a type check.
+      return res.canceled || !res.filePath ? "" : res.filePath;
     });
   }
 

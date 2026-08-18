@@ -2,13 +2,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import Ajv2020 from "ajv/dist/2020.js";
 import { buildPackageSchema, mergePackageSchemas, coreNodes } from "@jexs/core";
-import { AppNode, DialogNode, MenuNode, ShortcutNode, TrayNode, WindowNode } from "../src/index.js";
+import {
+  AppNode, DialogNode, MenuNode, NotificationNode, ShellNode, ShortcutNode, TrayNode, WindowNode,
+} from "../src/index.js";
 
 // AJV 2020's default export is a namespace under NodeNext resolution.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Ajv = (Ajv2020 as any).default ?? Ajv2020;
 
-const electronNodeClasses = [WindowNode, DialogNode, AppNode, MenuNode, TrayNode, ShortcutNode];
+const electronNodeClasses = [
+  WindowNode, DialogNode, AppNode, MenuNode, TrayNode, ShortcutNode, ShellNode, NotificationNode,
+];
 
 const combined = mergePackageSchemas([
   buildPackageSchema([...coreNodes], "@jexs/core"),
@@ -27,7 +31,9 @@ const ELECTRON_OPS = [
   "menu", "tray", "tray-destroy", "shortcut", "shortcut-remove", "window-run",
   "window-restore", "window-reload", "window-devtools", "window-title",
   "window-bounds", "window-list",
-  "dialog-open", "dialog-message", "app-quit", "app-path",
+  "dialog-open", "dialog-save", "dialog-message",
+  "app-quit", "app-path", "app-version", "app-locale", "app-relaunch", "app-on",
+  "shell-open", "shell-open-path", "shell-show", "shell-trash", "shell-beep", "notify",
 ];
 
 test("every electron op is present in byKey", () => {
