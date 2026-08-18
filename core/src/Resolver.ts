@@ -260,6 +260,8 @@ export function handleErr(err: unknown, value: unknown, context: Context): unkno
  * If the step def has a `"catch"` array and an HTTP error is thrown,
  * the catch steps are run with `$error: { status, message }` in context.
  */
+export function resolve(value: unknown, context: Context): unknown;
+export function resolve<T>(value: unknown, context: Context, cont: (v: unknown) => T): T | Promise<T>;
 export function resolve(value: unknown, context: Context, cont?: (v: unknown) => unknown): unknown {
   const obj = isObject(value) ? value : null;
 
@@ -295,7 +297,7 @@ export function resolve(value: unknown, context: Context, cont?: (v: unknown) =>
  * Builds and passes a new Record with resolved values to `then`.
  * On the sync path: no Promises created, callback fires immediately.
  */
-export function resolveObj(obj: Record<string, unknown>, context: Context, then: (r: Record<string, unknown>) => unknown): unknown {
+export function resolveObj<T>(obj: Record<string, unknown>, context: Context, then: (r: Record<string, unknown>) => T): T | Promise<T> {
   const result: Record<string, unknown> = {};
   const pending: Promise<unknown>[] = [];
   const pendingKeys: string[] = [];
@@ -322,7 +324,7 @@ export function resolveObj(obj: Record<string, unknown>, context: Context, then:
  * On the sync path: no allocations — writes resolved values in-place, calls then(values) directly.
  * On the async path: waits for all async values via Promise.all, then calls then(values).
  */
-export function resolveAll(values: unknown[], context: Context, then: (args: unknown[]) => unknown): unknown {
+export function resolveAll<T>(values: unknown[], context: Context, then: (args: unknown[]) => T): T | Promise<T> {
   const pendingPromises: Promise<unknown>[] = [];
   const pendingIndices: number[] = [];
   for (let i = 0; i < values.length; i++) {
