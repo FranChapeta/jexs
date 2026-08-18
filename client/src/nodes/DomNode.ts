@@ -196,6 +196,14 @@ export class DomNode extends Node {
         "{ \"copy\": { \"var\": \"$shareUrl\" } }",
       ],
     },
+    getClipboard: {
+      output: "string",
+      outputDescription: "The clipboard's text, or `\"\"` when it is empty or the read was denied.",
+      markdownDescription: "Reads text from the clipboard. Requires a secure context, and the browser may prompt for permission the first time.",
+      examples: [
+        "{ \"getClipboard\": true, \"as\": \"clip\" }",
+      ],
+    },
     showModal: {
       type: ["string", "object"],
       output: "object",
@@ -608,6 +616,13 @@ export class DomNode extends Node {
       if (!clip) return null;
       return clip.writeText(str).then(() => str);
     });
+  }
+  getClipboard(_def: Record<string, unknown>, _context: Context): NodeValue {
+    const clip = navigator.clipboard;
+    if (!clip?.readText) return "";
+    // A denied permission is a normal outcome, not a failure worth throwing:
+    // the step sequence continues with an empty string.
+    return clip.readText().catch(() => "");
   }
   showModal(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.showModal, context, v => {
