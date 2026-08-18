@@ -15,7 +15,7 @@ export {
 // ── Resolver ──
 export {
   createResolver, resolve, resolveAll, resolveObj, registerNode, registerLazy,
-  runSteps, resolveSteps,
+  runSteps, resolveSteps, handleErr, runStepsDetached,
   type ResolverFn, type Resolver, type ResolverKeys,
 } from "./Resolver.js";
 

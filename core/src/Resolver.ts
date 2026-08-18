@@ -373,6 +373,26 @@ export function resolveSteps(value: unknown, context: Context): unknown {
 }
 
 /**
+ * Run steps from a deferred callback — a timer tick, a socket message, a menu
+ * click, an OS event — where `resolve` has long since returned and the resolver
+ * is no longer wrapped around the call.
+ * `def` is the step object whose `catch` should be honored. The returned promise
+ * rejects when nothing handled the error, so callers can log with their own
+ * context.
+ */
+export async function runStepsDetached(
+  steps: unknown[],
+  context: Context,
+  def: unknown = null,
+): Promise<unknown> {
+  try {
+    return await runSteps(steps, context);
+  } catch (err) {
+    return handleErr(err, def, context);
+  }
+}
+
+/**
  * Creates a resolver from a list of nodes.
  * The resolver interprets JSON expressions at runtime.
  */
