@@ -1,8 +1,10 @@
-import { Node, Context, NodeValue, childContext, resolve, runSteps } from "@jexs/core";
+import {
+  Node, Context, NodeValue, childContext, resolve, runStepsDetached,
+} from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
 /** Accelerator -> the steps it runs, so a re-registration replaces cleanly. */
-const registered = new Map<string, { steps: unknown[]; context: Context }>();
+const registered = new Map<string, { steps: unknown[]; context: Context; def: Record<string, unknown> }>();
 
 /** Test seam. */
 export function resetShortcuts(): void {
@@ -37,23 +39,25 @@ export class ShortcutNode extends Node {
     return resolve(def.shortcut, context, async (value) => {
       const accelerator = typeof value === "string" ? value : "";
       if (!accelerator || !Array.isArray(def.do)) return false;
+      const steps = def.do;
 
       const { globalShortcut } = await import("electron");
       // Re-registering the same combination replaces its handler rather than
       // stacking a second one.
       if (globalShortcut.isRegistered(accelerator)) globalShortcut.unregister(accelerator);
 
-      const steps = def.do;
       const ok = globalShortcut.register(accelerator, () => {
+        // Looked up per fire rather than captured, so re-registering the same
+        // accelerator swaps the handler instead of leaving the old one live.
         const entry = registered.get(accelerator);
         if (!entry) return;
-        Promise.resolve(runSteps(entry.steps, childContext(entry.context, { accelerator })))
-          .catch((err: unknown) => {
-            console.error(`[ShortcutNode] "${accelerator}" failed:`, err);
-          });
+        const ctx = childContext(entry.context, { accelerator });
+        runStepsDetached(entry.steps, ctx, entry.def).catch((err: unknown) => {
+          console.error(`[ShortcutNode] "${accelerator}" failed:`, err);
+        });
       });
 
-      if (ok) registered.set(accelerator, { steps, context });
+      if (ok) registered.set(accelerator, { steps, context, def });
       else console.warn(`[ShortcutNode] the OS refused "${accelerator}" — another app likely owns it`);
       return ok;
     });

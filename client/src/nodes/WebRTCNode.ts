@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, runSteps } from "@jexs/core";
+import { Node, Context, NodeValue, runStepsDetached } from "@jexs/core";
 import { resolve, resolveAll } from "@jexs/core";
 import { WsNode } from "./WsNode.js";
 import type { JexsNodeSchema } from "@jexs/core";
@@ -410,7 +410,7 @@ function dispatchRtcMessage(peerId: string, data: unknown): unknown {
   if (onMessageFn) onMessageFn(peerId, data);
 
   if (onMessageSteps && onMessageContext) {
-    return Promise.resolve(runSteps(onMessageSteps, { ...onMessageContext, rtcMessage: data, rtcPeerId: peerId }))
+    return runStepsDetached(onMessageSteps, { ...onMessageContext, rtcMessage: data, rtcPeerId: peerId })
       .catch(e => console.error("[WebRTC] on-message error:", e));
   }
 

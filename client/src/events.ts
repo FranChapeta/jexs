@@ -1,4 +1,4 @@
-import { runSteps, type Context } from "@jexs/core";
+import { handleErr, runSteps, runStepsDetached, type Context } from "@jexs/core";
 
 /** The shared render context for a browser page — event handlers read and write
  *  it, so state set by one handler is visible to the next. */
@@ -41,7 +41,20 @@ export function hydrate(root: HTMLElement | Document = document, context: Contex
       for (const evt of events) {
         if (evt.type === "load") {
           applyEventData(context, { target: el, value: (el as HTMLInputElement).value ?? null, event: null });
-          runSteps(evt.do, context);
+          // `load` must stay SYNCHRONOUS: it runs during hydrate(), and callers
+          // read state a load handler seeds as soon as hydrate() returns.
+          // Detaching would defer it to a microtask and break that. So guard both
+          // paths by hand instead — previously a throw here escaped entirely.
+          try {
+            const r = runSteps(evt.do, context);
+            if (r instanceof Promise) {
+              r.catch(err => handleErr(err, evt, context))
+                .catch(err => console.error(`[Jexs] "load" handler failed:`, err));
+            }
+          } catch (err) {
+            try { handleErr(err, evt, context); }
+            catch (e) { console.error(`[Jexs] "load" handler failed:`, e); }
+          }
         } else {
           el.addEventListener(evt.type, (e: Event) => {
             if (evt.preventDefault) e.preventDefault();
@@ -57,7 +70,8 @@ export function hydrate(root: HTMLElement | Document = document, context: Contex
             }
 
             applyEventData(context, eventData);
-            runSteps(evt.do, context);
+            void runStepsDetached(evt.do, context, evt)
+              .catch(err => console.error(`[Jexs] "${evt.type}" handler failed:`, err));
           });
         }
       }

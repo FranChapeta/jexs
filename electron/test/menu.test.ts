@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createResolver, coreNodes } from "@jexs/core";
+import { childContext, createResolver, coreNodes, handleErr, runSteps } from "@jexs/core";
 import type { Context } from "@jexs/core";
 import { buildMenuTemplate } from "../src/nodes/Menu.js";
 
@@ -32,7 +32,7 @@ test("do steps reach the click handler raw, never resolved", async () => {
   const [item] = await buildMenuTemplate(
     [{ label: "Save", do: steps }],
     {},
-    (s) => { seen.push(s); },
+    (_raw, s) => { seen.push(s); },
   );
 
   assert.equal(typeof item.click, "function");
@@ -117,4 +117,43 @@ test("a submenu can come from an expression too", async () => {
   const sub = item.submenu as Record<string, unknown>[];
   assert.equal(sub.length, 1);
   assert.equal(sub[0].label, "Nested");
+});
+
+// A menu click fires long after the step that built the menu returned, so the
+// resolver is no longer wrapped around the call and a plain .catch would only
+// log. Routing through handleErr gives the item's own `catch` the same meaning
+// it would have inline, with $error bound.
+test("a menu item's catch receives the failure with $error bound", async () => {
+  createResolver([...coreNodes]);
+  const raw = {
+    label: "Boom",
+    do: [{ error: 500, message: "nope" }],
+    catch: [{ concat: ["caught: ", { var: "$error.message" }] }],
+  };
+  const [item] = await buildMenuTemplate([raw], {}, noop);
+  assert.equal(typeof item.click, "function");
+
+  // Drive the same path the node uses, to prove `catch` is reachable from a
+  // deferred callback rather than swallowed. `.then(() => runSteps(...))` and
+  // not Promise.resolve(runSteps(...)): runSteps throws SYNCHRONOUSLY, so the
+  // latter lets the throw escape before the promise exists and .catch never
+  // attaches. This test caught exactly that bug in the node handlers.
+  const ctx = childContext({}, { menuLabel: "Boom" });
+  const out = await Promise.resolve()
+    .then(() => runSteps(raw.do, ctx))
+    .catch((err: unknown) => handleErr(err, raw, ctx));
+  assert.equal(out, "caught: nope");
+});
+
+test("without a catch, a deferred failure still rejects rather than vanishing", async () => {
+  createResolver([...coreNodes]);
+  const raw = { label: "Boom", do: [{ error: 500, message: "unhandled" }] };
+  const ctx = childContext({}, {});
+
+  await assert.rejects(
+    Promise.resolve()
+      .then(() => runSteps(raw.do, ctx))
+      .catch((err: unknown) => handleErr(err, raw, ctx)),
+    /unhandled/,
+  );
 });

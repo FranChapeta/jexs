@@ -1,4 +1,6 @@
-import { Node, Context, NodeValue, childContext, resolve, resolveObj, runSteps } from "@jexs/core";
+import {
+  Node, Context, NodeValue, childContext, resolve, resolveObj, runStepsDetached,
+} from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { targetWindow, windowNameOf } from "./Window.js";
 
@@ -44,7 +46,13 @@ export function resetMenus(): void {
 export async function buildMenuTemplate(
   items: unknown,
   context: Context,
-  onClick: (steps: unknown[], item: Electron.MenuItem, win?: Electron.BaseWindow) => void,
+  onClick: (
+    /** The raw JSON item, so a per-item `catch` can be honored. */
+    raw: Record<string, unknown>,
+    steps: unknown[],
+    item: Electron.MenuItem,
+    win?: Electron.BaseWindow,
+  ) => void,
 ): Promise<Electron.MenuItemConstructorOptions[]> {
   // The tree itself may come from an expression — `{"var": "$menu"}`, or a
   // `{"file": "menu.json", "data": true}` — so resolve the CONTAINER before
@@ -84,7 +92,7 @@ export async function buildMenuTemplate(
       item.submenu = await buildMenuTemplate(submenu, context, onClick);
     }
     if (steps) {
-      item.click = (menuItem, win) => onClick(steps, menuItem, win);
+      item.click = (menuItem, win) => onClick(raw, steps, menuItem, win);
     }
 
     out.push(item);
@@ -118,6 +126,7 @@ export class MenuNode extends Node {
         id: { type: "string", markdownDescription: "Identifier, readable in the handler as `$menuId`." },
         submenu: { type: "array", items: { $ref: "#/$defs/_menuItem" }, markdownDescription: "Nested items." },
         do: { $ref: "#/$defs/steps", markdownDescription: "Steps run in the main process when the item is clicked." },
+        catch: { $ref: "#/$defs/steps", markdownDescription: "Steps run with `$error` bound if `do` fails. Without this a failure is only logged." },
       },
       additionalProperties: false,
     },
@@ -149,7 +158,7 @@ export class MenuNode extends Node {
     return resolve(def.window ?? null, context, async (target) => {
       const { Menu, app } = await import("electron");
 
-      const template = await buildMenuTemplate(def.menu, context, (steps, item, win) => {
+      const template = await buildMenuTemplate(def.menu, context, (raw, steps, item, win) => {
         // Electron hands the click the window whose menu it was, so a nested DOM
         // op targets the right renderer with no author effort.
         const extra: Record<string, unknown> = {
@@ -159,7 +168,10 @@ export class MenuNode extends Node {
         };
         const name = windowNameOf(win ?? null);
         if (name) extra.windowName = name;
-        Promise.resolve(runSteps(steps, childContext(context, extra))).catch((err: unknown) => {
+        // A click fires long after the step that built the menu returned, so
+        // the resolver is no longer around this call. runStepsDetached keeps the
+        // item's own `catch` working and stops a synchronous throw escaping.
+        runStepsDetached(steps, childContext(context, extra), raw).catch((err: unknown) => {
           console.error(`[MenuNode] "${String(item.label ?? item.id ?? "item")}" failed:`, err);
         });
       });

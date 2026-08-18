@@ -18,7 +18,7 @@
  */
 
 import { Node, Context, NodeValue } from "./Node.js";
-import { resolve, resolveAll, runSteps } from "../Resolver.js";
+import { resolve, resolveAll, runSteps, runStepsDetached } from "../Resolver.js";
 import type { JexsNodeSchema, JexsMethodSchema } from "../schema.js";
 
 // Lifecycle ops shared by `tick` and `cron`. `start` differs per timer kind (its
@@ -36,6 +36,8 @@ interface TimerState {
   intervalMs: number;
   steps: unknown[];
   context: Context;
+  /** The originating step, so a deferred failure can honor its `catch`. */
+  def: Record<string, unknown>;
   detach: boolean;
   timerId: ReturnType<typeof setTimeout> | null;
   count: number;
@@ -232,7 +234,7 @@ function startTick(def: Record<string, unknown>, context: Context): unknown {
 
     const now = Date.now();
     const state: TimerState = {
-      id, intervalMs: 1000 / rate, steps, context, detach,
+      id, intervalMs: 1000 / rate, steps, context, def, detach,
       timerId: null, count: 0, startTime: now, lastTime: now,
       paused: false, pausedAt: null, pausedTotal: 0,
     };
@@ -268,22 +270,17 @@ function scheduleTick(state: TimerState): void {
     };
 
     if (state.detach) {
-      try {
-        const result = runSteps(state.steps, state.context);
-        if (result instanceof Promise) {
-          result.catch(err => {
-            console.error(`[tick] Error in "${state.id}":`, err);
-          });
-        }
-      } catch (err) {
-        console.error(`[tick] Error in "${state.id}":`, err);
-      }
+      // Fire-and-forget: reschedule immediately without waiting for the steps.
+      void runStepsDetached(state.steps, state.context, state.def)
+        .catch(err => {
+          console.error(`[tick] Error in "${state.id}":`, err);
+        });
 
       if (ticks.has(state.id)) scheduleTick(state);
       return;
     }
 
-    Promise.resolve(runSteps(state.steps, state.context))
+    runStepsDetached(state.steps, state.context, state.def)
       .catch(err => {
         console.error(`[tick] Error in "${state.id}":`, err);
       })
@@ -316,7 +313,7 @@ function startCron(def: Record<string, unknown>, context: Context): unknown {
 
     const now = Date.now();
     const state: TimerState = {
-      id: String(id), intervalMs, steps, context, detach: false,
+      id: String(id), intervalMs, steps, context, def, detach: false,
       timerId: null, count: 0, startTime: now, lastTime: now,
       paused: false, pausedAt: null, pausedTotal: 0,
     };

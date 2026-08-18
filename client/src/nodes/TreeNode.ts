@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue } from "@jexs/core";
-import { resolve, resolveAll, runSteps } from "@jexs/core";
+import { resolve, resolveAll, runSteps, runStepsDetached } from "@jexs/core";
 import {
   resolvePath, adjustPathAfterRemoval, getChildArrayKey,
   getChildGroups, describeNode, getEditMode, getTextContent, getPotentialChildKeys,
@@ -779,11 +779,11 @@ function findNode(rt: TreeRuntime, path: string): HTMLElement | null {
 
 function fireChange(rt: TreeRuntime, delta: TreeDelta): void {
   if (!rt.onChangeSteps) return;
-  Promise.resolve(runSteps(rt.onChangeSteps, {
+  runStepsDetached(rt.onChangeSteps, {
     ...rt.context,
     delta,
     editorData: JSON.stringify(getData(rt), null, 2),
-  })).catch(err => console.error("[TreeNode] onChange error:", err));
+  }).catch(err => console.error("[TreeNode] onChange error:", err));
 }
 
 function fireSelect(rt: TreeRuntime): unknown {

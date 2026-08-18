@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, resolve, resolveAll, runSteps, createHttpError } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll, runStepsDetached, createHttpError } from "@jexs/core";
 import crypto from "node:crypto";
 import type { Duplex } from "node:stream";
 import type { IncomingMessage } from "node:http";
@@ -161,7 +161,7 @@ export class WebSocketNode extends Node {
       delete wsContext._upgrade;
 
       if (onConnect) {
-        Promise.resolve(runSteps(onConnect, { ...wsContext }))
+        runStepsDetached(onConnect, { ...wsContext }, def)
           .catch(err => console.error("[WebSocket] on-connect error:", err));
       }
 
@@ -187,13 +187,13 @@ export class WebSocketNode extends Node {
           return;
         }
 
-        Promise.resolve(runSteps(onMessage, { ...wsContext, message: messageData }))
+        runStepsDetached(onMessage, { ...wsContext, message: messageData }, def)
           .catch(err => console.error("[WebSocket] on-message error:", err));
       });
 
       ws.on("close", () => {
         if (onClose) {
-          Promise.resolve(runSteps(onClose, { ...wsContext }))
+          runStepsDetached(onClose, { ...wsContext }, def)
             .catch(err => console.error("[WebSocket] on-close error:", err));
         }
 

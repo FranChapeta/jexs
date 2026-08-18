@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, resolve, runSteps } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, runStepsDetached } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { createInterface } from "node:readline";
 
@@ -136,7 +136,7 @@ export class StdioNode extends Node {
         }
 
         const childContext: Context = { ...context, message };
-        Promise.resolve(runSteps(steps, childContext)).catch((err: unknown) => {
+        runStepsDetached(steps, childContext, def).catch((err: unknown) => {
           process.stderr.write(`[StdioNode] Error: ${err}\n`);
         });
       }
@@ -144,7 +144,7 @@ export class StdioNode extends Node {
 
     process.stdin.on("close", () => {
       if (closeSteps) {
-        Promise.resolve(runSteps(closeSteps, { ...context })).catch((err: unknown) => {
+        runStepsDetached(closeSteps, { ...context }, def).catch((err: unknown) => {
           process.stderr.write(`[StdioNode] on-close error: ${err}\n`);
         });
       }

@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, runSteps } from "@jexs/core";
+import { Node, Context, NodeValue, runStepsDetached } from "@jexs/core";
 import { resolve } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
@@ -115,7 +115,7 @@ export class WsNode extends Node {
     ws.onopen = () => {
       WsNode.reconnectDelay = 1000;
       if (Array.isArray(def["on-open"])) {
-        Promise.resolve(runSteps(def["on-open"] as unknown[], baseContext))
+        runStepsDetached(def["on-open"] as unknown[], baseContext, def)
           .catch(e => console.error("[WS] on-open error:", e));
       }
     };
@@ -135,7 +135,7 @@ export class WsNode extends Node {
       if (Array.isArray(def["on-message"])) {
         baseContext.wsMessage = data;
         baseContext.wsId = WsNode.localId;
-        Promise.resolve(runSteps(def["on-message"] as unknown[], baseContext))
+        runStepsDetached(def["on-message"] as unknown[], baseContext, def)
           .catch(e => console.error("[WS] on-message error:", e));
       }
     };
@@ -143,7 +143,7 @@ export class WsNode extends Node {
     ws.onclose = () => {
       WsNode.connection = null;
       if (Array.isArray(def["on-close"])) {
-        Promise.resolve(runSteps(def["on-close"] as unknown[], baseContext))
+        runStepsDetached(def["on-close"] as unknown[], baseContext, def)
           .catch(e => console.error("[WS] on-close error:", e));
       }
       if (!WsNode.intentionalClose) {
