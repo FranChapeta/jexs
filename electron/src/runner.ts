@@ -9,6 +9,7 @@ import { createResolver } from "@jexs/core";
 import type { Context } from "@jexs/core";
 import { loadNodePackages, entryContext } from "@jexs/server";
 import { openWindow, reopenPrimary, shellTemplate, targetWindow, windowNameOf } from "./nodes/Window.js";
+import { hasTray } from "./nodes/Tray.js";
 import { installBridge, rejectAll } from "./bridge.js";
 
 const projectDir = process.cwd();
@@ -75,14 +76,17 @@ async function main(): Promise<void> {
     windowFor: (context) => targetWindow(undefined, context),
   });
 
-  // macOS keeps the app (and its menu bar) alive with no windows open; every
-  // other platform expects the last window to end the process. Phase 3 makes
-  // this conditional on an active tray, which must outlive its windows.
+  // Who survives the last window closing:
+  //  - macOS always does, since its menu bar belongs to the app, not a window
+  //  - a tray app always does, on every platform: minimize-to-tray is the point,
+  //    and quitting here would make the tray icon unreachable the moment it
+  //    became useful
+  // Everything else ends with its last window.
   app.on("window-all-closed", () => {
     // A call in flight to a window that just vanished would never settle, and
     // the step sequence that issued it would hang forever.
     rejectAll("the window closed before the call completed");
-    if (process.platform !== "darwin") app.quit();
+    if (process.platform !== "darwin" && !hasTray()) app.quit();
   });
 
   // Dock click on macOS: the app is running but unreachable without a window.

@@ -12,7 +12,9 @@ export function preloadPath(): string {
 // Window registry
 
 const windows = new Map<string, Electron.BrowserWindow>();
-const nameOf = new WeakMap<Electron.BrowserWindow, string>();
+// Keyed by object identity rather than by BrowserWindow, so callers holding the
+// looser BaseWindow that Electron hands to menu clicks can look up too.
+const nameOf = new WeakMap<object, string>();
 let defaultWindowName: string | null = null;
 /** Options the first window was opened with, replayed by `reopenPrimary`. */
 let primaryOpts: Record<string, unknown> | null = null;
@@ -62,7 +64,7 @@ function registerWindow(name: string, win: Electron.BrowserWindow): string {
 }
 
 /** The registered name of a window, for seeding a main-process context. */
-export function windowNameOf(win: Electron.BrowserWindow | null): string | undefined {
+export function windowNameOf(win: Electron.BaseWindow | null | undefined): string | undefined {
   return win ? nameOf.get(win) : undefined;
 }
 
