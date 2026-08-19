@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue } from "./Node.js";
-import { resolveObj, GLOBAL_STEP_KEYS } from "../Resolver.js";
+import { resolveObj, GLOBAL_KEYS } from "../Resolver.js";
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);
@@ -60,7 +60,7 @@ export class ProxyNode extends Node {
 
     return resolveObj(def, context, (resolved) => {
       const call: Record<string, unknown> = {};
-      for (const k in resolved) if (!GLOBAL_STEP_KEYS.has(k)) call[k] = resolved[k];
+      for (const k in resolved) if (!GLOBAL_KEYS.has(k)) call[k] = resolved[k];
       // Return the promise; the resolver applies the global step keys (`as`,
       // `catch`, `then`) to it in THIS thread. That is what makes a remote call
       // behave exactly like a local one: the remote is only a value producer.

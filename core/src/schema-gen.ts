@@ -703,7 +703,9 @@ function buildRichMarkdown(methodKey: string, m: EmittedMethodSchema): string {
  * for the JSON schema) and re-exported for the MCP introspection tools so
  * `describe_op return` works.
  */
-export const GLOBAL_KEYS: Record<string, { markdownDescription: string; examples?: string[] }> = {
+/** Prose for the global step keys, for autocomplete. The keys themselves are
+ *  GLOBAL_KEYS in Resolver.ts; this only describes them. */
+export const GLOBAL_KEY_DOCS: Record<string, { markdownDescription: string; examples?: string[] }> = {
   as: {
     markdownDescription:
       "Store this step's result in a named context variable, read later via `{ \"var\": \"name\" }`. Works on any step.",
@@ -738,11 +740,11 @@ export const GLOBAL_KEYS: Record<string, { markdownDescription: string; examples
  *  loop gates it via `siblingHosts` so it validates as the branch under `if` and
  *  as a continuation everywhere else. */
 const UNIVERSAL: Record<string, { ref: EmittedSchema; markdownDescription: string }> = {
-  as:     { ref: { ...REF.strOrExpr },  markdownDescription: GLOBAL_KEYS.as.markdownDescription },
-  return: { ref: { ...REF.anyVal },     markdownDescription: GLOBAL_KEYS.return.markdownDescription },
-  catch:  { ref: { ...REF.steps },      markdownDescription: GLOBAL_KEYS.catch.markdownDescription },
-  then:   { ref: { ...REF.steps },      markdownDescription: GLOBAL_KEYS.then.markdownDescription },
-  bubble: { ref: { ...REF.boolOrExpr }, markdownDescription: GLOBAL_KEYS.bubble.markdownDescription },
+  as:     { ref: { ...REF.strOrExpr },  markdownDescription: GLOBAL_KEY_DOCS.as.markdownDescription },
+  return: { ref: { ...REF.anyVal },     markdownDescription: GLOBAL_KEY_DOCS.return.markdownDescription },
+  catch:  { ref: { ...REF.steps },      markdownDescription: GLOBAL_KEY_DOCS.catch.markdownDescription },
+  then:   { ref: { ...REF.steps },      markdownDescription: GLOBAL_KEY_DOCS.then.markdownDescription },
+  bubble: { ref: { ...REF.boolOrExpr }, markdownDescription: GLOBAL_KEY_DOCS.bubble.markdownDescription },
 };
 
 export interface CombinedSchema {

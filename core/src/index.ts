@@ -16,6 +16,9 @@ export {
 export {
   createResolver, resolve, resolveAll, resolveObj, registerNode, registerLazy,
   runSteps, resolveSteps, handleErr, runStepsDetached,
+  // The step keys the resolver owns. Hosts that inspect or filter a call need
+  // them, to avoid treating `as` or `catch` as an op.
+  GLOBAL_KEYS,
   type ResolverFn, type Resolver, type ResolverKeys,
 } from "./Resolver.js";
 

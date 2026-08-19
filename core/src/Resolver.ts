@@ -65,10 +65,12 @@ let current: ResolverState | null = null;
  * applied in `resolve`). They must never be eagerly resolved as node inputs.
  *
  * Exported because ProxyNode strips them before forwarding a call — the remote
- * side is only a value producer, and these are applied in the calling thread.
- * A second copy there would silently drift the day a sixth key is added.
+ * side is only a value producer, and these are applied in the calling thread —
+ * and because a host filtering IPC calls must not mistake `as` or `catch` for an
+ * op. `GLOBAL_KEY_DOCS` in schema-gen describes the same five for autocomplete;
+ * a test asserts the two cannot drift apart.
  */
-export const GLOBAL_STEP_KEYS = new Set(["as", "return", "catch", "bubble", "then"]);
+export const GLOBAL_KEYS = new Set(["as", "return", "catch", "bubble", "then"]);
 
 // Node keys that OWN `then` as their own sibling, shadowing the global `then`
 // continuation. Grandfathered: LogicNode's `if/then/else` predates `then` as a
@@ -306,7 +308,7 @@ export function resolveObj<T>(obj: Record<string, unknown>, context: Context, th
     // step machinery (`as`/`return` via runSteps, `catch` via handleErr). Resolving
     // a `catch: [...]` array here would execute the error handler on success. Kept
     // raw so the object shape is preserved for callers that pass `r` through.
-    if (GLOBAL_STEP_KEYS.has(key)) { result[key] = obj[key]; continue; }
+    if (GLOBAL_KEYS.has(key)) { result[key] = obj[key]; continue; }
     const r = dispatch(obj[key], context);
     if (r instanceof Promise) { pending.push(r); pendingKeys.push(key); }
     else result[key] = r;
