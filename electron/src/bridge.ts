@@ -1,4 +1,4 @@
-import { createHttpError, registerNode, ProxyNode } from "@jexs/core";
+import { createHttpError, registerNode, GLOBAL_KEYS, ProxyNode } from "@jexs/core";
 import type { Context, Resolver } from "@jexs/core";
 
 /**
@@ -123,6 +123,71 @@ export interface BridgeHooks {
   contextFor(win: Electron.BrowserWindow | null): Context;
   /** Which window a main-originated renderer op should target. */
   windowFor(context: Context): Electron.BrowserWindow | null;
+  /**
+   * Ops the page in a given window may ask main for, or null for no restriction.
+   */
+  allowedFor?(win: Electron.BrowserWindow | null): ReadonlySet<string> | null;
+}
+
+/**
+ * The first op in `call` the window is not permitted to ask for, if any.
+ *
+ * Only OPS are checked -- keys the resolver would actually dispatch on. A
+ * sibling is data belonging to its op, so `allow: ["query"]` covers
+ * `{ "query": "select", "table": "saves" }` with nothing further to list.
+ * Requiring siblings too would be tedious and impossible to get right, since
+ * they are declared by whichever package owns the op, not by the author.
+ *
+ * The walk is recursive because an op can sit at any depth: a sibling's VALUE is
+ * itself resolved, so `{ "query": "x", "table": { "file": "/etc/passwd" } }`
+ * reaches FileNode during sibling resolution. Checking only the top level would
+ * miss exactly the case the check exists for.
+ *
+ * Global step keys are skipped -- `as` and `catch` belong to the resolver rather
+ * than to any node, and a node may own `then` as a sibling of its own.
+ */
+export function deniedKey(
+  call: unknown,
+  allow: ReadonlySet<string>,
+  isOp: (key: string) => boolean,
+): string | undefined {
+  // IPC delivers a structured clone, which preserves reference IDENTITY: one
+  // object may appear at many points in a payload. Without `seen` a shared
+  // subtree is re-walked at every reference, so ~70 objects nested two
+  // references deep per level costs seconds of main-process time. A cycle is the
+  // same bug degenerate, recursing until the stack gives out.
+  const seen = new WeakSet<object>();
+
+  const walk = (value: unknown): string | undefined => {
+    if (value === null || typeof value !== "object") return undefined;
+    if (seen.has(value)) return undefined;
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const denied = walk(item);
+        if (denied) return denied;
+      }
+      return undefined;
+    }
+
+    for (const [key, child] of Object.entries(value)) {
+      if (!GLOBAL_KEYS.has(key) && isOp(key) && !allow.has(key)) return key;
+      const denied = walk(child);
+      if (denied) return denied;
+    }
+    return undefined;
+  };
+
+  return walk(call);
+}
+
+function deniedError(op: string, windowName: string): Error {
+  return createHttpError(
+    403,
+    `the "${windowName}" window may not ask the main process for "${op}". ` +
+      `Add it to that window's \`allow\` list, or move the step into a main-process handler.`,
+  );
 }
 
 /**
@@ -165,8 +230,15 @@ export async function installBridge(hooks: BridgeHooks): Promise<void> {
 
   // The sender's window becomes the implicit target, so a page can say
   // { "window-close": true } and mean its own window.
-  ipcMain.handle("jexs:invoke", (event, call: unknown) =>
-    Promise.resolve(resolver(call, hooks.contextFor(BrowserWindow.fromWebContents(event.sender)))));
+  ipcMain.handle("jexs:invoke", (event, call: unknown) => {
+    const sender = BrowserWindow.fromWebContents(event.sender);
+    const allow = hooks.allowedFor?.(sender) ?? null;
+    if (allow) {
+      const denied = deniedKey(call, allow, (key) => resolver.keys.has(key));
+      if (denied) throw deniedError(denied, String(hooks.contextFor(sender).windowName ?? "?"));
+    }
+    return Promise.resolve(resolver(call, hooks.contextFor(sender)));
+  });
 
   // --- main -> renderer ----------------------------------------------------
 

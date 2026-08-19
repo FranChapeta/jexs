@@ -1,6 +1,7 @@
 import { Node, Context, NodeValue, resolve, resolveAll, resolveObj } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 import { noWindowError, runInRenderer } from "../bridge.js";
 
 /** Absolute path to the shipped CJS preload. Compiled to dist/nodes/Window.js,
@@ -16,6 +17,12 @@ const windows = new Map<string, Electron.BrowserWindow>();
 // looser BaseWindow that Electron hands to menu clicks can look up too.
 const nameOf = new WeakMap<object, string>();
 let defaultWindowName: string | null = null;
+/** Per-window IPC allow-lists, keyed by window name. Absent = unrestricted. */
+const allowByName = new Map<string, ReadonlySet<string>>();
+/** Live `?wrap` tokens: token -> the one template it renders. */
+const wrapTokens = new Map<string, string>();
+/** The token a window holds, so closing it retires the token. */
+const tokenByName = new Map<string, string>();
 /** Options the first window was opened with, replayed by `reopenPrimary`. */
 let primaryOpts: Record<string, unknown> | null = null;
 
@@ -52,6 +59,12 @@ export function nextDefault(
 
 function unregisterWindow(name: string): void {
   windows.delete(name);
+  allowByName.delete(name);
+  const token = tokenByName.get(name);
+  if (token !== undefined) {
+    wrapTokens.delete(token);
+    tokenByName.delete(name);
+  }
   defaultWindowName = nextDefault(name, defaultWindowName, windows.keys());
 }
 
@@ -103,8 +116,55 @@ export async function reopenPrimary(fallback: Record<string, unknown> = {}): Pro
 /** Test seam: drop all registry state. */
 export function resetWindows(): void {
   windows.clear();
+  allowByName.clear();
+  wrapTokens.clear();
+  tokenByName.clear();
   defaultWindowName = null;
   primaryOpts = null;
+}
+
+/**
+ * Ops the page in `win` may ask the main process for, or null for no limit.
+ *
+ * Per window rather than per app, because windows differ: an editor needs `file`
+ * writes, a window rendering a feed or a preview needs nothing at all, and the
+ * one showing content you do not control is exactly the one worth constraining.
+ */
+export function allowedKeysFor(
+  win: Electron.BaseWindow | null | undefined,
+): ReadonlySet<string> | null {
+  const name = windowNameOf(win);
+  return name ? allowByName.get(name) ?? null : null;
+}
+
+/**
+ * Mint the `?wrap` token for a window's page. Called only by openWindow, which
+ * is the only legitimate producer of a wrap URL.
+ *
+ * The token is bound to ONE template, and the handler refuses any other. It sits
+ * in the URL, so the page can read its own -- that is fine and intended: with it
+ * a page can re-request the document it is already showing, which reloading does
+ * anyway, and nothing else.
+ */
+export function registerWrap(name: string, page: string): string {
+  const token = randomUUID();
+  wrapTokens.set(token, page);
+  tokenByName.set(name, token);
+  return token;
+}
+
+/**
+ * The template a `?wrap` token renders, or undefined if it is not a live token.
+ *
+ * Without this, `?wrap` is a channel page script can drive itself: the scheme is
+ * registered supportFetchAPI + corsEnabled and the page's origin IS app://local,
+ * so `fetch("app://local/anything.json?wrap")` would make main resolve that
+ * template with full privileges. protocol.handle sees only a Request -- there is
+ * no webContents to attribute it to -- so a window's `allow` list cannot reach
+ * this path. The token is what keeps the branch to its one caller.
+ */
+export function wrapPage(token: string | null): string | undefined {
+  return token === null ? undefined : wrapTokens.get(token);
 }
 
 /** Test seam: the current default, or null. */
@@ -149,17 +209,6 @@ export function browserWindowOptions(
   return out;
 }
 
-/** Build a partial bounds rect from a resolved object, dropping non-numbers. */
-export function boundsOptions(value: unknown): Partial<Electron.Rectangle> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
-  const src = value as Record<string, unknown>;
-  const out: Partial<Electron.Rectangle> = {};
-  for (const key of ["x", "y", "width", "height"] as const) {
-    if (typeof src[key] === "number") out[key] = src[key];
-  }
-  return out;
-}
-
 /**
  * Open a BrowserWindow showing a JSON page template over `app://`. Shared by the
  * runner (the initial window — boilerplate every app needs) and WindowNode
@@ -177,6 +226,9 @@ export async function openWindow(opts: Record<string, unknown> = {}): Promise<st
   const page = pageName(opts.page);
   const requested = typeof opts.name === "string" && opts.name !== "" ? opts.name : baseName(page);
   const name = registerWindow(uniqueName(requested, new Set(windows.keys())), win);
+  if (Array.isArray(opts.allow)) {
+    allowByName.set(name, new Set(opts.allow.filter((k): k is string => typeof k === "string")));
+  }
 
   // Only `app://` content may ever load here: this window's preload exposes the
   // main-process resolver over IPC, so foreign content must never reach it.
@@ -189,11 +241,37 @@ export async function openWindow(opts: Record<string, unknown> = {}): Promise<st
     return { action: "deny" };
   });
 
-  // Load the template over app:// with `?wrap`, which tells the runner to return
-  // the shell wrapping this page (rather than serving the path as a raw file).
-  await win.loadURL(`app://local/${encodeURIComponent(page)}?wrap`);
+  // Load the template over app:// with `?wrap=<token>`, which tells the runner to
+  // return the shell wrapping this page (rather than serving the path as a raw
+  // file). The token is per window and good for this template only.
+  await win.loadURL(`app://local/${encodeURIComponent(page)}?wrap=${registerWrap(name, page)}`);
   return name;
 }
+
+/**
+ * Content-Security-Policy for the generated shell.
+ *
+ * Deliberately narrow in scope rather than maximal. It blocks the things that
+ * turn a rendering bug into code execution — inline `<script>`, `eval`, plugins,
+ * and `<base>` hijacking — while leaving `connect-src`, `img-src` and
+ * `style-src` alone. A desktop app legitimately fetches remote APIs and renders
+ * remote images, and ElementNode emits inline `style` attributes, so locking
+ * those down by default would break working apps for no attacker benefit: the
+ * renderer already cannot navigate away from `app://` (see openWindow).
+ *
+ * `app:` is named alongside `'self'` deliberately. The client bundle is an
+ * EXTERNAL script (`<script src="/client.js">`), which `'self'` should cover
+ * since the scheme is registered `standard: true` and therefore has a real
+ * origin -- but if that ever failed the bundle would not load and the app would
+ * be dead, so the scheme is listed explicitly. It costs nothing: the `app://`
+ * handler serves only files under `dist/browser` and 404s everything else.
+ *
+ * Note this forbids the inline service-worker registration ElementNode injects
+ * when `_swRegistration` is set. Only ServerNode.listen sets that, for its HTTP
+ * static route, so the electron runner never produces it.
+ */
+export const SHELL_CSP =
+  "script-src 'self' app:; object-src 'none'; base-uri 'none'";
 
 export function shellTemplate(): unknown {
   return {
@@ -203,6 +281,7 @@ export function shellTemplate(): unknown {
         tag: "head",
         content: [
           { tag: "meta", charset: "utf-8" },
+          { tag: "meta", "http-equiv": "Content-Security-Policy", content: SHELL_CSP },
           { tag: "meta", name: "viewport", content: "width=device-width, initial-scale=1" },
           { tag: "title", content: { var: "$title" } },
         ],
@@ -210,6 +289,17 @@ export function shellTemplate(): unknown {
       { tag: "body", content: [{ file: { var: "$page" } }] },
     ],
   };
+}
+
+/** Build a partial bounds rect from a resolved object, dropping non-numbers. */
+export function boundsOptions(value: unknown): Partial<Electron.Rectangle> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
+  const src = value as Record<string, unknown>;
+  const out: Partial<Electron.Rectangle> = {};
+  for (const key of ["x", "y", "width", "height"] as const) {
+    if (typeof src[key] === "number") out[key] = src[key];
+  }
+  return out;
 }
 
 const WINDOW_SIBLING = {
@@ -233,6 +323,12 @@ export class WindowNode extends Node {
         fullscreen: { type: "boolean", description: "Open the window fullscreen." },
         title: { type: "string", description: "Window title." },
         frame: { type: "boolean", description: "Set `false` for a frameless window, so the page can draw its own title bar." },
+        allow: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Ops this window's page may ask the main process for. Omit for no restriction.\nList ops only — a sibling travels with its op, so `[\"query\"]` already covers `{ \"query\": \"select\", \"table\": \"saves\" }`. Nested values are checked too, so a denied op cannot hide in a sibling slot.\nYour own menu, tray and shortcut handlers are unaffected — they run in main and never cross the IPC channel this limits.",
+        },
         titleBarStyle: {
           type: "string",
           enum: [...TITLE_BAR_STYLES],
@@ -343,6 +439,7 @@ export class WindowNode extends Node {
         title: r.title,
         frame: r.frame,
         titleBarStyle: r.titleBarStyle,
+        allow: r.allow,
       });
     });
   }

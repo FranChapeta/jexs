@@ -3,16 +3,21 @@
 
 import { app, protocol, net, BrowserWindow, globalShortcut } from "electron";
 import { pathToFileURL } from "node:url";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, statSync, watch } from "node:fs";
 import path from "node:path";
 import { createResolver } from "@jexs/core";
 import type { Context } from "@jexs/core";
-import { loadNodePackages, entryContext } from "@jexs/server";
-import { openWindow, reopenPrimary, shellTemplate, targetWindow, windowNameOf } from "./nodes/Window.js";
+import { loadNodePackages, entryContext, safeRelative } from "@jexs/server";
+import {
+  allowedKeysFor, openWindow, reopenPrimary, shellTemplate, targetWindow, windowNameOf,
+  wrapPage,
+} from "./nodes/Window.js";
 import { hasTray } from "./nodes/Tray.js";
 import { installBridge, rejectAll } from "./bridge.js";
 
 const projectDir = process.cwd();
+/** `jexs-electron --dev`: devtools on every window, and reload on template edits. */
+const devMode = process.argv.includes("--dev");
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
@@ -52,18 +57,32 @@ async function main(): Promise<void> {
 
   protocol.handle("app", async (req) => {
     const url = new URL(req.url);
-    const rel = decodeURIComponent(url.pathname).replace(/^\/+/, "");
-    // `?wrap` (added only by openWindow) asks for the shell wrapping a page
-    if (url.searchParams.has("wrap")) {
+    // `?wrap=<token>` asks for the shell wrapping a page, which RESOLVES that
+    // template in main. Two independent checks, because this branch executes
+    // rather than serves: the token proves openWindow issued the URL (page
+    // script can build one, but cannot guess a token), and safeRelative still
+    // guards the name, since a page may have supplied it via `window-open` and
+    // FileNode resolves with path.resolve, which honors `../`.
+    const wrap = url.searchParams.get("wrap");
+    if (wrap !== null) {
+      const expected = wrapPage(wrap);
+      const rel = safeRelative(templatesDir, url.pathname);
+      if (expected === undefined || rel === null || rel !== expected) {
+        return new Response("Not found", { status: 404 });
+      }
       const ctx = mainContext();
       ctx._clientScript = "/client.js";
-      ctx.page = rel || "index.json";
+      ctx.page = rel;
       ctx.title = app.getName();
       const html = await Promise.resolve(resolver(shellTemplate(), ctx));
       return new Response(String(html), { headers: { "content-type": "text/html; charset=utf-8" } });
     }
-    const file = path.join(browserDir, rel);
-    if (existsSync(file) && statSync(file).isFile()) {
+    // Without the guard `..%2f..%2f..%2fetc/passwd` reads an arbitrary file —
+    // and the scheme is registered supportFetchAPI + corsEnabled, so page script
+    // could simply fetch it.
+    const asset = safeRelative(browserDir, url.pathname);
+    const file = asset === null ? null : path.join(browserDir, asset);
+    if (file && existsSync(file) && statSync(file).isFile()) {
       return net.fetch(pathToFileURL(file).toString());
     }
     return new Response("Not found", { status: 404 });
@@ -74,7 +93,10 @@ async function main(): Promise<void> {
     resolver,
     contextFor: (win) => mainContext(win),
     windowFor: (context) => targetWindow(undefined, context),
+    allowedFor: (win) => allowedKeysFor(win),
   });
+
+  if (devMode) enableDevMode(templatesDir);
 
   // Who survives the last window closing:
   //  - macOS always does, since its menu bar belongs to the app, not a window
@@ -105,6 +127,33 @@ async function main(): Promise<void> {
     await Promise.resolve(resolver({ file: "app/main.json" }, mainContext(null, projectDir)));
   } else {
     await openWindow({ title: app.getName() });
+  }
+}
+
+/** Devtools on every window, plus reload when a template changes. */
+function enableDevMode(templatesDir: string): void {
+  app.on("browser-window-created", (_event, win) => {
+    win.webContents.openDevTools();
+  });
+  for (const win of BrowserWindow.getAllWindows()) win.webContents.openDevTools();
+
+  if (!existsSync(templatesDir)) return;
+  // Coalesce: an editor save often emits several events for one write, and each
+  // would otherwise be its own reload.
+  let pending: ReturnType<typeof setTimeout> | null = null;
+  try {
+    watch(templatesDir, { recursive: true }, (_type, filename) => {
+      if (filename && !filename.endsWith(".json")) return;
+      if (pending) clearTimeout(pending);
+      pending = setTimeout(() => {
+        pending = null;
+        for (const win of BrowserWindow.getAllWindows()) win.webContents.reload();
+      }, 80);
+    });
+    console.log(`[jexs-electron] dev mode: watching ${templatesDir}`);
+  } catch (err) {
+    // Recursive watch is unsupported on some Linux setups; devtools still work.
+    console.warn(`[jexs-electron] dev mode: template watching unavailable: ${String(err)}`);
   }
 }
 

@@ -328,10 +328,15 @@ async function main(): Promise<void> {
     // No JS bootstrap: `jexs bundle` builds the renderer (dist/browser, served
     // over app://), then `jexs-electron` (from @jexs/electron) opens the window
     // showing src/index.json — or runs app/main.json against the main-process
-    // resolver if present. `build` packages a distributable with electron-builder.
-    scripts.dev = "jexs bundle && jexs-electron";
+    // resolver if present.
+    // dev:   `--dev` opens devtools on every window and reloads them when a
+    //        template under src/ changes.
+    // start: the same run without it, i.e. what a user sees.
+    // build: packages a distributable with electron-builder.
+    scripts.dev = "jexs bundle && jexs-electron --dev";
     scripts.bundle = "jexs bundle";
     scripts.build = "jexs bundle && electron-builder";
+    scripts.start = "jexs bundle && jexs-electron";
     scripts.schema = "jexs schema";
     scripts.postinstall = "jexs schema";
     scripts.format = "prettier --write \"app/**/*.json\"";
