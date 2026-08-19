@@ -92,5 +92,5 @@ export { Cache } from "./cache/Cache.js";
 //    host that builds its own resolver from installed packages) ──
 export { walkJexsPackages, loadNodePackages, enumerateNodeClasses, type DiscoveredPackage } from "./discover.js";
 export { buildProjectSchema, collectPackageSchemas } from "./schema-build.js";
-export { entryContext } from "./nodes/File.js";
+export { entryContext, safeRelative } from "./nodes/File.js";
 export { manifestOf, contributesNodes, type JexsManifest, type JexsEnv } from "./manifest.js";

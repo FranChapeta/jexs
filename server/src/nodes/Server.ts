@@ -8,6 +8,7 @@ import { WebSocketServer } from "ws";
 import { Context, Node, NodeValue, TimerNode, isHttpError, resolve, resolveAll } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { WebSocketNode } from "./WebSocket.js";
+import { safeRelative } from "./File.js";
 import { defaultSwConfig } from "../sw.js";
 
 /**
@@ -425,11 +426,12 @@ async function tryServeStatic(
   // Check registered static directories (e.g. @jexs/client browser bundle)
   for (const [prefix, localDir] of listener.staticDirs) {
     if (requestPath.startsWith(prefix + "/") || requestPath === prefix) {
-      const relative = requestPath.slice(prefix.length).replace(/^\/+/, "");
-      const filePath = path.resolve(localDir, relative);
-
-      // Prevent path traversal
-      if (!filePath.startsWith(localDir + path.sep) && filePath !== localDir) continue;
+      // safeRelative decodes: browsers percent-encode spaces and UTF-8, so
+      // without it a file named `foto ñ.png` is unreachable. Decoding is also
+      // what admits `..%2f`, which is why the guard is the same call.
+      const relative = safeRelative(localDir, requestPath.slice(prefix.length));
+      if (relative === null) continue;
+      const filePath = path.join(localDir, relative);
 
       try {
         const stat = await fs.promises.stat(filePath);
@@ -452,10 +454,12 @@ async function tryServeStatic(
 
   // Fall back to the configured public/ directory
   const publicDir = listener.publicDir;
-  const filePath = path.resolve(publicDir, requestPath.replace(/^\/+/, ""));
-
-  // Prevent path traversal — resolved path must be within publicDir
-  if (!filePath.startsWith(publicDir + path.sep) && filePath !== publicDir) return false;
+  // Same decode-and-contain. Note the decoding stops here: `requestPath` itself
+  // stays encoded, because it also feeds route matching, where turning `%2f`
+  // into a separator would change which route a request matches.
+  const relative = safeRelative(publicDir, requestPath);
+  if (relative === null) return false;
+  const filePath = path.join(publicDir, relative);
 
   try {
     const stat = await fs.promises.stat(filePath);

@@ -36,6 +36,41 @@ export function entryContext(dir: string): Context {
 }
 
 /**
+ * Decode a URL pathname into a path relative to `root`, or null if it escapes.
+ *
+ * For runners that serve files over HTTP or a custom scheme, where the path
+ * arrives from outside. Note this is the OPPOSITE rule from `resolvePath` below,
+ * which deliberately lets a load escape the root: `"../shared/x.json"` is a
+ * documented, supported template path. Escaping is a feature for a template
+ * author and a vulnerability for a request, so the two never share a code path.
+ *
+ * The containment check is not belt-and-braces, it is the actual guard. URL
+ * parsing normalizes a plain `../`, so `/../../etc/passwd` arrives as
+ * `/etc/passwd` and is harmless -- but a PERCENT-ENCODED separator survives it:
+ * the parser reads `..%2f..` as one opaque segment, and the decodeURIComponent
+ * that follows turns it back into `../../`.
+ *
+ * `path.join` rather than `path.resolve` for the candidate, so an absolute
+ * segment such as `C:/Windows/...` is appended rather than honored.
+ */
+export function safeRelative(root: string, pathname: string): string | null {
+  let rel: string;
+  try {
+    rel = decodeURIComponent(pathname).replace(/^\/+/, "");
+  } catch {
+    // Malformed percent-encoding (`%zz`, a trailing `%`). Not a path at all.
+    return null;
+  }
+  // `%00` decodes to a NUL, which truncates the name for some consumers and
+  // makes Node's fs throw. Rejected here so no caller has to wrap its own read.
+  if (rel.includes("\0")) return null;
+  const base = path.resolve(root);
+  const resolved = path.resolve(path.join(root, rel));
+  if (resolved !== base && !resolved.startsWith(base + path.sep)) return null;
+  return rel;
+}
+
+/**
  * FileNode - Handles file operations in JSON.
  *
  * Operations:
