@@ -70,19 +70,6 @@ export function safeRelative(root: string, pathname: string): string | null {
   return rel;
 }
 
-/**
- * FileNode - Handles file operations in JSON.
- *
- * Operations:
- * - { "file": "path/to/file.json" } -> load and parse JSON file
- * - { "file": { "var": "$path" }, "raw": true } -> dynamic path, load as string
- * - { "directory": "path/to/dir" } -> list directory contents
- * - { "directory": "path/to/dir", "recursive": true } -> list recursively
- * - { "directory": "path/to/dir", "extension": ["json", "js"] } -> filter by extension
- *
- * File paths are resolved relative to the app directory.
- * All property values are resolved dynamically (can use variables, joins, etc.)
- */
 export class FileNode extends Node {
   static schema: JexsNodeSchema = {
     file: {
@@ -111,6 +98,32 @@ export class FileNode extends Node {
         write: {
           output: "boolean",
           markdownDescription: "Writes data to the file (strings verbatim, otherwise JSON). Returns `true`/`false` for success.",
+        },
+        exists: {
+          type: "boolean",
+          output: "boolean",
+          markdownDescription: "Reports whether the path exists, without reading it. Cheaper than loading a large file to test for it, and unlike a load it does not treat an unparseable file as missing.",
+        },
+        stat: {
+          type: "boolean",
+          output: "object",
+          markdownDescription: "Reports file metadata without reading the contents.",
+          outputDescription: "`{ size, modified, created, isFile, isDirectory }` — `size` in bytes, the times as ISO strings. `null` if the path cannot be read.",
+        },
+        delete: {
+          type: "boolean",
+          output: "boolean",
+          markdownDescription: "Deletes the file. Already absent counts as success, so cleanup steps are repeatable. Refuses directories — there is deliberately no recursive delete.",
+        },
+        copyTo: {
+          type: "string",
+          output: "boolean",
+          markdownDescription: "Copies the file to another path, overwriting any file already there. The destination resolves the same way the source does.\nNamed `copyTo` rather than `copy` because `copy` is the client's clipboard op, and a step carrying both keys would dispatch on whichever came first.",
+        },
+        moveTo: {
+          type: "string",
+          output: "boolean",
+          markdownDescription: "Moves or renames the file, overwriting any file already there. The destination resolves the same way the source does.\nFalls back to copy-then-delete when the destination is on another drive or mount, which a plain rename cannot cross.",
         },
       },
     },
@@ -165,9 +178,13 @@ export class FileNode extends Node {
   }
 
   file(def: Record<string, unknown>, context: Context): NodeValue {
-    return "write" in def
-      ? writeFile(def, context, this.rootAbs)
-      : loadFile(def, context, this.rootAbs);
+    if ("write" in def) return writeFile(def, context, this.rootAbs);
+    if ("exists" in def) return statFile(def, context, this.rootAbs, "exists");
+    if ("stat" in def) return statFile(def, context, this.rootAbs, "stat");
+    if ("delete" in def) return deleteFile(def, context, this.rootAbs);
+    if ("copyTo" in def) return transferFile(def, context, this.rootAbs, "copyTo");
+    if ("moveTo" in def) return transferFile(def, context, this.rootAbs, "moveTo");
+    return loadFile(def, context, this.rootAbs);
   }
 
   directory(def: Record<string, unknown>, context: Context): NodeValue {
@@ -339,6 +356,97 @@ function writeFile(
     } catch (error) {
       const e = error as Error;
       console.error(`[FileNode] Error writing file ${filePath}:`, e.message);
+      return false;
+    }
+  });
+}
+
+/**
+ * `exists` and `stat` share a path because both only ask the filesystem about a
+ * file rather than reading it. A failed stat is the ANSWER for `exists`, so it is
+ * not logged; for `stat` it is a real failure and returns null.
+ */
+function statFile(
+  def: Record<string, unknown>,
+  context: Context,
+  rootAbs: string,
+  mode: "exists" | "stat",
+): unknown {
+  return resolve(def.file, context, async filePathValue => {
+    const filePath = resolvePath(filePathValue, rootAbs, getFileDir(context));
+
+    let info: Awaited<ReturnType<typeof fs.stat>>;
+    try {
+      info = await fs.stat(filePath);
+    } catch {
+      return mode === "exists" ? false : null;
+    }
+    if (mode === "exists") return true;
+
+    return {
+      size: info.size,
+      modified: info.mtime.toISOString(),
+      created: info.birthtime.toISOString(),
+      isFile: info.isFile(),
+      isDirectory: info.isDirectory(),
+    };
+  });
+}
+
+function deleteFile(
+  def: Record<string, unknown>,
+  context: Context,
+  rootAbs: string,
+): unknown {
+  return resolve(def.file, context, async filePathValue => {
+    const filePath = resolvePath(filePathValue, rootAbs, getFileDir(context));
+
+    try {
+      // `force` makes an already-absent file a success: a cleanup step should be
+      // repeatable, and "it is not there" is the outcome the caller wanted. No
+      // `recursive`, so a directory is an error rather than a silent tree wipe.
+      await fs.rm(filePath, { force: true });
+      return true;
+    } catch (error) {
+      const e = error as Error;
+      console.error(`[FileNode] Error deleting file ${filePath}:`, e.message);
+      return false;
+    }
+  });
+}
+
+function transferFile(
+  def: Record<string, unknown>,
+  context: Context,
+  rootAbs: string,
+  mode: "copyTo" | "moveTo",
+): unknown {
+  return resolveAll([def.file, def[mode]], context, async ([fromValue, toValue]) => {
+    const fileDir = getFileDir(context);
+    const from = resolvePath(fromValue, rootAbs, fileDir);
+    // The destination resolves by the same rules as the source, so a relative
+    // target lands next to the file that asked for the move, not next to `from`.
+    const to = resolvePath(toValue, rootAbs, fileDir);
+
+    try {
+      if (mode === "copyTo") {
+        await fs.copyFile(from, to);
+        return true;
+      }
+      try {
+        await fs.rename(from, to);
+      } catch (error) {
+        // EXDEV: rename cannot cross a drive or mount point, which on a desktop
+        // is an ordinary move (C: to D:, or onto a USB stick) rather than a bug.
+        if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
+        await fs.copyFile(from, to);
+        await fs.rm(from, { force: true });
+      }
+      return true;
+    } catch (error) {
+      const e = error as Error;
+      const verb = mode === "copyTo" ? "copying" : "moving";
+      console.error(`[FileNode] Error ${verb} ${from} to ${to}:`, e.message);
       return false;
     }
   });
