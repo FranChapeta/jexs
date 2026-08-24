@@ -1,6 +1,6 @@
 {
   "name": "@jexs/server",
-  "version": "0.8.5",
+  "version": "0.9.0",
   "license": "MIT",
   "description": "Node.js server runtime for Jexs — HTTP, routing, SQLite/MySQL, sessions, OAuth, email, web-push, WebSocket",
   "keywords": [
@@ -42,7 +42,7 @@
     "!dist/**/*.map"
   ],
   "peerDependencies": {
-    "@jexs/core": "^1.0.0",
+    "@jexs/core": "^1.1.0",
     "@jexs/physics": "^0.5.0"
   },
   "dependencies": {
@@ -50,13 +50,12 @@
     "ajv-formats": "^3.0.1",
     "bcrypt": "^6.0.0",
     "better-sqlite3": "^11.0.0",
-    "esbuild": "0.28.1",
+    "esbuild": "^0.28.1",
     "ioredis": "^5.3.0",
     "knex": "^3.1.0",
     "memjs": "^1.3.0",
     "mysql2": "^3.6.0",
     "nodemailer": "^9.0.3",
-    "uuid": "^14.0.1",
     "web-push": "^3.6.0",
     "ws": "^8.19.0"
   },

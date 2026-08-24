@@ -1,6 +1,6 @@
 {
   "name": "@jexs/client",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "license": "MIT",
   "description": "Browser runtime for Jexs — DOM, fetch, audio, WebSocket, push, and WebRTC nodes",
   "keywords": [
@@ -41,7 +41,7 @@
     "build:browser": "node -e \"require('fs').rmSync('dist/browser',{recursive:true,force:true})\" && esbuild client=src/index.ts sw=src/sw.ts physicsWorker=src/physicsWorker.ts resolverWorker=src/resolverWorker.ts --bundle --format=esm --splitting --outdir=dist/browser --entry-names=[name] --chunk-names=chunks/[hash] --minify --target=es2022"
   },
   "peerDependencies": {
-    "@jexs/core": "^1.0.0",
+    "@jexs/core": "^1.1.0",
     "@jexs/physics": "^0.5.0",
     "@jexs/gl": "^0.5.0"
   },
