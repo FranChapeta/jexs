@@ -1,6 +1,29 @@
 import { registerNode, registerLazy } from "@jexs/core";
 
 /**
+ * Rethrow a failed optional-package import with something the author can act on.
+ *
+ * `@jexs/physics` and `@jexs/gl` are OPTIONAL peers: an app that renders forms
+ * and lists should not have to install a physics engine and a WebGL renderer to
+ * bundle. The `.catch()` has to sit syntactically on the `import()` for that to
+ * work — esbuild only downgrades an unresolved dynamic import from a build error
+ * to a warning when it can see the rejection is handled, and it cannot see
+ * through a wrapper function.
+ *
+ * Failing loudly HERE is right, though: reaching this handler means a template
+ * actually used one of these ops, so the package is genuinely needed and silence
+ * would leave the op mysteriously inert.
+ */
+function missingPackage(pkg: string, needed: string): (err: unknown) => never {
+  return (err: unknown) => {
+    throw new Error(
+      `${needed} require "${pkg}", which is not installed. Run: npm i ${pkg}`,
+      { cause: err },
+    );
+  };
+}
+
+/**
  * Lazy node registrations, split by capability so the SAME blocks serve both the
  * main page and the resolver worker without duplicating the lists.
  *
@@ -28,7 +51,9 @@ export function registerComputeLazy(): void {
      "joint-add", "joint-remove",
      "parseGLB", "parseGLTF", "register-mesh"],
     () => Promise.all([
-      import("@jexs/physics"),
+      import("@jexs/physics").catch(
+        missingPackage("@jexs/physics", "entity, vector, physics, collision, joint and mesh ops"),
+      ),
       import("./physicsClient.js"),
     ]).then(([{ EntityNode, VectorNode, PhysicsNode, CollisionNode, JointNode, MeshNode }, { makePhysicsWorker }]) => {
       registerNode(new EntityNode());
@@ -87,8 +112,10 @@ export function registerDomLazy(): void {
     ["gl-init", "gl-destroy", "gl-hit", "gl-camera", "gl-texture", "gl-animate",
      "gl-text", "gl-font", "gl-shader", "gl-blur", "gl-transition", "gl-tween", "gl-ssao",
      "gl-register-mesh"],
-    () => import("@jexs/gl").then(({ GlNode }) => {
-      registerNode(new GlNode());
-    }),
+    () => import("@jexs/gl")
+      .catch(missingPackage("@jexs/gl", "gl-* ops"))
+      .then(({ GlNode }) => {
+        registerNode(new GlNode());
+      }),
   );
 }

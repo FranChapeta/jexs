@@ -16,6 +16,16 @@ function clientDistDir(): string {
   return path.dirname(fileURLToPath(import.meta.resolve("@jexs/client")));
 }
 
+/** Whether an optional package is installed in this project. */
+function isInstalled(pkg: string): boolean {
+  try {
+    import.meta.resolve(pkg);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Bundle the project's browser runtime into `dist/browser`. Generates an entry
  * that boots @jexs/client (which wires core/client/physics/gl) and then registers
@@ -58,13 +68,21 @@ export async function bundleClient(
   const entryPath = path.join(jexsDir, "browser-entry.js");
   writeFileSync(entryPath, entrySrc);
 
+  const entryPoints: Record<string, string> = {
+    client: entryPath,
+    sw: path.join(clientDist, "sw.js"),
+    resolverWorker: path.join(clientDist, "resolverWorker.js"),
+  };
+  // The physics worker STATICALLY imports @jexs/physics, so unlike the lazy
+  // registrations it cannot be rescued by a `.catch()` — listing it as an entry
+  // in an app without physics fails the entire bundle. Nothing references the
+  // emitted file unless a physics op runs, which needs the package anyway.
+  if (isInstalled("@jexs/physics")) {
+    entryPoints.physicsWorker = path.join(clientDist, "physicsWorker.js");
+  }
+
   const buildOptions: esbuild.BuildOptions = {
-    entryPoints: {
-      client: entryPath,
-      sw: path.join(clientDist, "sw.js"),
-      physicsWorker: path.join(clientDist, "physicsWorker.js"),
-      resolverWorker: path.join(clientDist, "resolverWorker.js"),
-    },
+    entryPoints,
     bundle: true,
     format: "esm",
     splitting: true,
