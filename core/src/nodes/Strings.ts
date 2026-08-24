@@ -73,7 +73,7 @@ export class StringNode extends Node {
     },
     parseJSON: {
       markdownDescription: "Parses a JSON string; returns `null` on invalid input.",
-      outputDescription: "The parsed value — any JSON type (object, array, number, string, boolean, or `null`). Returns `null` if the input isn't valid JSON, so it's indistinguishable from a literal `null`.",
+      outputDescription: "The parsed value, which can be any JSON type (object, array, number, string, boolean, or `null`). Returns `null` if the input isn't valid JSON, so it's indistinguishable from a literal `null`.",
       examples: [
         "{ \"parseJSON\": { \"var\": \"$raw\" } }",
       ],
@@ -117,7 +117,7 @@ export class StringNode extends Node {
         { type: "string", description: "The replacement string (`$1`/`$&` group refs work for regex searches)." },
       ],
       output: "string",
-      markdownDescription: "Replaces occurrences in `[input, search, replacement]`. A `search` of the form `/pattern/flags` is treated as a regular expression (so `$1`/`$&` group refs work in the replacement); any other string is matched literally. Replaces all occurrences by default — set `all: false` for only the first (literal), or omit the `g` flag (regex).",
+      markdownDescription: "Replaces occurrences in `[input, search, replacement]`. A `search` of the form `/pattern/flags` is treated as a regular expression (so `$1`/`$&` group refs work in the replacement); any other string is matched literally. Replaces all occurrences by default; set `all: false` for only the first (literal), or omit the `g` flag (regex).",
       examples: [
         "{ \"replace\": [\"foo foo\", \"foo\", \"bar\"] }",
         "{ \"replace\": [\"a1 b2\", \"/\\\\d/g\", \"#\"] }",
@@ -270,7 +270,7 @@ export class StringNode extends Node {
     },
     segment: {
       output: "array",
-      markdownDescription: "Splits a string into Unicode-correct segments via `Intl.Segmenter`, unlike the code-unit `split`. `\"grapheme\"` (default) yields user-perceived characters — emoji and combining marks stay whole, where `length` and index-based ops treat them as several UTF-16 units. `\"word\"` yields locale-aware word boundaries (works for scripts without spaces, e.g. Chinese/Japanese/Thai). `\"sentence\"` yields sentences.",
+      markdownDescription: "Splits a string into Unicode-correct segments via `Intl.Segmenter`, unlike the code-unit `split`. `\"grapheme\"` (default) yields user-perceived characters, so emoji and combining marks stay whole, where `length` and index-based ops treat them as several UTF-16 units. `\"word\"` yields locale-aware word boundaries (works for scripts without spaces, e.g. Chinese/Japanese/Thai). `\"sentence\"` yields sentences.",
       outputDescription: "An array of segment strings. `\"word\"`/`\"sentence\"` granularity includes the whitespace and punctuation segments between words.",
       examples: [
         "{ \"segment\": \"a\\ud83d\\udc4db\" }",

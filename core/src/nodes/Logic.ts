@@ -8,7 +8,7 @@ export class LogicNode extends Node {
   static schema: JexsNodeSchema = {
     if: {
       markdownDescription: "Resolves `then` when the condition is truthy, otherwise `else`. Both branches are optional.",
-      outputDescription: "The resolved value of the taken branch. A branch that is an **array** is run as a step sequence and yields only its LAST value — wrap multiple elements in one container if you need them all. With no `then` a truthy condition yields `true`; with no `else` a falsy condition yields `undefined`.",
+      outputDescription: "The resolved value of the taken branch. A branch that is an **array** is run as a step sequence and yields only its LAST value, so wrap multiple elements in one container if you need them all. With no `then` a truthy condition yields `true`; with no `else` a falsy condition yields `undefined`.",
       examples: [
         "{ \"if\": { \"var\": \"$active\" }, \"then\": \"yes\", \"else\": \"no\" }",
       ],
@@ -38,8 +38,8 @@ export class LogicNode extends Node {
       },
     },
     foreach: {
-      markdownDescription: "Iterates over an array, resolving `do` for each item — for side-effects or accumulation. Use `item` to name the item variable (default `\"item\"`), `key` for the index variable, and `parallel: true` to resolve all iterations concurrently.\nEach iteration receives a `loop` context with `item`, `index`, `first`, `last`, and `length`.",
-      outputDescription: "The **last** iteration's resolved value, not an array (an empty/absent input yields `null`). For an array `do`, that is the last step of the last iteration. Reach for `map` when you need a result per item — e.g. rendering N elements from a collection.",
+      markdownDescription: "Iterates over an array, resolving `do` for each item, for side-effects or accumulation. Use `item` to name the item variable (default `\"item\"`), `key` for the index variable, and `parallel: true` to resolve all iterations concurrently.\nEach iteration receives a `loop` context with `item`, `index`, `first`, `last`, and `length`.",
+      outputDescription: "The **last** iteration's resolved value, not an array (an empty/absent input yields `null`). For an array `do`, that is the last step of the last iteration. Reach for `map` when you need a result per item, e.g. rendering N elements from a collection.",
       examples: [
         "{ \"foreach\": { \"var\": \"$users\" }, \"item\": \"user\", \"do\": { \"setVars\": { \"seen\": { \"add\": [{ \"var\": \"$seen\" }, 1] } } } }",
       ],
@@ -64,7 +64,7 @@ export class LogicNode extends Node {
     and: {
       type: "array",
       output: "boolean",
-      markdownDescription: "Short-circuit AND — evaluates conditions left to right, stopping at the first falsy one.",
+      markdownDescription: "Short-circuit AND. Evaluates conditions left to right, stopping at the first falsy one.",
       outputDescription: "`true` if every condition is truthy, otherwise `false` (an empty array is `true`).",
       examples: [
         "{ \"and\": [{ \"var\": \"$loggedIn\" }, { \"var\": \"$verified\" }] }",
@@ -73,7 +73,7 @@ export class LogicNode extends Node {
     or: {
       type: "array",
       output: "boolean",
-      markdownDescription: "Short-circuit OR — evaluates conditions left to right, stopping at the first truthy one.",
+      markdownDescription: "Short-circuit OR. Evaluates conditions left to right, stopping at the first truthy one.",
       outputDescription: "`true` at the first truthy condition, otherwise `false` (an empty array is `false`).",
       examples: [
         "{ \"or\": [{ \"var\": \"$isAdmin\" }, { \"var\": \"$isModerator\" }] }",
@@ -82,8 +82,8 @@ export class LogicNode extends Node {
     coalesce: {
       type: "array",
       output: "any",
-      markdownDescription: "Resolves values left to right, returning the first non-empty one — the value itself, not a boolean. Short-circuits, so later expressions are never resolved once a value is found. Use it to supply a fallback without repeating an expression across `if`/`then`.",
-      outputDescription: "The first value that is not empty (`null`, `undefined`, `\"\"`, `[]`, `{}` are skipped; `0` and `false` are kept — the same rule as `notEmpty`). If every value is empty, the LAST one is returned; an empty array yields `undefined`.",
+      markdownDescription: "Resolves values left to right, returning the first non-empty one: the value itself, not a boolean. Short-circuits, so later expressions are never resolved once a value is found. Use it to supply a fallback without repeating an expression across `if`/`then`.",
+      outputDescription: "The first value that is not empty (`null`, `undefined`, `\"\"`, `[]`, `{}` are skipped; `0` and `false` are kept, the same rule as `notEmpty`). If every value is empty, the LAST one is returned; an empty array yields `undefined`.",
       examples: [
         "{ \"coalesce\": [{ \"var\": \"$props.button.properties.size.type\" }, \"any\"] }",
       ],
@@ -225,7 +225,7 @@ export class LogicNode extends Node {
     },
 
     exec: {
-      markdownDescription: "Resolves its value to a step sequence, then runs it. The steps are supplied as an expression — typically a `var` holding a step array (that is how you feed a step sequence in). The resolved array is executed as steps, so each step's `as` binding is visible to later steps.\nPass `\"params\"` to run the steps against a shallow copy of the context with those scoped variables merged in — the parent context is left untouched.",
+      markdownDescription: "Resolves its value to a step sequence, then runs it. The steps are supplied as an expression, typically a `var` holding a step array (that is how you feed a step sequence in). The resolved array is executed as steps, so each step's `as` binding is visible to later steps.\nPass `\"params\"` to run the steps against a shallow copy of the context with those scoped variables merged in. The parent context is left untouched.",
       outputDescription: "The LAST step's value when the resolved value is an array; otherwise the resolved value itself.",
       examples: [
         "{ \"exec\": { \"var\": \"$steps\" } }",

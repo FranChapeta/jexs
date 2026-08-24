@@ -10,7 +10,7 @@ export class TranslationNode extends Node {
       type: "string",
       output: "null",
       markdownDescription: "Configures automatic string translation for the current request.\nSets `context._translate` so the resolver auto-translates strings via a DB lookup table.",
-      outputDescription: "Always `null` — it configures translation as a side-effect (via `context._translate`) for the rest of the request.",
+      outputDescription: "Always `null`. It configures translation as a side-effect (via `context._translate`) for the rest of the request.",
       examples: [
         "{ \"translate\": { \"var\": \"$session.lang\" }, \"table\": \"translations\" }",
       ],

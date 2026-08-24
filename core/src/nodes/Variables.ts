@@ -7,7 +7,7 @@ export class VariablesNode extends Node {
   static schema: JexsNodeSchema = {
     var: {
       markdownDescription: "Reads a value from the current context by dot-path. Prefix the path with `$`. The path itself may be an expression that resolves to a string (e.g. `{ \"concat\": [...] }`).",
-      outputDescription: "The value stored at the dot-path — whatever type it holds (string, number, boolean, array, object) — or `undefined` if any segment of the path is missing.",
+      outputDescription: "The value stored at the dot-path, whatever type it holds (string, number, boolean, array, object), or `undefined` if any segment of the path is missing.",
       examples: [
         "{ \"var\": \"$user.name\" }",
       ],
@@ -16,7 +16,7 @@ export class VariablesNode extends Node {
       map: true,
       output: "null",
       markdownDescription: "Resolves each value in the map and writes the result back into the context (supports dot-paths, e.g. `\"request.body.id\"`).\nPass `\"raw\": true` to skip resolving values.\nPass `\"bubble\": true` to also write into every enclosing scope, so the values survive after the current file/loop/branch returns.",
-      outputDescription: "Always `null` — `setVars` is used for its side-effect of writing into the context, which later steps read via `{ \"var\": \"…\" }`.",
+      outputDescription: "Always `null`. `setVars` is used for its side-effect of writing into the context, which later steps read via `{ \"var\": \"…\" }`.",
       examples: [
         "{ \"setVars\": { \"count\": 0, \"name\": { \"var\": \"$user.name\" } } }",
       ],

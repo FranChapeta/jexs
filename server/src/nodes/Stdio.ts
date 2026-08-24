@@ -80,7 +80,7 @@ export class StdioNode extends Node {
     },
     "stdio-prompt": {
       output: "string",
-      markdownDescription: "Writes a prompt to stdout and reads one line from stdin, resolving to the entered text (trailing newline stripped). Lines are buffered so piped/redirected input works, and resolves to `\"\"` at end of input (EOF) — a non-interactive run never hangs. For interactive CLIs; mutually exclusive with `stdio-listen`. Call `stdio-close` after the last prompt so the process can exit.",
+      markdownDescription: "Writes a prompt to stdout and reads one line from stdin, resolving to the entered text (trailing newline stripped). Lines are buffered so piped/redirected input works, and resolves to `\"\"` at end of input (EOF), so a non-interactive run never hangs. For interactive CLIs; mutually exclusive with `stdio-listen`. Call `stdio-close` after the last prompt so the process can exit.",
       examples: [
         "{ \"stdio-prompt\": \"Project name: \", \"as\": \"name\" }",
       ],

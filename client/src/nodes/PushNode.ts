@@ -6,7 +6,7 @@ export class PushNode extends Node {
     "push-subscribe": {
       type: "string",
       output: "object",
-      markdownDescription: "Requests notification permission and subscribes to Web Push using the given VAPID public key.\nReturns the `PushSubscription` JSON — send it to your server to enable push delivery.\nRequires a registered service worker with `PushManager` support.",
+      markdownDescription: "Requests notification permission and subscribes to Web Push using the given VAPID public key.\nReturns the `PushSubscription` JSON, which you send to your server to enable push delivery.\nRequires a registered service worker with `PushManager` support.",
       examples: [
         "{ \"push-subscribe\": { \"var\": \"$vapidPublicKey\" } }",
       ],

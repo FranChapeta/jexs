@@ -45,7 +45,7 @@ export class WebSocketNode extends Node {
     "socket-accept": {
       type: "boolean",
       output: "null",
-      markdownDescription: "Completes the WebSocket upgrade for the current request and binds per-connection step arrays. Must be called from an upgrade pipeline (where `_upgrade` is in context — populated by the `listen` node's upgrade handling).",
+      markdownDescription: "Completes the WebSocket upgrade for the current request and binds per-connection step arrays. Must be called from an upgrade pipeline (where `_upgrade` is in context, populated by the `listen` node's upgrade handling).",
       examples: [
         "{ \"socket-accept\": true, \"on-message\": [{ \"socket-broadcast\": { \"var\": \"$message\" } }] }",
       ],

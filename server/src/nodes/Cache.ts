@@ -99,8 +99,8 @@ export class CacheNode extends Node {
       variants: {
         close: { output: "null", markdownDescription: "Closes the cache connection." },
         clear: { output: "null", markdownDescription: "Removes every entry.", outputDescription: "Always `null`." },
-        stats: { output: "object", markdownDescription: "Reports driver statistics.", outputDescription: "A stats object (hit/miss counts, entry count/size, etc.) — exact fields depend on the driver." },
-        dump:  { output: "object", markdownDescription: "Snapshots the cache contents (memory driver only).", outputDescription: "An object snapshot of all entries. Memory driver only — other drivers return an error object." },
+        stats: { output: "object", markdownDescription: "Reports driver statistics.", outputDescription: "A stats object (hit/miss counts, entry count/size, etc.); exact fields depend on the driver." },
+        dump:  { output: "object", markdownDescription: "Snapshots the cache contents (memory driver only).", outputDescription: "An object snapshot of all entries. Memory driver only; other drivers return an error object." },
       },
     },
   };

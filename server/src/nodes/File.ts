@@ -108,12 +108,12 @@ export class FileNode extends Node {
           type: "boolean",
           output: "object",
           markdownDescription: "Reports file metadata without reading the contents.",
-          outputDescription: "`{ size, modified, created, isFile, isDirectory }` — `size` in bytes, the times as ISO strings. `null` if the path cannot be read.",
+          outputDescription: "`{ size, modified, created, isFile, isDirectory }`, with `size` in bytes and the times as ISO strings. `null` if the path cannot be read.",
         },
         delete: {
           type: "boolean",
           output: "boolean",
-          markdownDescription: "Deletes the file. Already absent counts as success, so cleanup steps are repeatable. Refuses directories — there is deliberately no recursive delete.",
+          markdownDescription: "Deletes the file. Already absent counts as success, so cleanup steps are repeatable. Refuses directories, since there is deliberately no recursive delete.",
         },
         copyTo: {
           type: "string",
@@ -131,7 +131,7 @@ export class FileNode extends Node {
       type: "string",
       output: "array",
       markdownDescription: "Lists directory contents. The path resolves relative to the file doing the loading; a leading `/` anchors at the resolver root. Lists files by default; pass `\"subdirectories\": true` to list the folders instead.",
-      outputDescription: "An array of `{ name, path, size, modified }` entries — files by default, or subdirectories when `subdirectories` is set (filtered by `extension` when given); `[]` if the directory can't be read.",
+      outputDescription: "An array of `{ name, path, size, modified }` entries: files by default, or subdirectories when `subdirectories` is set (filtered by `extension` when given); `[]` if the directory can't be read.",
       examples: [
         "{ \"directory\": \"data/posts\", \"extension\": \"json\", \"recursive\": true }",
         "{ \"directory\": \"node_modules/@jexs\", \"subdirectories\": true }",

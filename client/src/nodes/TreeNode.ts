@@ -106,7 +106,7 @@ export class TreeNode extends Node {
     "tree-init": {
       type: "string",
       output: "null",
-      markdownDescription: "Initializes a JSON tree editor. The primary key value is a context dot-path (`$editor`) where the tree data is stored — read it back with `{ \"var\": \"$editor\" }`. Also pass `target` (CSS selector), `data` (array; if omitted, adopts any array already at the path), and `row` (JSON template).\nThe `row` template is resolved per node with context vars: `path`, `type`, `summary`, `depth`, `selected`, `expanded`.\nHook `on-change` steps receive `$delta` and `$editorData`; `on-select` receives `$selectedPath` and `$selectedNode`.",
+      markdownDescription: "Initializes a JSON tree editor. The primary key value is a context dot-path (`$editor`) where the tree data is stored, so you read it back with `{ \"var\": \"$editor\" }`. Also pass `target` (CSS selector), `data` (array; if omitted, adopts any array already at the path), and `row` (JSON template).\nThe `row` template is resolved per node with context vars: `path`, `type`, `summary`, `depth`, `selected`, `expanded`.\nHook `on-change` steps receive `$delta` and `$editorData`; `on-select` receives `$selectedPath` and `$selectedNode`.",
       examples: [
         "{ \"tree-init\": \"$editor\", \"target\": \"#editor\", \"data\": [], \"row\": { \"tag\": \"div\", \"content\": [{ \"var\": \"path\" }] }, \"on-change\": [] }",
       ],
@@ -135,7 +135,7 @@ export class TreeNode extends Node {
     "tree-render": {
       type: "string",
       output: "null",
-      markdownDescription: "Re-renders the tree at the given context path from its current data. Pass `path` for a **partial** render: a child-list path (e.g. `\"0.content\"`, where you `push`ed/`remove`d) re-renders just that list's items; a node path (e.g. `\"0.content.1\"`, whose data you changed) replaces that node and its subtree. Omit `path` for a full render. Call after editing the data with `setVars` or the array mutators (`push`/`remove`/`insert`/`move`/…) — there is no automatic reactivity.",
+      markdownDescription: "Re-renders the tree at the given context path from its current data. Pass `path` for a **partial** render: a child-list path (e.g. `\"0.content\"`, where you `push`ed/`remove`d) re-renders just that list's items; a node path (e.g. `\"0.content.1\"`, whose data you changed) replaces that node and its subtree. Omit `path` for a full render. Call after editing the data with `setVars` or the array mutators (`push`/`remove`/`insert`/`move`/…), since there is no automatic reactivity.",
       examples: [
         "{ \"tree-render\": \"$editor\", \"path\": \"0.content\" }",
       ],
@@ -187,7 +187,7 @@ export class TreeNode extends Node {
     },
     "tree-move": {
       type: "string",
-      markdownDescription: "Moves a node — either **reorder** the selected node among its siblings (`direction`) or **relocate** it to any list (`to`).",
+      markdownDescription: "Moves a node: either **reorder** the selected node among its siblings (`direction`) or **relocate** it to any list (`to`).",
       examples: [
         "{ \"tree-move\": \"$editor\", \"direction\": \"up\" }",
         "{ \"tree-move\": \"$editor\", \"to\": \"2.content\", \"index\": 0 }",

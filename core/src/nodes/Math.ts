@@ -174,7 +174,7 @@ export class MathNode extends Node {
         type: "number",
       },
       output: "number",
-      markdownDescription: "Euclidean norm — the square root of the sum of squares of an array of numbers.",
+      markdownDescription: "Euclidean norm: the square root of the sum of squares of an array of numbers.",
       examples: [
         "{ \"hypot\": [3, 4] }",
       ],

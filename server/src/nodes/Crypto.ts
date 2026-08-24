@@ -93,7 +93,7 @@ export class CryptoNode extends Node {
       type: "string",
       output: "string",
       markdownDescription: "Encrypts a string with AES-256-GCM using the app secret key (`APP_SECRET` env or an auto-generated `app/secret.key`).",
-      outputDescription: "A string `\"iv:authTag:ciphertext\"` (all hex) — pass it back to `decrypt` to recover the plaintext.",
+      outputDescription: "A string `\"iv:authTag:ciphertext\"` (all hex). Pass it back to `decrypt` to recover the plaintext.",
       examples: [
         "{ \"encrypt\": { \"var\": \"$token\" } }",
       ],

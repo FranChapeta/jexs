@@ -13,7 +13,7 @@ export class DateNode extends Node {
         "datetime",
       ],
       markdownDescription: "Returns the current timestamp. Pass a format string (`\"ms\"`, `\"iso\"`, `\"datetime\"`) or `true` (shorthand for `\"ms\"`).",
-      outputDescription: "A **number** (Unix milliseconds) for `ms`/`true`; otherwise a **string** — `iso` → ISO-8601, `datetime` → `YYYY-MM-DD HH:MM:SS` in UTC.",
+      outputDescription: "A **number** (Unix milliseconds) for `ms`/`true`; otherwise a **string**: `iso` → ISO-8601, `datetime` → `YYYY-MM-DD HH:MM:SS` in UTC.",
       examples: [
         "{ \"dateNow\": \"iso\" }",
       ],
@@ -61,7 +61,7 @@ export class DateNode extends Node {
     },
     dateParse: {
       output: "number",
-      markdownDescription: "Parses a date string into a Unix-ms timestamp — the inverse of `dateFormat`. Accepts anything `Date.parse` understands (ISO-8601 recommended). A number passes through unchanged.",
+      markdownDescription: "Parses a date string into a Unix-ms timestamp, the inverse of `dateFormat`. Accepts anything `Date.parse` understands (ISO-8601 recommended). A number passes through unchanged.",
       outputDescription: "A **number** (Unix milliseconds), or `null` if the value cannot be parsed.",
       examples: [
         "{ \"dateParse\": \"2026-07-01T12:00:00Z\" }",
@@ -74,7 +74,7 @@ export class DateNode extends Node {
         { type: "number", description: "The `to` Unix-ms timestamp." },
       ],
       output: "number",
-      markdownDescription: "Difference between two Unix-ms timestamps as `[from, to]`, in whole `unit`s (default `ms`). Positive when `to` is later than `from`. Units are fixed-length: `\"ms\"`, `\"second\"`, `\"minute\"`, `\"hour\"`, `\"day\"`, `\"week\"` (calendar months/years are not supported — extract parts with `datePart`).",
+      markdownDescription: "Difference between two Unix-ms timestamps as `[from, to]`, in whole `unit`s (default `ms`). Positive when `to` is later than `from`. Units are fixed-length: `\"ms\"`, `\"second\"`, `\"minute\"`, `\"hour\"`, `\"day\"`, `\"week\"` (calendar months/years are not supported; extract parts with `datePart`).",
       outputDescription: "A **number** of whole units, truncated toward zero and signed. `null` if fewer than two args are given or the unit is unknown.",
       examples: [
         "{ \"dateDiff\": [{ \"var\": \"$start\" }, { \"var\": \"$end\" }], \"unit\": \"day\" }",
@@ -97,7 +97,7 @@ export class DateNode extends Node {
     datePart: {
       output: "number",
       markdownDescription: "Extracts a single component from a Unix-ms timestamp, in UTC. Choose the component with the `part` sibling.",
-      outputDescription: "A **number** — `month` is 1-12, `day` is 1-31, `weekday` is 0-6 (0 = Sunday). `null` if `part` is missing or unknown.",
+      outputDescription: "A **number**: `month` is 1-12, `day` is 1-31, `weekday` is 0-6 (0 = Sunday). `null` if `part` is missing or unknown.",
       examples: [
         "{ \"datePart\": { \"var\": \"$ts\" }, \"part\": \"weekday\" }",
       ],
@@ -191,7 +191,7 @@ export class DateNode extends Node {
       ],
       output: "string",
       markdownDescription: "Formats a Unix-ms timestamp as a locale-aware relative-time string via `Intl.RelativeTimeFormat`. Tuple form `[target, base]`: `target` is phrased relative to `base`, which defaults to now (matching date-fns `intlFormatDistance` and moment `.from()`). Auto-selects the largest fitting unit (second through year) unless `unit` forces one; month and year use approximate 30-day / 365-day lengths, so long spans are rounded.",
-      outputDescription: "A **string** like `\"3 hours ago\"` or `\"in 5 minutes\"` — a past `target` reads \"... ago\", a future one \"in ...\".",
+      outputDescription: "A **string** like `\"3 hours ago\"` or `\"in 5 minutes\"`. A past `target` reads \"... ago\", a future one \"in ...\".",
       examples: [
         "{ \"dateRelative\": [{ \"var\": \"$createdAt\" }] }",
         "{ \"dateRelative\": [{ \"var\": \"$ts\" }, { \"var\": \"$now\" }], \"style\": \"short\" }",

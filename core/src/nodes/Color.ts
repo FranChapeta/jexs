@@ -114,7 +114,7 @@ export class ColorNode extends Node {
         { type: ["string", "array"], description: "Second color: a hex string or an array in the `format` space." },
       ],
       output: "number",
-      markdownDescription: "WCAG contrast ratio between two colors: `(Llighter + 0.05) / (Ldarker + 0.05)`, from 1 (identical) to 21 (black on white). Tuple form `[a, b]` — order does not matter.",
+      markdownDescription: "WCAG contrast ratio between two colors: `(Llighter + 0.05) / (Ldarker + 0.05)`, from 1 (identical) to 21 (black on white). Tuple form `[a, b]`, where order does not matter.",
       examples: [
         "{ \"contrast\": [\"#000000\", \"#ffffff\"] }",
       ],

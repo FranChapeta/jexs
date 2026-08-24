@@ -161,7 +161,7 @@ export class DomNode extends Node {
         { $ref: "#/$defs/_gettableProp", description: "The DOM property to read, or a dot-path to a nested one (e.g. \"style.color\")." },
       ],
       output: "any",
-      markdownDescription: "Reads a live DOM property from an element (the JS property, not the HTML attribute) — e.g. `scrollTop`, `scrollHeight`, `checked`. Supports dot-paths for nested props, e.g. `style.color`. Pass `[selectorOrElement, propName]`.",
+      markdownDescription: "Reads a live DOM property from an element (the JS property, not the HTML attribute), e.g. `scrollTop`, `scrollHeight`, `checked`. Supports dot-paths for nested props, e.g. `style.color`. Pass `[selectorOrElement, propName]`.",
       examples: [
         "{ \"getProp\": [\"#log\", \"scrollTop\"] }",
         "{ \"getProp\": [\"#box\", \"style.color\"] }",
@@ -176,7 +176,7 @@ export class DomNode extends Node {
       ],
       output: "object",
       outputDescription: RETURNS_TARGET,
-      markdownDescription: "Writes a live DOM property on an element (the JS property, not the HTML attribute) — e.g. `scrollTop`, `checked`, `selectedIndex`. Supports dot-paths for nested props (e.g. `style.color`), traversed like `setVars`. Pass `[selectorOrElement, propName, value]`. Returns the element.",
+      markdownDescription: "Writes a live DOM property on an element (the JS property, not the HTML attribute), e.g. `scrollTop`, `checked`, `selectedIndex`. Supports dot-paths for nested props (e.g. `style.color`), traversed like `setVars`. Pass `[selectorOrElement, propName, value]`. Returns the element.",
       examples: [
         "{ \"setProp\": [\"#log\", \"scrollTop\", 99999] }",
         "{ \"setProp\": [\"#box\", \"style.color\", \"red\"] }",
@@ -272,7 +272,7 @@ export class DomNode extends Node {
         { type: "number", description: "The y coordinate, in CSS pixels relative to the viewport." },
       ],
       output: "object",
-      outputDescription: "A plain `{ offsetNode, offset }` object — the live DOM node under the point and the caret's character offset within it — or null if the point misses the document or no supporting API exists.",
+      outputDescription: "A plain `{ offsetNode, offset }` object holding the live DOM node under the point and the caret's character offset within it, or null if the point misses the document or no supporting API exists.",
       markdownDescription: "Finds the caret position at a viewport point, returning `{ offsetNode, offset }`. Uses the standards-track `Document.caretPositionFromPoint` (Firefox, modern Chromium) and falls back to the WebKit/Blink `Document.caretRangeFromPoint` (Safari, older Chromium), so it works across browsers. Pass `[x, y]`.",
       examples: [
         "{ \"caretFromPoint\": [120, 40] }",

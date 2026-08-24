@@ -83,7 +83,7 @@ export class DatabaseNode extends Node {
         },
         raw: {
           markdownDescription: "Runs a raw SQL string with positional bindings.",
-          outputDescription: "The driver result — a rows array on SQLite, the first result set otherwise.",
+          outputDescription: "The driver result: a rows array on SQLite, the first result set otherwise.",
           siblings: {
             sql: { type: "string", description: "Raw SQL string." },
             bindings: { type: "array", description: "Positional bindings for the SQL." },

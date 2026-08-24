@@ -667,7 +667,7 @@ function buildRichMarkdown(methodKey: string, m: EmittedMethodSchema): string {
   if (m.variantDocs && m.variantDocs.length > 0) {
     const ops = m.variantDocs.map(v => {
       const out = v.output ? ` → ${v.output}` : "";
-      const desc = v.description ? ` — ${v.description}` : "";
+      const desc = v.description ? `: ${v.description}` : "";
       return `- \`${v.key}\`${out}${desc}`;
     });
     md = (md ? md + "\n\n" : "") + "**Operations:**\n" + ops.join("\n");
@@ -676,7 +676,7 @@ function buildRichMarkdown(methodKey: string, m: EmittedMethodSchema): string {
       .filter(([k]) => k !== methodKey)
       .map(([k, v]) => {
         const desc = pickDesc(v as MaybeMeta);
-        return desc ? `- \`${k}\` — ${desc}` : `- \`${k}\``;
+        return desc ? `- \`${k}\`: ${desc}` : `- \`${k}\``;
       });
     if (siblings.length > 0) {
       md = (md ? md + "\n\n" : "") + "**Properties:**\n" + siblings.join("\n");
@@ -713,7 +713,7 @@ export const GLOBAL_KEY_DOCS: Record<string, { markdownDescription: string; exam
   },
   return: {
     markdownDescription:
-      "In a step array, a step that resolves to `{ \"return\": X }` stops the array early and yields `X`. Escapes only the current array — nest the wrapper to exit outer arrays.",
+      "In a step array, a step that resolves to `{ \"return\": X }` stops the array early and yields `X`. Escapes only the current array, so nest the wrapper to exit outer arrays.",
     examples: [
       "{ \"if\": { \"empty\": { \"var\": \"$name\" } }, \"then\": { \"return\": \"Hello, world!\" } }",
     ],
@@ -725,12 +725,12 @@ export const GLOBAL_KEY_DOCS: Record<string, { markdownDescription: string; exam
   },
   then: {
     markdownDescription:
-      "Run these steps as a FIRE-AND-FORGET continuation (like a Promise `.then`): the step returns immediately — later steps do NOT block on it — and once this expression settles, the steps run with the result bound as `$result`. A rejection runs `catch`. The step itself yields `null` (the result is delivered to `$result`, not returned), so a sibling `as` here would bind `null` — read the value via `$result` inside `then`. Works on ANY node; use it to kick off async I/O (`query`, `file`, a host `dialog`, `thread`) without stalling the sequence. (Under `if`, `then` is the branch, not a continuation.)",
+      "Run these steps as a FIRE-AND-FORGET continuation (like a Promise `.then`): the step returns immediately (later steps do NOT block on it), and once this expression settles, the steps run with the result bound as `$result`. A rejection runs `catch`. The step itself yields `null` (the result is delivered to `$result`, not returned), so a sibling `as` here would bind `null`; read the value via `$result` inside `then`. Works on ANY node; use it to kick off async I/O (`query`, `file`, a host `dialog`, `thread`) without stalling the sequence. (Under `if`, `then` is the branch, not a continuation.)",
     examples: ["{ \"query-select\": \"saves\", \"then\": [{ \"set-html\": [\"#list\", { \"var\": \"$result\" }] }] }"],
   },
   bubble: {
     markdownDescription:
-      "Modifier for a write — only valid alongside `as` or `setVars`. Also writes the result up into every enclosing scope, so it survives after the current file / loop / branch returns. Without it, writes are scoped to the copied context and lost on return.",
+      "Modifier for a write, only valid alongside `as` or `setVars`. Also writes the result up into every enclosing scope, so it survives after the current file / loop / branch returns. Without it, writes are scoped to the copied context and lost on return.",
     examples: ["{ \"var\": \"$total\", \"as\": \"total\", \"bubble\": true }"],
   },
 };

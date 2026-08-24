@@ -77,7 +77,7 @@ export class TimerNode extends Node {
       variants: {
         start: {
           output: "string",
-          markdownDescription: "Begins the loop, returning the timer `id`. The `do` steps run in the background — their values are not returned here.",
+          markdownDescription: "Begins the loop, returning the timer `id`. The `do` steps run in the background, so their values are not returned here.",
           siblings: {
             rate: {
               type: "number",
@@ -118,7 +118,7 @@ export class TimerNode extends Node {
       variants: {
         start: {
           output: "string",
-          markdownDescription: "Begins the scheduled task, returning the timer `id`. The `do` steps run in the background — their values are not returned here.",
+          markdownDescription: "Begins the scheduled task, returning the timer `id`. The `do` steps run in the background, so their values are not returned here.",
           siblings: {
             every: {
               type: "string",

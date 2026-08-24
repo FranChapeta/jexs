@@ -85,7 +85,7 @@ export class ArrayNode extends Node {
       ],
       output: "array",
       markdownDescription: "Extracts the value of a key (dot-path) from each object in an array.",
-      outputDescription: "An array of each object's value at the key — `undefined` in slots where the object lacks it.",
+      outputDescription: "An array of each object's value at the key, with `undefined` in slots where the object lacks it.",
       examples: [
         "{ \"pluck\": [{ \"var\": \"$users\" }, \"name\"] }",
       ],
@@ -113,7 +113,7 @@ export class ArrayNode extends Node {
         { description: "The item to append." },
       ],
       output: "array",
-      markdownDescription: "Appends an item to an array **in place** and returns that array. The array referenced by the first argument is mutated — point it at a `var` (e.g. `{ \"var\": \"$items\" }`), not a literal. If the first argument is not an array, returns a new single-element array. For a non-mutating append use `{ \"merge\": [arr, [item]] }`.",
+      markdownDescription: "Appends an item to an array **in place** and returns that array. The array referenced by the first argument is mutated, so point it at a `var` (e.g. `{ \"var\": \"$items\" }`), not a literal. If the first argument is not an array, returns a new single-element array. For a non-mutating append use `{ \"merge\": [arr, [item]] }`.",
       outputDescription: "The same (now longer) array; or a new `[item]` when the target is not an array.",
       examples: [
         "{ \"push\": [{ \"var\": \"$items\" }, \"new\"] }",
@@ -126,7 +126,7 @@ export class ArrayNode extends Node {
         { description: "The item to prepend." },
       ],
       output: "array",
-      markdownDescription: "Prepends an item to an array **in place** and returns that array. Mutates the array referenced by the first argument — point it at a `var`, not a literal. If the first argument is not an array, returns a new single-element array.",
+      markdownDescription: "Prepends an item to an array **in place** and returns that array. Mutates the array referenced by the first argument, so point it at a `var`, not a literal. If the first argument is not an array, returns a new single-element array.",
       outputDescription: "The same (now longer) array; or a new `[item]` when the target is not an array.",
       examples: [
         "{ \"unshift\": [{ \"var\": \"$items\" }, \"first\"] }",
@@ -197,7 +197,7 @@ export class ArrayNode extends Node {
     filter: {
       tuple: 2,
       output: "array",
-      markdownDescription: "Returns the items of an array for which a condition is truthy. Tuple form: `[<array>, <condition>]`.\nEach iteration exposes the current element as `item` (rename via the `item`/`index` siblings), plus `index` and `loop`. Read the element with `{ \"var\": \"item\" }` — a leading `$` is optional.",
+      markdownDescription: "Returns the items of an array for which a condition is truthy. Tuple form: `[<array>, <condition>]`.\nEach iteration exposes the current element as `item` (rename via the `item`/`index` siblings), plus `index` and `loop`. Read the element with `{ \"var\": \"item\" }`; a leading `$` is optional.",
       examples: [
         "{ \"filter\": [{ \"var\": \"$nums\" }, { \"gt\": [{ \"var\": \"item\" }, 2] }] }",
         "{ \"filter\": [{ \"var\": \"$users\" }, { \"eq\": [{ \"var\": \"u.role\" }, \"admin\"] }], \"item\": \"u\" }",
@@ -215,7 +215,7 @@ export class ArrayNode extends Node {
     },
     find: {
       tuple: 2,
-      markdownDescription: "Returns the first item of an array for which a condition is truthy. Tuple form: `[<array>, <condition>]`.\nEach iteration exposes the current element as `item` (rename via the `item`/`index` siblings), plus `index` and `loop`. Read the element with `{ \"var\": \"item\" }` — a leading `$` is optional.",
+      markdownDescription: "Returns the first item of an array for which a condition is truthy. Tuple form: `[<array>, <condition>]`.\nEach iteration exposes the current element as `item` (rename via the `item`/`index` siblings), plus `index` and `loop`. Read the element with `{ \"var\": \"item\" }`; a leading `$` is optional.",
       outputDescription: "The first matching item (any type), or `undefined` if none match.",
       examples: [
         "{ \"find\": [{ \"var\": \"$users\" }, { \"eq\": [{ \"var\": \"item.role\" }, \"admin\"] }] }",
@@ -250,8 +250,8 @@ export class ArrayNode extends Node {
     },
     reduce: {
       tuple: 3,
-      markdownDescription: "Reduces an array to a single value. Tuple form: `[<array>, <reducer>, <initial>]`.\nEach iteration exposes the current element as `item` (rename via the `item`/`index` siblings), plus `index`, `accumulator`, and `loop`. Read them with `{ \"var\": \"item\" }` / `{ \"var\": \"accumulator\" }` — a leading `$` is optional.",
-      outputDescription: "The final accumulator value — its type follows the reducer/initial value (the initial value is returned as-is for an empty array).",
+      markdownDescription: "Reduces an array to a single value. Tuple form: `[<array>, <reducer>, <initial>]`.\nEach iteration exposes the current element as `item` (rename via the `item`/`index` siblings), plus `index`, `accumulator`, and `loop`. Read them with `{ \"var\": \"item\" }` / `{ \"var\": \"accumulator\" }`; a leading `$` is optional.",
+      outputDescription: "The final accumulator value, typed by the reducer or initial value (the initial value is returned as-is for an empty array).",
       examples: [
         "{ \"reduce\": [{ \"var\": \"$nums\" }, { \"add\": [{ \"var\": \"accumulator\" }, { \"var\": \"item\" }] }, 0] }",
         "{ \"reduce\": [{ \"var\": \"$nums\" }, { \"add\": [{ \"var\": \"accumulator\" }, { \"var\": \"n\" }] }, 0], \"item\": \"n\" }",

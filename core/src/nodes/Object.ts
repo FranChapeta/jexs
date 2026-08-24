@@ -60,7 +60,7 @@ export class ObjectNode extends Node {
     deepMerge: {
       type: "array",
       output: "object",
-      markdownDescription: "Recursively merges multiple objects (later keys win). Nested plain objects merge; arrays and primitive values are replaced. For a shallow merge — or to concatenate arrays — use `merge`.",
+      markdownDescription: "Recursively merges multiple objects (later keys win). Nested plain objects merge; arrays and primitive values are replaced. For a shallow merge, or to concatenate arrays, use `merge`.",
       examples: [
         "{ \"deepMerge\": [{ \"var\": \"$defaults\" }, { \"var\": \"$overrides\" }] }",
       ],

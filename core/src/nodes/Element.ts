@@ -23,7 +23,7 @@ const tag = (siblings: Record<string, A>) => ({ siblings });
 // (not per-variant). `class`/`style` accept their special shapes.
 const GLOBAL: Record<string, A> = {
   if:      { description: "Conditionally render this element; a falsy result renders an empty string `\"\"`." },
-  content: { description: "Children of the element — a string or mixed array of strings and expressions." },
+  content: { description: "Children of the element: a string or mixed array of strings and expressions." },
   events:  { $ref: "#/$defs/_eventMap", description: "DOM event handlers, keyed by event name: `{ \"click\": { \"do\": [...] } }`." },
   class:   { type: ["string", "array", "object"], description: "Class list: a string, array, or `{ className: bool }` map." },
   id:      str("Element id."),
@@ -111,7 +111,7 @@ export class ElementNode extends Node {
       // (the variants only ADD known-attribute hints, never restrict).
       variantBy: "value",
       markdownDescription: "Renders an HTML element. Attributes are flat keys on the object; `content` holds children.\r\n`class` accepts a string, array, or `{ className: bool }` map. `style` accepts a camel- or kebab-case object.\r\nFor `<style>`/`<script>` the `content` is emitted as literal text (no escaping/translation); a `<style>` object `content` is compiled to CSS, and a `<script>` with a JSON `type` (`application/json` or a `+json` media type such as `application/ld+json`) has its `content` resolved and serialized to safely-escaped JSON.\r\nAdd an `\"if\"` key to conditionally render. Wire DOM events via an `\"events\"` object.",
-      outputDescription: "An HTML **string**. When an `\"if\"` key is present and falsy, renders to an empty string `\"\"`. String content has `$identifier` tokens interpolated — wrap literal `$` content in `{ \"raw\": \"…\" }`.",
+      outputDescription: "An HTML **string**. When an `\"if\"` key is present and falsy, renders to an empty string `\"\"`. String content has `$identifier` tokens interpolated, so wrap literal `$` content in `{ \"raw\": \"…\" }`.",
       examples: [
         "{ \"tag\": \"button\", \"class\": \"btn\", \"events\": { \"click\": { \"do\": [...] } }, \"content\": [\"Submit\"] }",
       ],
