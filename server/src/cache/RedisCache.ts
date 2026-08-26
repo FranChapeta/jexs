@@ -1,5 +1,22 @@
-import { Redis } from "ioredis";
+import { Redis, RedisOptions } from "ioredis";
 import { CacheAdapter, CacheStats } from "./CacheAdapter.js";
+import { redactUrl, type TlsConfig } from "../connection.js";
+
+const REDIS_SCHEMES = new Set(["redis:", "rediss:"]);
+
+export function parseRedisUrl(raw: string): string {
+  const url = String(raw).trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`Redis url must start with redis:// or rediss:// (got "${redactUrl(url)}")`);
+  }
+  if (!REDIS_SCHEMES.has(parsed.protocol)) {
+    throw new Error(`Redis url must start with redis:// or rediss:// (got "${redactUrl(url)}")`);
+  }
+  return url;
+}
 
 /**
  * Redis cache adapter using ioredis.
@@ -11,25 +28,41 @@ export class RedisCache implements CacheAdapter {
 
   constructor(
     options: {
+      url?: string;
       host?: string;
       port?: number;
+      username?: string;
       password?: string;
       db?: number;
+      tls?: boolean | TlsConfig;
       prefix?: string;
     } = {},
   ) {
     this.prefix = options.prefix ?? "";
 
-    this.client = new Redis({
-      host: options.host ?? "127.0.0.1",
-      port: options.port ?? 6379,
-      password: options.password,
-      db: options.db ?? 0,
+    const common: RedisOptions = {
       lazyConnect: true,
       retryStrategy: (times: number) => {
         if (times > 3) return null; // Stop retrying after 3 attempts
         return Math.min(times * 200, 2000);
       },
+    };
+    // ioredis enables TLS on the presence of `tls`, so `false` must drop the key
+    // rather than pass through, and `true` becomes an empty options object.
+    if (options.tls) common.tls = options.tls === true ? {} : options.tls;
+
+    if (options.url) {
+      this.client = new Redis(parseRedisUrl(options.url), common);
+      return;
+    }
+
+    this.client = new Redis({
+      ...common,
+      host: options.host ?? "127.0.0.1",
+      port: options.port ?? 6379,
+      username: options.username,
+      password: options.password,
+      db: options.db ?? 0,
     });
   }
 

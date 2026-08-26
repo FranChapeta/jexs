@@ -9,11 +9,17 @@
  *  - The worker-thread entry (`!isMainThread`): wires `parentPort` messages
  *    straight into core's `runWorkerRuntime`. All the SAB/handshake/poll/queue
  *    machinery lives in @jexs/core.
+ *
+ * `@jexs/physics` is an OPTIONAL peer, so it is imported DYNAMICALLY and only on
+ * the worker thread — a server that routes requests and queries a database
+ * should not have to install a physics engine. The main-thread half never
+ * touches it: `makePhysicsWorker` only spawns the worker. A static import would
+ * load the package for anyone who so much as imports the barrel, since
+ * `index.ts` re-exports this module.
  */
 import { Worker, isMainThread, parentPort } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
 import { runWorkerRuntime, type WorkerLike } from "@jexs/core";
-import { physicsSetup } from "@jexs/physics";
 
 /** Env worker constructor passed to `new PhysicsNode(...)`. */
 export function makePhysicsWorker(): WorkerLike {
@@ -23,7 +29,18 @@ export function makePhysicsWorker(): WorkerLike {
 }
 
 // Worker-thread entry: wire parentPort messages straight to the core runtime.
+// Failing loudly here is right — the worker is spawned lazily, on the first
+// physics op, so reaching this point means the package is genuinely needed.
 if (!isMainThread && parentPort) {
   const port = parentPort;
-  runWorkerRuntime(physicsSetup, (h) => port.on("message", h));
+  void import("@jexs/physics")
+    .catch((err: unknown) => {
+      throw new Error(
+        "physics ops require \"@jexs/physics\", which is not installed. Run: npm i @jexs/physics",
+        { cause: err },
+      );
+    })
+    .then(({ physicsSetup }) => {
+      runWorkerRuntime(physicsSetup, (h) => port.on("message", h));
+    });
 }

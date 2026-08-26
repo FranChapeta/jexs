@@ -1,3 +1,5 @@
+import type { TlsConfig } from "../connection.js";
+
 /**
  * Cache adapter interface.
  * All cache backends implement this interface.
@@ -72,15 +74,22 @@ export interface CacheConfig {
 
   // Redis-specific
   redis?: {
+    /** `redis://` or `rediss://` connection string; supplies host/port/auth/db. */
+    url?: string;
     host?: string;
     port?: number;
+    username?: string;
     password?: string;
     db?: number;
+    /** TLS: `true` for the default trust store, or Node TLS options. */
+    tls?: boolean | TlsConfig;
   };
 
   // Memcached-specific
   memcached?: {
     servers?: string[];
+    username?: string;
+    password?: string;
   };
 
   // Memory-specific

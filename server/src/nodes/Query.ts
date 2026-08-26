@@ -356,11 +356,10 @@ export class QueryNode extends Node {
       system: def.system,
     };
 
+    // Omitted `connection` falls back to whichever opened first; getKnex owns
+    // that chain, so this does not repeat it.
     const connRaw = await resolve(def.connection ?? null, context);
-    const connectionName = connRaw
-      ? String(connRaw)
-      : (DatabaseNode.getDefaultConnection() ?? "default");
-    const knex = DatabaseNode.getKnex(connectionName);
+    const knex = DatabaseNode.getKnex(connRaw == null ? undefined : String(connRaw));
 
     const resolvedQuery = await resolveQueryDef(flat, context);
 

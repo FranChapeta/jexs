@@ -1,5 +1,6 @@
 import { Node, Context, NodeValue, resolve, resolveAll, resolveObj, createHttpError } from "@jexs/core";
 import { Cache, CacheConfig } from "../cache/Cache.js";
+import { parseTls, TLS_STRINGS } from "../connection.js";
 import type { JexsNodeSchema } from "@jexs/core";
 
 export class CacheNode extends Node {
@@ -8,11 +9,12 @@ export class CacheNode extends Node {
       type: "string",
       enum: ["redis", "memory", "memcached"],
       output: "string",
-      markdownDescription: "Initializes the cache singleton. The value selects the driver; connection details vary by driver.",
+      markdownDescription: "Initializes the cache singleton. The value selects the driver; connection details vary by driver. Redis also accepts a `url` connection string in place of the discrete host/port properties — memcached does not, because its connection format is the server list itself.",
       outputDescription: "The connected driver name (`\"memory\"`, `\"redis\"`, or `\"memcached\"`).",
       examples: [
         "{ \"cache-connect\": \"memory\" }",
         "{ \"cache-connect\": \"redis\", \"host\": \"localhost\", \"port\": 6379 }",
+        "{ \"cache-connect\": \"redis\", \"url\": { \"var\": \"$env.REDIS_URL\" } }",
         "{ \"cache-connect\": \"memcached\", \"servers\": [\"localhost:11211\"] }",
       ],
       siblings: {
@@ -23,18 +25,54 @@ export class CacheNode extends Node {
         redis: {
           markdownDescription: "Redis driver.",
           siblings: {
-            host:     { type: "string", description: "Redis hostname." },
-            port:     { type: "number", description: "Redis port." },
-            password: { type: "string", description: "Auth password." },
-            db:       { type: "number", description: "Database index." },
+            tls: {
+              type: ["boolean", "string", "object"],
+              enum: TLS_STRINGS,
+              markdownDescription: "TLS for the connection, also spelled `ssl`. `true` encrypts AND verifies against the system trust store — the strictest setting, which fails on a private CA. An object takes `ca`, `cert`, `key`, `passphrase`, `servername`, `rejectUnauthorized`, `minVersion` and `ciphers`. The string forms (`\"true\"`, `\"1\"`, `\"require\"`, `\"false\"`, `\"0\"`, `\"disable\"`) are for a value arriving from `$env` as text. Implied by a `rediss://` url.\n\nCertificates are PEM **content**, not paths: load the file first with `{ \"file\": \"/certs/redis-ca.pem\", \"raw\": true, \"as\": \"ca\" }` and pass `{ \"var\": \"$ca\" }`.",
+              examples: [
+                "true",
+                "{ \"ca\": { \"var\": \"$ca\" }, \"servername\": \"cache.internal\" }",
+              ],
+            },
+          },
+          variants: {
+            url: {
+              type: "string",
+              markdownDescription: "Connection string, e.g. `rediss://user:pass@host:6379/0`. `redis://` is plaintext, `rediss://` negotiates TLS. Carries host, port, credentials and database index, so it replaces `host`.",
+            },
+            host: {
+              type: "string",
+              markdownDescription: "Redis hostname, spelling the endpoint out instead of passing a `url`.",
+              siblings: {
+                port:     { type: "number", description: "Redis port (default 6379)." },
+                username: { type: "string", description: "ACL username (Redis 6+)." },
+                password: { type: "string", description: "Auth password." },
+                db:       { type: "number", description: "Database index." },
+              },
+            },
           },
         },
         memcached: {
-          markdownDescription: "Memcached driver.",
-          siblings: {
-            servers: { type: "array",  description: "Server list as `host:port` strings." },
-            host:    { type: "string", description: "Hostname (used to build one server when `servers` is omitted)." },
-            port:    { type: "number", description: "Port (with `host`)." },
+          markdownDescription: "Memcached driver. There is no `url` here as there is for `redis`: memcached's connection format is the `host:port` server list itself, with credentials alongside, which is what providers hand you. TLS is not supported by the underlying `memjs` client — tunnel it (stunnel, a service mesh) or use Redis where the traffic must be encrypted.",
+          variants: {
+            servers: {
+              type: "array",
+              items: { type: "string" },
+              markdownDescription: "Server list as `host:port` strings.",
+              siblings: {
+                username: { type: "string", description: "SASL username." },
+                password: { type: "string", description: "SASL password." },
+              },
+            },
+            host: {
+              type: "string",
+              markdownDescription: "Hostname of a single server, the shorthand for a one-entry `servers`.",
+              siblings: {
+                port:     { type: "number", description: "Port (default 11211)." },
+                username: { type: "string", description: "SASL username." },
+                password: { type: "string", description: "SASL password." },
+              },
+            },
           },
         },
         memory: {
@@ -107,21 +145,34 @@ export class CacheNode extends Node {
 
   ["cache-connect"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveObj(def, context, r => {
-      const type = String(r["cache-connect"] ?? "memory") as CacheConfig["type"];
+      const type = cacheDriver(r["cache-connect"]);
       const config: CacheConfig = { type };
 
       if (r.prefix) config.prefix = String(r.prefix);
       if (r.defaultTtl) config.defaultTtl = Number(r.defaultTtl);
+      requireOneEndpoint(r, type);
 
       if (type === "redis") {
         config.redis = {};
-        if (r.host) config.redis.host = String(r.host);
-        if (r.port) config.redis.port = Number(r.port);
-        if (r.password) config.redis.password = String(r.password);
-        if (r.db) config.redis.db = Number(r.db);
+        if (r.url) {
+          config.redis.url = String(r.url);
+        } else {
+          if (r.host) config.redis.host = String(r.host);
+          if (r.port) config.redis.port = Number(r.port);
+          if (r.username) config.redis.username = String(r.username);
+          if (r.password) config.redis.password = String(r.password);
+          if (r.db) config.redis.db = Number(r.db);
+        }
+        const tls = parseTls(r.tls ?? r.ssl);
+        if (tls !== undefined) config.redis.tls = tls;
       }
 
       if (type === "memcached") {
+        // memjs dials over a plain socket, so silently accepting a `tls` here
+        // would ship unencrypted traffic while the template says otherwise.
+        if (r.tls != null || r.ssl != null) {
+          throw createHttpError(501, "the memcached driver does not support TLS; tunnel it or use redis");
+        }
         config.memcached = {};
         if (r.servers && Array.isArray(r.servers)) {
           config.memcached.servers = r.servers.map((s) => String(s));
@@ -129,6 +180,8 @@ export class CacheNode extends Node {
           const p = r.port ? Number(r.port) : 11211;
           config.memcached.servers = [`${r.host}:${p}`];
         }
+        if (r.username) config.memcached.username = String(r.username);
+        if (r.password) config.memcached.password = String(r.password);
       }
 
       if (type === "memory") {
@@ -178,5 +231,39 @@ export class CacheNode extends Node {
 
   ["cache-has"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["cache-has"], context, async keyRaw => Cache.getInstance().has(String(keyRaw)));
+  }
+}
+
+const CACHE_DRIVERS = ["memory", "redis", "memcached"] as const;
+
+function cacheDriver(value: unknown): CacheConfig["type"] {
+  const type = String(value ?? "memory");
+  if ((CACHE_DRIVERS as readonly string[]).includes(type)) {
+    return type as CacheConfig["type"];
+  }
+  throw createHttpError(
+    400,
+    `Unknown cache driver "${type}" (expected ${CACHE_DRIVERS.join(", ")})`,
+  );
+}
+
+// Per driver, the properties a `url` already carries
+// Only redis takes a `url`, so it is the only driver with a second spelling of
+// the endpoint to rule out.
+const ENDPOINT_SIBLINGS: Record<string, readonly string[]> = {
+  redis: ["host", "port", "username", "password", "db"],
+};
+
+/**
+ * Refuse a `url` given alongside the discrete endpoint properties
+ */
+function requireOneEndpoint(r: Record<string, unknown>, type: string): void {
+  if (!r.url) return;
+  const also = (ENDPOINT_SIBLINGS[type] ?? []).filter(k => r[k] != null);
+  if (also.length > 0) {
+    throw createHttpError(
+      400,
+      `"url" already carries the endpoint — drop ${also.map(k => `"${k}"`).join(", ")}, or drop the url and spell it out`,
+    );
   }
 }
