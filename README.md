@@ -97,7 +97,7 @@ A few rules govern how every expression is resolved. Worth internalizing — the
 
 - `as` — store a step's result in a named context variable: `{ "var": "$user.name", "as": "name" }`, read later via `{ "var": "$name" }`.
 - `return` — short-circuit: a step resolving to `{ "return": X }` ends the current array early and yields `X`. It escapes only that array; nest the wrapper to exit an outer one.
-- `catch` — a step array run if the expression throws an HTTP error, with `$error` (`{ status, message }`) in context.
+- `catch` — a step array run if the expression throws an HTTP error, with `$error` (`{ status, message }`) in context. A node that knows more about the failure binds it as a further variable: a failing `fetch` adds `$response` (`{ status, ok, headers, body, url }`).
 
 **Iterating.** `map` transforms each element of an array via `do`; `filter`/`find`/`reduce` take a tuple `[<array>, <expr>, …]`. Each exposes the current element as `item` (and `index`, plus `accumulator` for `reduce`); rename it with the `item` sibling — `{ "filter": [{ "var": "$users" }, { "eq": [{ "var": "u.role" }, "admin"] }], "item": "u" }`. Read it with `{ "var": "item" }`; a leading `$` is optional.
 

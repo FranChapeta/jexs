@@ -24,6 +24,7 @@ export {
 
 // ── Error utilities ──
 export { createHttpError, isHttpError } from "./errors.js";
+export type { HttpError, ErrorBindings, ErrorResponse } from "./errors.js";
 
 // ── Core nodes ──
 export { TimerNode } from "./nodes/Timer.js";

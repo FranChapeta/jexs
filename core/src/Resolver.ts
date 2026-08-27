@@ -239,7 +239,11 @@ export function handleErr(err: unknown, value: unknown, context: Context): unkno
     const error = isHttpError(err)
       ? { status: err.status, message: err.message }
       : { message: err instanceof Error ? err.message : String(err) };
-    const catchCtx = childContext(context, { error });
+    // A node that knows more than its message offers it as further variables of
+    // its own (`fetch` hands over `$response`), so `$error` keeps the one shape
+    // everywhere. Bound first, so none of them can displace `$error` itself.
+    const bindings = isHttpError(err) ? err.bindings : undefined;
+    const catchCtx = childContext(context, { ...bindings, error });
     return runSteps(catchSteps, catchCtx);
   }
   throw err;
@@ -259,8 +263,9 @@ export function handleErr(err: unknown, value: unknown, context: Context): unkno
  * off, the sequence is handed `undefined` right away so it never blocks, and when
  * the work settles the `then` steps run with the result bound as `$result`.
  *
- * If the step def has a `"catch"` array and an HTTP error is thrown,
- * the catch steps are run with `$error: { status, message }` in context.
+ * If the step def has a `"catch"` array and an HTTP error is thrown, the catch
+ * steps are run with `$error: { status, message }` in context, alongside any
+ * further variables the thrower offered (see `createHttpError`).
  */
 export function resolve(value: unknown, context: Context): unknown;
 export function resolve<T>(value: unknown, context: Context, cont: (v: unknown) => T): T | Promise<T>;

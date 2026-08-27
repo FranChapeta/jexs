@@ -129,6 +129,19 @@ const cases: Case[] = [
   { label: "string-slot rejects query count (number-output) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { foreach: [1], item: { query: "count", table: "users" }, do: "y" } },
 
+  // FetchNode: `full` is a sibling-mode variant, so it narrows the output from
+  // the decoded body ("any") to the `{ status, ok, headers, body, url }` envelope.
+  { label: "fetch with headers/type/timeout (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { fetch: "/api/me", headers: { Authorization: { concat: ["Bearer ", { var: "$token" }] } }, type: "text", timeout: 5000 } },
+  { label: "fetch invalid method (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { fetch: "/api/me", method: "FETCH" } },
+  { label: "fetch invalid decode type (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { fetch: "/api/me", type: "buffer" } },
+  { label: "string-slot accepts a bare fetch (any-output) (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { foreach: [1], item: { fetch: "/api/name" }, do: "y" } },
+  { label: "string-slot rejects fetch full (object-output) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { foreach: [1], item: { fetch: "/api/name", full: true }, do: "y" } },
+
   // Keyless ops folded into the bare `cache`/`storage` key (value-mode).
   { label: "cache value-mode stats (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { cache: "stats" } },
