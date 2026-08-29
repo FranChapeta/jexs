@@ -38,8 +38,15 @@ import type {
  * expression whose method declares `output: "string"` or `"any"`. Methods with
  * no `output:` annotation are treated as "any" and appear in every variant.
  *
- * `anyVal` / `mapVal` / `steps` keep referencing the unfiltered `exprFlat`
- * since they don't constrain output type.
+ * `anyVal` / `steps` keep referencing the unfiltered `exprFlat` since they don't
+ * constrain output type.
+ *
+ * `mapVal` is deliberately NOT routed to `exprFlat`: a `map: true` slot's keys are
+ * names the node keeps verbatim (variables, headers, columns, case labels), which
+ * the runtime resolves per entry via `resolveObj` without ever dispatching the map
+ * itself. Routing it to `exprFlat` would dispatch on those keys, so a column named
+ * `email` or a variable named `fetch` would be validated as that op. Keys are
+ * therefore opaque and only the VALUES are checked.
  */
 export const sharedDefs = {
   anyVal: {
@@ -52,9 +59,8 @@ export const sharedDefs = {
     },
   },
   mapVal: {
-    if: { type: "array" },
-    then: { items: { $ref: "#/$defs/exprFlat" } },
-    else: { if: { type: "object" }, then: { $ref: "#/$defs/exprFlat" }, else: {} },
+    type: "object",
+    additionalProperties: { $ref: "#/$defs/anyVal" },
   },
   strOrExpr:   { if: { type: "string"  }, then: {}, else: { $ref: "#/$defs/exprFlat_string"  } },
   numOrExpr:   { if: { type: "number"  }, then: {}, else: { $ref: "#/$defs/exprFlat_number"  } },
@@ -162,8 +168,31 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
     return out;
   }
 
-  if (prop.map === true) {
-    const out: EmittedSchema = { ...REF.mapVal };
+  if (prop.map) {
+    // `map` fixes the KEY semantics (opaque); `type` says only which CONTAINER
+    // shapes are accepted. No type-or-expr wrapping and no output narrowing here:
+    // an opaque-key map has no expression alternative to narrow. `array` present
+    // means a list of maps (query `data`'s rows), and the one-or-many shape is
+    // emitted inline rather than as its own $defs entry, since dedupeShapes hoists
+    // any shape that gains a second use.
+    const types = prop.type === undefined
+      ? []
+      : Array.isArray(prop.type) ? prop.type : [prop.type];
+    const acceptsArray = types.includes("array");
+    const acceptsObject = types.length === 0 || types.includes("object");
+
+    let out: EmittedSchema;
+    if (!acceptsArray) {
+      out = { ...REF.mapVal };                              // a map
+    } else if (!acceptsObject) {
+      out = { type: "array", items: { ...REF.mapVal } };    // a list of maps
+    } else {
+      out = {                                               // either (query `data`)
+        if: { type: "array" },
+        then: { items: { ...REF.mapVal } },
+        else: { ...REF.mapVal },
+      };
+    }
     liftMetadata(prop, out);
     return out;
   }

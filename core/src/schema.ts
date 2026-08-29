@@ -42,7 +42,22 @@ export interface JexsPropertySchema {
    *  Pairs with `tuple` for arity; slots past the list (when `tuple`'s max exceeds
    *  its length) fall back to anyVal. */
   prefixItems?: readonly JexsPropertySchema[];
-  /** Object whose values are themselves expressions / step arrays / primitives. */
+  /** Opaque-key map: the KEYS are names the node keeps verbatim (variable names,
+   *  header names, column names, case labels) and the VALUES are expressions. The
+   *  map is never dispatched as an expression itself, matching the per-entry
+   *  `resolveObj` the runtime resolves these with, so a key that happens to
+   *  collide with a handler key stays a name.
+   *
+   *  `map` describes the KEYS; a `type` alongside it describes the CONTAINER, so
+   *  the two are orthogonal. An opaque-key map has no expression alternative, so
+   *  `type` here says only which container shapes are accepted and does NOT get
+   *  the type-or-expression wrapping or output narrowing a normal typed slot gets:
+   *
+   *    map: true                            an object (the default)
+   *    map: true, type: "object"            the same, spelled out
+   *    map: true, type: ["object","array"]  one map or a list of them (query `data`)
+   *    map: true, type: "array"             a list of maps only
+   */
   map?: boolean;
   /** Strictly an array of step expressions. */
   steps?: boolean;

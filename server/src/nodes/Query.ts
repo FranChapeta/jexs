@@ -237,7 +237,7 @@ type P = import("@jexs/core").JexsPropertySchema;
  *  with other nodes' handler keys. */
 const OPT: Record<string, P> = {
   where:        { description: "WHERE clause: `{ column: value }` or nested `or`/`and`." },
-  data:         { description: "Row data: an object, or an array of rows." },
+  data:         { map: true, type: ["object", "array"], description: "Row data: an object, or an array of rows." },
   orderBy:      { description: "ORDER BY: `{ column: 'asc' | 'desc' }`." },
   groupBy:      { description: "GROUP BY column name or array of names." },
   first:        { type: "boolean", description: "Return a single row instead of an array." },

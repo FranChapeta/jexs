@@ -231,6 +231,39 @@ const cases: Case[] = [
   { label: "element if-on-tag is gated, not LogicNode if (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { tag: "div", if: { var: "$show" }, content: ["x"] } },
 
+  // Opaque-key maps (`map: true`). The KEYS are names the node keeps verbatim, so
+  // one colliding with a handler key must NOT be dispatched as that op — matching
+  // the per-entry resolveObj the runtime uses. Only the VALUES are checked.
+  { label: "setVars: variable named `email` (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { setVars: { email: "a@b.c" } } },
+  { label: "setVars: variable named `fetch` holding a number (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { setVars: { fetch: 3 } } },
+  { label: "fetch: header named `email` (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { fetch: "/api/x", headers: { email: "a@b.c" } } },
+  { label: "exec: param named `query` (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { exec: { var: "$steps" }, params: { query: "hi" } } },
+  { label: "switch: a case key named `fetch` (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { switch: { var: "$k" }, cases: { fetch: "matched" } } },
+  // Values ARE still validated as expressions — this is new coverage, since the old
+  // exprFlat routing left map values unchecked (exprFlat.additionalProperties: true).
+  { label: "map value is a broken expression (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { fetch: "/api/x", headers: { "X-Q": { fetch: 3 } } } },
+  { label: "map slot given a scalar (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { fetch: "/api/x", headers: "nope" } },
+  { label: "map slot given an array (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { setVars: [{ a: 1 }] } },
+
+  // `map: true, type: ["object", "array"]`: query `data` is the one slot whose
+  // runtime takes a row map OR a list of them.
+  { label: "query insert: row with an `email` column (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { query: "insert", table: "users", options: { data: { email: "a@b.c", name: "Bob" } } } },
+  { label: "query insert: many rows with `email` columns (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { query: "insert", table: "users", options: { data: [{ email: "a@b.c" }, { email: "c@d.e" }] } } },
+  { label: "query insert: data as a whole expression (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { query: "insert", table: "users", options: { data: { var: "$row" } } } },
+  { label: "query insert: rows must be objects, not scalars (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { query: "insert", table: "users", options: { data: ["a", "b"] } } },
+
   // Should fail
   { label: "eq tuple too short", schemaRef: "byKey/eq", expectValid: false,
     expr: { eq: [1] } },

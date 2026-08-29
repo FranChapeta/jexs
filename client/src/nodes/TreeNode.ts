@@ -119,7 +119,6 @@ export class TreeNode extends Node {
           description: "Initial data array or expression. If omitted, adopts any array already at the context path.",
         },
         row: {
-          map: true,
           description: "JSON row template resolved per tree node.",
         },
         "on-change": {
