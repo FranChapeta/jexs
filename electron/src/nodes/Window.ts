@@ -530,10 +530,13 @@ export class WindowNode extends Node {
    * proxied call.
    */
   ["window-run"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def.window ?? null, def.params ?? null], context, ([target, params]) => {
+    return resolve(def.window ?? null, context, target => {
       const win = targetWindow(target, context);
       if (!win) throw noWindowError("window-run");
-      return runInRenderer(win, def["window-run"], params);
+      if (!this.isObject(def.params)) return runInRenderer(win, def["window-run"]);
+      return resolveObj(def.params, context, params =>
+        runInRenderer(win, def["window-run"], params),
+      );
     });
   }
 
