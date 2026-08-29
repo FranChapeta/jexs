@@ -6,9 +6,7 @@ export class StringNode extends Node {
   static schema: JexsNodeSchema = {
     concat: {
       type: "array",
-      items: {
-        type: "string",
-      },
+      items: {},
       output: "string",
       markdownDescription: "Joins an array of values into a single string.",
       examples: [
