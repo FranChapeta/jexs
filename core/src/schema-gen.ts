@@ -136,12 +136,17 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
   // carries no recursive catch-all, so this is safe for the depth budget.
   if (prop.properties) {
     const props: Record<string, EmittedSchema> = {};
-    for (const [k, v] of Object.entries(prop.properties)) props[k] = expandProperty(v);
+    const required: string[] = [];
+    for (const [k, v] of Object.entries(prop.properties)) {
+      props[k] = expandProperty(v);
+      if (v.required) required.push(k);
+    }
     const out: EmittedSchema = {
       type: "object",
       properties: props,
       additionalProperties: prop.additionalProperties ?? false,
     };
+    if (required.length > 0) out.required = required;
     liftMetadata(prop, out);
     return out;
   }
@@ -306,6 +311,10 @@ export interface EmittedMethodSchema {
   variantDocs?: VariantDoc[];
   /** Conditional sibling constraints for variants methods. Emitted (real schema). */
   allOf?: EmittedSchema[];
+  /** Siblings the handler refuses to run without. Emitted (real schema): the entry
+   *  is applied to the whole step via `dependentSchemas`, so this reports a missing
+   *  property on the step itself. Variant-specific ones live in `allOf` instead. */
+  required?: string[];
   /** Shared `commonSiblings` block, attached on merge (2020-12 evaluates $ref siblings). */
   $ref?: string;
   /** Per-handler catch-all for undeclared siblings, attached on merge. */
@@ -348,6 +357,7 @@ interface CompiledMethod {
   variantOutputs?: VariantOutput[];
   variantDocs?: VariantDoc[];
   allOf?: EmittedSchema[];
+  required?: string[];
 }
 
 function compileMethod(
@@ -364,10 +374,18 @@ function compileMethod(
   const properties: Record<string, EmittedSchema> = {
     [methodKey]: expandProperty(primary),
   };
+  const required: string[] = [];
   for (const [k, v] of Object.entries(siblings ?? {})) {
     properties[k] = expandProperty(v);
+    if (v.required) required.push(k);
   }
-  return { properties, output, outputDescription, ownerNode };
+  return {
+    properties,
+    output,
+    outputDescription,
+    ownerNode,
+    required: required.length > 0 ? required : undefined,
+  };
 }
 
 /**
@@ -396,9 +414,13 @@ function compileVariantMethod(
   const properties: Record<string, EmittedSchema> = {
     [methodKey]: expandProperty(primary),
   };
-  // Method-level siblings apply to every variant (e.g. `flags` for regex).
+  // Method-level siblings apply to every variant (e.g. `flags` for regex), so a
+  // required one is required for every operation and belongs on the base entry.
+  // A variant's OWN required siblings are gated by its discriminator in walkVariants.
+  const required: string[] = [];
   for (const [k, v] of Object.entries(commonSiblings ?? {})) {
     properties[k] = expandProperty(v);
+    if (v.required) required.push(k);
   }
   const allOf: EmittedSchema[] = [];
   const variantOutputs = walkVariants(
@@ -421,6 +443,7 @@ function compileVariantMethod(
     variantOutputs,
     variantDocs,
     allOf: allOf.length > 0 ? allOf : undefined,
+    required: required.length > 0 ? required : undefined,
   };
 }
 
@@ -490,12 +513,18 @@ function walkVariants(
     // earlier variant's permissive `{}` must survive, with this variant's shape
     // layered on via the gated `allOf` below.
     const extra: Record<string, EmittedSchema> = {};
+    const extraRequired: string[] = [];
     for (const [sk, sv] of Object.entries(variant.siblings ?? {})) {
       if (!(sk in properties)) properties[sk] = {};
       extra[sk] = expandProperty(sv);
+      if (sv.required) extraRequired.push(sk);
     }
     if (Object.keys(extra).length > 0) {
-      allOf.push({ if: cond, then: { properties: extra } });
+      // `required` rides the SAME discriminator gate as the shapes: a sibling a
+      // variant cannot run without is only missing when that variant is selected.
+      const then: EmittedSchema = { properties: extra };
+      if (extraRequired.length > 0) then.required = extraRequired;
+      allOf.push({ if: cond, then });
     }
 
     if (variant.variants) {
@@ -647,6 +676,7 @@ export function buildPackageSchema(
     if (m.variantOutputs !== undefined) entry.variantOutputs = m.variantOutputs;
     if (m.variantDocs !== undefined) entry.variantDocs = m.variantDocs;
     if (m.allOf !== undefined) entry.allOf = m.allOf;
+    if (m.required !== undefined) entry.required = m.required;
     // 2020-12 evaluates $ref siblings, so the local `properties` (primary key)
     // applies in addition to the shared siblings block from the ref'd schema.
     const ref = nodeSiblingsRef[m.ownerNode];
@@ -701,11 +731,13 @@ function buildRichMarkdown(methodKey: string, m: EmittedMethodSchema): string {
     });
     md = (md ? md + "\n\n" : "") + "**Operations:**\n" + ops.join("\n");
   } else {
+    const isRequired = new Set(m.required ?? []);
     const siblings = Object.entries(m.properties)
       .filter(([k]) => k !== methodKey)
       .map(([k, v]) => {
         const desc = pickDesc(v as MaybeMeta);
-        return desc ? `- \`${k}\`: ${desc}` : `- \`${k}\``;
+        const req = isRequired.has(k) ? " *(required)*" : "";
+        return desc ? `- \`${k}\`${req}: ${desc}` : `- \`${k}\`${req}`;
       });
     if (siblings.length > 0) {
       md = (md ? md + "\n\n" : "") + "**Properties:**\n" + siblings.join("\n");

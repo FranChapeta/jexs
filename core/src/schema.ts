@@ -31,6 +31,22 @@ export interface JexsPropertySchema {
   examples?: unknown[];
   /** Direct JSON Pointer ref into the combined schema's $defs (e.g. `"#/$defs/_routeNode"`). */
   $ref?: string;
+  /**
+   * The step is invalid without this property. Valid on a SIBLING (or a key inside
+   * a nested `properties` block), not on the primary key, which is the dispatch
+   * trigger and always present.
+   *
+   * Emits a JSON Schema `required` on the enclosing object, so a missing property
+   * is reported where the step is written. Declared inside a `variants` entry it is
+   * gated by that variant's discriminator, so it applies only to that operation.
+   *
+   * Mark a property required only when the handler itself refuses to run without
+   * it. A value that merely has a default, or one the node can source elsewhere at
+   * runtime (e.g. a `from` that `email-connect` may already have supplied), is not
+   * required here: the schema cannot see that state and would report a valid step
+   * as broken.
+   */
+  required?: boolean;
 
   // Markers — resolved by the generator, never emitted verbatim.
   /** Strict literal. Opt out of implicit type-or-expression wrapping. */
