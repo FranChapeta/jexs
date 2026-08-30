@@ -265,6 +265,18 @@ const cases: Case[] = [
   { label: "query insert: rows must be objects, not scalars (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { query: "insert", table: "users", options: { data: ["a", "b"] } } },
 
+  // `concat` stringifies whatever it gets, so its items are untyped. Typing them
+  // `string` sent expressions to exprFlat_string, which rejects every number-output
+  // op — breaking the commonest CSS idiom, `{ concat: [<number>, "px"] }`.
+  { label: "concat with a literal number (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { concat: [1, "px"] } },
+  { label: "concat with a number-output expression (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { concat: [{ max: [0, { var: "$x" }] }, "px"] } },
+  { label: "concat with a string-output expression (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { concat: [{ upper: { var: "$name" } }, "!"] } },
+  { label: "concat of plain strings (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { concat: ["Hello, ", { var: "$name" }] } },
+
   // `routes` takes a literal tree OR an expression producing one; the discriminator
   // mirrors the runtime's isRouteTreeShape (methods/children/paramName/paramRegex).
   { label: "routes as a literal tree (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
