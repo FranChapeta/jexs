@@ -27,7 +27,8 @@ for (const kw of ["markdownDescription", "output"]) {
 
 interface Case {
   label: string;
-  /** Which schema to validate against. "byKey/<methodKey>" or "exprFlat". */
+  /** Which schema to validate against: `byKey/<methodKey>`, `$defs/exprFlat`, or
+   *  `""` for the schema ROOT (what an editor applies to a whole file). */
   schemaRef: string;
   expr: unknown;
   expectValid: boolean;
@@ -264,6 +265,27 @@ const cases: Case[] = [
   { label: "query insert: rows must be objects, not scalars (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { query: "insert", table: "users", options: { data: ["a", "b"] } } },
 
+  // `routes` takes a literal tree OR an expression producing one; the discriminator
+  // mirrors the runtime's isRouteTreeShape (methods/children/paramName/paramRegex).
+  { label: "routes as a literal tree (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { routes: { children: { users: { methods: { GET: { file: "pages/users.json" } } } } } } },
+  { label: "routes from a var expression (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { routes: { var: "$routes" } } },
+  { label: "routes from a file expression (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { routes: { file: "routes.json", data: true } } },
+  { label: "routes literal tree with a bad method (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { routes: { methods: { FETCH: { file: "x.json" } } } } },
+  // A route file is a step wrapping the tree, so it matches the root via `steps`.
+  // `_routeNode` is underscored and therefore NOT a root branch: as one it accepted
+  // any object of objects (it recurses through additionalProperties) and passed
+  // whole files that are broken expressions.
+  { label: "a route file, tree wrapped in a step (valid)", schemaRef: "", expectValid: true,
+    expr: [{ routes: { children: { email: { methods: { GET: { run: [{ response: "x" }] } } } } } }] },
+  { label: "a wrapped tree with a handler-key segment name (valid)", schemaRef: "", expectValid: true,
+    expr: { routes: { children: { email: { methods: { GET: { file: "x.json" } } } } } } },
+  { label: "root no longer masks a broken step (FAIL)", schemaRef: "", expectValid: false,
+    expr: { email: { a: {} }, body: { b: {} } } },
+
   // Should fail
   { label: "eq tuple too short", schemaRef: "byKey/eq", expectValid: false,
     expr: { eq: [1] } },
@@ -279,7 +301,11 @@ ajv.addSchema(schema, "jexs://combined");
 let pass = 0, fail = 0;
 for (const c of cases) {
   // Validate via $ref into the registered schema, so $defs/anyVal etc. resolve.
-  const validate = ajv.compile({ $ref: `jexs://combined#/${c.schemaRef}` });
+  // An empty schemaRef means the document root (`#`, not `#/`, which would point
+  // at a property named ""), i.e. what an editor applies to a whole file.
+  const validate = ajv.compile({
+    $ref: c.schemaRef === "" ? "jexs://combined#" : `jexs://combined#/${c.schemaRef}`,
+  });
   const ok = validate(c.expr);
   const expectedLabel = c.expectValid ? "valid" : "invalid";
   const actualLabel = ok ? "valid" : "invalid";

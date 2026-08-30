@@ -620,7 +620,7 @@ export function buildPackageSchema(
       for (const sib of collectMethodSiblings(method)) addSiblingHost(sib, methodKey);
     }
 
-    // Per-Node $defs contributions (e.g. RouterNode's routeNode tree shape).
+    // Per-Node $defs contributions (e.g. RouterNode's _routeNode tree shape).
     const nodeDefs = cls.schemaDefs;
     if (nodeDefs) {
       for (const [defName, defSchema] of Object.entries(nodeDefs)) {

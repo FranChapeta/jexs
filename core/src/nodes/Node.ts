@@ -81,10 +81,18 @@ export abstract class Node {
    * e.g. recursive trees, patternProperties. Schema author refs them via
    * `{ $ref: "#/$defs/<name>" }` on a property.
    *
-   * Naming convention: entries whose names start with `_` are internal helpers.
-   * Entries whose names DON'T start with `_` are also added to the combined
-   * schema's top-level `anyOf` as root-matchable branches (e.g. `routeNode`
-   * lets a bare routes-tree file validate at the file root).
+   * Naming convention: entries whose names start with `_` are internal helpers,
+   * reachable only through a property that refs them. Entries whose names DON'T
+   * start with `_` are ALSO added to the combined schema's top-level `anyOf`, so a
+   * whole file may be written in that shape.
+   *
+   * Prefer `_`. A root branch is an alternative the file only has to satisfy ONE
+   * of, so a permissive shape there passes files that every other branch rejects.
+   * RouterNode's `_routeNode` was root-matchable for exactly one reason (a bare
+   * routes tree whose top-level segment collides with a handler key) and, because
+   * it recurses through `additionalProperties`, ended up accepting any object of
+   * objects, masking broken expressions at the file root. Nothing is
+   * root-matchable today.
    */
   static schemaDefs?: Record<string, Record<string, unknown>>;
 

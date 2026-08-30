@@ -83,7 +83,7 @@ function getCachedRegex(pattern: string): RegExp {
 export class RouterNode extends Node {
   static schema: JexsNodeSchema = {
     routes: {
-      $ref: "#/$defs/routeNode",
+      $ref: "#/$defs/_routesSlot",
       markdownDescription: "Matches the incoming request path and method against a route tree, then executes the handler.\nSupports exact segments, `*` (single param with optional `paramName`/`paramRegex`),\n`**` (catch-all), conditional `\"if\"` guards per node, and query/body validation.\n\nA `WS` method handler that calls `socket-accept` completes a WebSocket upgrade.\nStep expressions inside `run` are validated as Jexs expressions; any other key on a handler is treated as a Jexs expression and evaluated directly.",
       outputDescription: "The matched handler's result. A `file`/`run` step that renders to a string is wrapped as `{ response: <html> }`; a handler that returns an object passes it through unchanged, as either a response envelope (`{ response, responseStatus, responseType, responseHeaders }`) or a bare JSON value. Throws a 404 HTTP error when no route matches, so use a catch-all route (`**`) or wrap calls in `catch` to handle not-found.",
       examples: [
@@ -92,28 +92,28 @@ export class RouterNode extends Node {
     },
   };
 
-  /**
-   * Recursive route-tree shape. Any unknown key is treated as a route segment
-   * (recurses into another routeNode). Step expressions inside `run` and WS
-   * `on-*` arrays get full Jexs expression validation via `#/$defs/steps`.
-   *
-   * `routeNode` (no underscore) is auto-added to the combined schema's top-level
-   * `anyOf` per the schemaDefs underscore convention — so bare routes-tree files
-   * validate without false positives from segment names that happen to collide
-   * with handler keys (e.g. a route named `verify`).
-   */
   static schemaDefs = {
-    routeNode: {
+    _routesSlot: {
+      if: {
+        anyOf: [
+          { required: ["methods"] },   { required: ["children"] },
+          { required: ["paramName"] }, { required: ["paramRegex"] },
+        ],
+      },
+      then: { $ref: "#/$defs/_routeNode" },
+      else: { $ref: "#/$defs/exprFlat" },
+    },
+    _routeNode: {
       type: "object",
       properties: {
         paramName:  { type: "string" },
         paramRegex: { type: "string" },
         methods:    { $ref: "#/$defs/_routeMethods" },
-        children:   { type: "object", additionalProperties: { $ref: "#/$defs/routeNode" } },
+        children:   { type: "object", additionalProperties: { $ref: "#/$defs/_routeNode" } },
         if:    {},
         else:  {},
       },
-      additionalProperties: { $ref: "#/$defs/routeNode" },
+      additionalProperties: { $ref: "#/$defs/_routeNode" },
     },
     _routeMethods: {
       type: "object",

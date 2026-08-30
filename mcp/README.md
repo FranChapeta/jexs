@@ -58,7 +58,7 @@ node mcp/test-driver.mjs                    # drives a full session and prints e
 | `resolve_expression` | `exec` — evaluates the passed JSON expression against the live resolver |
 | `list_nodes` | merged `byNode`, with variant ops pulled from `byKey[op].variantDocs` |
 | `describe_op` | `byKey[op]` — description, return type, siblings, variant ops, examples (falls back to global step keys) |
-| `describe_def` | `extraDefs[name]` — the `#/$defs/<name>` shape (e.g. `routeNode`) |
+| `describe_def` | `extraDefs[name]` — the `#/$defs/<name>` shape (e.g. `_routeNode`) |
 | `inspect_file` | `walk.json` collects used op keys; `walk-lint.json` (path-tracking) flags dispatch foot-guns |
 
 ## Notes / differences from the old TypeScript version
