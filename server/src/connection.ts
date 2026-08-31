@@ -142,7 +142,17 @@ export function mergeTls(
 
 // ── Database urls ──────────────────────────────────────────────────────────────
 
-export type DatabaseType = "sqlite" | "mysql" | "pg";
+/** Drivers dialed over the network, so these are the ones a `host` can name.
+ *  SQLite is a file and never has one, which is why it is not in this list. */
+export const HOSTED_DATABASE_TYPES = ["mysql", "pg"] as const;
+/** Every driver. Shared by the schema `enum`s and the runtime guard below, so
+ *  the two cannot drift. */
+export const DATABASE_TYPES = ["sqlite", ...HOSTED_DATABASE_TYPES] as const;
+export type DatabaseType = (typeof DATABASE_TYPES)[number];
+
+export function isDatabaseType(value: unknown): value is DatabaseType {
+  return typeof value === "string" && DATABASE_TYPES.some(t => t === value);
+}
 
 const DB_SCHEMES: Record<string, DatabaseType> = {
   sqlite: "sqlite",

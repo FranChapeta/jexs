@@ -5,6 +5,7 @@ import { Node, Context, NodeValue, resolve, resolveAll, resolveObj } from "@jexs
 import type { JexsNodeSchema } from "@jexs/core";
 import {
   mergeTls, parseDbUrl, parseTls, TLS_STRINGS,
+  DATABASE_TYPES, HOSTED_DATABASE_TYPES, isDatabaseType,
   type DatabaseConfig, type DatabaseType,
 } from "../connection.js";
 
@@ -96,11 +97,6 @@ export class DatabaseNode extends Node {
           // flat here alongside the others.
           siblings: {
             name: { type: "string", description: "Connection name (default `\"default\"`)." },
-            type: {
-              type: "string",
-              enum: ["sqlite", "mysql", "pg"],
-              description: "Database driver. Optional when `url` is given — the scheme selects it.",
-            },
             ssl: {
               type: ["boolean", "string", "object"],
               enum: TLS_STRINGS,
@@ -123,6 +119,16 @@ export class DatabaseNode extends Node {
               type: "string",
               markdownDescription: "Server hostname, spelling the endpoint out instead of passing a `url` (MySQL / PostgreSQL).",
               siblings: {
+                // `type` lives here rather than alongside the other two ways of
+                // naming an endpoint, which each carry the driver themselves: a
+                // url's scheme names it, and `filename` is a SQLite path. Only a
+                // host leaves it open, so only a host has to say.
+                type: {
+                  type: "string",
+                  enum: HOSTED_DATABASE_TYPES,
+                  required: true,
+                  description: "Database driver.",
+                },
                 port: { type: "number", description: "Server port (default 3306 for MySQL, 5432 for PostgreSQL)." },
                 user: { type: "string", description: "Username." },
                 password: { type: "string", description: "Password." },
@@ -131,7 +137,7 @@ export class DatabaseNode extends Node {
             },
             filename: {
               type: "string",
-              markdownDescription: "SQLite file path, spelling the endpoint out instead of passing a `url` (with `\"sqlite\"`).",
+              markdownDescription: "SQLite file path, spelling the endpoint out instead of passing a `url`. It names the driver on its own, so no `type` is needed alongside it.",
             },
           },
         },
@@ -458,9 +464,15 @@ function doConnect(def: Record<string, unknown>, context: Context): unknown {
         );
       }
     }
-    const type = (r.type ? String(r.type) : fromUrl?.type) as DatabaseConfig["type"] | undefined;
+    const declared = r.type == null ? undefined : String(r.type);
+    if (declared !== undefined && !isDatabaseType(declared)) {
+      throw new Error(
+        `[DatabaseNode] unknown database "type": "${declared}" (expected ${DATABASE_TYPES.join(", ")})`,
+      );
+    }
+    const type = declared ?? fromUrl?.type ?? (r.filename != null ? "sqlite" : undefined);
     if (!type) {
-      throw new Error("[DatabaseNode] connect needs a \"type\" (or a \"url\" whose scheme names one)");
+      throw new Error("[DatabaseNode] connect needs a \"type\" (or a \"url\" whose scheme names one, or a \"filename\" for SQLite)");
     }
     // Two drivers named at once means one of them is a mistake, and the losing
     // one would only surface as a confusing protocol error at dial time.
