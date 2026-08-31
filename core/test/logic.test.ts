@@ -72,7 +72,10 @@ test("exec: runs a var-held step array as steps, `as` visible to later steps", (
 });
 
 test("exec: yields the last step's value, not the whole array", () => {
-  assert.equal(resolve({ exec: { var: "$steps" } }, { steps: [1, 2, 3] }), 3);
+  assert.equal(
+    resolve({ exec: { var: "$steps" } }, { steps: [{ var: "$a" }, { var: "$b" }], a: 1, b: 3 }),
+    3,
+  );
 });
 
 test("exec: a non-array resolved value is returned as-is", () => {

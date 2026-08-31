@@ -272,7 +272,7 @@ test("fetch: throw false covers a timeout too, not just a bad status", async () 
   stubHang();
   assert.equal(await resolve({ fetch: "/api/slow", timeout: 20, throw: false }, {}), null);
   stubHang();
-  // `status: 0` is what marks "no response arrived" — the platform's own
+  // `status: 0` is what marks "no response arrived": the platform's own
   // convention, and the one thing a bare null cannot tell you.
   assert.deepEqual(
     await resolve({ fetch: "/api/slow", timeout: 20, throw: false, full: true }, {}),

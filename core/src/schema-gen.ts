@@ -67,7 +67,14 @@ export const sharedDefs = {
   boolOrExpr:  { if: { type: "boolean" }, then: {}, else: { $ref: "#/$defs/exprFlat_boolean" } },
   nullOrExpr:  { if: { type: "null"    }, then: {}, else: { $ref: "#/$defs/exprFlat_null"    } },
   arrayOrExpr: { if: { type: "array"   }, then: {}, else: { $ref: "#/$defs/exprFlat_array"   } },
-  steps:       { type: "array", items: { $ref: "#/$defs/exprFlat" } },
+  // An array of expressions, or a single one. `runSteps` normalizes a lone
+  // expression into a one-step sequence, so both shapes run identically and the
+  // slot stays type-checked either way (an untyped slot would accept anything).
+  steps: {
+    if: { type: "array" },
+    then: { items: { $ref: "#/$defs/exprFlat" } },
+    else: { $ref: "#/$defs/exprFlat" },
+  },
 } as const;
 
 const REF = {

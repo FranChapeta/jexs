@@ -57,6 +57,13 @@ test("return: short-circuits a step array", () => {
 });
 
 test("return: absent, the last step's value wins", () => {
-  const out = runSteps([{ setVars: { x: 1 } }, "a", "b"], {});
-  assert.equal(out, "b");
+  const out = runSteps([{ setVars: { x: 1 } }, { var: "$x" }], {});
+  assert.equal(out, 1);
+});
+
+test("a literal step is rejected, not silently run as a value", () => {
+  // `["Hello"]` is a value dressed up as a sequence: every literal step resolves
+  // to itself, so it can only ever be a no-op or the array's return value.
+  assert.throws(() => runSteps(["Hello"], {}), /step must be an expression object/);
+  assert.throws(() => runSteps([{ setVars: { x: 1 } }, 42], {}), /step must be an expression object/);
 });

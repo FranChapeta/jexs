@@ -665,7 +665,7 @@ export class MeshNode extends Node {
       "register-mesh": {
       type: "string",
       output: "null",
-      markdownDescription: "Registers a parsed mesh in the active EntityStore's `meshes` map. Idempotent —\nre-registering the same id is a no-op. GL extends this via `gl-register-mesh`,\nwhich additionally uploads the geometry to the GPU.",
+      markdownDescription: "Registers a parsed mesh in the active EntityStore's `meshes` map. Idempotent:\nre-registering the same id is a no-op. GL extends this via `gl-register-mesh`,\nwhich additionally uploads the geometry to the GPU.",
       examples: [
         "{ \"foreach\": { \"var\": \"scene.meshes\" }, \"item\": \"m\", \"do\": {\n    \"register-mesh\": { \"var\": \"m.id\" },\n    \"bounds\":    { \"var\": \"m.bounds\" },\n    \"positions\": { \"var\": \"m.positions\" },\n    \"normals\":   { \"var\": \"m.normals\" },\n    \"uvs\":       { \"var\": \"m.uvs\" },\n    \"indices\":   { \"var\": \"m.indices\" },\n    \"material\":  { \"var\": \"m.material\" }\n} }",
       ],

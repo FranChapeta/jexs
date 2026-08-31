@@ -665,11 +665,11 @@ export class PhysicsNode extends Node {
         },
         start: {
           type: "boolean",
-          description: "Auto-start the simulation loop (default `true`). Set `false` to create the world without a loop and drive it yourself with `physics-step` (e.g. a server authoritative tick) — avoids double-stepping.",
+          description: "Auto-start the simulation loop (default `true`). Set `false` to create the world without a loop and drive it yourself with `physics-step` (e.g. a server authoritative tick), which avoids double-stepping.",
         },
         hz: {
           type: "number",
-          description: "Loop tick rate in Hz (e.g. `30`). The loop fires at this fixed rate via a timer instead of RAF (client) / the default ~60Hz timer (server). Physics still steps at the fixed timestep internally — this only sets how often the loop runs, e.g. for a server authoritative tick.",
+          description: "Loop tick rate in Hz (e.g. `30`). The loop fires at this fixed rate via a timer instead of RAF (client) / the default ~60Hz timer (server). Physics still steps at the fixed timestep internally; this only sets how often the loop runs, e.g. for a server authoritative tick.",
         },
       },
     },
@@ -853,8 +853,9 @@ export class CollisionNode extends Node {
           description: "Optional handler ID (auto-generated if omitted).",
         },
         do: {
-          type: "array",
-          description: "Steps to run on collision.",
+          steps: true,
+          required: true,
+          description: "Steps to run on collision. An array runs as a sequence; a single expression is run on its own.",
         },
         thread: {
           enum: ["physics", "main"],
@@ -874,7 +875,8 @@ export class CollisionNode extends Node {
         ? [String(groupsRaw[0]), String(groupsRaw[1])]
         : ["", ""];
       const id = idRaw !== null ? String(idRaw) : `h${w.handlers.length}`;
-      const steps = Array.isArray(def.do) ? def.do as unknown[] : [];
+      if (def.do === undefined) throw new Error("collision-on needs `do` steps");
+      const steps = Array.isArray(def.do) ? def.do : [def.do];
       const thread = def.thread === "main" ? "main" : "physics";
       w.handlers.push({ id, groups, do: steps, thread });
       return id;

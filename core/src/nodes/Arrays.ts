@@ -244,6 +244,7 @@ export class ArrayNode extends Node {
           description: "Variable name for the current item (default `\"item\"`).",
         },
         do: {
+          required: true,
           description: "Template to resolve for each item.",
         },
       },
@@ -644,6 +645,7 @@ export class ArrayNode extends Node {
   map(def: Record<string, unknown>, context: Context) {
     const itemName = typeof def.item === "string" ? def.item : "item";
     const template = def.do;
+    if (template === undefined) throw new Error("map needs a `do` template");
     return resolve(def.map, context, arr => {
       const items = this.toArray(arr);
       const results: unknown[] = [];

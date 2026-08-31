@@ -89,7 +89,8 @@ export class TimerNode extends Node {
             },
             do: {
               steps: true,
-              description: "Steps to execute on each tick.",
+              required: true,
+              description: "Steps to execute on each tick. An array runs as a sequence; a single expression is run on its own.",
             },
           },
         },
@@ -126,7 +127,8 @@ export class TimerNode extends Node {
             },
             do: {
               steps: true,
-              description: "Steps to execute on each interval.",
+              required: true,
+              description: "Steps to execute on each interval. An array runs as a sequence; a single expression is run on its own.",
             },
           },
         },
@@ -226,7 +228,12 @@ function startTick(def: Record<string, unknown>, context: Context): unknown {
   return resolveAll([def.id, def.rate ?? 60, def.detach ?? false], context, ([idRaw, rateRaw, detachRaw]: unknown[]) => {
     const id = String(idRaw);
     const rate = Number(rateRaw);
-    const steps = Array.isArray(def.do) ? def.do as unknown[] : [];
+    // No steps means a timer that ticks forever doing nothing, which looks like a
+    // hung app rather than a mistake, so it is an error rather than a no-op. A
+    // lone expression is normalized here because TimerState.steps is an array;
+    // runSteps would take it either way.
+    if (def.do === undefined) throw new Error("timer needs `do` steps");
+    const steps = Array.isArray(def.do) ? def.do : [def.do];
     const detach = detachRaw === true || detachRaw === 1 || detachRaw === "1" || detachRaw === "true";
 
     const prev = ticks.get(id);
@@ -306,7 +313,12 @@ export function parseInterval(value: string): number {
 function startCron(def: Record<string, unknown>, context: Context): unknown {
   return resolveAll([def.id, def.every], context, ([id, every]: unknown[]) => {
     const intervalMs = parseInterval(String(every));
-    const steps = Array.isArray(def.do) ? def.do as unknown[] : [];
+    // No steps means a timer that ticks forever doing nothing, which looks like a
+    // hung app rather than a mistake, so it is an error rather than a no-op. A
+    // lone expression is normalized here because TimerState.steps is an array;
+    // runSteps would take it either way.
+    if (def.do === undefined) throw new Error("timer needs `do` steps");
+    const steps = Array.isArray(def.do) ? def.do : [def.do];
 
     const prev = crons.get(String(id));
     if (prev?.timerId != null) clearInterval(prev.timerId);

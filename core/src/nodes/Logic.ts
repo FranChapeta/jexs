@@ -30,6 +30,7 @@ export class LogicNode extends Node {
       siblings: {
         cases: {
           map: true,
+          required: true,
           description: "Object mapping string keys to result expressions.",
         },
         default: {
@@ -45,6 +46,7 @@ export class LogicNode extends Node {
       ],
       siblings: {
         do: {
+          required: true,
           description: "Steps or expression to resolve for each item.",
         },
         item: {
@@ -252,6 +254,7 @@ export class LogicNode extends Node {
     return resolve(def.switch, context, value => {
       const cases = def.cases;
       if (!this.isObject(cases)) {
+        if (!("cases" in def)) throw new Error("switch needs a `cases` map");
         return "default" in def ? resolveSteps(def.default, context) : undefined;
       }
       const key = this.toString(value);
@@ -266,11 +269,12 @@ export class LogicNode extends Node {
       const itemName = typeof itemRaw === "string" ? itemRaw : "item";
       const keyName = typeof keyRaw === "string" ? keyRaw : null;
       const template = def.do;
+      if (template === undefined) throw new Error("foreach needs a `do` template");
 
       // foreach iterates for effect/accumulation and yields the LAST iteration's
       // value (empty input → null). Use `map` when you need an array of every
       // result (e.g. rendering N elements from a collection).
-      if (template === undefined || arr.length === 0) return null;
+      if (arr.length === 0) return null;
 
       const buildContext = (item: unknown, i: number): Context => childContext(context, {
         [itemName]: item,

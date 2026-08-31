@@ -337,6 +337,32 @@ const cases: Case[] = [
   { label: "a row with an `email` column needs no subject (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { query: "insert", table: "users", options: { data: [{ email: "a@b.c" }] } } },
 
+  // `steps: true` takes an array of expressions OR a single one, since runSteps
+  // normalizes a lone expression into a one-step sequence. Both stay type-checked;
+  // an untyped slot would accept anything at all.
+  { label: "steps slot: an array of expressions (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { tick: "start", id: "game", do: [{ var: "tick.dt" }, { var: "tick.count" }] } },
+  { label: "steps slot: a single expression (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { tick: "start", id: "game", do: { var: "tick.dt" } } },
+  { label: "steps slot: a scalar is still not an expression (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { tick: "start", id: "game", do: 42 } },
+  { label: "steps slot: an array of scalars (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { tick: "start", id: "game", do: [42] } },
+  { label: "steps slot: a malformed expression is caught (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { tick: "start", id: "game", do: { concat: "not-an-array" } } },
+  { label: "tick start without do (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { tick: "start", id: "game", rate: 60 } },
+  { label: "tick stop needs no do (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { tick: "stop", id: "game" } },
+  // The universal `catch` is a steps slot too, so it takes either shape, and is
+  // held to the same rule: a step is an expression, never a bare value.
+  { label: "catch as a single expression (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { fetch: "/api/x", catch: { var: "$error.message" } } },
+  { label: "catch as a scalar (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { fetch: "/api/x", catch: "failed" } },
+  { label: "catch as an array of scalars (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { fetch: "/api/x", catch: ["failed"] } },
+
   // Should fail
   { label: "eq tuple too short", schemaRef: "byKey/eq", expectValid: false,
     expr: { eq: [1] } },

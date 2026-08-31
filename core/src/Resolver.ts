@@ -230,8 +230,8 @@ function storeAs(step: unknown, value: unknown, context: Context): unknown {
  * `catch`/`$error` semantics.
  */
 export function handleErr(err: unknown, value: unknown, context: Context): unknown {
-  if (isObject(value) && Array.isArray((value as Record<string, unknown>).catch)) {
-    const catchSteps = (value as Record<string, unknown>).catch as unknown[];
+  if (isObject(value) && value.catch !== undefined) {
+    const catchSteps = Array.isArray(value.catch) ? value.catch : [value.catch];
     // Bind under the bare key `error` (not `$error`): `var` strips a leading
     // `$`, so `{ "var": "$error.message" }` looks up `error.message` in context.
     // HTTP errors carry a status; any other thrown/rejected error (e.g. a worker
@@ -276,15 +276,18 @@ export function resolve(value: unknown, context: Context, cont?: (v: unknown) =>
   // doesn't block), run `then` with `$result` when it settles, and route errors
   // through `catch` (unhandled if none, like any background task). Hand the
   // sequence `undefined` immediately via `cont` so later steps run right away.
-  if (obj !== null && Array.isArray(obj.then) && !ownsThen(obj)) {
+  if (obj !== null && obj.then !== undefined && !ownsThen(obj)) {
     void Promise.resolve()
       .then(() => dispatch(value, context))
-      .then(result => runSteps(obj.then as unknown[], childContext(context, { result })))
+      .then(result => runSteps(
+        Array.isArray(obj.then) ? obj.then : [obj.then],
+        childContext(context, { result }),
+      ))
       .catch(err => handleErr(err, obj, context));
     return cont ? cont(undefined) : undefined;
   }
 
-  const hasCatch = obj !== null && Array.isArray(obj.catch);
+  const hasCatch = obj !== null && obj.catch !== undefined;
 
   let r: unknown;
   try {
@@ -352,12 +355,23 @@ export function resolveAll<T>(values: unknown[], context: Context, then: (args: 
  * A step that resolves to `{ return: X }` stops the sequence and yields `X`.
  * The wrapper does not propagate to enclosing sequences — to escape multiple
  * levels, nest the wrapper (e.g. `{ return: { return: X } }`).
+ *
+ * Every step must be an expression object. A literal step resolves to itself, so
+ * it can only ever be a no-op or, as the last step, a value dressed up as a
+ * sequence — `["Hello"]` where `"Hello"` was meant. Deciding whether a slot holds
+ * one step or many is `resolveSteps`' job, not this one's; callers that accept
+ * either shape normalize before calling.
  */
 export function runSteps(steps: unknown[], context: Context): unknown {
   let i = 0;
   function next(): unknown {
     if (i >= steps.length) return;
     const step = steps[i++];
+    if (!isObject(step)) {
+      throw new Error(
+        `A step must be an expression object, got ${step === null ? "null" : typeof step}: ${JSON.stringify(step)}`,
+      );
+    }
     const isLast = i >= steps.length;
     return resolve(step, context, v => {
       const after = (): unknown => {

@@ -52,7 +52,7 @@ export class AppNode extends Node {
         "Run steps when an application event fires.\nListeners add rather than replace, so this does not disturb the runner's own lifecycle handling — an `activate` handler runs alongside the default window restore, it does not suppress it.",
       examples: ["{ \"app-on\": \"before-quit\", \"do\": [{ \"file\": \"state.json\", \"write\": { \"var\": \"$state\" } }] }"],
       siblings: {
-        do: { steps: true, description: "Steps run in the main process when the event fires." },
+        do: { steps: true, required: true, description: "Steps run in the main process when the event fires. An array runs as a sequence; a single expression is run on its own." },
       },
     },
   };
@@ -93,8 +93,13 @@ export class AppNode extends Node {
   "app-on"(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["app-on"], context, async (value) => {
       const event = String(value);
-      if (!APP_EVENTS.includes(event as AppEvent) || !Array.isArray(def.do)) return null;
-      const steps = def.do;
+      if (!APP_EVENTS.includes(event as AppEvent)) return null;
+      // A handler with no steps registers and then does nothing every time the
+      // event fires, which reads as the event never arriving. The slot takes an
+      // array or a single expression, so it is normalized here rather than in
+      // runSteps, whose contract is a step array.
+      if (def.do === undefined) throw new Error("app-on needs `do` steps");
+      const steps = Array.isArray(def.do) ? def.do : [def.do];
 
       const { app } = await import("electron");
       // `app.on` is declared as one overload per event name, each with its own

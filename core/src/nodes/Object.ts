@@ -53,6 +53,7 @@ export class ObjectNode extends Node {
           description: "Variable name for the current value (default `\"item\"`).",
         },
         do: {
+          required: true,
           description: "Template to resolve for each value.",
         },
       },
@@ -118,6 +119,7 @@ export class ObjectNode extends Node {
   mapValues(def: Record<string, unknown>, context: Context) {
     const itemName = typeof def.item === "string" ? def.item : "item";
     const template = def.do;
+    if (template === undefined) throw new Error("mapValues needs a `do` template");
     return resolve(def.mapValues, context, obj => {
       if (!this.isObject(obj)) return {};
       const record = obj; // const preserves the narrowed type into the closure below
