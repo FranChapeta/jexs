@@ -29,7 +29,7 @@ npm install @jexs/server @jexs/core
 | `SessionNode` | `session` | Cookie-backed sessions |
 | `CryptoNode` | `hash`, `verify`, `random-bytes`, `jwt-sign`, `jwt-verify`, ... | Crypto helpers |
 | `OAuthNode` | `oauth` | Generic OAuth2 (Google, GitHub, ...) |
-| `EmailNode` | `email-send` | SMTP via nodemailer |
+| `EmailNode` | `email`, `email-connect` | SMTP via nodemailer |
 | `WebPushNode` | `push-send`, `push-vapid` | Browser push |
 | `WebSocketNode` | `ws-broadcast`, `ws-send`, `ws-handle` | WebSocket server |
 | `CacheNode` | `cache-get`, `cache-set`, `cache-del` | Memory / Redis / Memcached |

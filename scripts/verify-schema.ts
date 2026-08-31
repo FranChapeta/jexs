@@ -143,6 +143,27 @@ const cases: Case[] = [
   { label: "string-slot rejects fetch full (object-output) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { foreach: [1], item: { fetch: "/api/name", full: true }, do: "y" } },
 
+  // EmailNode: `list` and `icalEvent` carry shapes of their own, told apart from
+  // an expression that produces one by the presence of the shape's required key.
+  { label: "email list with url/comment and a plain url (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { email: "a@x.com", subject: "s", from: "me@x.com", list: { unsubscribe: "https://x.com/u", help: { url: "mailto:h@x.com", comment: "Help" } } } },
+  { label: "email list value from an expression (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { email: "a@x.com", subject: "s", list: { unsubscribe: { concat: ["https://x.com/u/", { var: "$t" }] } } } },
+  // The fields inside a def are `strOrExpr` refs rather than `type: "string"`,
+  // because a def is emitted verbatim: a bare type would reject the expression.
+  { label: "email list url from an expression (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { email: "a@x.com", subject: "s", list: { help: { url: { var: "$helpUrl" }, comment: "Help" } } } },
+  { label: "email list comment typo (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { email: "a@x.com", subject: "s", list: { help: { url: "mailto:h@x.com", commnet: "Help" } } } },
+  { label: "email icalEvent object (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { email: "a@x.com", subject: "s", icalEvent: { method: "REQUEST", content: { var: "$ics" } } } },
+  { label: "email icalEvent whole value from an expression (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { email: "a@x.com", subject: "s", icalEvent: { var: "$invite" } } },
+  { label: "email icalEvent path instead of content (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { email: "a@x.com", subject: "s", icalEvent: { method: "REQUEST", content: "BEGIN:VCALENDAR", path: "/invites/x.ics" } } },
+  { label: "email invalid priority (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { email: "a@x.com", subject: "s", priority: "urgent" } },
+
   // Keyless ops folded into the bare `cache`/`storage` key (value-mode).
   { label: "cache value-mode stats (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { cache: "stats" } },
@@ -297,6 +318,24 @@ const cases: Case[] = [
     expr: { routes: { children: { email: { methods: { GET: { file: "x.json" } } } } } } },
   { label: "root no longer masks a broken step (FAIL)", schemaRef: "", expectValid: false,
     expr: { email: { a: {} }, body: { b: {} } } },
+
+  // `required` siblings. Reported on the step itself, at any nesting depth, and
+  // never inside an opaque-key map (a column/variable named `email` is a name).
+  { label: "email without a subject (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { email: "a@b.c", body: "hi" } },
+  { label: "email with a subject (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { email: "a@b.c", subject: "Hi", body: "hi" } },
+  { label: "email without a subject, nested in steps (FAIL)", schemaRef: "$defs/steps", expectValid: false,
+    expr: [{ if: { var: "$x" }, then: [{ email: "a@b.c" }] }] },
+  { label: "attachment without content (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { email: "a@b.c", subject: "Hi", attachments: [{ filename: "a.pdf" }] } },
+  { label: "attachment without a filename is fine, it defaults (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { email: "a@b.c", subject: "Hi", attachments: [{ content: { var: "$pdf" } }] } },
+  // The required marker must not leak into opaque-key maps or data rows.
+  { label: "a variable named `email` needs no subject (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { setVars: { email: "a@b.c" } } },
+  { label: "a row with an `email` column needs no subject (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { query: "insert", table: "users", options: { data: [{ email: "a@b.c" }] } } },
 
   // Should fail
   { label: "eq tuple too short", schemaRef: "byKey/eq", expectValid: false,
