@@ -122,7 +122,7 @@ async function run(args: string[]): Promise<void> {
   // finds nothing — e.g. running from the monorepo itself, not an installed
   // project; a scaffolded project always discovers @jexs/core + @jexs/server.
   let nodes = await loadNodePackages(process.cwd(), { root: root ?? ".", env: "node" });
-  if (nodes.length === 0) nodes = [...coreNodes, ...serverNodes({ root: root ?? "." })];
+  if (nodes.length === 0) nodes = [...coreNodes(), ...serverNodes({ root: root ?? "." })];
   const resolve = createResolver(nodes);
   const context: Context = { ...entryContext(path.dirname(abs)), env: process.env as Record<string, string>, args: parseArgs(appArgs) };
   await Promise.resolve(resolve({ file: path.basename(abs) }, context));

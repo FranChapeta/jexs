@@ -9,7 +9,7 @@ const noop = () => {};
 // buildMenuTemplate is pure enough to test with no Electron runtime: it only
 // turns JSON into a template array.
 test("scalar fields resolve, including expressions", async () => {
-  createResolver([...coreNodes]);
+  createResolver(coreNodes());
   const ctx: Context = { name: "Save As..." };
   const [item] = await buildMenuTemplate(
     [{ label: { var: "$name" }, accelerator: "CmdOrCtrl+S", enabled: true }],
@@ -25,7 +25,7 @@ test("scalar fields resolve, including expressions", async () => {
 // resolving `do` in main would find no DOM handler for setText and quietly turn
 // the step into a plain object, destroying the handler instead of dispatching it.
 test("do steps reach the click handler raw, never resolved", async () => {
-  createResolver([...coreNodes]);
+  createResolver(coreNodes());
   const seen: unknown[][] = [];
   const steps = [{ setText: ["#out", "Saved"] }];
 
@@ -44,7 +44,7 @@ test("do steps reach the click handler raw, never resolved", async () => {
 });
 
 test("submenus recurse and keep their own handlers", async () => {
-  createResolver([...coreNodes]);
+  createResolver(coreNodes());
   const template = await buildMenuTemplate(
     [{
       label: "File",
@@ -68,7 +68,7 @@ test("submenus recurse and keep their own handlers", async () => {
 });
 
 test("unknown roles and types are dropped rather than passed to Electron", async () => {
-  createResolver([...coreNodes]);
+  createResolver(coreNodes());
   const [item] = await buildMenuTemplate(
     [{ label: "X", role: "notARole", type: "notAType" }],
     {},
@@ -80,14 +80,14 @@ test("unknown roles and types are dropped rather than passed to Electron", async
 });
 
 test("non-object entries are skipped", async () => {
-  createResolver([...coreNodes]);
+  createResolver(coreNodes());
   const template = await buildMenuTemplate(["nope", 42, null, { label: "Real" }], {}, noop);
   assert.equal(template.length, 1);
   assert.equal(template[0].label, "Real");
 });
 
 test("a non-array menu yields an empty template", async () => {
-  createResolver([...coreNodes]);
+  createResolver(coreNodes());
   assert.deepEqual(await buildMenuTemplate(undefined, {}, noop), []);
   assert.deepEqual(await buildMenuTemplate({ label: "x" }, {}, noop), []);
 });
@@ -96,7 +96,7 @@ test("a non-array menu yields an empty template", async () => {
 // runtime has to as well -- otherwise validation says yes and the app silently
 // gets an empty menu bar.
 test("the tree can come from an expression, not just a literal array", async () => {
-  createResolver([...coreNodes]);
+  createResolver(coreNodes());
   const ctx: Context = { myMenu: [{ label: "From var", do: [{ noop: 1 }] }] };
 
   const template = await buildMenuTemplate({ var: "$myMenu" }, ctx, noop);
@@ -107,7 +107,7 @@ test("the tree can come from an expression, not just a literal array", async () 
 });
 
 test("a submenu can come from an expression too", async () => {
-  createResolver([...coreNodes]);
+  createResolver(coreNodes());
   const ctx: Context = { sub: [{ label: "Nested" }] };
   const [item] = await buildMenuTemplate(
     [{ label: "File", submenu: { var: "$sub" } }],
@@ -124,7 +124,7 @@ test("a submenu can come from an expression too", async () => {
 // log. Routing through handleErr gives the item's own `catch` the same meaning
 // it would have inline, with $error bound.
 test("a menu item's catch receives the failure with $error bound", async () => {
-  createResolver([...coreNodes]);
+  createResolver(coreNodes());
   const raw = {
     label: "Boom",
     do: [{ error: 500, message: "nope" }],
@@ -146,7 +146,7 @@ test("a menu item's catch receives the failure with $error bound", async () => {
 });
 
 test("without a catch, a deferred failure still rejects rather than vanishing", async () => {
-  createResolver([...coreNodes]);
+  createResolver(coreNodes());
   const raw = { label: "Boom", do: [{ error: 500, message: "unhandled" }] };
   const ctx = childContext({}, {});
 

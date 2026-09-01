@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createResolver, coreNodes } from "../src/index.js";
 
-const resolve = createResolver(coreNodes);
+const resolve = createResolver(coreNodes());
 
 // Component-wise approximate array compare (rgb/hsl arrays carry float rounding).
 function closeArr(actual: unknown, expected: number[], eps = 1e-6) {

@@ -9,7 +9,7 @@
  *   // In a package's build:schema script:
  *   import { buildPackageSchema } from "@jexs/core";
  *   import { coreNodes } from "@jexs/core";
- *   writeFileSync("dist/schema.json", JSON.stringify(buildPackageSchema(coreNodes), null, 2));
+ *   writeFileSync("dist/schema.json", JSON.stringify(buildPackageSchema(coreNodes()), null, 2));
  *
  *   // In create's build:schema script:
  *   import { mergePackageSchemas } from "@jexs/core";
@@ -599,7 +599,7 @@ function reportCollisions(collisions: string[], opts: SchemaBuildOptions, contex
  * `onCollision: "skip"`, keep the first and warn).
  *
  * Accepts either Node classes (the typeof Node value) or Node instances. The
- * resolver builds with instances, so callers can pass `coreNodes` directly.
+ * resolver builds with instances, so callers can pass `coreNodes()` directly.
  */
 export function buildPackageSchema(
   nodes: ReadonlyArray<Node | (typeof Node)>,

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createResolver, coreNodes } from "../src/index.js";
 
-const resolve = createResolver(coreNodes);
+const resolve = createResolver(coreNodes());
 
 // Tolerance helper for the floating-point trig / interpolation ops.
 const close = (a: unknown, b: number, eps = 1e-9) =>

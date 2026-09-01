@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createResolver, coreNodes } from "../src/index.js";
 
-const resolve = createResolver(coreNodes);
+const resolve = createResolver(coreNodes());
 
 // fromEntries lives on ArrayNode (its input is an array of pairs) — the inverse
 // of ObjectNode's `entries`. See also its round-trip with `entries` below.

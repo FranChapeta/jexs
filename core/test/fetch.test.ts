@@ -2,7 +2,7 @@ import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { createResolver, coreNodes } from "../src/index.js";
 
-const resolve = createResolver(coreNodes);
+const resolve = createResolver(coreNodes());
 
 const realFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = realFetch; });

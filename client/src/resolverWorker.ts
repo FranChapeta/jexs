@@ -12,7 +12,7 @@
 import { createResolver, coreNodes, runSteps, collectTransferables } from "@jexs/core";
 import { registerComputeLazy } from "./registerNodes.js";
 
-createResolver([...coreNodes]);
+createResolver(coreNodes());
 registerComputeLazy();
 
 interface ThreadRequest { rid: number; steps: unknown; params: Record<string, unknown> }

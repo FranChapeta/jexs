@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createResolver, coreNodes } from "../src/index.js";
 
-const resolve = createResolver(coreNodes);
+const resolve = createResolver(coreNodes());
 
 // Regex lives on the string ops: a `/pattern/flags` argument is treated as a
 // regular expression; any other string is literal.

@@ -17,7 +17,7 @@ const abs = (rel: string): string => path.join(root, rel);
 
 before(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "jexs-file-"));
-  resolve = createResolver([...coreNodes, new FileNode(root)]);
+  resolve = createResolver([...coreNodes(), new FileNode(root)]);
 });
 
 after(async () => {

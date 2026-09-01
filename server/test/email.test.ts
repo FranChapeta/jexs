@@ -4,7 +4,7 @@ import net from "node:net";
 import { createResolver, coreNodes } from "@jexs/core";
 import { EmailNode, addresses, attachments, icalEvent, parseSmtpUrl, smtpOptions } from "../src/nodes/Email.js";
 
-const resolve = createResolver([...coreNodes, new EmailNode()]);
+const resolve = createResolver([...coreNodes(), new EmailNode()]);
 
 /**
  * Enough of an SMTP server to hold a real conversation, so the accepted/rejected

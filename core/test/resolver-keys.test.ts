@@ -11,7 +11,7 @@ class LateNode extends Node {
 }
 
 test("keys is a live view, not a snapshot taken at createResolver", () => {
-  const resolver = createResolver([...coreNodes]);
+  const resolver = createResolver(coreNodes());
   assert.equal(resolver.keys.has("var"), true);
   assert.equal(resolver.keys.has("lateop"), false);
 
@@ -24,7 +24,7 @@ test("keys is a live view, not a snapshot taken at createResolver", () => {
 // The set is the UNION of _keyMap and _lazyMap, and the lazy path migrates
 // entries between them as modules load. Reading either alone gives a wrong answer.
 test("keys includes lazy keys that have no handler yet", () => {
-  const resolver = createResolver([...coreNodes]);
+  const resolver = createResolver(coreNodes());
   assert.equal(resolver.keys.has("lazyop"), false);
 
   registerLazy(["lazyop"], async () => {});
@@ -33,7 +33,7 @@ test("keys includes lazy keys that have no handler yet", () => {
 });
 
 test("onKeysChange fires with exactly what was added", () => {
-  const resolver = createResolver([...coreNodes]);
+  const resolver = createResolver(coreNodes());
   const seen: string[][] = [];
   resolver.onKeysChange((added) => seen.push([...added]));
 
@@ -49,7 +49,7 @@ test("onKeysChange fires with exactly what was added", () => {
 });
 
 test("onKeysChange does not announce a lazy key the resolver already handles", () => {
-  const resolver = createResolver([...coreNodes]);
+  const resolver = createResolver(coreNodes());
   const seen: string[][] = [];
   resolver.onKeysChange((added) => seen.push([...added]));
 
@@ -58,7 +58,7 @@ test("onKeysChange does not announce a lazy key the resolver already handles", (
 });
 
 test("onKeysChange returns an unsubscribe", () => {
-  const resolver = createResolver([...coreNodes]);
+  const resolver = createResolver(coreNodes());
   const seen: string[][] = [];
   const off = resolver.onKeysChange((added) => seen.push([...added]));
 
@@ -70,11 +70,11 @@ test("onKeysChange returns an unsubscribe", () => {
 // createResolver tears down the previous resolver, and a listener surviving that
 // would fire for a resolver its owner no longer holds.
 test("subscribers do not leak across resolver rebuilds", () => {
-  const first = createResolver([...coreNodes]);
+  const first = createResolver(coreNodes());
   const seen: string[][] = [];
   first.onKeysChange((added) => seen.push([...added]));
 
-  createResolver([...coreNodes]);
+  createResolver(coreNodes());
   registerNode(new LateNode());
   assert.deepEqual(seen, []);
 });
@@ -84,11 +84,11 @@ test("subscribers do not leak across resolver rebuilds", () => {
 // is still bound to the map it was built for, so a superseded resolver reports
 // its own keys rather than silently mirroring whoever is current.
 test("a superseded resolver's key view does not report the live resolver's keys", () => {
-  const first = createResolver([...coreNodes]);
+  const first = createResolver(coreNodes());
   assert.equal(first.keys.has("var"), true);
   assert.equal(first.keys.has("lateop"), false);
 
-  createResolver([...coreNodes]);
+  createResolver(coreNodes());
   registerNode(new LateNode());
 
   assert.equal(first.keys.has("lateop"), false, "stale view must not see the new resolver");
@@ -96,15 +96,15 @@ test("a superseded resolver's key view does not report the live resolver's keys"
 });
 
 test("a superseded resolver stops counting lazy keys, which belong to the current one", () => {
-  const first = createResolver([...coreNodes]);
-  createResolver([...coreNodes]);
+  const first = createResolver(coreNodes());
+  createResolver(coreNodes());
   registerLazy(["lazyonly"], async () => {});
 
   assert.equal(first.keys.has("lazyonly"), false);
 });
 
 test("a listener that throws does not break registration", () => {
-  const resolver = createResolver([...coreNodes]);
+  const resolver = createResolver(coreNodes());
   resolver.onKeysChange(() => { throw new Error("boom"); });
 
   registerNode(new LateNode());
@@ -124,7 +124,7 @@ test("ProxyNode adopts keys at runtime and reports which were new", () => {
 });
 
 test("registering a grown proxy installs the new keys and keeps first-wins", () => {
-  const resolver = createResolver([...coreNodes]);
+  const resolver = createResolver(coreNodes());
   const calls: Record<string, unknown>[] = [];
   const proxy = new ProxyNode(["remoteop"], (call) => { calls.push(call); return "forwarded"; });
   registerNode(proxy);
@@ -146,7 +146,7 @@ test("registering a grown proxy installs the new keys and keeps first-wins", () 
 // continuation -- so this holds for any remote, in either direction.
 test("a proxied step blocks the next one and binds its value via as", async () => {
   const order: string[] = [];
-  createResolver([...coreNodes]);
+  createResolver(coreNodes());
   registerNode(new ProxyNode(["remoteslow"], async () => {
     order.push("remote-start");
     await new Promise((r) => setTimeout(r, 20));
@@ -168,7 +168,7 @@ test("a proxied step blocks the next one and binds its value via as", async () =
 // the resolver -- not the proxy -- that intercepts it. So it behaves the same
 // whether the op is local or remote.
 test("a `then` sibling makes a proxied step fire-and-forget, as it would locally", async () => {
-  createResolver([...coreNodes]);
+  createResolver(coreNodes());
   let settled = false;
   registerNode(new ProxyNode(["remotebg"], async () => {
     await new Promise((r) => setTimeout(r, 20));
@@ -186,7 +186,7 @@ test("a `then` sibling makes a proxied step fire-and-forget, as it would locally
 });
 
 test("ProxyNode forwards resolved siblings and receives the context", () => {
-  const resolver = createResolver([...coreNodes]);
+  const resolver = createResolver(coreNodes());
   const seen: { call: Record<string, unknown>; context: Context }[] = [];
   registerNode(new ProxyNode(["remotecall"], (call, context) => {
     seen.push({ call, context });

@@ -7,7 +7,7 @@ import { SHELL_CSP, registerWrap, resetWindows, shellTemplate, wrapPage } from "
 import { deniedKey } from "../src/bridge.js";
 
 test("the shell carries a CSP", () => {
-  const resolver = createResolver([...coreNodes]);
+  const resolver = createResolver(coreNodes());
   const html = String(resolver(shellTemplate(), {
     title: "T", page: "index.json", _clientScript: "/client.js",
   }));

@@ -15,7 +15,7 @@ const electronNodeClasses = [
 ];
 
 const combined = mergePackageSchemas([
-  buildPackageSchema([...coreNodes], "@jexs/core"),
+  buildPackageSchema(coreNodes(), "@jexs/core"),
   buildPackageSchema(electronNodeClasses.map((C) => new C()), "@jexs/electron"),
 ]);
 
@@ -202,7 +202,7 @@ test("shortcut takes an accelerator with do steps", () => {
 
 test("no electron key collides with a core key", () => {
   const coreKeys = new Set(
-    coreNodes.flatMap((n) => [...(n.handlerKeys ?? [])]),
+    coreNodes().flatMap((n) => [...(n.handlerKeys ?? [])]),
   );
   for (const NodeClass of electronNodeClasses) {
     for (const op of Object.keys(NodeClass.schema)) {

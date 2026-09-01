@@ -4,7 +4,7 @@ import { ServiceWorkerNode } from "./nodes/ServiceWorkerNode.js";
 // Single typed reference to the SW global scope (unavoidable — DOM lib types self as Window)
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
-const swResolver = createResolver([...coreNodes, new ServiceWorkerNode()]);
+const swResolver = createResolver([...coreNodes(), new ServiceWorkerNode()]);
 
 // Resolve config URL relative to this SW file (e.g. /jexs/sw.js -> /jexs/sw-config.json)
 const configUrl = new URL("./sw-config.json", sw.location.href).href;

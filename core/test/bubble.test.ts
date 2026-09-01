@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createResolver, coreNodes, childContext, Node } from "../src/index.js";
 
 // createResolver installs the global resolver that runSteps/resolve delegate to.
-const resolve = createResolver(coreNodes);
+const resolve = createResolver(coreNodes());
 
 test("setVars without bubble stays scoped to the child context (map do)", () => {
   const ctx: Record<string, unknown> = { total: 0 };

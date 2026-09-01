@@ -50,24 +50,35 @@ import { DateNode } from "./nodes/Date.js";
 import { ErrorNode } from "./nodes/Error.js";
 import { FetchNode } from "./nodes/FetchNode.js";
 
-/** Core nodes — pure logic plus global-fetch HTTP; no DOM or Node.js APIs. Safe for browser, server, and workers. */
-export const coreNodes: Node[] = [
-  new VariablesNode(),
-  new ElementNode(),
-  new LogicNode(),
-  new StringNode(),
-  new ArrayNode(),
-  new ObjectNode(),
-  new MathNode(),
-  new ColorNode(),
-  new TimerNode(),
-  new DateNode(),
-  new ErrorNode(),
-  new FetchNode(),
-];
+/**
+ * Core nodes — pure logic plus global-fetch HTTP; no DOM or Node.js APIs. Safe
+ * for browser, server, and workers.
+ *
+ * A factory, not a shared array: a resolver owns its node instances, and node
+ * state lives on those instances (MathNode's seed, TimerNode's timer registries).
+ * Handing the same instances to two resolvers would share that state between
+ * them, so each resolver gets a fresh set.
+ */
+export function coreNodes(): Node[] {
+  return [
+    new VariablesNode(),
+    new ElementNode(),
+    new LogicNode(),
+    new StringNode(),
+    new ArrayNode(),
+    new ObjectNode(),
+    new MathNode(),
+    new ColorNode(),
+    new TimerNode(),
+    new DateNode(),
+    new ErrorNode(),
+    new FetchNode(),
+  ];
+}
 
 /** Discovery alias: the `"jexs".nodes` manifest entry points at this module, and
- *  node discovery consumes `mod.default ?? mod.nodes`. Same instances as {@link coreNodes}. */
+ *  node discovery consumes `mod.default ?? mod.nodes` — invoking it, since it's a
+ *  factory. Same as {@link coreNodes}. */
 export const nodes = coreNodes;
 
 // ── Step runner ──

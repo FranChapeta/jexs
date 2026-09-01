@@ -113,7 +113,7 @@ test("messageBoxOptions maps the primary value to message and validates type", (
 // The window shell is a JSON Element tree rather than an HTML file, so it can be
 // resolved with a core-only resolver — a real SSR test with no Electron at all.
 test("shellTemplate resolves to a document with the page mounted and script injected", () => {
-  const resolve = createResolver([...coreNodes]);
+  const resolve = createResolver(coreNodes());
   const html = String(
     resolve(shellTemplate(), {
       title: "My App",

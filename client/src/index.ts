@@ -49,12 +49,15 @@ interface JexsHost {
   reply?: (id: number, value: unknown, error?: string) => void;
 }
 
-/** Eager client node set, combined with coreNodes to build the browser resolver. */
-export const clientNodes: Node[] = [
-  new DomNode(),
-  new AudioNode(),
-  new StorageNode(),
-];
+/** Eager client node set, combined with coreNodes to build the browser resolver.
+ *  A factory for the same reason coreNodes is one: a resolver owns its instances. */
+export function clientNodes(): Node[] {
+  return [
+    new DomNode(),
+    new AudioNode(),
+    new StorageNode(),
+  ];
+}
 
 export { hydrate, pageContext };
 
@@ -72,7 +75,7 @@ export { ServiceWorkerNode } from "./nodes/ServiceWorkerNode.js";
 
 // Browser: build the resolver, expose a debug/hydration handle, and auto-hydrate.
 if (typeof window !== "undefined") {
-  const resolver = createResolver([...coreNodes, ...clientNodes]);
+  const resolver = createResolver([...coreNodes(), ...clientNodes()]);
   // `window.jexs` is a small handle: `context` for inspecting/seeding shared state,
   // `hydrate` for (re)binding events on server-injected content (see Server SSR).
   (window as unknown as Record<string, unknown>).jexs = { context: pageContext, hydrate };

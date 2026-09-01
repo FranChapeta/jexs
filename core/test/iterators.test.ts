@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createResolver, coreNodes, runSteps } from "../src/index.js";
 
 // createResolver installs the global resolver that runSteps/resolve delegate to.
-const resolve = createResolver(coreNodes);
+const resolve = createResolver(coreNodes());
 
 test("filter: renames the item via the `item` sibling", () => {
   const out = resolve({ filter: [[1, 2, 3], { gt: [{ var: "n" }, 1] }], item: "n" }, {});

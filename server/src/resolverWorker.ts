@@ -21,7 +21,7 @@ if (!isMainThread && parentPort) {
   const root = workerData && typeof workerData === "object" && "root" in workerData
     ? String((workerData as { root: unknown }).root)
     : "app";
-  createResolver([...coreNodes, ...serverNodes({ root })]);
+  createResolver([...coreNodes(), ...serverNodes({ root })]);
   port.on("message", (req: ThreadRequest) => {
     const { rid, steps, params } = req;
     // `.then(() => runSteps(...))` so a SYNC throw from runSteps is caught too.

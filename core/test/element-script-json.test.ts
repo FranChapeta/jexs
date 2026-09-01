@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createResolver, coreNodes } from "../src/index.js";
 
-const resolve = createResolver(coreNodes);
+const resolve = createResolver(coreNodes());
 
 // Extract the text between the opening <script ...> and the final </script>.
 // The greedy capture means a stray </script> in the payload (a failed escape)

@@ -15,7 +15,7 @@ test("a node is disposed when its resolver is replaced", () => {
   createResolver([node]);
   assert.equal(node.disposed, 0);
 
-  createResolver([...coreNodes]);
+  createResolver(coreNodes());
   assert.equal(node.disposed, 1);
 });
 
@@ -62,14 +62,14 @@ test("a throwing dispose does not stop the rest of the teardown", () => {
 });
 
 test("nodes without dispose are skipped harmlessly", () => {
-  const resolver = createResolver([...coreNodes]);
+  const resolver = createResolver(coreNodes());
   assert.doesNotThrow(() => resolver.destroy());
 });
 
 test("destroy is inert once a resolver has been superseded", () => {
   const node = new DisposableNode();
   const first = createResolver([node]);
-  createResolver([...coreNodes]);
+  createResolver(coreNodes());
   assert.equal(node.disposed, 1);
 
   // The replacement already tore it down; destroying the stale handle must not

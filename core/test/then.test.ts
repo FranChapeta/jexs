@@ -10,7 +10,7 @@ class DeferNode extends Node {
     return Promise.resolve("R:" + String(def.defer));
   }
 }
-const resolve = createResolver([new DeferNode(), ...coreNodes]);
+const resolve = createResolver([new DeferNode(), ...coreNodes()]);
 
 const flush = () => new Promise(r => setTimeout(r, 0));
 

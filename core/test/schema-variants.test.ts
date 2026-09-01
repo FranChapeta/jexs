@@ -53,7 +53,7 @@ class FakeDefaultNode extends Node {
 }
 
 const combined = mergePackageSchemas([
-  buildPackageSchema([...coreNodes, new FakeValNode(), new FakeSibNode(), new FakeDefaultNode()]),
+  buildPackageSchema([...coreNodes(), new FakeValNode(), new FakeSibNode(), new FakeDefaultNode()]),
 ]);
 
 const ajv = new Ajv({ strict: false, allErrors: true });

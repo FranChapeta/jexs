@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createResolver, coreNodes } from "../src/index.js";
 
-const resolve = createResolver(coreNodes);
+const resolve = createResolver(coreNodes());
 
 // A fixed reference instant used across the extraction / boundary tests.
 // 2026-07-01T12:30:45.123Z is a Wednesday (getUTCDay() === 3).

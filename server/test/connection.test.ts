@@ -237,7 +237,7 @@ test("redis urls are guarded on their scheme and otherwise passed through", () =
 // ── DatabaseNode connect ───────────────────────────────────────────────────────
 
 // knex never dials until a query runs, so these configure without connecting.
-const resolve = createResolver([...coreNodes, new DatabaseNode()]);
+const resolve = createResolver([...coreNodes(), new DatabaseNode()]);
 const connect = async (step: Record<string, unknown>): Promise<Record<string, unknown>> =>
   await Promise.resolve(resolve(step, {})) as Record<string, unknown>;
 
@@ -315,7 +315,7 @@ test("a type contradicting the url scheme is refused", async () => {
 // Same rule as `database: "connect"`, so the two nodes do not disagree about
 // what carrying both spellings means.
 test("cache-connect refuses a url alongside the discrete endpoint", async () => {
-  const cacheResolve = createResolver([...coreNodes, new CacheNode()]);
+  const cacheResolve = createResolver([...coreNodes(), new CacheNode()]);
   const run = async (step: Record<string, unknown>) =>
     await Promise.resolve(cacheResolve(step, {}));
 
@@ -341,7 +341,7 @@ test("cache-connect refuses a url alongside the discrete endpoint", async () => 
 // driver used to connect in-process while the log and the return value both
 // claimed the driver that was asked for.
 test("cache-connect refuses an unknown driver instead of falling back to memory", async () => {
-  const cacheResolve = createResolver([...coreNodes, new CacheNode()]);
+  const cacheResolve = createResolver([...coreNodes(), new CacheNode()]);
   const run = async (step: Record<string, unknown>) =>
     await Promise.resolve(cacheResolve(step, {}));
 

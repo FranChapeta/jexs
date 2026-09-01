@@ -33,7 +33,7 @@ export interface ServerNodesOptions {
 /**
  * Server-specific nodes, built fresh per call so each set can target its own
  * `root`. Combine with coreNodes for a full resolver:
- * `[...coreNodes, ...serverNodes()]`. Individual node classes are exported below
+ * `[...coreNodes(), ...serverNodes()]`. Individual node classes are exported below
  * for custom wiring.
  */
 export function serverNodes({ root = "app" }: ServerNodesOptions = {}): Node[] {
