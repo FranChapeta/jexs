@@ -7,7 +7,10 @@
  */
 
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
-import { splitPath, hasAnyKey, isObject } from "../helpers.js";
+import {
+  splitPath, isObject,
+  toStringValue, toNumberValue, toBooleanValue, toArrayValue,
+} from "../helpers.js";
 
 export interface Context {
   [key: string]: unknown;
@@ -132,11 +135,9 @@ export abstract class Node {
     return typeof handler === "function" ? handler.call(this, definition, context) : null;
   }
 
-  /**
-   * Helper: Check if value is a plain object
-   */
+  /** Helper: Check if value is a plain object. */
   protected isObject(value: unknown): value is Record<string, unknown> {
-    return value !== null && typeof value === "object" && !Array.isArray(value);
+    return isObject(value);
   }
 
   /**
@@ -157,65 +158,47 @@ export abstract class Node {
     }
   }
 
-  /**
-   * Helper: Convert value to string
-   */
+  // Coercion sugar for handler bodies. The rules live in helpers.ts as free
+  // functions, since none of them touch a node and a node's own module-scope
+  // helpers need them too (a module function cannot reach a protected member,
+  // even when handed the instance).
+
+  /** Helper: Convert value to string. */
   protected toString(value: unknown): string {
-    if (value === null || value === undefined) return "";
-    if (typeof value === "string") return value;
-    if (typeof value === "number" || typeof value === "boolean")
-      return String(value);
-    return JSON.stringify(value);
+    return toStringValue(value);
   }
 
-  /**
-   * Helper: Convert value to number
-   */
+  /** Helper: Convert value to number. */
   protected toNumber(value: unknown): number {
-    if (typeof value === "number") return value;
-    if (typeof value === "string") {
-      const num = parseFloat(value);
-      return isNaN(num) ? 0 : num;
-    }
-    if (typeof value === "boolean") return value ? 1 : 0;
-    return 0;
+    return toNumberValue(value);
   }
 
   /**
-   * Helper: Convert value to boolean. Static so resolver machinery (e.g. the
-   * global `bubble` modifier) can coerce a resolved flag with the exact same
-   * rules the instance helper gives every node's condition inputs.
+   * Helper: Convert value to boolean. Also exposed as a static, so the resolver
+   * machinery (the global `bubble` modifier) coerces a resolved flag by exactly
+   * the rules every node's condition inputs get.
    */
-  static toBooleanValue(value: unknown): boolean {
-    if (typeof value === "boolean") return value;
-    if (typeof value === "number") return value !== 0;
-    if (typeof value === "string") {
-      return value !== "" && value !== "0" && value.toLowerCase() !== "false";
-    }
-    if (Array.isArray(value)) return value.length > 0;
-    if (isObject(value)) {
-      if ("nodeType" in value) return true; // DOM nodes are truthy
-      return hasAnyKey(value);
-    }
-    return value !== null && value !== undefined;
-  }
-
-  /** Helper: Convert value to boolean (instance sugar for `toBooleanValue`). */
   protected toBoolean(value: unknown): boolean {
-    return Node.toBooleanValue(value);
+    return toBooleanValue(value);
   }
 
-  /**
-   * Helper: Convert value to array
-   */
+  static toBooleanValue(value: unknown): boolean {
+    return toBooleanValue(value);
+  }
+
+  /** Helper: Convert value to array. */
   protected toArray(value: unknown): unknown[] {
-    if (Array.isArray(value)) return value;
-    if (value === null || value === undefined) return [];
-    return [value];
+    return toArrayValue(value);
   }
 }
 
-const nodeProtoKeys = new Set(Object.getOwnPropertyNames(Node.prototype));
+/**
+ * Names `handlerKeys` must never report as ops. Everything on `Node.prototype`,
+ * plus `dispose` by hand: `dispose?(): void` above is a bodiless declaration, so
+ * TypeScript emits nothing for it and it is absent from the prototype — leaving a
+ * node that implements it (MathNode, TimerNode) to register `dispose` as an op.
+ */
+const nodeProtoKeys = new Set([...Object.getOwnPropertyNames(Node.prototype), "dispose"]);
 
 /** Write a single dot-path value into one context (no propagation). */
 function writeContextValue(context: Context, varName: string, value: unknown): void {

@@ -249,13 +249,13 @@ export class DateNode extends Node {
       const base = this.toNumber(a[0]);
       const interval = String(a[1]);
       const result = base + parseInterval(interval);
-      return this.emit(result, def, context, "ms");
+      return emitDate(result, def, context, "ms");
     });
   }
 
   dateFormat(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.dateFormat, context, ms =>
-      this.emit(this.toNumber(ms), def, context, "datetime")
+      emitDate(this.toNumber(ms), def, context, "datetime")
     );
   }
 
@@ -289,9 +289,9 @@ export class DateNode extends Node {
   dateStartOf(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.dateStartOf, context, ts => {
       const base = this.toNumber(ts);
-      if (!def.unit) return this.emit(boundary(base, "day", false), def, context, "ms");
+      if (!def.unit) return emitDate(boundary(base, "day", false), def, context, "ms");
       return resolve(def.unit, context, u =>
-        this.emit(boundary(base, String(u), false), def, context, "ms")
+        emitDate(boundary(base, String(u), false), def, context, "ms")
       );
     });
   }
@@ -299,9 +299,9 @@ export class DateNode extends Node {
   dateEndOf(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.dateEndOf, context, ts => {
       const base = this.toNumber(ts);
-      if (!def.unit) return this.emit(boundary(base, "day", true), def, context, "ms");
+      if (!def.unit) return emitDate(boundary(base, "day", true), def, context, "ms");
       return resolve(def.unit, context, u =>
-        this.emit(boundary(base, String(u), true), def, context, "ms")
+        emitDate(boundary(base, String(u), true), def, context, "ms")
       );
     });
   }
@@ -332,11 +332,12 @@ export class DateNode extends Node {
   }
 
   /** Emit a computed timestamp through the `format` sibling (or a default). */
-  private emit(ms: number | null, def: Record<string, unknown>, context: Context, fallback: string): NodeValue {
-    if (ms === null) return null;
-    if (!def.format) return formatDate(ms, fallback);
-    return resolve(def.format, context, fmt => formatDate(ms, String(fmt)));
-  }
+}
+
+function emitDate(ms: number | null, def: Record<string, unknown>, context: Context, fallback: string): NodeValue {
+  if (ms === null) return null;
+  if (!def.format) return formatDate(ms, fallback);
+  return resolve(def.format, context, fmt => formatDate(ms, String(fmt)));
 }
 
 function formatDate(ms: number, format: string): string | number {

@@ -246,6 +246,60 @@ export function hasAnyKey(obj: object): boolean {
   return false;
 }
 
+// ── Value coercion ───────────────────────────────────────────────────────────
+//
+// The rules every node input is read through. Free functions rather than methods
+// on Node because none of them touch a node: they are pure, and a node's
+// module-scope helpers need them just as much as its handlers do. `Node` exposes
+// the same four as protected instance sugar (`this.toNumber(v)`), which is what
+// handler bodies use.
+
+/** Coerce to string. Objects and arrays serialize as JSON; null/undefined are "". */
+export function toStringValue(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value);
+}
+
+/** Coerce to number. Unparseable input is 0 rather than NaN, so arithmetic on a
+ *  missing variable yields a number instead of poisoning the whole expression. */
+export function toNumberValue(value: unknown): number {
+  if (typeof value === "number") return value;
+  if (typeof value === "string") {
+    const num = parseFloat(value);
+    return isNaN(num) ? 0 : num;
+  }
+  if (typeof value === "boolean") return value ? 1 : 0;
+  return 0;
+}
+
+/**
+ * Coerce to boolean. Differs from JS truthiness where a template author would
+ * expect it to: `"0"` and `"false"` are falsy (they arrive from query strings and
+ * attributes), an empty array or object is falsy, and a DOM node is truthy.
+ */
+export function toBooleanValue(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    return value !== "" && value !== "0" && value.toLowerCase() !== "false";
+  }
+  if (Array.isArray(value)) return value.length > 0;
+  if (isObject(value)) {
+    if ("nodeType" in value) return true; // DOM nodes are truthy
+    return hasAnyKey(value);
+  }
+  return value !== null && value !== undefined;
+}
+
+/** Coerce to array. Wraps a lone value; null/undefined become empty. */
+export function toArrayValue(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (value === null || value === undefined) return [];
+  return [value];
+}
+
 /**
  * Check if a value is empty (null, undefined, empty string, empty array, empty object)
  */

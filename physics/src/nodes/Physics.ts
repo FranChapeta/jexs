@@ -684,6 +684,69 @@ export class PhysicsNode extends Node {
         },
       },
     },
+    "physics-pause": {
+      type: "boolean",
+      output: "null",
+      markdownDescription: "Pauses the world's simulation loop, leaving every entity where it is. Resume with `physics-resume`.",
+      examples: [
+        "{ \"physics-pause\": true }",
+      ],
+    },
+    "physics-resume": {
+      type: "boolean",
+      output: "null",
+      markdownDescription: "Resumes a world paused by `physics-pause`. The elapsed-time accumulator is reset, so the pause does not replay as one huge step.",
+      examples: [
+        "{ \"physics-resume\": true }",
+      ],
+    },
+    "physics-destroy": {
+      type: "boolean",
+      output: "null",
+      markdownDescription: "Tears the world down: stops the loop, shuts down the physics worker when threaded, and drops the world. A no-op when no world exists.",
+      examples: [
+        "{ \"physics-destroy\": true }",
+      ],
+    },
+    "physics-apply": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Applies an impulse to one entity by id, changing its velocity immediately. A no-op when the entity is not in the world.",
+      examples: [
+        "{ \"physics-apply\": \"player\", \"impulse\": [0, -400, 0] }",
+      ],
+      siblings: {
+        impulse: {
+          type: "array",
+          description: "Impulse vector `[x, y, z]`. Omit `z` for 2D worlds.",
+        },
+      },
+    },
+    "physics-raycast": {
+      type: "boolean",
+      output: "array",
+      markdownDescription: "Casts a ray through the world and returns every entity it hits, nearest first. Works on both client and server.",
+      outputDescription: "An array of hits ordered by distance, empty when nothing is hit or no world exists.",
+      examples: [
+        "{ \"physics-raycast\": true, \"from\": { \"x\": 0, \"y\": 0 }, \"dir\": { \"x\": 1, \"y\": 0 }, \"mask\": [\"enemy\"] }",
+      ],
+      siblings: {
+        from: {
+          map: true,
+          required: true,
+          description: "Ray origin `{ x, y, z }`. `z` defaults to 0.",
+        },
+        dir: {
+          map: true,
+          required: true,
+          description: "Ray direction `{ x, y, z }`. `z` defaults to 0.",
+        },
+        mask: {
+          type: "array",
+          description: "Only hit entities in these collision groups. Omit to hit every entity.",
+        },
+      },
+    },
   };
 
 
@@ -862,6 +925,14 @@ export class CollisionNode extends Node {
           description: "Where `do` runs when physics is threaded. `physics` (default) runs it in the physics worker; use `main` when the steps mutate client/server context, DOM, or network state the owning thread reads.",
         },
       },
+    },
+    "collision-off": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Removes a collision handler by the `id` that `collision-on` registered it under. Unknown ids are a no-op.",
+      examples: [
+        "{ \"collision-off\": \"playerHitsEnemy\" }",
+      ],
     },
   };
 

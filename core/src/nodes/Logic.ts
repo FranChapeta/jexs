@@ -1,7 +1,7 @@
 import { Node, Context, NodeValue, childContext } from "./Node.js";
 import { resolve, resolveAll, resolveObj } from "../Resolver.js";
 import { runSteps, resolveSteps } from "../Resolver.js";
-import { hasAnyKey } from "../helpers.js";
+import { hasAnyKey, isObject } from "../helpers.js";
 import type { JexsNodeSchema } from "../schema.js";
 
 export class LogicNode extends Node {
@@ -342,12 +342,11 @@ export class LogicNode extends Node {
     const values = this.toArray(def.coalesce);
     let i = 0;
     let last: unknown = undefined;
-    const self = this;
     function next(): unknown {
       if (i >= values.length) return last;
       return resolve(values[i++], context, v => {
         last = v;
-        if (!self.isEmptyValue(v)) return v;
+        if (!isEmptyValue(v)) return v;
         return next();
       });
     }
@@ -420,41 +419,22 @@ export class LogicNode extends Node {
   }
 
   typeof(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.typeof, context, value => this.typeName(value));
+    return resolve(def.typeof, context, value => typeName(value));
   }
 
   isType(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.isType, context, args => {
       const [value, type] = this.toArray(args);
-      return this.typeName(value) === this.toString(type);
+      return typeName(value) === this.toString(type);
     });
   }
 
-  // Jexs type name: arrays report "array" (not "object"), and null/undefined are
-  // distinct. Everything else follows JS `typeof`.
-  private typeName(value: unknown): string {
-    if (value === null) return "null";
-    if (value === undefined) return "undefined";
-    if (Array.isArray(value)) return "array";
-    return typeof value;
-  }
-
   empty(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.empty, context, value => this.isEmptyValue(value));
+    return resolve(def.empty, context, value => isEmptyValue(value));
   }
 
   notEmpty(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.notEmpty, context, value => !this.isEmptyValue(value));
-  }
-
-  // Shared emptiness rule for empty / notEmpty / coalesce: null, undefined, "",
-  // [], {} are empty; 0 and false (and other non-collections) are not.
-  private isEmptyValue(value: unknown): boolean {
-    if (value === null || value === undefined) return true;
-    if (typeof value === "string") return value === "";
-    if (Array.isArray(value)) return value.length === 0;
-    if (this.isObject(value)) return !hasAnyKey(value);
-    return false;
+    return resolve(def.notEmpty, context, value => !isEmptyValue(value));
   }
 
   sleep(def: Record<string, unknown>, context: Context): NodeValue {
@@ -477,4 +457,23 @@ export class LogicNode extends Node {
       return resolveSteps(value, context);
     });
   }
+}
+
+// Jexs type name: arrays report "array" (not "object"), and null/undefined are
+// distinct. Everything else follows JS `typeof`.
+function typeName(value: unknown): string {
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
+}
+
+// Shared emptiness rule for empty / notEmpty / coalesce: null, undefined, "",
+// [], {} are empty; 0 and false (and other non-collections) are not.
+function isEmptyValue(value: unknown): boolean {
+  if (value === null || value === undefined) return true;
+  if (typeof value === "string") return value === "";
+  if (Array.isArray(value)) return value.length === 0;
+  if (isObject(value)) return !hasAnyKey(value);
+  return false;
 }

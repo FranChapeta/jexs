@@ -1,4 +1,5 @@
 import { Node, Context } from "./Node.js";
+import { toNumberValue, toArrayValue } from "../helpers.js";
 import { resolveAll } from "../Resolver.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
 
@@ -122,106 +123,107 @@ export class ColorNode extends Node {
   };
 
   toRgb(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.toRgb, def.format], c, ([input, fmt]) =>
-      this.toRgba(input, this.fmt(fmt)));
+    return resolveAll([def.toRgb, def.format], c, ([input, formatArg]) =>
+      toRgba(input, fmt(formatArg)));
   }
 
   toHsl(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.toHsl, def.format], c, ([input, fmt]) => {
-      const [r, g, b, a] = this.toRgba(input, this.fmt(fmt));
+    return resolveAll([def.toHsl, def.format], c, ([input, formatArg]) => {
+      const [r, g, b, a] = toRgba(input, fmt(formatArg));
       const [h, s, l] = rgbToHsl(r, g, b);
       return [h, s, l, a];
     });
   }
 
   toHex(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.toHex, def.format], c, ([input, fmt]) =>
-      toHexString(this.toRgba(input, this.fmt(fmt))));
+    return resolveAll([def.toHex, def.format], c, ([input, formatArg]) =>
+      toHexString(toRgba(input, fmt(formatArg))));
   }
 
   lighten(def: Record<string, unknown>, c: Context) {
-    return this.adjustLightness(def.lighten, def.format, c, 1);
+    return adjustLightness(def.lighten, def.format, c, 1);
   }
 
   darken(def: Record<string, unknown>, c: Context) {
-    return this.adjustLightness(def.darken, def.format, c, -1);
+    return adjustLightness(def.darken, def.format, c, -1);
   }
 
   mix(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.mix, def.format], c, ([args, fmt]) => {
-      const format = this.fmt(fmt);
+    return resolveAll([def.mix, def.format], c, ([args, formatArg]) => {
+      const format = fmt(formatArg);
       const a = this.toArray(args);
-      const ca = this.toSpace(a[0], format);
-      const cb = this.toSpace(a[1], format);
+      const ca = toSpace(a[0], format);
+      const cb = toSpace(a[1], format);
       const t = this.toNumber(a[2]);
       return ca.map((v, i) => v + (cb[i] - v) * t);
     });
   }
 
   luminance(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.luminance, def.format], c, ([input, fmt]) =>
-      relLuminance(this.toRgba(input, this.fmt(fmt))));
+    return resolveAll([def.luminance, def.format], c, ([input, formatArg]) =>
+      relLuminance(toRgba(input, fmt(formatArg))));
   }
 
   contrast(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.contrast, def.format], c, ([args, fmt]) => {
-      const format = this.fmt(fmt);
+    return resolveAll([def.contrast, def.format], c, ([args, formatArg]) => {
+      const format = fmt(formatArg);
       const a = this.toArray(args);
-      const la = relLuminance(this.toRgba(a[0], format));
-      const lb = relLuminance(this.toRgba(a[1], format));
+      const la = relLuminance(toRgba(a[0], format));
+      const lb = relLuminance(toRgba(a[1], format));
       const light = Math.max(la, lb);
       const dark = Math.min(la, lb);
       return (light + 0.05) / (dark + 0.05);
     });
   }
 
-  private adjustLightness(arg: unknown, formatRaw: unknown, c: Context, sign: number) {
-    return resolveAll([arg, formatRaw], c, ([args, fmt]) => {
-      const format = this.fmt(fmt);
-      const a = this.toArray(args);
-      const rgba = this.toRgba(a[0], format);
-      const amount = this.toNumber(a[1]);
-      const hsl = rgbToHsl(rgba[0], rgba[1], rgba[2]);
-      const l = Math.max(0, Math.min(100, hsl[2] + sign * amount * 100));
-      const [r, g, b] = hslToRgb(hsl[0], hsl[1], l);
-      return this.emitColor([r, g, b, rgba[3]], format);
-    });
-  }
-
-  /** Normalize the `format` sibling to a known space (default `"rgb"`). */
-  private fmt(value: unknown): string {
-    return value === "hsl" ? "hsl" : "rgb";
-  }
-
-  /** Any color input -> rgba (all components 0..1). Strings parse as hex;
-   *  arrays are read as rgb or hsl per `format`. */
-  private toRgba(input: unknown, format: string): Rgba {
-    if (typeof input === "string") return parseHex(input);
-    const arr = this.toArray(input).map(v => this.toNumber(v));
-    const a = arr.length > 3 ? clamp01(arr[3]) : 1;
-    if (format === "hsl") {
-      const [r, g, b] = hslToRgb(arr[0] ?? 0, arr[1] ?? 0, arr[2] ?? 0);
-      return [r, g, b, a];
-    }
-    return [clamp01(arr[0] ?? 0), clamp01(arr[1] ?? 0), clamp01(arr[2] ?? 0), a];
-  }
-
-  /** A color as an array in the requested space (rgb `[r,g,b,a]` or hsl `[h,s,l,a]`). */
-  private toSpace(input: unknown, format: string): number[] {
-    return this.emitColor(this.toRgba(input, format), format);
-  }
-
-  /** Emit an rgba value as an array in the requested space. */
-  private emitColor(rgba: Rgba, format: string): number[] {
-    if (format === "hsl") {
-      const [h, s, l] = rgbToHsl(rgba[0], rgba[1], rgba[2]);
-      return [h, s, l, rgba[3]];
-    }
-    return [rgba[0], rgba[1], rgba[2], rgba[3]];
-  }
 }
 
 type Rgba = [number, number, number, number];
+
+function adjustLightness(arg: unknown, formatRaw: unknown, c: Context, sign: number) {
+  return resolveAll([arg, formatRaw], c, ([args, formatArg]) => {
+    const format = fmt(formatArg);
+    const a = toArrayValue(args);
+    const rgba = toRgba(a[0], format);
+    const amount = toNumberValue(a[1]);
+    const hsl = rgbToHsl(rgba[0], rgba[1], rgba[2]);
+    const l = Math.max(0, Math.min(100, hsl[2] + sign * amount * 100));
+    const [r, g, b] = hslToRgb(hsl[0], hsl[1], l);
+    return emitColor([r, g, b, rgba[3]], format);
+  });
+}
+
+/** Normalize the `format` sibling to a known space (default `"rgb"`). */
+function fmt(value: unknown): string {
+  return value === "hsl" ? "hsl" : "rgb";
+}
+
+/** Any color input -> rgba (all components 0..1). Strings parse as hex;
+ *  arrays are read as rgb or hsl per `format`. */
+function toRgba(input: unknown, format: string): Rgba {
+  if (typeof input === "string") return parseHex(input);
+  const arr = toArrayValue(input).map(v => toNumberValue(v));
+  const a = arr.length > 3 ? clamp01(arr[3]) : 1;
+  if (format === "hsl") {
+    const [r, g, b] = hslToRgb(arr[0] ?? 0, arr[1] ?? 0, arr[2] ?? 0);
+    return [r, g, b, a];
+  }
+  return [clamp01(arr[0] ?? 0), clamp01(arr[1] ?? 0), clamp01(arr[2] ?? 0), a];
+}
+
+/** A color as an array in the requested space (rgb `[r,g,b,a]` or hsl `[h,s,l,a]`). */
+function toSpace(input: unknown, format: string): number[] {
+  return emitColor(toRgba(input, format), format);
+}
+
+/** Emit an rgba value as an array in the requested space. */
+function emitColor(rgba: Rgba, format: string): number[] {
+  if (format === "hsl") {
+    const [h, s, l] = rgbToHsl(rgba[0], rgba[1], rgba[2]);
+    return [h, s, l, rgba[3]];
+  }
+  return [rgba[0], rgba[1], rgba[2], rgba[3]];
+}
 
 function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n));

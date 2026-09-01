@@ -375,13 +375,6 @@ export class ArrayNode extends Node {
     },
   };
 
-  /** The array to edit in place — the source itself, or a shallow copy when
-   *  `clone`. A non-array is wrapped into a fresh array (nothing to mutate). */
-  private mutArr(value: unknown, clone: boolean): unknown[] {
-    if (!Array.isArray(value)) return value != null ? [value] : [];
-    return clone ? [...value] : value;
-  }
-
   first(def: Record<string, unknown>, c: Context) {
     return resolve(def.first, c, v => this.toArray(v)[0]);
   }
@@ -401,7 +394,7 @@ export class ArrayNode extends Node {
 
   reverse(def: Record<string, unknown>, c: Context) {
     return resolve(def.clone, c, cl =>
-      resolve(def.reverse, c, v => this.mutArr(v, this.toBoolean(cl)).reverse()));
+      resolve(def.reverse, c, v => mutArr(v, this.toBoolean(cl)).reverse()));
   }
 
   unique(def: Record<string, unknown>, c: Context) {
@@ -430,17 +423,17 @@ export class ArrayNode extends Node {
 
   sort(def: Record<string, unknown>, c: Context) {
     return resolve(def.clone, c, cl =>
-      resolve(def.sort, c, v => sortInPlace(this.mutArr(v, this.toBoolean(cl)), false)));
+      resolve(def.sort, c, v => sortInPlace(mutArr(v, this.toBoolean(cl)), false)));
   }
 
   sortDesc(def: Record<string, unknown>, c: Context) {
     return resolve(def.clone, c, cl =>
-      resolve(def.sortDesc, c, v => sortInPlace(this.mutArr(v, this.toBoolean(cl)), true)));
+      resolve(def.sortDesc, c, v => sortInPlace(mutArr(v, this.toBoolean(cl)), true)));
   }
 
   shuffle(def: Record<string, unknown>, c: Context) {
     return resolve(def.clone, c, cl =>
-      resolve(def.shuffle, c, v => shuffleInPlace(this.mutArr(v, this.toBoolean(cl)))));
+      resolve(def.shuffle, c, v => shuffleInPlace(mutArr(v, this.toBoolean(cl)))));
   }
 
   sortBy(def: Record<string, unknown>, c: Context) {
@@ -448,7 +441,7 @@ export class ArrayNode extends Node {
       const clone = this.toBoolean(cl);
       return resolve(def.sortBy, c, args => {
         const a = this.toArray(args);
-        const arr = this.mutArr(a[0], clone);
+        const arr = mutArr(a[0], clone);
         const key = this.toString(a[1]);
         const direction = a.length > 2 && a[2] === "desc" ? -1 : 1;
         return arr.sort((x, y) => {
@@ -760,6 +753,13 @@ export class ArrayNode extends Node {
       return list.format(this.toArray(value).map(v => this.toString(v)));
     });
   }
+}
+
+/** The array to edit in place — the source itself, or a shallow copy when
+ *  `clone`. A non-array is wrapped into a fresh array (nothing to mutate). */
+function mutArr(value: unknown, clone: boolean): unknown[] {
+  if (!Array.isArray(value)) return value != null ? [value] : [];
+  return clone ? [...value] : value;
 }
 
 function sortInPlace(arr: unknown[], desc: boolean): unknown[] {

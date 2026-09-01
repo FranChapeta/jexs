@@ -338,47 +338,47 @@ export class QueryNode extends Node {
   };
 
   query(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    return this.execQuery(def, context);
+    return execQuery(def, context);
   }
+}
 
-  private async execQuery(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-    const options = isObject(def.options) ? def.options : {};
-    const [queryRaw, tableRaw] = await Promise.all([
-      resolve(def.query ?? null, context),
-      resolve(def.table ?? null, context),
-    ]);
-    // Flatten { query, table, ...options } into the QueryDefinition shape the
-    // execute* helpers already consume.
-    const flat: Record<string, unknown> = {
-      ...options,
-      query: queryRaw == null ? undefined : String(queryRaw),
-      table: tableRaw == null ? undefined : String(tableRaw),
-      system: def.system,
-    };
+async function execQuery(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
+  const options = isObject(def.options) ? def.options : {};
+  const [queryRaw, tableRaw] = await Promise.all([
+    resolve(def.query ?? null, context),
+    resolve(def.table ?? null, context),
+  ]);
+  // Flatten { query, table, ...options } into the QueryDefinition shape the
+  // execute* helpers already consume.
+  const flat: Record<string, unknown> = {
+    ...options,
+    query: queryRaw == null ? undefined : String(queryRaw),
+    table: tableRaw == null ? undefined : String(tableRaw),
+    system: def.system,
+  };
 
-    // Omitted `connection` falls back to whichever opened first; getKnex owns
-    // that chain, so this does not repeat it.
-    const connRaw = await resolve(def.connection ?? null, context);
-    const knex = DatabaseNode.getKnex(connRaw == null ? undefined : String(connRaw));
+  // Omitted `connection` falls back to whichever opened first; getKnex owns
+  // that chain, so this does not repeat it.
+  const connRaw = await resolve(def.connection ?? null, context);
+  const knex = DatabaseNode.getKnex(connRaw == null ? undefined : String(connRaw));
 
-    const resolvedQuery = await resolveQueryDef(flat, context);
+  const resolvedQuery = await resolveQueryDef(flat, context);
 
-    if (!def.system) await runValidator(resolvedQuery, context);
+  if (!def.system) await runValidator(resolvedQuery, context);
 
-    const first = resolvedQuery.first === true;
+  const first = resolvedQuery.first === true;
 
-    switch (resolvedQuery.type) {
-      case "select":  return executeSelect(knex, resolvedQuery, first) as Promise<NodeValue>;
-      case "insert":  return executeInsert(knex, resolvedQuery) as Promise<NodeValue>;
-      case "upsert":  return executeUpsert(knex, resolvedQuery) as Promise<NodeValue>;
-      case "update":  return executeUpdate(knex, resolvedQuery) as Promise<NodeValue>;
-      case "delete":  return executeDelete(knex, resolvedQuery) as Promise<NodeValue>;
-      case "count":   return executeCount(knex, resolvedQuery) as Promise<NodeValue>;
-      case "create":  return executeCreate(knex, resolvedQuery) as Promise<NodeValue>;
-      case "drop":    return executeDrop(knex, resolvedQuery) as Promise<NodeValue>;
-      case "alter":   return executeAlter(knex, resolvedQuery) as Promise<NodeValue>;
-      default: throw new Error(`Unknown query type: ${resolvedQuery.type}`);
-    }
+  switch (resolvedQuery.type) {
+    case "select":  return executeSelect(knex, resolvedQuery, first) as Promise<NodeValue>;
+    case "insert":  return executeInsert(knex, resolvedQuery) as Promise<NodeValue>;
+    case "upsert":  return executeUpsert(knex, resolvedQuery) as Promise<NodeValue>;
+    case "update":  return executeUpdate(knex, resolvedQuery) as Promise<NodeValue>;
+    case "delete":  return executeDelete(knex, resolvedQuery) as Promise<NodeValue>;
+    case "count":   return executeCount(knex, resolvedQuery) as Promise<NodeValue>;
+    case "create":  return executeCreate(knex, resolvedQuery) as Promise<NodeValue>;
+    case "drop":    return executeDrop(knex, resolvedQuery) as Promise<NodeValue>;
+    case "alter":   return executeAlter(knex, resolvedQuery) as Promise<NodeValue>;
+    default: throw new Error(`Unknown query type: ${resolvedQuery.type}`);
   }
 }
 

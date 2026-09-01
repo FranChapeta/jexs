@@ -84,43 +84,44 @@ export class WorkerNode extends Node {
       // may await it, collect it, or make it fire-and-forget via the universal
       // `then` (which the resolver applies to this result).
       if (!this.makeWorker) return resolveSteps(steps, params as Context);
-      return this.dispatch(name, steps, params, idleMs);
+      return dispatchThread(this.makeWorker, name, steps, params, idleMs);
     });
   }
+}
 
-  /** Post one request to the named thread and return a Promise for its result.
-   *  Owns the rid-matching directly over the pool (no separate task layer). */
-  private dispatch(
-    name: string,
-    steps: unknown,
-    params: Record<string, unknown>,
-    idleMs: number,
-  ): Promise<unknown> {
-    const { worker, state } = acquireWorker<TaskWorkerLike, ThreadState>(name, this.makeWorker!, (w) => {
-      const st: ThreadState = { pending: new Map(), nextRid: 1 };
-      w.onmessage = (ev) => {
-        const { rid, result, error } = ev.data as ThreadResponse;
-        const p = st.pending.get(rid);
-        if (!p) return;
-        st.pending.delete(rid);
-        if (error !== undefined) p.reject(new Error(error));
-        else p.resolve(result);
-      };
-      // A clone failure (onmessageerror) or a top-level worker fault (onerror)
-      // can't be matched to one rid — reject ALL in-flight so no Promise hangs.
-      const failAll = (msg: string) => {
-        for (const p of st.pending.values()) p.reject(new Error(msg));
-        st.pending.clear();
-      };
-      w.onmessageerror = () => failAll("worker message could not be deserialized");
-      w.onerror = () => failAll("worker error");
-      return st;
-    });
+/** Post one request to the named thread and return a Promise for its result.
+ *  Owns the rid-matching directly over the pool (no separate task layer). */
+function dispatchThread(
+  makeWorker: () => TaskWorkerLike,
+  name: string,
+  steps: unknown,
+  params: Record<string, unknown>,
+  idleMs: number,
+): Promise<unknown> {
+  const { worker, state } = acquireWorker<TaskWorkerLike, ThreadState>(name, makeWorker, (w) => {
+    const st: ThreadState = { pending: new Map(), nextRid: 1 };
+    w.onmessage = (ev) => {
+      const { rid, result, error } = ev.data as ThreadResponse;
+      const p = st.pending.get(rid);
+      if (!p) return;
+      st.pending.delete(rid);
+      if (error !== undefined) p.reject(new Error(error));
+      else p.resolve(result);
+    };
+    // A clone failure (onmessageerror) or a top-level worker fault (onerror)
+    // can't be matched to one rid — reject ALL in-flight so no Promise hangs.
+    const failAll = (msg: string) => {
+      for (const p of st.pending.values()) p.reject(new Error(msg));
+      st.pending.clear();
+    };
+    w.onmessageerror = () => failAll("worker message could not be deserialized");
+    w.onerror = () => failAll("worker error");
+    return st;
+  });
 
-    const rid = state.nextRid++;
-    return new Promise<unknown>((resolve, reject) => {
-      state.pending.set(rid, { resolve, reject });
-      worker.postMessage({ rid, steps, params }, collectTransferables(params));
-    }).finally(() => releaseWorker(name, idleMs));
-  }
+  const rid = state.nextRid++;
+  return new Promise<unknown>((resolve, reject) => {
+    state.pending.set(rid, { resolve, reject });
+    worker.postMessage({ rid, steps, params }, collectTransferables(params));
+  }).finally(() => releaseWorker(name, idleMs));
 }

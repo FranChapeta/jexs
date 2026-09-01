@@ -358,6 +358,31 @@ export class GlNode extends Node {
         },
       },
     },
+    "gl-tilemap-set": {
+      type: "string",
+      output: "null",
+      markdownDescription: "Changes one tile of a tilemap built by `gl-tilemap` and rebuilds its VBO. Out-of-range coordinates and unknown tilemap names are a no-op.",
+      examples: [
+        "{ \"gl-tilemap-set\": \"level1\", \"x\": 3, \"y\": 2, \"tile\": 5 }",
+      ],
+      siblings: {
+        x: {
+          type: "number",
+          required: true,
+          description: "Column of the tile to change (0-based).",
+        },
+        y: {
+          type: "number",
+          required: true,
+          description: "Row of the tile to change (0-based).",
+        },
+        tile: {
+          type: "number",
+          required: true,
+          description: "Atlas frame index to write. `0` clears the tile.",
+        },
+      },
+    },
     "gl-trail": {
       type: "string",
       output: "null",
