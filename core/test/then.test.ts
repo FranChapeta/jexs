@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createResolver, coreNodes, runSteps, Node } from "../src/index.js";
+import { createResolver, coreNodes, Node } from "../src/index.js";
 
 // A fake async node: `{ defer: "X" }` resolves to "R:X" on a later microtask, so
 // we can observe that a fire-and-forget `then` does not block the step sequence.
@@ -23,7 +23,7 @@ test("then: `if/then/else` still resolves the branch (its `if` owner shadows the
 
 test("then: fire-and-forget does not block the sequence and runs the continuation with $result", async () => {
   const ctx: Record<string, unknown> = {};
-  const out = runSteps([
+  const out = resolve.runSteps([
     { defer: "A", then: [{ as: "grabbed", var: "$result", bubble: true }] },
     { as: "second", concat: ["step2"] },
     { var: "$second" },
@@ -41,7 +41,7 @@ test("then: fire-and-forget does not block the sequence and runs the continuatio
 
 test("then: a sibling `as` binds null (the result is delivered to `$result`, not returned)", async () => {
   const ctx: Record<string, unknown> = {};
-  const out = runSteps([
+  const out = resolve.runSteps([
     { defer: "Z", as: "sync", then: [{ as: "async", var: "$result", bubble: true }], bubble: true },
     { var: "$sync" },
   ], ctx);

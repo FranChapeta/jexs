@@ -9,20 +9,22 @@
  * compute-lazy keys reach — no DOM, no GL. Fetched lazily, only when the first
  * `thread` step runs (see makeModuleWorker in index.ts).
  */
-import { createResolver, coreNodes, runSteps, collectTransferables } from "@jexs/core";
+import { createResolver, coreNodes, collectTransferables } from "@jexs/core";
 import { registerComputeLazy } from "./registerNodes.js";
 
-createResolver(coreNodes());
-registerComputeLazy();
+const resolver = createResolver(coreNodes());
+registerComputeLazy(resolver);
 
 interface ThreadRequest { rid: number; steps: unknown; params: Record<string, unknown> }
 
 self.onmessage = (e: MessageEvent) => {
   const { rid, steps, params } = e.data as ThreadRequest;
-  // `params` IS the worker's context; the steps resolve against it. `.then(() =>
-  // runSteps(...))` so a SYNC throw from runSteps is caught too.
+  // `params` IS the worker's context; the steps resolve against it. Going through
+  // the resolver rather than the free `runSteps` is what adopts this context —
+  // `params` arrives over postMessage, and structured clone drops the symbol that
+  // carries the resolver. `.then(() => ...)` so a SYNC throw is caught too.
   Promise.resolve()
-    .then(() => runSteps(steps as unknown[], params))
+    .then(() => resolver.runSteps(steps as unknown[], params))
     .then((result) => self.postMessage({ rid, result }, { transfer: collectTransferables(result) }))
     .catch((err: unknown) => self.postMessage({ rid, error: err instanceof Error ? err.message : String(err) }));
 };

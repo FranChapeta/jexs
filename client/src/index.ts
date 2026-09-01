@@ -1,6 +1,6 @@
 import {
-  registerNode, WorkerNode, ProxyNode, createResolver, resolve, runSteps, childContext,
-  coreNodes, Node,
+  WorkerNode, ProxyNode, createResolver, childContext,
+  coreNodes, Node, type Resolver,
 } from "@jexs/core";
 import { DomNode } from "./nodes/DomNode.js";
 import { AudioNode } from "./nodes/AudioNode.js";
@@ -73,22 +73,42 @@ export { PushNode } from "./nodes/PushNode.js";
 export { WebRTCNode } from "./nodes/WebRTCNode.js";
 export { ServiceWorkerNode } from "./nodes/ServiceWorkerNode.js";
 
+/**
+ * The page's resolver, once the browser branch below has built it.
+ *
+ * Exported because a generated browser entry (`server/src/bundle.ts` writes one)
+ * registers app nodes into it, and it has no other way to reach the handle.
+ */
+let pageResolver: Resolver | null = null;
+
+/** The page's resolver. Throws off the main thread, where none is built. */
+export function getResolver(): Resolver {
+  if (!pageResolver) {
+    throw new Error("No page resolver: @jexs/client builds one only in a browser window.");
+  }
+  return pageResolver;
+}
+
 // Browser: build the resolver, expose a debug/hydration handle, and auto-hydrate.
 if (typeof window !== "undefined") {
-  const resolver = createResolver([...coreNodes(), ...clientNodes()]);
+  // `pageContext` is the resolver's root scope: DOM event handlers run steps
+  // against it long after any resolve returned, so it has to be attached up
+  // front rather than by the first call. Every scope derived from it inherits.
+  const resolver = createResolver([...coreNodes(), ...clientNodes()], { context: pageContext });
+  pageResolver = resolver;
   // `window.jexs` is a small handle: `context` for inspecting/seeding shared state,
   // `hydrate` for (re)binding events on server-injected content (see Server SSR).
-  (window as unknown as Record<string, unknown>).jexs = { context: pageContext, hydrate };
+  (window as unknown as Record<string, unknown>).jexs = { context: pageContext, hydrate, resolver };
 
   // Lazy node groups (loaded on first use). Compute groups are worker-safe; DOM
   // groups need the main thread. The resolver worker reuses registerComputeLazy
   // (the same blocks), so there are no duplicated node lists.
-  registerComputeLazy();
-  registerDomLazy();
+  registerComputeLazy(resolver);
+  registerDomLazy(resolver);
 
   // `thread` node — runs `do` steps on a resolver Web Worker. The leaf bundle is
   // only FETCHED when the first `thread` step runs (URL resolved, not loaded).
-  registerNode(new WorkerNode(makeModuleWorker(new URL("./resolverWorker.js", import.meta.url))));
+  resolver.registerNode(new WorkerNode(makeModuleWorker(new URL("./resolverWorker.js", import.meta.url))));
 
   // Auto-forward main-process node calls (query, file, dialog, window, …) to a
   // native host over its IPC bridge, so they can be authored directly in renderer
@@ -99,13 +119,13 @@ if (typeof window !== "undefined") {
   if (host?.keys && host.invoke) {
     const invoke = host.invoke.bind(host);
     const toHost = new ProxyNode(host.keys, (call) => invoke(call));
-    registerNode(toHost);
+    resolver.registerNode(toHost);
 
     // The host can register nodes after this page loaded, so its key set is not
     // frozen at preload time. Re-registering installs the new keys; only ones
     // the resolver lacks are added, so local handlers still win.
     host.onKeys?.((added) => {
-      if (toHost.addKeys(added).length > 0) registerNode(toHost);
+      if (toHost.addKeys(added).length > 0) resolver.registerNode(toHost);
     });
 
     // The mirror direction: tell the host which keys live here, so it can proxy
@@ -133,11 +153,11 @@ if (typeof window !== "undefined") {
       host.onCall((message) => {
         Promise.resolve()
           .then(() => {
-            if (!("steps" in message)) return resolve(message.call, pageContext);
+            if (!("steps" in message)) return resolver.resolve(message.call, pageContext);
             const scope = message.params
               ? childContext(pageContext, message.params)
               : pageContext;
-            return runSteps(message.steps, scope);
+            return resolver.runSteps(message.steps, scope);
           })
           .then(
             (value) => reply(message.id, serializable(value)),

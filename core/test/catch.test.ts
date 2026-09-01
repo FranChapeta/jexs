@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createResolver, coreNodes, resolveObj } from "../src/index.js";
+import { createResolver, coreNodes } from "../src/index.js";
 
 // Use the function returned by createResolver (the entry resolver an app calls),
 // not the exported `resolve` wrapper — top-level catch must work here too.
@@ -16,7 +16,7 @@ test("resolveObj skips the global step keys (as/return/catch)", () => {
     return: { setVars: { returned: true } },
     as: "x",
   };
-  const r = resolveObj(obj, ctx, x => x) as Record<string, unknown>;
+  const r = resolve.resolveObj(obj, ctx, x => x) as Record<string, unknown>;
   assert.equal(ctx.caught, undefined);    // catch steps not executed on success
   assert.equal(ctx.returned, undefined);  // return not eagerly resolved
   assert.equal(r.value, 1);               // ordinary keys still resolved

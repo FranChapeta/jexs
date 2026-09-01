@@ -18,45 +18,125 @@ export interface ResolverKeys {
   [Symbol.iterator](): IterableIterator<string>;
 }
 
-/** What `createResolver` hands back: the resolve function plus its own state. */
+/** What `createResolver` hands back: the resolve function, plus the API for the
+ *  dispatch table it carries. */
 export interface Resolver extends ResolverFn {
   readonly keys: ResolverKeys;
   /** Subscribe to key additions. Returns an unsubscribe. */
   onKeysChange(cb: (added: readonly string[]) => void): () => void;
   /** Add a node. Keys already claimed are left alone (first registration wins). */
   registerNode(node: Node): void;
-  /** Register keys that load a module the first time one is encountered. */
-  registerLazy(keys: string[], loader: () => Promise<void>): void;
-  /** Whether this is still the resolver module-scope `resolve()` dispatches to. */
-  readonly isCurrent: boolean;
-  /** Tear down, if still current. */
+  /** Register keys that load a module the first time one is encountered. The
+   *  loader is handed this resolver, so it registers into the right one. */
+  registerLazy(keys: string[], loader: (resolver: Resolver) => void | Promise<void>): void;
+  /** The node registered for a key, if any. */
+  nodeFor(key: string): Node | undefined;
+  /** Whether this resolver has been torn down. */
+  readonly destroyed: boolean;
+  /** Tear down: dispose every node registered here. */
   destroy(): void;
+
+  resolve(value: unknown, context: Context): unknown;
+  resolve<T>(value: unknown, context: Context, cont: (v: unknown) => T): T | Promise<T>;
+  resolveObj<T>(obj: Record<string, unknown>, context: Context, then: (r: Record<string, unknown>) => T): T | Promise<T>;
+  resolveAll<T>(values: unknown[], context: Context, then: (args: unknown[]) => T): T | Promise<T>;
+  runSteps(steps: unknown[], context: Context): unknown;
+  resolveSteps(value: unknown, context: Context): unknown;
+  runStepsDetached(steps: unknown[], context: Context, def?: unknown): Promise<unknown>;
 }
 
 /**
- * Everything one resolver owns, created fresh by `createResolver` rather than
- * living as module-level maps that merely get cleared between runs.
+ * The same object as {@link Resolver}, with the dispatch state it carries.
  *
- * There is still a single CURRENT instance, and that is a deliberate constraint
- * rather than an oversight: node handlers receive only `(def, context)` and call
- * the module-scope `resolve()` with no handle to reach for, so the running
- * resolver has to be findable without one. Concurrent instances would mean
- * threading a resolver through every handler signature, or an async-context
- * mechanism browsers do not have. Instances are therefore isolated but not
- * simultaneous — creating one supersedes the last.
+ * Resolvers are ordinary objects and any number of them can run at once, even in
+ * one realm. A node handler receives only `(def, context)` and calls the
+ * module-scope `resolve()` with no handle to reach for, so the running resolver
+ * is found on the CONTEXT: `createResolver`'s entry points stamp it under
+ * `RESOLVER`, and derived scopes inherit it because the key is an ENUMERABLE
+ * symbol, which object spread and `childContext` both copy. `JSON` and
+ * `structuredClone` drop symbols, so a context crossing to a worker never drags
+ * a resolver with it.
+ *
+ * These fields live on the resolver itself rather than in a separate state record
+ * it points back at: the resolver has to be a callable function (so it cannot
+ * hold private class fields), and one object with a module-private type is
+ * simpler than two objects with a back-reference. Only `Resolver` is exported, so
+ * none of this reaches the published types.
  */
-interface ResolverState {
+interface ResolverImpl extends Resolver {
   keyMap: Map<string, Node>;
   /** Lazy module loading: key → loader, loaded once then removed. */
-  lazyMap: Map<string, () => Promise<void>>;
-  pendingLoads: Map<() => Promise<void>, Promise<void>>;
+  lazyMap: Map<string, Loader>;
+  pendingLoads: Map<Loader, Promise<void>>;
   keyListeners: Set<(added: readonly string[]) => void>;
   translateFn: TranslateFn | null;
+  /**
+   * Every node registered here, including ones that lost first-wins on all of
+   * their keys and so never entered `keyMap`. Teardown walks this, not `keyMap`,
+   * so a node that owns resources still gets disposed.
+   */
+  nodes: Set<Node>;
+  /** Backs the public read-only `destroyed`. */
+  torndown: boolean;
+  /** The tree walker. Dispatch goes straight here; `resolve` adds the step keys. */
   impl: ResolverFn;
 }
 
-/** The resolver that module-scope `resolve()` and friends operate on. */
-let current: ResolverState | null = null;
+type Loader = (resolver: Resolver) => void | Promise<void>;
+
+/**
+ * Where a context records the resolver it is running in.
+ *
+ * ENUMERABLE on purpose, and that is the whole mechanism: object spread copies
+ * own enumerable symbol keys, so every `{ ...context }` and every
+ * `childContext(...)` carries the resolver into the derived scope without a
+ * single call site having to thread it. (`PARENT` in Node.ts is non-enumerable
+ * for the opposite reason — a plain spread must NOT inherit a bubble target.)
+ *
+ * Symbol-keyed so templates cannot reach it: `var` reads string paths, and
+ * `Object.keys` never lists symbols.
+ */
+const RESOLVER = Symbol("jexs.resolver");
+
+interface Resolved extends Context {
+  [RESOLVER]?: ResolverImpl;
+}
+
+/** Record `self` on a context, unless it already belongs to another resolver. */
+function adopt<T extends Context>(self: ResolverImpl, context: T): T {
+  const owner = (context as Resolved)[RESOLVER];
+  if (owner === self) return context;
+  if (owner !== undefined) {
+    throw new Error(
+      "This context is already running in another resolver. A context is one " +
+      "flow and a flow belongs to one resolver, so pass a fresh context (or a " +
+      "childContext of one already running here) rather than sharing a live one.",
+    );
+  }
+  // Assigned, not defineProperty'd: it has to be enumerable so spreads carry it.
+  (context as Resolved)[RESOLVER] = self;
+  return context;
+}
+
+/** The resolver a context is running in, with its internals. */
+function implFor(context: Context): ResolverImpl {
+  const self = (context as Resolved)[RESOLVER];
+  if (self === undefined) {
+    throw new Error(
+      "No resolver for this context. Resolve through a resolver at least once " +
+      "(resolver.resolve / .runSteps), derive it from a scope that already has " +
+      "one (childContext, or a plain spread), or pass it as createResolver's " +
+      "`context` option.",
+    );
+  }
+  return self;
+}
+
+/** The resolver a context is running in. Throws if it has never been adopted. */
+export function resolverFor(context: Context): Resolver {
+  return implFor(context);
+}
+
 
 /**
  * Global step keys handled by the resolver machinery, not by nodes: `as`
@@ -85,62 +165,17 @@ function ownsThen(obj: Record<string, unknown>): boolean {
 }
 
 /**
- * Cleanup hooks. Module-scope on purpose, unlike everything else here: node
- * modules register these at IMPORT time (MathNode's seed, TimerNode's timers),
- * long before any resolver exists, and what they reset is module state belonging
- * to the node rather than to a resolver.
+ * A key view bound to one resolver's state. Lazy keys count too: an unloaded
+ * module is still something this resolver can dispatch.
  */
-const _cleanupHooks: (() => void)[] = [];
-
-/** Register a cleanup function called when a resolver is destroyed or replaced. */
-export function onResolverDestroy(hook: () => void): void {
-  _cleanupHooks.push(hook);
-}
-
-/**
- * Tear down the current resolver: dispose its nodes, run cleanup hooks, drop
- * its state.
- *
- * `current` is cleared FIRST so nothing disposal triggers can dispatch back into
- * a half-torn-down resolver.
- */
-export function destroyResolver(): void {
-  const state = current;
-  current = null;
-
-  // Per-resolver teardown: each node this resolver dispatched to gets a chance
-  // to release what it owns. A node appears under many keys, so dispose once.
-  if (state) {
-    const seen = new Set<Node>();
-    for (const node of state.keyMap.values()) {
-      if (seen.has(node) || !node.dispose) continue;
-      seen.add(node);
-      try { node.dispose(); } catch { /* best-effort */ }
-    }
-  }
-
-  // Process-level hooks. Deliberately NOT cleared: node modules register these
-  // once at import time, so clearing meant only the first teardown in a process
-  // ever ran them — a second resolver's timers would then run forever.
-  for (const hook of _cleanupHooks) {
-    try { hook(); } catch { /* best-effort */ }
-  }
-}
-
-/**
- * A key view bound to one resolver's state, so a superseded resolver reports its
- * own (now frozen) keys rather than silently mirroring whoever is current. Lazy
- * keys only count while current, since an unloaded module belongs to the live
- * resolver's dispatch, not to a torn-down one.
- */
-function makeKeysView(state: ResolverState): ResolverKeys {
+function makeKeysView(self: ResolverImpl): ResolverKeys {
   const union = (): Set<string> => {
-    const out = new Set<string>(state.keyMap.keys());
-    if (current === state) for (const key of state.lazyMap.keys()) out.add(key);
+    const out = new Set<string>(self.keyMap.keys());
+    for (const key of self.lazyMap.keys()) out.add(key);
     return out;
   };
   return {
-    has: (key) => state.keyMap.has(key) || (current === state && state.lazyMap.has(key)),
+    has: (key) => self.keyMap.has(key) || self.lazyMap.has(key),
     get size() { return union().size; },
     toArray: () => [...union()],
     [Symbol.iterator]: () => union().values(),
@@ -148,52 +183,55 @@ function makeKeysView(state: ResolverState): ResolverKeys {
 }
 
 /** A listener must never break a registration, so failures are swallowed. */
-function announceKeys(state: ResolverState, added: string[]): void {
+function announceKeys(self: ResolverImpl, added: string[]): void {
   if (added.length === 0) return;
-  for (const cb of state.keyListeners) {
+  for (const cb of self.keyListeners) {
     try { cb(added); } catch { /* best-effort */ }
   }
 }
 
-function addNode(state: ResolverState, node: Node): void {
+function addNode(self: ResolverImpl, node: Node): void {
+  self.nodes.add(node);
   const added: string[] = [];
   for (const key of node.handlerKeys ?? []) {
-    if (!state.keyMap.has(key)) {
-      state.keyMap.set(key, node);
+    if (!self.keyMap.has(key)) {
+      self.keyMap.set(key, node);
       added.push(key);
     }
   }
-  announceKeys(state, added);
+  announceKeys(self, added);
 }
 
-function addLazy(state: ResolverState, keys: string[], loader: () => Promise<void>): void {
+function addLazy(self: ResolverImpl, keys: string[], loader: Loader): void {
   const added: string[] = [];
   for (const key of keys) {
-    if (!state.lazyMap.has(key) && !state.keyMap.has(key)) added.push(key);
-    state.lazyMap.set(key, loader);
+    if (!self.lazyMap.has(key) && !self.keyMap.has(key)) added.push(key);
+    self.lazyMap.set(key, loader);
   }
-  announceKeys(state, added);
+  announceKeys(self, added);
 }
 
 /**
- * Register keys that trigger a lazy module load when first encountered.
- * Operates on the current resolver; a no-op before one exists.
+ * Tear down: dispose every node registered here.
+ *
+ * Idempotent, and it does NOT touch any other resolver — one resolver's teardown
+ * leaving another's timers and connections running is the whole point.
  */
-export function registerLazy(keys: string[], loader: () => Promise<void>): void {
-  if (current) addLazy(current, keys, loader);
-}
+function destroy(self: ResolverImpl): void {
+  if (self.torndown) return;
+  self.torndown = true;
 
-/**
- * Register a node into the current resolver's key map.
- * Used for lazy-loaded modules that self-register after the resolver is created,
- * and to re-apply a node whose key set has grown (see ProxyNode.addKeys).
- */
-export function registerNode(node: Node): void {
-  if (current) addNode(current, node);
+  for (const node of self.nodes) {
+    if (!node.dispose) continue;
+    try { node.dispose(); } catch { /* best-effort */ }
+  }
+  self.keyListeners.clear();
+  // keyMap/lazyMap are deliberately kept, so a destroyed resolver's `keys` view
+  // still reports what it had rather than going silently empty.
 }
 
 export async function translate(text: string, context: Context): Promise<string> {
-  const fn = current?.translateFn;
+  const fn = implFor(context).translateFn;
   if (fn && /[a-zA-Z]/.test(text)) {
     return fn(text, context);
   }
@@ -202,11 +240,6 @@ export async function translate(text: string, context: Context): Promise<string>
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);
-}
-
-/** Dispatch through the current resolver, or pass the value through if none. */
-function dispatch(value: unknown, context: Context): unknown {
-  return current ? current.impl(value, context) : value;
 }
 
 function storeAs(step: unknown, value: unknown, context: Context): unknown {
@@ -270,6 +303,10 @@ export function handleErr(err: unknown, value: unknown, context: Context): unkno
 export function resolve(value: unknown, context: Context): unknown;
 export function resolve<T>(value: unknown, context: Context, cont: (v: unknown) => T): T | Promise<T>;
 export function resolve(value: unknown, context: Context, cont?: (v: unknown) => unknown): unknown {
+  // Read once, up front: the fire-and-forget path below settles on a later tick,
+  // and pinning the resolver here keeps that continuation with the resolver the
+  // work started in no matter what else is created meanwhile.
+  const self = implFor(context);
   const obj = isObject(value) ? value : null;
 
   // Fire-and-forget: dispatch off the caller's stack (so even synchronous setup
@@ -278,7 +315,7 @@ export function resolve(value: unknown, context: Context, cont?: (v: unknown) =>
   // sequence `undefined` immediately via `cont` so later steps run right away.
   if (obj !== null && obj.then !== undefined && !ownsThen(obj)) {
     void Promise.resolve()
-      .then(() => dispatch(value, context))
+      .then(() => self.impl(value, context))
       .then(result => runSteps(
         Array.isArray(obj.then) ? obj.then : [obj.then],
         childContext(context, { result }),
@@ -291,7 +328,7 @@ export function resolve(value: unknown, context: Context, cont?: (v: unknown) =>
 
   let r: unknown;
   try {
-    r = dispatch(value, context);
+    r = self.impl(value, context);
   } catch (err) {
     if (hasCatch) return handleErr(err, value, context);
     throw err;
@@ -308,6 +345,7 @@ export function resolve(value: unknown, context: Context, cont?: (v: unknown) =>
  * On the sync path: no Promises created, callback fires immediately.
  */
 export function resolveObj<T>(obj: Record<string, unknown>, context: Context, then: (r: Record<string, unknown>) => T): T | Promise<T> {
+  const { impl } = implFor(context);
   const result: Record<string, unknown> = {};
   const pending: Promise<unknown>[] = [];
   const pendingKeys: string[] = [];
@@ -317,7 +355,7 @@ export function resolveObj<T>(obj: Record<string, unknown>, context: Context, th
     // a `catch: [...]` array here would execute the error handler on success. Kept
     // raw so the object shape is preserved for callers that pass `r` through.
     if (GLOBAL_KEYS.has(key)) { result[key] = obj[key]; continue; }
-    const r = dispatch(obj[key], context);
+    const r = impl(obj[key], context);
     if (r instanceof Promise) { pending.push(r); pendingKeys.push(key); }
     else result[key] = r;
   }
@@ -335,10 +373,11 @@ export function resolveObj<T>(obj: Record<string, unknown>, context: Context, th
  * On the async path: waits for all async values via Promise.all, then calls then(values).
  */
 export function resolveAll<T>(values: unknown[], context: Context, then: (args: unknown[]) => T): T | Promise<T> {
+  const { impl } = implFor(context);
   const pendingPromises: Promise<unknown>[] = [];
   const pendingIndices: number[] = [];
   for (let i = 0; i < values.length; i++) {
-    const r = dispatch(values[i], context);
+    const r = impl(values[i], context);
     if (r instanceof Promise) { pendingPromises.push(r); pendingIndices.push(i); }
     else values[i] = r;
   }
@@ -419,37 +458,46 @@ export async function runStepsDetached(
  */
 export interface ResolverOptions {
   translate?: TranslateFn;
+  /**
+   * The root context this resolver runs in.
+   *
+   * Only needed for a long-lived scope handed to detached callbacks BEFORE
+   * anything resolves in it — the browser's `pageContext`, whose DOM event
+   * handlers run steps against it. Everything else is covered without it: a
+   * context arriving from outside (a worker message, an HTTP request, a call to
+   * `resolver.resolve`) is attached by the entry point it arrives at, and a
+   * derived scope inherits through `childContext` or a plain spread.
+   */
+  context?: Context;
 }
 
+/**
+ * Build a resolver over a set of nodes.
+ *
+ * The nodes become this resolver's own: node state lives on the instances
+ * (MathNode's seed, TimerNode's timer registries), so build a fresh set per
+ * resolver — `coreNodes()`, `clientNodes()`, `serverNodes({ root })` — rather
+ * than sharing one array. Sharing an instance is allowed and simply shares that
+ * instance's state.
+ */
 export function createResolver(nodes: Node[], options?: ResolverOptions): Resolver {
-  // Only one resolver is current at a time; creating one tears down the last.
-  if (current) destroyResolver();
+  // The resolver IS the callable. It closes over itself, which is safe because
+  // the body only runs once the binding is initialized.
+  // Delegates to the catch-aware `resolve` wrapper rather than straight to
+  // `impl`, so a top-level `catch` on the entry expression is honored too —
+  // matching how `runSteps` (and every nested node) already resolves.
+  const self = ((value: unknown, context: Context) =>
+    self.resolve(value, context)) as ResolverImpl;
 
-  const state: ResolverState = {
-    keyMap: new Map<string, Node>(),
-    lazyMap: new Map<string, () => Promise<void>>(),
-    pendingLoads: new Map<() => Promise<void>, Promise<void>>(),
-    keyListeners: new Set(),
-    translateFn: options?.translate ?? null,
-    // Replaced below; the state object has to exist first so `impl` can close
-    // over it rather than over module-level maps.
-    impl: (value: unknown) => value,
-  };
+  const keyMap = self.keyMap = new Map<string, Node>();
+  const lazyMap = self.lazyMap = new Map<string, Loader>();
+  const pendingLoads = self.pendingLoads = new Map<Loader, Promise<void>>();
+  self.keyListeners = new Set();
+  self.translateFn = options?.translate ?? null;
+  self.nodes = new Set<Node>();
+  self.torndown = false;
 
-  // Build key-to-node dispatch map (first registration wins per key)
-  const { keyMap, lazyMap, pendingLoads } = state;
-  for (const node of nodes) {
-    const nodeKeys = node.handlerKeys;
-    if (nodeKeys) {
-      for (let i = 0; i < nodeKeys.length; i++) {
-        if (!keyMap.has(nodeKeys[i])) {
-          keyMap.set(nodeKeys[i], node);
-        }
-      }
-    }
-  }
-
-  state.impl = function resolveImpl(value: unknown, context: Context): unknown {
+  self.impl = function resolveImpl(value: unknown, context: Context): unknown {
     // Hottest case first: anything that isn't a non-null object resolves to
     // itself. Covers null/undefined/boolean/number/string and also
     // function/symbol/bigint (all previously fell through to `return value`).
@@ -497,7 +545,7 @@ export function createResolver(nodes: Node[], options?: ResolverOptions): Resolv
           if (loader) {
             let pending = pendingLoads.get(loader);
             if (!pending) {
-              pending = loader().catch((err: unknown) => {
+              pending = Promise.resolve(loader(self)).catch((err: unknown) => {
                 pendingLoads.delete(loader);
                 throw err;
               });
@@ -539,26 +587,38 @@ export function createResolver(nodes: Node[], options?: ResolverOptions): Resolv
     return value;
   };
 
-  current = state;
-
-  // Delegate to the catch-aware `resolve` wrapper, not straight to `state.impl`,
-  // so a top-level `catch` on the entry expression is honored too — matching how
-  // `runSteps` (and every nested node) already resolves through `resolve()`.
-  // A wrapper rather than `resolve` itself, so this API hangs off what
-  // createResolver returns without also appearing on the exported `resolve`.
-  const resolver = ((value: unknown, context: Context) =>
-    resolve(value, context)) as Resolver;
-
-  Object.defineProperties(resolver, {
-    keys: { value: makeKeysView(state) },
-    isCurrent: { get: () => current === state },
+  Object.defineProperties(self, {
+    keys: { value: makeKeysView(self) },
+    destroyed: { get: () => self.torndown },
   });
-  resolver.onKeysChange = (cb) => {
-    state.keyListeners.add(cb);
-    return () => { state.keyListeners.delete(cb); };
+
+  self.onKeysChange = (cb) => {
+    self.keyListeners.add(cb);
+    return () => { self.keyListeners.delete(cb); };
   };
-  resolver.registerNode = (node) => addNode(state, node);
-  resolver.registerLazy = (keys, loader) => addLazy(state, keys, loader);
-  resolver.destroy = () => { if (current === state) destroyResolver(); };
-  return resolver;
+  self.registerNode = (node) => addNode(self, node);
+  self.registerLazy = (keys, loader) => addLazy(self, keys, loader);
+  self.nodeFor = (key) => self.keyMap.get(key);
+  self.destroy = () => destroy(self);
+
+  // Entry points: attach the context, then hand off to the free helpers, which
+  // read the resolver back off it as every nested node call already does. This is
+  // the only place a flow is bound to a resolver. Attaching is idempotent, so
+  // re-entering an already-attached context costs a property compare.
+  const at = (context: Context) => adopt(self, context);
+
+  self.resolve = ((value: unknown, context: Context, cont?: (v: unknown) => unknown) => {
+    at(context);
+    return cont === undefined ? resolve(value, context) : resolve(value, context, cont);
+  }) as Resolver["resolve"];
+  self.resolveObj = (obj, context, then) => resolveObj(obj, at(context), then);
+  self.resolveAll = (values, context, then) => resolveAll(values, at(context), then);
+  self.runSteps = (steps, context) => runSteps(steps, at(context));
+  self.resolveSteps = (value, context) => resolveSteps(value, at(context));
+  self.runStepsDetached = (steps, context, def) => runStepsDetached(steps, at(context), def);
+
+  for (const node of nodes) addNode(self, node);
+  if (options?.context) adopt(self, options.context);
+
+  return self;
 }

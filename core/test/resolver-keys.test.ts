@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  Node, ProxyNode, createResolver, coreNodes, registerNode, registerLazy, runSteps,
+  Node, ProxyNode, createResolver, coreNodes,
 } from "../src/index.js";
 import type { Context, JexsNodeSchema } from "../src/index.js";
 
@@ -16,7 +16,7 @@ test("keys is a live view, not a snapshot taken at createResolver", () => {
   assert.equal(resolver.keys.has("lateop"), false);
 
   // registerNode is a runtime API, not a boot-time one.
-  registerNode(new LateNode());
+  resolver.registerNode(new LateNode());
   assert.equal(resolver.keys.has("lateop"), true);
   assert.ok(resolver.keys.toArray().includes("lateop"));
 });
@@ -27,7 +27,7 @@ test("keys includes lazy keys that have no handler yet", () => {
   const resolver = createResolver(coreNodes());
   assert.equal(resolver.keys.has("lazyop"), false);
 
-  registerLazy(["lazyop"], async () => {});
+  resolver.registerLazy(["lazyop"], async () => {});
   assert.equal(resolver.keys.has("lazyop"), true);
   assert.ok(resolver.keys.size > 0);
 });
@@ -37,14 +37,14 @@ test("onKeysChange fires with exactly what was added", () => {
   const seen: string[][] = [];
   resolver.onKeysChange((added) => seen.push([...added]));
 
-  registerNode(new LateNode());
+  resolver.registerNode(new LateNode());
   assert.deepEqual(seen, [["lateop"]]);
 
   // Re-registering the same node adds nothing, so it must not announce.
-  registerNode(new LateNode());
+  resolver.registerNode(new LateNode());
   assert.deepEqual(seen, [["lateop"]]);
 
-  registerLazy(["lazyA", "lazyB"], async () => {});
+  resolver.registerLazy(["lazyA", "lazyB"], async () => {});
   assert.deepEqual(seen[1], ["lazyA", "lazyB"]);
 });
 
@@ -53,7 +53,7 @@ test("onKeysChange does not announce a lazy key the resolver already handles", (
   const seen: string[][] = [];
   resolver.onKeysChange((added) => seen.push([...added]));
 
-  registerLazy(["var"], async () => {});
+  resolver.registerLazy(["var"], async () => {});
   assert.deepEqual(seen, []);
 });
 
@@ -63,51 +63,50 @@ test("onKeysChange returns an unsubscribe", () => {
   const off = resolver.onKeysChange((added) => seen.push([...added]));
 
   off();
-  registerNode(new LateNode());
+  resolver.registerNode(new LateNode());
   assert.deepEqual(seen, []);
 });
 
-// createResolver tears down the previous resolver, and a listener surviving that
-// would fire for a resolver its owner no longer holds.
-test("subscribers do not leak across resolver rebuilds", () => {
+// A listener belongs to the resolver it was registered on, so work in a second
+// resolver must never reach it.
+test("subscribers do not leak between resolvers", () => {
   const first = createResolver(coreNodes());
   const seen: string[][] = [];
   first.onKeysChange((added) => seen.push([...added]));
 
-  createResolver(coreNodes());
-  registerNode(new LateNode());
+  const second = createResolver(coreNodes());
+  second.registerNode(new LateNode());
   assert.deepEqual(seen, []);
 });
 
-// The resolver is a module-scope singleton by design -- handlers get only
-// (def, context), so resolve() must be reachable without a handle. The key view
-// is still bound to the map it was built for, so a superseded resolver reports
-// its own keys rather than silently mirroring whoever is current.
-test("a superseded resolver's key view does not report the live resolver's keys", () => {
+// Resolvers coexist, so each key view answers for its own dispatch map only.
+test("one resolver's key view does not report another's keys", () => {
   const first = createResolver(coreNodes());
   assert.equal(first.keys.has("var"), true);
   assert.equal(first.keys.has("lateop"), false);
 
-  createResolver(coreNodes());
-  registerNode(new LateNode());
+  const second = createResolver(coreNodes());
+  second.registerNode(new LateNode());
 
-  assert.equal(first.keys.has("lateop"), false, "stale view must not see the new resolver");
-  assert.equal(first.keys.has("var"), true, "stale view keeps its own keys");
+  assert.equal(first.keys.has("lateop"), false, "must not see the other resolver");
+  assert.equal(first.keys.has("var"), true, "keeps its own keys");
+  assert.equal(second.keys.has("lateop"), true);
 });
 
-test("a superseded resolver stops counting lazy keys, which belong to the current one", () => {
+test("lazy keys belong to the resolver they were registered on", () => {
   const first = createResolver(coreNodes());
-  createResolver(coreNodes());
-  registerLazy(["lazyonly"], async () => {});
+  const second = createResolver(coreNodes());
+  second.registerLazy(["lazyonly"], async () => {});
 
   assert.equal(first.keys.has("lazyonly"), false);
+  assert.equal(second.keys.has("lazyonly"), true);
 });
 
 test("a listener that throws does not break registration", () => {
   const resolver = createResolver(coreNodes());
   resolver.onKeysChange(() => { throw new Error("boom"); });
 
-  registerNode(new LateNode());
+  resolver.registerNode(new LateNode());
   assert.equal(resolver.keys.has("lateop"), true);
 });
 
@@ -127,13 +126,13 @@ test("registering a grown proxy installs the new keys and keeps first-wins", () 
   const resolver = createResolver(coreNodes());
   const calls: Record<string, unknown>[] = [];
   const proxy = new ProxyNode(["remoteop"], (call) => { calls.push(call); return "forwarded"; });
-  registerNode(proxy);
+  resolver.registerNode(proxy);
 
   assert.equal(resolver.keys.has("remoteop"), true);
 
   // `var` is a core key, so claiming it must NOT steal dispatch from core.
   proxy.addKeys(["remoteop2", "var"]);
-  registerNode(proxy);
+  resolver.registerNode(proxy);
   assert.equal(resolver.keys.has("remoteop2"), true);
   assert.equal(resolver({ var: "$nothing" }, {}), undefined);
   assert.equal(calls.length, 0);
@@ -146,15 +145,15 @@ test("registering a grown proxy installs the new keys and keeps first-wins", () 
 // continuation -- so this holds for any remote, in either direction.
 test("a proxied step blocks the next one and binds its value via as", async () => {
   const order: string[] = [];
-  createResolver(coreNodes());
-  registerNode(new ProxyNode(["remoteslow"], async () => {
+  const resolver = createResolver(coreNodes());
+  resolver.registerNode(new ProxyNode(["remoteslow"], async () => {
     order.push("remote-start");
     await new Promise((r) => setTimeout(r, 20));
     order.push("remote-end");
     return "VALUE";
   }));
 
-  const out = await runSteps([
+  const out = await resolver.runSteps([
     { remoteslow: "x", as: "got" },
     { concat: ["got=", { var: "$got" }] },
   ], {});
@@ -168,15 +167,15 @@ test("a proxied step blocks the next one and binds its value via as", async () =
 // the resolver -- not the proxy -- that intercepts it. So it behaves the same
 // whether the op is local or remote.
 test("a `then` sibling makes a proxied step fire-and-forget, as it would locally", async () => {
-  createResolver(coreNodes());
+  const resolver = createResolver(coreNodes());
   let settled = false;
-  registerNode(new ProxyNode(["remotebg"], async () => {
+  resolver.registerNode(new ProxyNode(["remotebg"], async () => {
     await new Promise((r) => setTimeout(r, 20));
     settled = true;
     return "V";
   }));
 
-  const out = await runSteps([
+  const out = await resolver.runSteps([
     { remotebg: "x", then: [{ concat: ["ignored"] }] },
     { concat: ["next"] },
   ], {});
@@ -188,7 +187,7 @@ test("a `then` sibling makes a proxied step fire-and-forget, as it would locally
 test("ProxyNode forwards resolved siblings and receives the context", () => {
   const resolver = createResolver(coreNodes());
   const seen: { call: Record<string, unknown>; context: Context }[] = [];
-  registerNode(new ProxyNode(["remotecall"], (call, context) => {
+  resolver.registerNode(new ProxyNode(["remotecall"], (call, context) => {
     seen.push({ call, context });
     return "ok";
   }));

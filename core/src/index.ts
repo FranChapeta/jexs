@@ -14,8 +14,12 @@ export {
 
 // ── Resolver ──
 export {
-  createResolver, resolve, resolveAll, resolveObj, registerNode, registerLazy,
+  createResolver, resolve, resolveAll, resolveObj,
   runSteps, resolveSteps, handleErr, runStepsDetached,
+  // Node registration takes no context, so it has no resolver to read off one:
+  // it hangs off the handle (`resolver.registerNode`) or, inside a lazy loader,
+  // off the resolver the loader is handed.
+  resolverFor,
   // The step keys the resolver owns. Hosts that inspect or filter a call need
   // them, to avoid treating `as` or `catch` as an op.
   GLOBAL_KEYS,

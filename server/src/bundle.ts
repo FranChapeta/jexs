@@ -1,7 +1,8 @@
 // The client bundler — the build-time consumer of discovery. `jexs bundle` walks
 // the project's browser node packages and produces a project-local dist/browser
 // containing @jexs/client's runtime PLUS any third-party browser nodes, all
-// sharing one @jexs/core (a single bundle, so the resolver singleton is one). The
+// sharing one @jexs/core (a single bundle, so they register into the one page
+// resolver @jexs/client builds rather than each getting their own). The
 // server prefers this local bundle over @jexs/client's prebuilt one when present.
 
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
@@ -50,18 +51,20 @@ export async function bundleClient(
     (p) => contributesNodes(p.manifest, "browser") && !p.name.startsWith("@jexs/"),
   );
 
-  const imports = [`import "@jexs/client";`, `import { registerNode } from "@jexs/core";`];
+  // Registration hangs off the resolver, not a module-scope function, so the
+  // entry asks @jexs/client for the page resolver it built on import.
+  const imports = [`import { getResolver } from "@jexs/client";`];
   const regs: string[] = [];
   pkgs.forEach((p, i) => {
     imports.push(`import { nodes as n${i} } from ${JSON.stringify(p.name)};`);
-    regs.push(`register(n${i});`);
+    regs.push(`register(r, n${i});`);
   });
   const entrySrc =
     `${imports.join("\n")}\n` +
-    `function register(c){ const list = typeof c === "function" ? c({}) : c; if (Array.isArray(list)) for (const n of list) registerNode(n); }\n` +
+    `function register(r, c){ const list = typeof c === "function" ? c({}) : c; if (Array.isArray(list)) for (const n of list) r.registerNode(n); }\n` +
     // @jexs/client creates the resolver synchronously on import (when window exists),
-    // so the resolver is ready before these registrations run.
-    `if (typeof window !== "undefined") { ${regs.join(" ")} }\n`;
+    // so getResolver() is ready before these registrations run.
+    `if (typeof window !== "undefined") { const r = getResolver(); ${regs.join(" ")} }\n`;
 
   const jexsDir = path.join(projectDir, ".jexs");
   mkdirSync(jexsDir, { recursive: true });

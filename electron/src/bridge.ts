@@ -1,4 +1,4 @@
-import { createHttpError, registerNode, GLOBAL_KEYS, ProxyNode } from "@jexs/core";
+import { createHttpError, GLOBAL_KEYS, ProxyNode } from "@jexs/core";
 import type { Context, Resolver } from "@jexs/core";
 
 /**
@@ -261,14 +261,14 @@ export async function installBridge(hooks: BridgeHooks): Promise<void> {
     // so growing the proxy's own set is not enough — without re-registering the
     // new keys would never dispatch. Only absent keys are added, so first-wins
     // still protects every local handler.
-    registerNode(rendererProxy);
+    resolver.registerNode(rendererProxy);
   });
 
   ipcMain.on("jexs:result", (_event, msg: { id?: number; value?: unknown; error?: string }) => {
     if (typeof msg?.id === "number") settle(msg.id, msg.value, msg.error);
   });
 
-  // `registerNode` is a runtime API, not a boot-time one, so a node registered
+  // `resolver.registerNode` is a runtime API, not a boot-time one, so a node registered
   // in main later must still become reachable from pages already open. Without
   // this the renderer's key set would be whatever it read at preload, frozen for
   // the life of the process.

@@ -10,13 +10,27 @@ class DisposableNode extends Node {
   dispose() { this.disposed++; }
 }
 
-test("a node is disposed when its resolver is replaced", () => {
+test("a node is disposed when its resolver is destroyed", () => {
   const node = new DisposableNode();
-  createResolver([node]);
+  const resolver = createResolver([node]);
   assert.equal(node.disposed, 0);
 
-  createResolver(coreNodes());
+  resolver.destroy();
   assert.equal(node.disposed, 1);
+  assert.equal(resolver.destroyed, true);
+});
+
+// Resolvers coexist: building one used to tear the previous one down, which made
+// two live resolvers in a realm impossible. Nothing but `destroy()` disposes now.
+test("creating a resolver leaves an existing one running", () => {
+  const node = new DisposableNode();
+  const first = createResolver([node]);
+
+  createResolver(coreNodes());
+
+  assert.equal(node.disposed, 0, "an unrelated resolver must not dispose this node");
+  assert.equal(first.destroyed, false);
+  assert.equal(first({ disposable: true }, {}), null, "and it still dispatches");
 });
 
 test("a node claiming many keys is disposed once, not per key", () => {
@@ -34,19 +48,33 @@ test("a node claiming many keys is disposed once, not per key", () => {
   assert.equal(node.disposed, 1);
 });
 
-// The previous mechanism cleared its hook list after the first teardown, so in a
-// process that built several resolvers only the first ever cleaned up -- a second
-// resolver's timers would then run forever.
-test("disposal runs for every resolver, not just the first in the process", () => {
+// Each resolver tears down its own nodes and nobody else's, which is what lets a
+// short-lived resolver be destroyed while a long-lived one keeps running.
+test("destroying one resolver does not dispose another's nodes", () => {
   const a = new DisposableNode();
   const b = new DisposableNode();
 
-  createResolver([a]);
+  const first = createResolver([a]);
   const second = createResolver([b]);
   second.destroy();
 
-  assert.equal(a.disposed, 1, "first resolver's node disposed on replace");
-  assert.equal(b.disposed, 1, "second resolver's node disposed on destroy");
+  assert.equal(b.disposed, 1, "its own node is disposed");
+  assert.equal(a.disposed, 0, "the other resolver's node is left alone");
+
+  first.destroy();
+  assert.equal(a.disposed, 1);
+});
+
+// A node whose keys were every one of them already claimed never enters the
+// dispatch map, but it was still handed over and may own resources.
+test("a node that lost first-wins on every key is still disposed", () => {
+  const winner = new DisposableNode();
+  const loser = new DisposableNode();
+  const resolver = createResolver([winner, loser]);
+
+  assert.equal(resolver.nodeFor("disposable"), winner, "first registration wins");
+  resolver.destroy();
+  assert.equal(loser.disposed, 1, "the shadowed node is disposed too");
 });
 
 test("a throwing dispose does not stop the rest of the teardown", () => {
@@ -66,15 +94,13 @@ test("nodes without dispose are skipped harmlessly", () => {
   assert.doesNotThrow(() => resolver.destroy());
 });
 
-test("destroy is inert once a resolver has been superseded", () => {
+test("destroy is idempotent, so a node is never disposed twice", () => {
   const node = new DisposableNode();
-  const first = createResolver([node]);
-  createResolver(coreNodes());
-  assert.equal(node.disposed, 1);
+  const resolver = createResolver([node]);
 
-  // The replacement already tore it down; destroying the stale handle must not
-  // reach into whoever is current now.
-  first.destroy();
+  resolver.destroy();
+  resolver.destroy();
+
   assert.equal(node.disposed, 1);
-  assert.equal(first.isCurrent, false);
+  assert.equal(resolver.destroyed, true);
 });

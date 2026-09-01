@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createResolver, coreNodes, runSteps } from "../src/index.js";
+import { createResolver, coreNodes } from "../src/index.js";
 
-// createResolver installs the global resolver that runSteps/resolve delegate to.
+// The resolver the steps below run in; contexts are adopted at its entry points.
 const resolve = createResolver(coreNodes());
 
 test("filter: renames the item via the `item` sibling", () => {
@@ -45,7 +45,7 @@ test("reduce: renames the item while accumulator stays available", () => {
 });
 
 test("return: short-circuits a step array", () => {
-  const out = runSteps(
+  const out = resolve.runSteps(
     [
       { setVars: { x: 1 } },
       { if: { eq: [{ var: "$x" }, 1] }, then: { return: "early" } },
@@ -57,13 +57,13 @@ test("return: short-circuits a step array", () => {
 });
 
 test("return: absent, the last step's value wins", () => {
-  const out = runSteps([{ setVars: { x: 1 } }, { var: "$x" }], {});
+  const out = resolve.runSteps([{ setVars: { x: 1 } }, { var: "$x" }], {});
   assert.equal(out, 1);
 });
 
 test("a literal step is rejected, not silently run as a value", () => {
   // `["Hello"]` is a value dressed up as a sequence: every literal step resolves
   // to itself, so it can only ever be a no-op or the array's return value.
-  assert.throws(() => runSteps(["Hello"], {}), /step must be an expression object/);
-  assert.throws(() => runSteps([{ setVars: { x: 1 } }, 42], {}), /step must be an expression object/);
+  assert.throws(() => resolve.runSteps(["Hello"], {}), /step must be an expression object/);
+  assert.throws(() => resolve.runSteps([{ setVars: { x: 1 } }, 42], {}), /step must be an expression object/);
 });
