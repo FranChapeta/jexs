@@ -46,10 +46,8 @@ interface TimerState {
   paused: boolean;
   pausedAt: number | null;
   pausedTotal: number;
+  registry: Map<string, TimerState>;
 }
-
-const ticks = new Map<string, TimerState>();
-const crons = new Map<string, TimerState>();
 
 // ─── TimerNode ──────────────────────────────────────────────────────────────
 
@@ -137,37 +135,43 @@ export class TimerNode extends Node {
     },
   };
 
+  readonly ticks = new Map<string, TimerState>();
+  readonly crons = new Map<string, TimerState>();
+
   tick(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.tick, context, op => dispatch(String(op), def, context, "tick"));
+    return resolve(def.tick, context, op => dispatch(this, String(op), def, context, "tick"));
   }
 
   cron(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.cron, context, op => dispatch(String(op), def, context, "cron"));
-  }
-
-  static stopAll(): void {
-    for (const s of ticks.values()) { if (s.timerId != null) clearTimeout(s.timerId); }
-    for (const s of crons.values()) { if (s.timerId != null) clearInterval(s.timerId); }
-    ticks.clear();
-    crons.clear();
+    return resolve(def.cron, context, op => dispatch(this, String(op), def, context, "cron"));
   }
 
   /** Timers outlive their resolver unless stopped, so tear them down with it. */
   dispose(): void {
-    TimerNode.stopAll();
+    stopAll(this);
   }
+}
+
+/** Stop and forget every timer this node owns. */
+function stopAll(self: TimerNode): void {
+  for (const s of self.ticks.values()) { if (s.timerId != null) clearTimeout(s.timerId); }
+  for (const s of self.crons.values()) { if (s.timerId != null) clearInterval(s.timerId); }
+  self.ticks.clear();
+  self.crons.clear();
 }
 
 
 // ─── Dispatch ───────────────────────────────────────────────────────────────
 
 function dispatch(
-  op: string, def: Record<string, unknown>, context: Context, kind: "tick" | "cron",
+  self: TimerNode, op: string, def: Record<string, unknown>, context: Context, kind: "tick" | "cron",
 ): unknown {
-  const registry = kind === "tick" ? ticks : crons;
+  const registry = kind === "tick" ? self.ticks : self.crons;
 
   switch (op) {
-    case "start": return kind === "tick" ? startTick(def, context) : startCron(def, context);
+    case "start": return kind === "tick"
+      ? startTick(def, context, registry)
+      : startCron(def, context, registry);
     case "stop":  return stop(def, context, registry, kind);
     case "pause": return pause(def, context, registry);
     case "resume": return resume(def, context, registry, kind);
@@ -224,7 +228,9 @@ function resume(
 
 // ─── Tick: compensating setTimeout loop ─────────────────────────────────────
 
-function startTick(def: Record<string, unknown>, context: Context): unknown {
+function startTick(
+  def: Record<string, unknown>, context: Context, registry: Map<string, TimerState>,
+): unknown {
   return resolveAll([def.id, def.rate ?? 60, def.detach ?? false], context, ([idRaw, rateRaw, detachRaw]: unknown[]) => {
     const id = String(idRaw);
     const rate = Number(rateRaw);
@@ -236,17 +242,17 @@ function startTick(def: Record<string, unknown>, context: Context): unknown {
     const steps = Array.isArray(def.do) ? def.do : [def.do];
     const detach = detachRaw === true || detachRaw === 1 || detachRaw === "1" || detachRaw === "true";
 
-    const prev = ticks.get(id);
+    const prev = registry.get(id);
     if (prev?.timerId != null) clearTimeout(prev.timerId);
 
     const now = Date.now();
     const state: TimerState = {
       id, intervalMs: 1000 / rate, steps, context, def, detach,
       timerId: null, count: 0, startTime: now, lastTime: now,
-      paused: false, pausedAt: null, pausedTotal: 0,
+      paused: false, pausedAt: null, pausedTotal: 0, registry,
     };
 
-    ticks.set(id, state);
+    registry.set(id, state);
     scheduleTick(state);
     return id;
   });
@@ -258,7 +264,7 @@ function scheduleTick(state: TimerState): void {
   const delay = Math.max(0, state.intervalMs - (drift > 0 ? drift : 0));
 
   state.timerId = setTimeout(() => {
-    if (!ticks.has(state.id)) return;
+    if (!state.registry.has(state.id)) return;
 
     if (state.paused) {
       scheduleTick(state);
@@ -283,7 +289,7 @@ function scheduleTick(state: TimerState): void {
           console.error(`[tick] Error in "${state.id}":`, err);
         });
 
-      if (ticks.has(state.id)) scheduleTick(state);
+      if (state.registry.has(state.id)) scheduleTick(state);
       return;
     }
 
@@ -292,7 +298,7 @@ function scheduleTick(state: TimerState): void {
         console.error(`[tick] Error in "${state.id}":`, err);
       })
       .finally(() => {
-        if (ticks.has(state.id)) scheduleTick(state);
+        if (state.registry.has(state.id)) scheduleTick(state);
       });
   }, delay);
 }
@@ -310,7 +316,9 @@ export function parseInterval(value: string): number {
   return Math.round(parseFloat(match[1]) * MULTIPLIERS[match[2]]);
 }
 
-function startCron(def: Record<string, unknown>, context: Context): unknown {
+function startCron(
+  def: Record<string, unknown>, context: Context, registry: Map<string, TimerState>,
+): unknown {
   return resolveAll([def.id, def.every], context, ([id, every]: unknown[]) => {
     const intervalMs = parseInterval(String(every));
     // No steps means a timer that ticks forever doing nothing, which looks like a
@@ -320,18 +328,18 @@ function startCron(def: Record<string, unknown>, context: Context): unknown {
     if (def.do === undefined) throw new Error("timer needs `do` steps");
     const steps = Array.isArray(def.do) ? def.do : [def.do];
 
-    const prev = crons.get(String(id));
+    const prev = registry.get(String(id));
     if (prev?.timerId != null) clearInterval(prev.timerId);
 
     const now = Date.now();
     const state: TimerState = {
       id: String(id), intervalMs, steps, context, def, detach: false,
       timerId: null, count: 0, startTime: now, lastTime: now,
-      paused: false, pausedAt: null, pausedTotal: 0,
+      paused: false, pausedAt: null, pausedTotal: 0, registry,
     };
 
     state.timerId = setInterval(async () => {
-      if (!crons.has(state.id) || state.paused) return;
+      if (!state.registry.has(state.id) || state.paused) return;
 
       const now = Date.now();
       state.count++;
@@ -350,7 +358,7 @@ function startCron(def: Record<string, unknown>, context: Context): unknown {
       }
     }, intervalMs);
 
-    crons.set(state.id, state);
+    registry.set(state.id, state);
     return state.id;
   });
 }

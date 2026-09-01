@@ -122,3 +122,49 @@ test("lazy keys and their loaders are per resolver", async () => {
 
   assert.equal(await b({ op: 1 }, {}), "B");
 });
+
+// TimerNode keys its registries by a template-supplied id, so two resolvers
+// running the same app would otherwise collide, and either teardown would stop
+// both. The registries are instance fields, and instances are per resolver.
+test("timers belong to their own resolver and survive another's teardown", async () => {
+  const ctxA: Context = { hits: 0 };
+  const ctxB: Context = { hits: 0 };
+  const a = createResolver(coreNodes(), { context: ctxA });
+  const b = createResolver(coreNodes(), { context: ctxB });
+
+  const start = { tick: "start", id: "shared", rate: 60, do: [{ setVars: { hits: { add: [{ var: "$hits" }, 1] } }, bubble: true }] };
+  a.resolve(start, ctxA);
+  b.resolve(start, ctxB);
+
+  await tick();
+  assert.ok((ctxA.hits as number) > 0, "A's timer ran");
+  assert.ok((ctxB.hits as number) > 0, "B's timer ran under the same id");
+
+  a.destroy();
+  const afterA = ctxA.hits as number;
+  const atDestroy = ctxB.hits as number;
+  await tick();
+
+  assert.equal(ctxA.hits, afterA, "A's timer stopped with A");
+  assert.ok((ctxB.hits as number) > atDestroy, "B's timer is untouched by A's teardown");
+  b.destroy();
+});
+
+// `randomSeed` exists to make a run reproducible, which a stream shared with
+// another resolver defeats.
+test("a random seed set in one resolver does not reach the other", () => {
+  const a = createResolver(coreNodes());
+  const b = createResolver(coreNodes());
+
+  a({ randomSeed: 42 }, {});
+  const first = a({ random: 1000000 }, {});
+
+  // Re-seed A, then draw from B before drawing from A again. B's draw is the
+  // discriminator: on a shared stream it advances the seed and A's next value
+  // moves. Asserting only that A alone is reproducible would pass either way.
+  a({ randomSeed: 42 }, {});
+  b({ random: 1000000 }, {});
+  const again = a({ random: 1000000 }, {});
+
+  assert.equal(again, first, "B's draw must not advance A's seeded stream");
+});

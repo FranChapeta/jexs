@@ -1,22 +1,29 @@
 import { Node, Context } from "./Node.js";
-import { resolve, resolveAll } from "../Resolver.js";
+import { resolve, resolveAll, resolverFor } from "../Resolver.js";
 import type { JexsNodeSchema } from "../schema.js";
 
 // ── Seeded PRNG (mulberry32) ─────────────────────────────────────────────────
-let _seed: number | null = null;
 
-function seededRandom(): number {
-  let t = (_seed = (_seed! + 0x6D2B79F5) | 0);
+/** Advance a node's seeded stream by one step. */
+function seededRandom(self: MathNode): number {
+  let t = (self.seed = (self.seed! + 0x6D2B79F5) | 0);
   t = Math.imul(t ^ (t >>> 15), t | 1);
   t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
 
-/** Next random float in `[0, 1)` — drawn from the seeded RNG when `randomSeed`
- *  is active, otherwise `Math.random`. Shared so other nodes (e.g. ArrayNode's
- *  `shuffle`) draw from the same reproducible stream. */
-export function nextRandom(): number {
-  return _seed !== null ? seededRandom() : Math.random();
+/**
+ * Next random float in `[0, 1)` — drawn from the seeded RNG when `randomSeed`
+ * is active in this context's resolver, otherwise `Math.random`.
+ *
+ * Takes the context rather than reading a module global because the seed lives
+ * on the MathNode instance, and so per resolver: `randomSeed` exists to make a
+ * run reproducible, which a stream shared with an unrelated resolver defeats.
+ * Exported so other nodes (ArrayNode's `shuffle`) draw from the same stream.
+ */
+export function nextRandom(context: Context): number {
+  const math = resolverFor(context).nodeFor("randomSeed");
+  return math instanceof MathNode && math.seed !== null ? seededRandom(math) : Math.random();
 }
 
 function hashString(str: string): number {
@@ -34,6 +41,14 @@ const ORDINAL_SUFFIX: Record<string, string> = {
 };
 
 export class MathNode extends Node {
+  /**
+   * The `randomSeed` stream position, or null for unseeded `Math.random`.
+   * An instance field, so it is per resolver: `randomSeed` is a reproducibility
+   * knob, and sharing one stream between resolvers defeats it. Public because
+   * `nextRandom` reaches it from module scope.
+   */
+  seed: number | null = null;
+
   static schema: JexsNodeSchema = {
     sqrt: {
       output: "number",
@@ -637,24 +652,24 @@ export class MathNode extends Node {
   random(def: Record<string, unknown>, c: Context) {
     return resolve(def.random, c, values => {
       const arr = this.toArray(values);
-      if (arr.length === 0) return nextRandom();
+      if (arr.length === 0) return nextRandom(c);
       // One arg n → integer in [0, n]; two args → integer in [min, max].
       const min = arr.length > 1 ? this.toNumber(arr[0]) : 0;
       const max = arr.length > 1 ? this.toNumber(arr[1]) : this.toNumber(arr[0]);
-      return Math.floor(nextRandom() * (max - min + 1)) + min;
+      return Math.floor(nextRandom(c) * (max - min + 1)) + min;
     });
   }
 
   randomSeed(def: Record<string, unknown>, c: Context) {
     return resolve(def.randomSeed, c, val => {
-      if (val == null) { _seed = null; return null; }
-      _seed = typeof val === "number" ? val : hashString(String(val));
+      if (val == null) { this.seed = null; return null; }
+      this.seed = typeof val === "number" ? val : hashString(String(val));
       return null;
     });
   }
 
   /** A seed set through one resolver must not leak into the next. */
   dispose(): void {
-    _seed = null;
+    this.seed = null;
   }
 }

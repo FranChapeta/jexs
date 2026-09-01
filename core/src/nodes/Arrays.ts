@@ -433,7 +433,7 @@ export class ArrayNode extends Node {
 
   shuffle(def: Record<string, unknown>, c: Context) {
     return resolve(def.clone, c, cl =>
-      resolve(def.shuffle, c, v => shuffleInPlace(mutArr(v, this.toBoolean(cl)))));
+      resolve(def.shuffle, c, v => shuffleInPlace(mutArr(v, this.toBoolean(cl)), c)));
   }
 
   sortBy(def: Record<string, unknown>, c: Context) {
@@ -770,10 +770,10 @@ function sortInPlace(arr: unknown[], desc: boolean): unknown[] {
   return desc ? arr.reverse() : arr;
 }
 
-/** Fisher-Yates shuffle in place, drawing from the shared (seedable) RNG. */
-function shuffleInPlace(arr: unknown[]): unknown[] {
+/** Fisher-Yates shuffle in place, drawing from this resolver's (seedable) RNG. */
+function shuffleInPlace(arr: unknown[], context: Context): unknown[] {
   for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(nextRandom() * (i + 1));
+    const j = Math.floor(nextRandom(context) * (i + 1));
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;

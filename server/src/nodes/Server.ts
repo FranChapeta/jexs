@@ -5,7 +5,7 @@ import path from "node:path";
 import { URL } from "node:url";
 import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
-import { Context, Node, NodeValue, TimerNode, isHttpError, resolve, resolveAll } from "@jexs/core";
+import { Context, Node, NodeValue, isHttpError, resolve, resolveAll } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { WebSocketNode } from "./WebSocket.js";
 import { safeRelative } from "./File.js";
@@ -600,14 +600,18 @@ function sendResponse(res: http.ServerResponse, result: unknown): void {
 }
 
 /**
- * Close every live listener and the shared WebSocket server, then the process-global timer and
- * WebSocket connection registries. Currently uninvoked in the CLI path (the process runs until
+ * Close every live listener and the shared WebSocket server, then the process-global
+ * WebSocket connection registry. Currently uninvoked in the CLI path (the process runs until
  * killed); exposed for programmatic/test shutdown. Unambiguous now that one module owns all
  * listeners.
+ *
+ * Timers are NOT stopped here: they belong to the TimerNode instance of whichever
+ * resolver started them, and this has no resolver handle. `resolver.destroy()`
+ * disposes them, which is also the only way that cannot reach into another
+ * resolver's timers.
  */
 export function closeAllServers(): Promise<void> {
   WebSocketNode.closeAll();
-  TimerNode.stopAll();
   const shared = wss;
   const closes = listeners.map(
     (l) =>
