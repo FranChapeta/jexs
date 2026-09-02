@@ -14,9 +14,6 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-let transporter: Transporter | null = null;
-let defaultFrom: string | undefined;
-let preview = false;
 
 const SMTP_SCHEMES = new Set(["smtp", "smtps"]);
 
@@ -235,6 +232,16 @@ function label(to: string | string[]): string {
 
 export class EmailNode extends Node {
   /**
+   * The SMTP transport `email-connect` opened, and the defaults it carries.
+   * Instance fields (never on the prototype, so `handlerKeys` ignores them), and
+   * so per resolver: two resolvers configuring different SMTP targets in one
+   * process must not overwrite each other's transport.
+   */
+  private transporter: Transporter | null = null;
+  private defaultFrom: string | undefined;
+  private preview = false;
+
+  /**
    * `list` and `icalEvent` take shapes of their own rather than a value, so they
    * are spelled out here instead of going through `map`, which would leave every
    * key and value unchecked. Both have to tell their own shape apart from an
@@ -446,8 +453,8 @@ export class EmailNode extends Node {
       const target = this.toString(o["email-connect"]).trim();
       if (!target) throw new Error("email-connect needs a host, an smtp:// url, or \"ethereal\"");
 
-      preview = target.toLowerCase() === "ethereal";
-      const base: SmtpOptions = preview
+      this.preview = target.toLowerCase() === "ethereal";
+      const base: SmtpOptions = this.preview
         ? await etherealOptions()
         // A scheme is what separates the two spellings: anything else is a host.
         : /^[a-z][a-z0-9+.-]*:/i.test(target)
@@ -455,19 +462,19 @@ export class EmailNode extends Node {
           : { host: target };
 
       const options = smtpOptions(base, o);
-      defaultFrom = o.from != null ? this.toString(o.from) : undefined;
+      this.defaultFrom = o.from != null ? this.toString(o.from) : undefined;
       // The default `from` has to ride in the second argument; nodemailer ignores
       // one set inside the transport options, though the type accepts it there.
-      transporter = nodemailer.createTransport(options, defaultFrom ? { from: defaultFrom } : undefined);
+      this.transporter = nodemailer.createTransport(options, this.defaultFrom ? { from: this.defaultFrom } : undefined);
       return options.host;
     });
   }
 
   email(def: Record<string, unknown>, context: Context): NodeValue {
     if (!("subject" in def)) throw new Error("email needs a subject");
-    if (!defaultFrom && !("from" in def)) throw new Error(NO_FROM);
+    if (!this.defaultFrom && !("from" in def)) throw new Error(NO_FROM);
 
-    const t = transporter;
+    const t = this.transporter;
     if (!t) {
       throw createHttpError(
         500,
@@ -484,7 +491,7 @@ export class EmailNode extends Node {
         const to = addresses(o.email);
         if (!to) throw new Error("email needs at least one recipient");
         // The preflight only proved a `from` was WRITTEN; this is checking the resolved value.
-        if (o.from == null && !defaultFrom) throw new Error(NO_FROM);
+        if (o.from == null && !this.defaultFrom) throw new Error(NO_FROM);
 
         const message: SendMailOptions = { to, subject: this.toString(o.subject) };
         if (o.from != null) message.from = this.toString(o.from);
@@ -541,7 +548,7 @@ export class EmailNode extends Node {
           rejected: (info.rejected ?? []).map(String),
           response: info.response ?? null,
         };
-        if (preview) {
+        if (this.preview) {
           const previewUrl = nodemailer.getTestMessageUrl(info);
           console.log(`[EmailNode] Preview: ${previewUrl}`);
           result.previewUrl = previewUrl;

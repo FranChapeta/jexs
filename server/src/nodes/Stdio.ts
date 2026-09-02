@@ -2,6 +2,10 @@ import { Node, Context, NodeValue, resolve, runStepsDetached } from "@jexs/core"
 import type { JexsNodeSchema } from "@jexs/core";
 import { createInterface } from "node:readline";
 
+// Module-level on purpose, not instance fields: there is exactly one process
+// stdin. Two resolvers each attaching their own readline interface would compete
+// for the same lines, so the attach guard and the reader stay shared however many
+// resolvers exist.
 let stdinAttached = false;
 
 function encode(value: unknown): string {

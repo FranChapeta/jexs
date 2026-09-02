@@ -360,7 +360,7 @@ async function execQuery(def: Record<string, unknown>, context: Context): Promis
   // Omitted `connection` falls back to whichever opened first; getKnex owns
   // that chain, so this does not repeat it.
   const connRaw = await resolve(def.connection ?? null, context);
-  const knex = DatabaseNode.getKnex(connRaw == null ? undefined : String(connRaw));
+  const knex = DatabaseNode.getKnex(context, connRaw == null ? undefined : String(connRaw));
 
   const resolvedQuery = await resolveQueryDef(flat, context);
 

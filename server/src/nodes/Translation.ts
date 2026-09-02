@@ -53,7 +53,7 @@ export class TranslationNode extends Node {
 
     // Cache miss — query DB
     try {
-      const knex = DatabaseNode.getKnex();
+      const knex = DatabaseNode.getKnex(context);
       const row = await knex(table)
         .select("translated_text")
         .where({ text_hash: hash, language_code: to })

@@ -1,7 +1,7 @@
 import Knex, { Knex as KnexType } from "knex";
 import fs from "node:fs";
 import path from "node:path";
-import { Node, Context, NodeValue, resolve, resolveAll, resolveObj } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll, resolveObj, resolverFor } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import {
   mergeTls, parseDbUrl, parseTls, TLS_STRINGS,
@@ -47,9 +47,6 @@ function describe(config: DatabaseConfig): ConnectionInfo {
   };
 }
 
-// Module-level state
-const connections: Map<string, DatabaseConnection> = new Map();
-let defaultConnectionName: string | null = null;
 
 /**
  * DatabaseNode - Handles database connections and queries in JSON.
@@ -67,7 +64,41 @@ let defaultConnectionName: string | null = null;
  * { "database": "tableExists", "table": "users" }
  * { "database": "dropTable", "table": "users" }
  */
+/**
+ * The DatabaseNode of the resolver a context is running in.
+ *
+ * Connections are keyed by a template-supplied name, so they live on the node
+ * instance and therefore per resolver: two resolvers opening "main" at different
+ * URLs must not overwrite each other. Every op and every static below takes a
+ * context so it can find its own node.
+ */
+export function databaseFor(context: Context): DatabaseNode {
+  const node = resolverFor(context).nodeFor("database");
+  if (!(node instanceof DatabaseNode)) {
+    throw new Error("No DatabaseNode in this resolver; build it with serverNodes().");
+  }
+  return node;
+}
+
 export class DatabaseNode extends Node {
+  /** Open connections and whichever opened first. Instance fields, so they never
+   *  reach the prototype where `handlerKeys` would read them as ops. */
+  readonly connections: Map<string, DatabaseConnection> = new Map();
+  defaultConnectionName: string | null = null;
+
+  /**
+   * Close this resolver's connections on teardown. `knex.destroy()` is async and
+   * `dispose` is not, so the closes are started and not awaited; use the
+   * `{ "database": "close" }` op when a caller needs to know it finished.
+   */
+  dispose(): void {
+    for (const conn of this.connections.values()) {
+      void Promise.resolve(conn.knex.destroy()).catch(() => { /* best-effort */ });
+    }
+    this.connections.clear();
+    this.defaultConnectionName = null;
+  }
+
   static schema: JexsNodeSchema = {
     database: {
       type: "string",
@@ -190,17 +221,17 @@ export class DatabaseNode extends Node {
     return resolve(def.database, context, operation => {
       switch (String(operation)) {
         case "connect":
-          return doConnect(def, context);
+          return doConnect(this, def, context);
         case "close":
-          return doClose(def, context);
+          return doClose(this, def, context);
         case "raw":
-          return doRaw(def, context);
+          return doRaw(this, def, context);
         case "tableExists":
-          return doTableExists(def, context);
+          return doTableExists(this, def, context);
         case "dropTable":
-          return doDropTable(def, context);
+          return doDropTable(this, def, context);
         case "info":
-          return doInfo(def, context);
+          return doInfo(this, def, context);
         default:
           console.error(`[DatabaseNode] Unknown operation: ${operation}`);
           return null;
@@ -212,71 +243,76 @@ export class DatabaseNode extends Node {
   // Static Connection Management
   // ============================================
 
-  static getInstance(
-    name: string = "default",
-    config?: DatabaseConfig,
-  ): DatabaseConnection {
-    if (!connections.has(name)) {
-      if (!config) {
-        config = {
-          type: "sqlite",
-          filename: path.join(
-            process.cwd(),
-            name === "default" ? "data.db" : `${name}.db`,
-          ),
-        };
-      }
-      DatabaseNode.init(name, config);
-    }
-    return connections.get(name)!;
-  }
-
-  static init(name: string, config: DatabaseConfig): void {
-    if (connections.has(name)) {
-      connections.get(name)!.knex.destroy();
-    }
-    const knex = createConnection(config);
-    // `config` goes no further than this call: knex has what it needs to dial.
-    connections.set(name, { knex, info: describe(config) });
-  }
+  // These take a context because their callers are OTHER nodes (QueryNode,
+  // TranslationNode) that hold one but no handle on this node. Everything inside
+  // this module already has the node and calls the helpers below directly.
 
   /** Omit `name` to get whichever connection opened first. */
-  static getKnex(name?: string): KnexType {
-    return requireConnection(name).knex;
+  static getKnex(context: Context, name?: string): KnexType {
+    return requireConnection(databaseFor(context), name).knex;
   }
 
   /** Type, target and TLS state. Carries no credentials — none are kept. */
-  static getInfo(name?: string): ConnectionInfo | null {
-    const conn = connections.get(connectionName(name));
-    return conn ? { ...conn.info } : null;
+  static getInfo(context: Context, name?: string): ConnectionInfo | null {
+    return infoOf(databaseFor(context), name);
   }
 
-  static async closeConnection(name: string): Promise<void> {
-    const conn = connections.get(name);
-    if (conn) {
-      await conn.knex.destroy();
-      connections.delete(name);
-    }
+  static async closeConnection(context: Context, name: string): Promise<void> {
+    await closeConnection(databaseFor(context), name);
   }
 
-  static async closeAll(): Promise<void> {
-    for (const conn of connections.values()) {
+  static async closeAll(context: Context): Promise<void> {
+    const self = databaseFor(context);
+    for (const conn of self.connections.values()) {
       await conn.knex.destroy();
     }
-    connections.clear();
-    defaultConnectionName = null;
+    self.connections.clear();
+    self.defaultConnectionName = null;
   }
 
-  static getDefaultConnection(): string | null {
-    return defaultConnectionName;
+  static getDefaultConnection(context: Context): string | null {
+    return databaseFor(context).defaultConnectionName;
   }
 
   static async transaction<T>(
+    context: Context,
     name: string,
     callback: (trx: KnexType.Transaction) => Promise<T>,
   ): Promise<T> {
-    return requireConnection(name).knex.transaction(callback);
+    return requireConnection(databaseFor(context), name).knex.transaction(callback);
   }
+}
+
+/** Open `name`, replacing any connection already under it. */
+function openConnection(self: DatabaseNode, name: string, config: DatabaseConfig): void {
+  self.connections.get(name)?.knex.destroy();
+  const knex = createConnection(config);
+  // `config` goes no further than this call: knex has what it needs to dial.
+  self.connections.set(name, { knex, info: describe(config) });
+}
+
+/** The connection under `name`, opening a default SQLite file if there is none. */
+function openOrReuse(self: DatabaseNode, name: string, config?: DatabaseConfig): DatabaseConnection {
+  if (!self.connections.has(name)) {
+    openConnection(self, name, config ?? {
+      type: "sqlite",
+      filename: path.join(process.cwd(), name === "default" ? "data.db" : `${name}.db`),
+    });
+  }
+  return self.connections.get(name)!;
+}
+
+/** Type, target and TLS state for a connection, or null if it is unknown. */
+function infoOf(self: DatabaseNode, nameRaw?: unknown): ConnectionInfo | null {
+  const conn = self.connections.get(connectionName(self, nameRaw));
+  return conn ? { ...conn.info } : null;
+}
+
+async function closeConnection(self: DatabaseNode, name: string): Promise<void> {
+  const conn = self.connections.get(name);
+  if (!conn) return;
+  await conn.knex.destroy();
+  self.connections.delete(name);
 }
 
 // npm package per driver, for the "not installed" messages below.
@@ -342,8 +378,8 @@ function toBindings(value: unknown): KnexType.RawBinding[] | undefined {
  * first, else `"default"`. Every op taking an optional `connection` / `name`
  * resolves it here rather than repeating the fallback chain.
  */
-function connectionName(nameRaw?: unknown): string {
-  return String(nameRaw ?? defaultConnectionName ?? "default");
+function connectionName(self: DatabaseNode, nameRaw?: unknown): string {
+  return String(nameRaw ?? self.defaultConnectionName ?? "default");
 }
 
 /**
@@ -352,9 +388,9 @@ function connectionName(nameRaw?: unknown): string {
  * actually reads — and since the drivers are optional peers, "not connected"
  * on its own leaves out the half that is usually the real problem.
  */
-function requireConnection(nameRaw?: unknown): DatabaseConnection {
-  const name = connectionName(nameRaw);
-  const conn = connections.get(name);
+function requireConnection(self: DatabaseNode, nameRaw?: unknown): DatabaseConnection {
+  const name = connectionName(self, nameRaw);
+  const conn = self.connections.get(name);
   if (conn) return conn;
   throw new Error(
     `Database "${name}" is not connected. Open it with ` +
@@ -447,7 +483,7 @@ function knexFor(config: DatabaseConfig): KnexType {
 // the two are alternatives, not layers — see the guard in `doConnect`.
 const ENDPOINT_SIBLINGS = ["host", "port", "user", "password", "db", "filename"] as const;
 
-function doConnect(def: Record<string, unknown>, context: Context): unknown {
+function doConnect(self: DatabaseNode, def: Record<string, unknown>, context: Context): unknown {
   return resolveObj(def, context, r => {
     const name = String(r.name ?? "default");
     // A `url` supplies the whole endpoint and picks the driver via its scheme.
@@ -501,30 +537,30 @@ function doConnect(def: Record<string, unknown>, context: Context): unknown {
       if (ssl !== undefined) config.ssl = ssl;
     }
 
-    DatabaseNode.getInstance(name, config);
+    openOrReuse(self, name, config);
 
-    if (!defaultConnectionName) {
-      defaultConnectionName = name;
+    if (!self.defaultConnectionName) {
+      self.defaultConnectionName = name;
     }
 
     return {
       type: "database",
       action: "connect",
       name,
-      info: DatabaseNode.getInfo(name),
+      info: infoOf(self, name),
     };
   });
 }
 
-function doClose(def: Record<string, unknown>, context: Context): unknown {
+function doClose(self: DatabaseNode, def: Record<string, unknown>, context: Context): unknown {
   return resolve(def.name ?? null, context, async nameRaw => {
-    const name = connectionName(nameRaw);
+    const name = connectionName(self, nameRaw);
 
     try {
-      await DatabaseNode.closeConnection(name);
+      await closeConnection(self, name);
 
-      if (defaultConnectionName === name) {
-        defaultConnectionName = null;
+      if (self.defaultConnectionName === name) {
+        self.defaultConnectionName = null;
       }
 
       console.log(`[DatabaseNode] Closed connection: ${name}`);
@@ -537,9 +573,9 @@ function doClose(def: Record<string, unknown>, context: Context): unknown {
   });
 }
 
-function doRaw(def: Record<string, unknown>, context: Context): unknown {
+function doRaw(self: DatabaseNode, def: Record<string, unknown>, context: Context): unknown {
   return resolveAll([def.connection ?? null, def.sql, def.bindings ?? null], context, async ([connectionRaw, sqlRaw, bindingsRaw]) => {
-    const conn = requireConnection(connectionRaw);
+    const conn = requireConnection(self, connectionRaw);
     const sql = String(sqlRaw);
     const bindings = toBindings(bindingsRaw);
     // knex has no "bindings: undefined" overload — omitted means the 1-arg call.
@@ -549,26 +585,26 @@ function doRaw(def: Record<string, unknown>, context: Context): unknown {
   });
 }
 
-function doTableExists(def: Record<string, unknown>, context: Context): unknown {
+function doTableExists(self: DatabaseNode, def: Record<string, unknown>, context: Context): unknown {
   return resolveAll([def.connection ?? null, def.table], context, async ([connectionRaw, tableRaw]) => {
     const table = String(tableRaw);
-    return requireConnection(connectionRaw).knex.schema.hasTable(table);
+    return requireConnection(self, connectionRaw).knex.schema.hasTable(table);
   });
 }
 
-function doDropTable(def: Record<string, unknown>, context: Context): unknown {
+function doDropTable(self: DatabaseNode, def: Record<string, unknown>, context: Context): unknown {
   return resolveAll([def.connection ?? null, def.table], context, async ([connectionRaw, tableRaw]) => {
     const table = String(tableRaw);
-    await requireConnection(connectionRaw).knex.schema.dropTableIfExists(table);
+    await requireConnection(self, connectionRaw).knex.schema.dropTableIfExists(table);
     return { type: "database", action: "dropTable", table };
   });
 }
 
-function doInfo(def: Record<string, unknown>, context: Context): unknown {
+function doInfo(self: DatabaseNode, def: Record<string, unknown>, context: Context): unknown {
   return resolve(def.name ?? null, context, async nameRaw => {
     // `info` reports on an unknown connection with `null` rather than throwing,
     // so it resolves the name but does not go through `requireConnection`.
-    const conn = connections.get(connectionName(nameRaw));
+    const conn = self.connections.get(connectionName(self, nameRaw));
     if (!conn) return null;
 
     const result: Record<string, unknown> = { ...conn.info };

@@ -7,7 +7,6 @@ import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
 import { Context, Node, NodeValue, isHttpError, resolve, resolveAll } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
-import { WebSocketNode } from "./WebSocket.js";
 import { safeRelative } from "./File.js";
 import { defaultSwConfig } from "../sw.js";
 
@@ -21,8 +20,8 @@ import { defaultSwConfig } from "../sw.js";
  *
  * Bind additional ports by adding more `{ "listen": ..., "do": [...] }` steps: each is an
  * independent listener (its own `http.Server`) with its own `do`, `client`, `sw`, and
- * `maxBodySize`. The node is a resolver singleton, so the live listeners live in module state
- * (mirroring WebSocketNode's registry), one physical `http.Server` per port.
+ * `maxBodySize`. Live listeners are kept on the node, so they belong to the resolver
+ * that opened them, one physical `http.Server` per port.
  *
  * When "client" is set, the listener auto-serves the @jexs/client browser bundle and ElementNode
  * auto-injects the script tag into <head> elements.
@@ -62,6 +61,8 @@ const HOST_INFO = {
  * fields, so each `listen` step is fully independent (its own request pipeline and config).
  */
 interface Listener {
+  /** The node that started it, so module helpers reach the resolver's own state. */
+  node: ServerNode;
   httpServer: http.Server;
   port: number;
   steps: unknown[];
@@ -70,17 +71,6 @@ interface Listener {
   staticDirs: Map<string, string>;
   swConfig: { path: string; content: string } | null;
   publicDir: string;
-}
-
-// Module-level state — the ServerNode is a resolver singleton, so its live listeners belong to
-// the module, not to instance fields. One shared `wss` in `noServer` mode handles the `upgrade`
-// event from every port (it is decoupled from any single http.Server).
-const listeners: Listener[] = [];
-let wss: WebSocketServer | null = null;
-
-function getWss(): WebSocketServer {
-  if (!wss) wss = new WebSocketServer({ noServer: true });
-  return wss;
 }
 
 /**
@@ -114,7 +104,12 @@ async function handleUpgrade(
   head: Buffer,
   listener: Listener,
 ): Promise<void> {
-  const upgrade = { req, socket, head, wss: getWss(), accepted: false };
+  // One `noServer` WebSocketServer per node, made on the first upgrade. It binds
+  // nothing and only completes handshakes, so one covers every port this node
+  // listens on (it is decoupled from any single http.Server), and its `clients`
+  // set is what dispose closes.
+  const wss = (listener.node.wss ??= new WebSocketServer({ noServer: true }));
+  const upgrade = { req, socket, head, wss, accepted: false };
   try {
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
     const context: Context = {
@@ -599,38 +594,6 @@ function sendResponse(res: http.ServerResponse, result: unknown): void {
   }
 }
 
-/**
- * Close every live listener and the shared WebSocket server, then the process-global
- * WebSocket connection registry. Currently uninvoked in the CLI path (the process runs until
- * killed); exposed for programmatic/test shutdown. Unambiguous now that one module owns all
- * listeners.
- *
- * Timers are NOT stopped here: they belong to the TimerNode instance of whichever
- * resolver started them, and this has no resolver handle. `resolver.destroy()`
- * disposes them, which is also the only way that cannot reach into another
- * resolver's timers.
- */
-export function closeAllServers(): Promise<void> {
-  WebSocketNode.closeAll();
-  const shared = wss;
-  const closes = listeners.map(
-    (l) =>
-      new Promise<void>((res, rej) => {
-        l.httpServer.close((err) => (err ? rej(err) : res()));
-      }),
-  );
-  listeners.length = 0;
-  return new Promise((res, rej) => {
-    const done = () => Promise.all(closes).then(() => res(), rej);
-    if (shared) {
-      wss = null;
-      shared.close(() => void done());
-    } else {
-      void done();
-    }
-  });
-}
-
 // Pick a sensible Cache-Control for a static asset.
 // - sw.js: must always be re-checked (service worker spec); short max-age.
 // - Content-hashed bundles (esbuild emits them under /chunks/ with a hash in
@@ -652,6 +615,34 @@ function resolveClientBrowserDir(): string | null {
 }
 
 export class ServerNode extends Node {
+  /**
+   * Live listeners and the shared upgrade handler, per node and so per resolver:
+   * a port is held until something closes it, and only the resolver that opened
+   * one should be able to. Instance fields rather than methods, so `handlerKeys`
+   * (which reads the prototype) never sees them as ops.
+   */
+  readonly listeners: Listener[] = [];
+  wss: WebSocketServer | null = null;
+
+  /**
+   * Release what this resolver holds: the ports it bound, the sockets its
+   * listeners upgraded, and the upgrade handler itself. Reached through
+   * `resolver.destroy()`, so a listener is only ever taken down by whoever
+   * opened it.
+   *
+   * `wss.clients` is exactly this node's sockets, since the ws server tracks
+   * every socket it completes an upgrade for. Another resolver's connections are
+   * therefore left alone, unlike a process-wide close. WebSocketNode's own
+   * registries need no help here: each socket's `close` handler removes it.
+   */
+  dispose(): void {
+    for (const listener of this.listeners) listener.httpServer.close();
+    this.listeners.length = 0;
+    for (const ws of this.wss?.clients ?? []) ws.close(1001, "Server shutting down");
+    this.wss?.close();
+    this.wss = null;
+  }
+
   static schema: JexsNodeSchema = {
     listen: {
       type: "number",
@@ -689,10 +680,11 @@ export class ServerNode extends Node {
       return null;
     }
 
-    return resolveAll([def.listen, def.maxBodySize ?? null], context, ([portRaw, maxBodyRaw]) => {
+    return resolveAll([def.listen, def.maxBodySize ?? null], context, async ([portRaw, maxBodyRaw]) => {
       const port = Number(portRaw) || 3000;
 
       const listener: Listener = {
+        node: this,
         httpServer: null as unknown as http.Server, // assigned below
         port,
         steps,
@@ -737,20 +729,34 @@ export class ServerNode extends Node {
         handleUpgrade(req, socket, head, listener);
       });
 
-      httpServer.on("error", (err: NodeJS.ErrnoException) => {
-        if (err.code === "EADDRINUSE") {
-          console.error(`[Server] Port ${port} is already in use.`);
-        } else {
-          console.error("[Server] Server error:", err.message);
-        }
-        process.exit(1);
+      this.listeners.push(listener);
+
+      // Bind, and let the step fail rather than killing the process: a port clash
+      // is this listener's failure, not the program's. Another resolver here may
+      // be serving happily, and the author can react with a `catch` like any
+      // other step error.
+      try {
+        await new Promise<void>((res, rej) => {
+          httpServer.once("listening", () => res());
+          httpServer.once("error", rej);
+          httpServer.listen(port, "0.0.0.0");
+        });
+      } catch (err) {
+        const idx = this.listeners.indexOf(listener);
+        if (idx !== -1) this.listeners.splice(idx, 1);
+        const e = err as NodeJS.ErrnoException;
+        throw e.code === "EADDRINUSE" ? new Error(`Port ${port} is already in use.`) : e;
+      }
+
+      // Bound. Anything from here is a runtime fault on a step that has already
+      // returned, so it can only be logged — swap the bind's rejecting handler
+      // (the only one attached) for one that says so.
+      httpServer.removeAllListeners("error");
+      httpServer.on("error", (err: Error) => {
+        console.error("[Server] Server error:", err.message);
       });
 
-      listeners.push(listener);
-
-      httpServer.listen(port, "0.0.0.0", () => {
-        console.log(`Jexs running at http://0.0.0.0:${port}`);
-      });
+      console.log(`Jexs running at http://0.0.0.0:${port}`);
 
       // Log install URL if in installer mode
       if (context.installToken) {
@@ -760,7 +766,9 @@ export class ServerNode extends Node {
         fs.writeFileSync("install.txt", installUrl + "\n");
       }
 
-      return { type: "listen", port };
+      // `output: "null"` in the schema: the step is started for its effect, and
+      // nothing downstream reads a handle to the listener.
+      return null;
     });
   }
 }

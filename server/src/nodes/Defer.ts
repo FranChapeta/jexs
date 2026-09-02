@@ -1,6 +1,10 @@
 import { Node, Context, NodeValue, resolve } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
+// Module-level on purpose, not an instance field: the id is written into the HTML
+// as `__jexs_defer_N` and again into the script that replaces the placeholder, so
+// it has to be unique across every resolver rendering into one page. Per-resolver
+// counters would collide there, the same reason ElementNode's id counter is shared.
 let deferIdCounter = 0;
 
 /**

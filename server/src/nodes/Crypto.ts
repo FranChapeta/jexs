@@ -10,43 +10,41 @@ export function sha256(input: string): string {
   return createHash("sha256").update(input).digest("hex");
 }
 
-// The encryption key is process-global (it's THE app secret). APP_SECRET env is
-// the primary source; the `secret.key` file is a dev fallback, resolved under the
-// root a CryptoNode is constructed with (default "app"). If several node sets with
-// different roots are built in one process, the last constructed wins here — fine,
-// since the secret is a single per-process value.
-let keyFileDir = "app";
-let cachedKey: Buffer | null = null;
+// APP_SECRET env is the primary source for the encryption key; the `secret.key`
+// file is a dev fallback, resolved under the root a CryptoNode is constructed
+// with (default "app"). Both the root and the cached key live on the node, so two
+// resolvers built at different roots read their own key file instead of the last
+// constructor silently winning for the whole process.
 
-function keyFilePath(): string {
-  return path.join(keyFileDir, "secret.key");
+function keyFilePath(self: CryptoNode): string {
+  return path.join(self.keyFileDir, "secret.key");
 }
 
 /** Derive a 32-byte key from APP_SECRET env var, key file, or auto-generated key file */
-function getEncryptionKey(): Buffer {
-  if (cachedKey) return cachedKey;
+function getEncryptionKey(self: CryptoNode): Buffer {
+  if (self.cachedKey) return self.cachedKey;
 
   const secret = process.env.APP_SECRET;
   if (secret) {
-    cachedKey = createHash("sha256").update(secret).digest();
-    return cachedKey;
+    self.cachedKey = createHash("sha256").update(secret).digest();
+    return self.cachedKey;
   }
 
-  const keyFile = keyFilePath();
+  const keyFile = keyFilePath(self);
   if (existsSync(keyFile)) {
-    cachedKey = Buffer.from(readFileSync(keyFile, "utf8").trim(), "hex");
-    return cachedKey;
+    self.cachedKey = Buffer.from(readFileSync(keyFile, "utf8").trim(), "hex");
+    return self.cachedKey;
   }
 
   const key = randomBytes(32);
   writeFileSync(keyFile, key.toString("hex"), "utf8");
-  cachedKey = key;
-  return cachedKey;
+  self.cachedKey = key;
+  return self.cachedKey;
 }
 
 /** AES-256-GCM encrypt. Returns "iv:authTag:ciphertext" (all hex). */
-export function encrypt(plaintext: string): string {
-  const key = getEncryptionKey();
+export function encrypt(self: CryptoNode, plaintext: string): string {
+  const key = getEncryptionKey(self);
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
   const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
@@ -55,11 +53,11 @@ export function encrypt(plaintext: string): string {
 }
 
 /** AES-256-GCM decrypt. Expects "iv:authTag:ciphertext" (all hex). */
-export function decrypt(ciphertext: string): string {
+export function decrypt(self: CryptoNode, ciphertext: string): string {
   const parts = ciphertext.split(":");
   if (parts.length !== 3) throw new Error("[Crypto] Invalid encrypted format");
   const [ivHex, authTagHex, encryptedHex] = parts;
-  const key = getEncryptionKey();
+  const key = getEncryptionKey(self);
   const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(ivHex, "hex"));
   decipher.setAuthTag(Buffer.from(authTagHex, "hex"));
   const decrypted = Buffer.concat([decipher.update(Buffer.from(encryptedHex, "hex")), decipher.final()]);
@@ -146,9 +144,14 @@ export class CryptoNode extends Node {
     },
   };
 
+  /** Root the `secret.key` dev fallback is resolved under. Instance fields, not
+   *  prototype members, so `handlerKeys` never sees them. */
+  keyFileDir: string;
+  cachedKey: Buffer | null = null;
+
   constructor(root: string = "app") {
     super();
-    keyFileDir = root;
+    this.keyFileDir = root;
   }
 
   sha256(def: Record<string, unknown>, context: Context) {
@@ -156,11 +159,11 @@ export class CryptoNode extends Node {
   }
 
   encrypt(def: Record<string, unknown>, context: Context) {
-    return resolve(def.encrypt, context, v => encrypt(this.toString(v)));
+    return resolve(def.encrypt, context, v => encrypt(this, this.toString(v)));
   }
 
   decrypt(def: Record<string, unknown>, context: Context) {
-    return resolve(def.decrypt, context, v => decrypt(this.toString(v)));
+    return resolve(def.decrypt, context, v => decrypt(this, this.toString(v)));
   }
 
   hash(def: Record<string, unknown>, context: Context) {

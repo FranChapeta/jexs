@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createResolver, coreNodes } from "@jexs/core";
+import type { Context } from "@jexs/core";
 import { mergeTls, parseDbUrl, parseTls, redactUrl } from "../src/connection.js";
 import { DatabaseNode } from "../src/nodes/Database.js";
 import { CacheNode } from "../src/nodes/Cache.js";
@@ -237,11 +238,12 @@ test("redis urls are guarded on their scheme and otherwise passed through", () =
 // ── DatabaseNode connect ───────────────────────────────────────────────────────
 
 // knex never dials until a query runs, so these configure without connecting.
-const resolve = createResolver([...coreNodes(), new DatabaseNode()]);
+const dbCtx: Context = {};
+const resolve = createResolver([...coreNodes(), new DatabaseNode()], { context: dbCtx });
 const connect = async (step: Record<string, unknown>): Promise<Record<string, unknown>> =>
   await Promise.resolve(resolve(step, {})) as Record<string, unknown>;
 
-after(async () => { await DatabaseNode.closeAll(); });
+after(async () => { await DatabaseNode.closeAll(dbCtx); });
 
 test("url and the discrete endpoint properties are alternatives, not layers", async () => {
   await assert.rejects(
@@ -266,7 +268,7 @@ test("ssl layers over a url instead of colliding with it", async () => {
   });
   const info = r.info as Record<string, unknown>;
   assert.equal(info.ssl, true);
-  const settings = DatabaseNode.getKnex("c3").client.connectionSettings as Record<string, unknown>;
+  const settings = DatabaseNode.getKnex(dbCtx, "c3").client.connectionSettings as Record<string, unknown>;
   // Merged key-wise. node-postgres would have the url REPLACE the ssl object.
   assert.deepEqual(settings.ssl, { rejectUnauthorized: false, ca: CA_PEM.trim() });
 });
