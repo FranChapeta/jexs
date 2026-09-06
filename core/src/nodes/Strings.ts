@@ -2,6 +2,13 @@ import { Node, Context } from "./Node.js";
 import { resolve, resolveAll } from "../Resolver.js";
 import type { JexsNodeSchema } from "../schema.js";
 
+/**
+ * Chunk size for feeding `btoa`, because `String.fromCharCode(...bytes)` is a
+ * spread and ~100k arguments overflows the stack. Affects speed only, never the
+ * output. Retires on Node 25+, whose V8 has `Uint8Array.prototype.toBase64`.
+ */
+const BASE64_CHUNK = 8192;
+
 export class StringNode extends Node {
   static schema: JexsNodeSchema = {
     concat: {
@@ -69,7 +76,35 @@ export class StringNode extends Node {
         "{ \"slug\": \"Hello World!\" }",
       ],
     },
+    toBase64: {
+      output: "string",
+      markdownDescription: "Encodes a string as base64. The text is read as UTF-8, so any character encodes, not just the Latin-1 range the platform's own `btoa` is limited to.\n\nPass `urlSafe: true` for the alphabet URLs and JWTs use (`-` and `_` in place of `+` and `/`, padding dropped).",
+      examples: [
+        "{ \"toBase64\": { \"concat\": [{ \"var\": \"$user\" }, \":\", { \"var\": \"$key\" }] } }",
+      ],
+      siblings: {
+        urlSafe: {
+          type: "boolean",
+          description: "Use the URL-safe alphabet and drop the `=` padding.",
+        },
+      },
+    },
+    fromBase64: {
+      // Typed, unlike the ops around it: those coerce whatever they are given,
+      // while this one needs text that already IS base64, so a number-output
+      // expression here is a mistake worth catching in the editor.
+      type: "string",
+      output: "string",
+      markdownDescription: "Decodes base64 back to a string, reading the bytes as UTF-8. Accepts either alphabet and tolerates missing padding, so a value that arrived URL-safe needs no flag.",
+      outputDescription: "The decoded text. Throws if the input is not valid base64.",
+      examples: [
+        "{ \"fromBase64\": { \"var\": \"$token\" } }",
+      ],
+    },
     parseJSON: {
+      // Typed for the same reason as `fromBase64`: this reads text that already
+      // IS JSON rather than stringifying whatever arrives.
+      type: "string",
       markdownDescription: "Parses a JSON string; returns `null` on invalid input.",
       outputDescription: "The parsed value, which can be any JSON type (object, array, number, string, boolean, or `null`). Returns `null` if the input isn't valid JSON, so it's indistinguishable from a literal `null`.",
       examples: [
@@ -327,6 +362,34 @@ export class StringNode extends Node {
 
   length(d: Record<string, unknown>, c: Context) {
     return resolve(d.length, c, v => this.toString(v).length);
+  }
+
+  toBase64(def: Record<string, unknown>, c: Context) {
+    return resolveAll([def.toBase64, def.urlSafe], c, ([value, urlSafe]) => {
+      // Through TextEncoder, not straight into `btoa`, which is Latin-1 only:
+      // `btoa("héllo")` throws on its own.
+      const bytes = new TextEncoder().encode(this.toString(value));
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += BASE64_CHUNK) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + BASE64_CHUNK));
+      }
+      const encoded = btoa(binary);
+      return this.toBoolean(urlSafe)
+        ? encoded.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+        : encoded;
+    });
+  }
+
+  fromBase64(def: Record<string, unknown>, c: Context) {
+    return resolve(def.fromBase64, c, v => {
+      // Either alphabet, padded or not: a URL-safe value usually arrives stripped,
+      // and `atob` wants the standard characters and a length that is a multiple of 4.
+      const standard = this.toString(v).trim().replace(/-/g, "+").replace(/_/g, "/");
+      const binary = atob(standard + "=".repeat((4 - (standard.length % 4)) % 4));
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return new TextDecoder().decode(bytes);
+    });
   }
 
   slug(def: Record<string, unknown>, c: Context) {

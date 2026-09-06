@@ -42,3 +42,38 @@ test("segment: word granularity yields locale word boundaries", () => {
 test("segment: resolves a nested-expression input", () => {
   assert.deepEqual(resolve({ segment: { var: "$s" } }, { s: "hi" }), ["h", "i"]);
 });
+
+// base64 wraps the platform's btoa/atob, which are Latin-1 only: `btoa("héllo")`
+// throws on its own, so the UTF-8 round trip is the part worth pinning.
+test("toBase64: encodes UTF-8, matching what every other language calls base64", () => {
+  assert.equal(resolve({ toBase64: "hello" }, {}), "aGVsbG8=");
+  assert.equal(resolve({ toBase64: "héllo ✓" }, {}), "aMOpbGxvIOKckw==");
+  assert.equal(resolve({ toBase64: "" }, {}), "");
+});
+
+test("toBase64: urlSafe swaps the two characters and drops the padding", () => {
+  assert.equal(resolve({ toBase64: "a?b>c~ÿ" }, {}), "YT9iPmN+w78=");
+  assert.equal(resolve({ toBase64: "a?b>c~ÿ", urlSafe: true }, {}), "YT9iPmN-w78");
+});
+
+test("fromBase64: reads either alphabet, padded or not", () => {
+  assert.equal(resolve({ fromBase64: "aMOpbGxvIOKckw==" }, {}), "héllo ✓");
+  assert.equal(resolve({ fromBase64: "YT9iPmN-w78" }, {}), "a?b>c~ÿ");
+  assert.equal(resolve({ fromBase64: "YT9iPmN+w78=" }, {}), "a?b>c~ÿ");
+  assert.equal(resolve({ fromBase64: "" }, {}), "");
+});
+
+test("base64: round trips text far past the spread limit", () => {
+  // `String.fromCharCode(...bytes)` overflows the stack somewhere above 100KB,
+  // which is why the encoder chunks; 300KB proves the chunking works.
+  const big = "é".repeat(300_000);
+  assert.equal(resolve({ fromBase64: { toBase64: { var: "$big" } } }, { big }), big);
+});
+
+test("base64: an expression on either side, and urlSafe as one too", () => {
+  assert.equal(
+    resolve({ toBase64: { concat: [{ var: "$user" }, ":", { var: "$key" }] } }, { user: "ada", key: "s3cret" }),
+    "YWRhOnMzY3JldA==",
+  );
+  assert.equal(resolve({ toBase64: "a?b>c~ÿ", urlSafe: { var: "$safe" } }, { safe: true }), "YT9iPmN-w78");
+});

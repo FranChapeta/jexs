@@ -164,6 +164,22 @@ const cases: Case[] = [
   { label: "email invalid priority (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { email: "a@x.com", subject: "s", priority: "urgent" } },
 
+  // base64 in StringsNode, both directions string-output.
+  { label: "toBase64 with urlSafe (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { toBase64: { var: "$text" }, urlSafe: true } },
+  { label: "string-slot accepts fromBase64 (string-output) (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { foreach: [1], item: { fromBase64: { var: "$token" } }, do: "y" } },
+  // The two decoders type their input, unlike the ops around them that coerce:
+  // these read text that already IS base64 or JSON.
+  { label: "fromBase64 given a number-output expression (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { fromBase64: { add: [1, 2] } } },
+  { label: "parseJSON given a number-output expression (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { parseJSON: { add: [1, 2] } } },
+  { label: "parseJSON given an any-output expression (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { parseJSON: { var: "$raw" } } },
+  { label: "toBase64 still takes anything, since it stringifies (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { toBase64: { add: [1, 2] } } },
+
   // Keyless ops folded into the bare `cache`/`storage` key (value-mode).
   { label: "cache value-mode stats (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { cache: "stats" } },
