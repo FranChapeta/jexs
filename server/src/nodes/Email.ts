@@ -503,13 +503,8 @@ export class EmailNode extends Node {
         if (bcc) message.bcc = bcc;
         const replyTo = addresses(o.replyTo);
         if (replyTo) message.replyTo = Array.isArray(replyTo) ? replyTo.join(", ") : replyTo;
-        if (o.priority != null) {
-          const priority = PRIORITIES.find(p => p === this.toString(o.priority).toLowerCase());
-          if (!priority) {
-            throw new Error(`Invalid email priority "${this.toString(o.priority)}": expected ${PRIORITIES.join(", ")}`);
-          }
-          message.priority = priority;
-        }
+        const priority = this.getOption(o.priority, PRIORITIES, "email priority");
+        if (priority) message.priority = priority;
         if (o.inReplyTo != null) message.inReplyTo = this.toString(o.inReplyTo);
         // Message ids take the same one-or-a-list shape an address field does.
         const references = addresses(o.references);

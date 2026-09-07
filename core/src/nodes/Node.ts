@@ -190,6 +190,22 @@ export abstract class Node {
   protected toArray(value: unknown): unknown[] {
     return toArrayValue(value);
   }
+
+  /**
+   * Helper: the member of an enum sibling's allowed list that a value names, or
+   * undefined when absent, so a caller spells its default with `??`. Anything
+   * present must be a member, an empty string included: a value quietly ignored
+   * makes the step do something other than what it says. Folds case, and `name`
+   * reaches the message, so qualify it ("fetch type", not "type").
+   */
+  protected getOption<T extends string>(value: unknown, allowed: readonly T[], name: string): T | undefined {
+    if (value === null || value === undefined) return undefined;
+    const found = allowed.find(a => a === String(value).toLowerCase());
+    if (!found) {
+      throw new Error(`Invalid ${name} "${String(value)}": expected ${allowed.join(", ")}`);
+    }
+    return found;
+  }
 }
 
 /**

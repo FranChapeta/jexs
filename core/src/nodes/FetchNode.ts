@@ -29,16 +29,6 @@ const PASSTHROUGH: readonly (readonly [string, readonly string[]])[] = [
 /** Methods that never carry a request body */
 const BODYLESS = new Set(["GET", "HEAD"]);
 
-/**
- * Match an enum sibling against its allowed list
- */
-function option<T extends string>(value: unknown, allowed: readonly T[], name: string): T | undefined {
-  if (value === null || value === undefined || value === "") return undefined;
-  const found = allowed.find(a => a === String(value).toLowerCase());
-  if (!found) throw new Error(`Invalid fetch ${name} "${String(value)}": expected ${allowed.join(", ")}`);
-  return found;
-}
-
 /** Classify URL by file extension. Returns "json" | "text" | "binary" | "unknown". */
 function classifyUrlExt(url: string): "json" | "text" | "binary" | "unknown" {
   const q = url.indexOf("?");
@@ -220,11 +210,11 @@ export class FetchNode extends Node {
         // Merged in rather than assigned per key: RequestInit types each of these
         // as its own enum, which a keyed loop cannot express without a cast.
         for (const [key, allowed] of PASSTHROUGH) {
-          const value = option(o[key], allowed, key);
+          const value = this.getOption(o[key], allowed, `fetch ${key}`);
           if (value) Object.assign(options, { [key]: value });
         }
         // Checked before the request goes out: a typo here should not cost a round trip.
-        const forcedKind = option(o.type, DECODE_KINDS, "type");
+        const forcedKind = this.getOption(o.type, DECODE_KINDS, "fetch type");
         const timeout = this.toNumber(o.timeout);
         if (timeout > 0) options.signal = AbortSignal.timeout(timeout);
 
