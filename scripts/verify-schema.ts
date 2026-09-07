@@ -164,6 +164,22 @@ const cases: Case[] = [
   { label: "email invalid priority (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { email: "a@x.com", subject: "s", priority: "urgent" } },
 
+  // CryptoNode: hmac and timingSafeEqual are 2-tuples, with enum-checked siblings.
+  { label: "hmac tuple with algorithm and encoding (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { hmac: [{ var: "$body" }, { var: "$secret" }], algorithm: "sha512", encoding: "base64url" } },
+  { label: "hmac invalid algorithm (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { hmac: ["body", "key"], algorithm: "md5" } },
+  { label: "hmac tuple too short (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { hmac: ["body"] } },
+  { label: "string-slot accepts hmac (string-output) (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { foreach: [1], item: { hmac: ["b", "k"] }, do: "y" } },
+  { label: "string-slot rejects timingSafeEqual (boolean-output) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { foreach: [1], item: { timingSafeEqual: ["a", "b"] }, do: "y" } },
+  { label: "sha256 invalid encoding (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { sha256: "abc", encoding: "hex64" } },
+  { label: "string-slot accepts uuid (string-output) (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { foreach: [1], item: { uuid: true }, do: "y" } },
+
   // base64 in StringsNode, both directions string-output.
   { label: "toBase64 with urlSafe (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { toBase64: { var: "$text" }, urlSafe: true } },

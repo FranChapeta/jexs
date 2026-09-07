@@ -1,5 +1,8 @@
 import bcrypt from "bcrypt";
-import { randomBytes, createHash, createCipheriv, createDecipheriv } from "node:crypto";
+import {
+  randomBytes, randomUUID, createHash, createHmac, createCipheriv, createDecipheriv,
+  timingSafeEqual as timingSafeEqualBytes,
+} from "node:crypto";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { Node, Context, resolve, resolveAll } from "@jexs/core";
@@ -8,6 +11,26 @@ import type { JexsNodeSchema } from "@jexs/core";
 /** Reusable SHA-256 helper (used by SchemaNode and QueryNode) */
 export function sha256(input: string): string {
   return createHash("sha256").update(input).digest("hex");
+}
+
+// One list per option, shared by the schema `enum` and the runtime check below,
+// so what the editor offers and what the node accepts cannot drift apart.
+const ALGORITHMS = ["sha256", "sha512", "sha1"] as const;
+const ENCODINGS = ["hex", "base64", "base64url"] as const;
+
+type Algorithm = (typeof ALGORITHMS)[number];
+type Encoding = (typeof ENCODINGS)[number];
+
+/**
+ * Both values of a two-value op. A missing side is not a comparison that came
+ * out false, it is a step that cannot run, and answering `false` to "does this
+ * token match" when nothing was compared is the wrong answer to give.
+ */
+function pair(value: unknown, name: string, shape: string): unknown[] {
+  if (!Array.isArray(value) || value.length < 2) {
+    throw new Error(`${name} needs two values: ${shape}`);
+  }
+  return value;
 }
 
 // APP_SECRET env is the primary source for the encryption key; the `secret.key`
@@ -81,10 +104,55 @@ export class CryptoNode extends Node {
     sha256: {
       type: "string",
       output: "string",
-      markdownDescription: "Computes the SHA-256 digest of a string.",
-      outputDescription: "A 64-character lowercase hex string.",
+      markdownDescription: "Computes the SHA-256 digest of a string. Pass `encoding` for `base64` or `base64url` instead of hex, which is what a digest going into a header or a URL wants.",
+      outputDescription: "A 64-character lowercase hex string, or the digest in the requested `encoding`.",
       examples: [
         "{ \"sha256\": { \"var\": \"$token\" } }",
+      ],
+      siblings: {
+        encoding: {
+          type: "string",
+          enum: ENCODINGS,
+          description: "Digest encoding (default `\"hex\"`).",
+        },
+      },
+    },
+    hmac: {
+      tuple: 2,
+      prefixItems: [
+        { type: "string", description: "The message to authenticate." },
+        { type: "string", description: "The shared secret key." },
+      ],
+      output: "string",
+      markdownDescription: "Computes an HMAC of the message under the key. This is what verifies a signed webhook: recompute the signature over the raw body and compare it to the header the sender supplied, with `timingSafeEqual` rather than `eq`.",
+      outputDescription: "The MAC in the requested `encoding` (hex by default).",
+      examples: [
+        "{ \"hmac\": [{ \"var\": \"$request.rawBody\" }, { \"var\": \"$env.WEBHOOK_SECRET\" }], \"as\": \"expected\" }",
+      ],
+      siblings: {
+        algorithm: {
+          type: "string",
+          enum: ALGORITHMS,
+          description: "Hash backing the MAC (default `\"sha256\"`).",
+        },
+        encoding: {
+          type: "string",
+          enum: ENCODINGS,
+          description: "Output encoding (default `\"hex\"`).",
+        },
+      },
+    },
+    timingSafeEqual: {
+      tuple: 2,
+      prefixItems: [
+        { type: "string", description: "One value, e.g. the signature a caller sent." },
+        { type: "string", description: "The other, e.g. the signature you computed." },
+      ],
+      output: "boolean",
+      markdownDescription: "Compares two strings in constant time. Use it for anything secret: an `eq` on a token or a signature returns as soon as the first byte differs, and the time that takes tells an attacker how much of a guess was right.\n\nBoth sides are digested before comparing, so values of different lengths compare safely and the comparison leaks no length.",
+      outputDescription: "`true` when the two are identical.",
+      examples: [
+        "{ \"timingSafeEqual\": [{ \"var\": \"$request.headers.x-signature\" }, { \"var\": \"$expected\" }] }",
       ],
     },
     encrypt: {
@@ -128,7 +196,7 @@ export class CryptoNode extends Node {
       ],
       output: "boolean",
       markdownDescription: "Compares a plaintext password against a bcrypt hash.",
-      outputDescription: "`true` if the password matches the hash, otherwise `false` (also `false` if fewer than two args are given).",
+      outputDescription: "`true` if the password matches the hash, otherwise `false`.",
       examples: [
         "{ \"verify\": [{ \"var\": \"$body.password\" }, { \"var\": \"$user.password_hash\" }] }",
       ],
@@ -140,6 +208,15 @@ export class CryptoNode extends Node {
       outputDescription: "A hex string `2 × bytes` characters long.",
       examples: [
         "{ \"randomHex\": 16 }",
+      ],
+    },
+    uuid: {
+      type: "boolean",
+      output: "string",
+      markdownDescription: "Generates a random (version 4) UUID. Use it for an id a database has not issued yet: an idempotency key, a correlation id, a row id chosen before the insert.",
+      outputDescription: "A 36-character UUID, e.g. `\"3f8a1c2e-…\"`.",
+      examples: [
+        "{ \"uuid\": true, \"as\": \"requestId\" }",
       ],
     },
   };
@@ -155,7 +232,40 @@ export class CryptoNode extends Node {
   }
 
   sha256(def: Record<string, unknown>, context: Context) {
-    return resolve(def.sha256, context, v => sha256(this.toString(v)));
+    return resolveAll([def.sha256, def.encoding], context, ([value, encoding]) =>
+      createHash("sha256")
+        .update(this.toString(value))
+        .digest(this.getOption(encoding, ENCODINGS, "sha256 encoding") ?? "hex"),
+    );
+  }
+
+  hmac(def: Record<string, unknown>, context: Context) {
+    // The tuple resolves before it is split, so the whole pair may come from one
+    // expression: `{ "hmac": { "var": "$signing" } }` is as valid as writing the
+    // two values out.
+    return resolveAll([def.hmac, def.algorithm, def.encoding], context,
+      ([args, algorithm, encoding]) => {
+        const [message, key] = pair(args, "hmac", "[message, key]");
+        return createHmac(
+          this.getOption(algorithm, ALGORITHMS, "hmac algorithm") ?? "sha256",
+          this.toString(key),
+        )
+          .update(this.toString(message))
+          .digest(this.getOption(encoding, ENCODINGS, "hmac encoding") ?? "hex");
+      },
+    );
+  }
+
+  timingSafeEqual(def: Record<string, unknown>, context: Context) {
+    return resolve(def.timingSafeEqual, context, args => {
+      const [a, b] = pair(args, "timingSafeEqual", "[value, value]");
+      // Digested first so the two buffers are always the same length: the raw
+      // comparison throws on a mismatch, and returning early for one would leak
+      // the length of the secret.
+      const left = createHash("sha256").update(this.toString(a)).digest();
+      const right = createHash("sha256").update(this.toString(b)).digest();
+      return timingSafeEqualBytes(left, right);
+    });
   }
 
   encrypt(def: Record<string, unknown>, context: Context) {
@@ -175,17 +285,29 @@ export class CryptoNode extends Node {
   }
 
   verify(def: Record<string, unknown>, context: Context) {
-    const args = this.toArray(def.verify);
-    if (args.length < 2) return false;
-    return resolveAll([args[0], args[1]], context, ([plainVal, hashedVal]) =>
-      bcrypt.compare(this.toString(plainVal), this.toString(hashedVal))
-    );
+    return resolve(def.verify, context, args => {
+      const [plainVal, hashedVal] = pair(args, "verify", "[password, hash]");
+      return bcrypt.compare(this.toString(plainVal), this.toString(hashedVal));
+    });
   }
 
   randomHex(def: Record<string, unknown>, context: Context) {
     return resolve(def.randomHex, context, v => {
-      const bytes = this.toNumber(v) || 32;
+      // Absent means the documented 32. Anything else has to be a real count:
+      // `toNumber` reads "abc" as 0, and the `|| 32` that followed then handed
+      // back a token of a size nobody asked for.
+      if (v === null || v === undefined) return randomBytes(32).toString("hex");
+      const bytes = typeof v === "number" ? v
+        : typeof v === "string" && v.trim() !== "" ? Number(v)
+        : NaN;
+      if (!Number.isInteger(bytes) || bytes < 1) {
+        throw new Error(`Invalid randomHex "${String(v)}": expected a positive whole number of bytes`);
+      }
       return randomBytes(bytes).toString("hex");
     });
+  }
+
+  uuid(): string {
+    return randomUUID();
   }
 }
