@@ -206,6 +206,12 @@ const cases: Case[] = [
   { label: "ws-close with code and reason (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { "ws-close": true, name: "feed", code: 4001, reason: "signed out" } },
 
+  // AudioNode: restart, and bytes handed in instead of a url.
+  { label: "audio-play with restart (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { "audio-play": "music", loop: true, restart: true } },
+  { label: "audio-load from content (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { "audio-load": "theme", content: { var: "$bytes" } } },
+
   // Keyless ops folded into the bare `cache`/`storage` key (value-mode).
   { label: "cache value-mode stats (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { cache: "stats" } },
