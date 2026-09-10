@@ -196,6 +196,16 @@ const cases: Case[] = [
   { label: "toBase64 still takes anything, since it stringifies (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { toBase64: { add: [1, 2] } } },
 
+  // WsNode: ws-status is string-output, binaryType is enum-checked.
+  { label: "ws-connect with name, retry and protocols (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { "ws-connect": "/feed", name: "feed", retry: 3, protocols: ["v2"], binaryType: "arraybuffer" } },
+  { label: "ws-connect invalid binaryType (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "ws-connect": "/feed", binaryType: "buffer" } },
+  { label: "string-slot accepts ws-status (string-output) (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { foreach: [1], item: { "ws-status": true }, do: "y" } },
+  { label: "ws-close with code and reason (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { "ws-close": true, name: "feed", code: 4001, reason: "signed out" } },
+
   // Keyless ops folded into the bare `cache`/`storage` key (value-mode).
   { label: "cache value-mode stats (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { cache: "stats" } },

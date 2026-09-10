@@ -92,7 +92,7 @@ export function registerDomLazy(resolver: Resolver): void {
   );
 
   resolver.registerLazy(
-    ["ws-connect", "ws-send", "ws-close"],
+    ["ws-connect", "ws-send", "ws-close", "ws-status"],
     (r) => import("./nodes/WsNode.js").then(({ WsNode }) => {
       r.registerNode(new WsNode());
     }),
