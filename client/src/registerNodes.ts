@@ -106,7 +106,7 @@ export function registerDomLazy(resolver: Resolver): void {
   );
 
   resolver.registerLazy(
-    ["rtc"],
+    ["rtc", "rtc-connect", "rtc-signal", "rtc-send", "rtc-broadcast", "rtc-close", "rtc-status"],
     (r) => import("./nodes/WebRTCNode.js").then(({ WebRTCNode }) => {
       r.registerNode(new WebRTCNode());
     }),

@@ -206,6 +206,26 @@ const cases: Case[] = [
   { label: "ws-close with code and reason (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { "ws-close": true, name: "feed", code: 4001, reason: "signed out" } },
 
+  // WebRTCNode: signalling is a seam, so `listen` carries the sink and the
+  // handshake ops it replaced are gone.
+  { label: "rtc listen with handlers and iceServers (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { rtc: "listen", trickle: false, timeout: 30000,
+            iceServers: [{ urls: "turn:turn.test:3478", username: "u", credential: "p" }],
+            "on-signal": { "ws-send": { var: "$rtcSignal" } },
+            "on-open": { concat: ["up"] } } },
+  { label: "rtc listen without on-signal (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { rtc: "listen", timeout: 30000 } },
+  { label: "rtc-signal peer must be a string, not a number-output expression (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "rtc-signal": { add: [1, 2] }, data: { var: "$wsMessage.sig" } } },
+  { label: "rtc-signal without data (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "rtc-signal": { var: "$wsMessage.from" } } },
+  { label: "rtc value-mode holds only the peerless ops (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { rtc: "connect", id: "peer" } },
+  { label: "rtc send invalid channel (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "rtc-send": "peer", data: { n: 1 }, channel: "reliable" } },
+  { label: "string-slot accepts rtc connect and rtc status (string-output) (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { concat: [{ "rtc-connect": "peer" }, { "rtc-status": "peer" }] } },
+
   // AudioNode: restart, and bytes handed in instead of a url.
   { label: "audio-play with restart (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { "audio-play": "music", loop: true, restart: true } },
