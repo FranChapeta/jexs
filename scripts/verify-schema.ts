@@ -226,6 +226,11 @@ const cases: Case[] = [
   { label: "string-slot accepts rtc connect and rtc status (string-output) (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { concat: [{ "rtc-connect": "peer" }, { "rtc-status": "peer" }] } },
 
+  // DomNode: pointerLocked reads the live browser state rather than a context
+  // var a listener used to push, so it is boolean-output.
+  { label: "string-slot rejects pointerLocked (boolean-output) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { foreach: [1], item: { pointerLocked: true }, do: "y" } },
+
   // AudioNode: restart, and bytes handed in instead of a url.
   { label: "audio-play with restart (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { "audio-play": "music", loop: true, restart: true } },

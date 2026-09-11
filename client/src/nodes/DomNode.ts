@@ -3,8 +3,6 @@ import { resolve, resolveAll } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { hydrate } from "../events.js";
 
-let pointerLockListenerAdded = false;
-
 // Live DOM properties addressable by getProp/setProp, used to constrain the
 // property slot of each tuple. Read-only metrics are gettable only, so they're
 // absent from the settable list.
@@ -392,12 +390,19 @@ export class DomNode extends Node {
     pointerLock: {
       type: ["string", "object"],
       output: "null",
-      markdownDescription: "Requests pointer lock on an element. Updates `context.pointerLocked` on lock state changes.",
+      markdownDescription: "Requests pointer lock on an element, resolving once the browser grants it. A refusal (no user gesture, or the document is not focused) rejects, so `catch` can see it.\nRead the current state with `pointerLocked` rather than tracking it: the browser also drops the lock on its own when the user presses Escape.",
+      examples: ["{ \"pointerLock\": \"#canvas\" }"],
     },
     pointerUnlock: {
       type: "boolean",
       output: "null",
       markdownDescription: "Exits pointer lock via `document.exitPointerLock()`.",
+    },
+    pointerLocked: {
+      type: "boolean",
+      output: "boolean",
+      markdownDescription: "Whether an element currently holds the pointer lock. Read on demand, so it is never stale: the lock can be lost without the page asking, and a game loop reading this each frame sees that immediately.",
+      examples: ["{ \"pointerLocked\": true }"],
     },
   };
 
@@ -769,19 +774,21 @@ export class DomNode extends Node {
     return resolve(def.pointerLock, context, v => {
       const el = getElement(v);
       if (!el) return null;
-      if (!pointerLockListenerAdded) {
-        pointerLockListenerAdded = true;
-        document.addEventListener("pointerlockchange", () => {
-          context.pointerLocked = !!document.pointerLockElement;
-        });
-      }
-      el.requestPointerLock();
-      return null;
+      // Typed `Promise<void>` by lib.dom, but that is Pointer Lock 2.0 and not
+      // yet universal: Chrome, Edge and Firefox return a promise that rejects
+      // when the browser refuses, Safari returns undefined. So the promise is
+      // awaited when there is one, which is what lets a refusal reach `catch`,
+      // and the step stays synchronous where the browser is.
+      const granted: unknown = el.requestPointerLock();
+      return granted instanceof Promise ? granted.then(() => null) : null;
     });
   }
   pointerUnlock(_def: Record<string, unknown>, _context: Context): NodeValue {
     document.exitPointerLock();
     return null;
+  }
+  pointerLocked(_def: Record<string, unknown>, _context: Context): NodeValue {
+    return !!document.pointerLockElement;
   }
 }
 
