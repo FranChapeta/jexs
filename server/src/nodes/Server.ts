@@ -32,6 +32,7 @@ const MIME_TYPES: Record<string, string> = {
   ".css": "text/css",
   ".js": "application/javascript",
   ".json": "application/json",
+  ".map": "application/json",
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
@@ -44,6 +45,30 @@ const MIME_TYPES: Record<string, string> = {
   ".gltf": "model/gltf+json",
   ".bin": "application/octet-stream",
 };
+
+// What may be served straight off disk. A Set built once, because the check
+// runs on every request, not just the ones that turn out to be static.
+//
+// Deliberately its own list rather than MIME_TYPES' keys: the two differ, and
+// deriving either from the other would change what is reachable. `.json` has a
+// content type for responses but is not servable from disk, and `.map` is
+// servable without needing its own entry to be listed here.
+const STATIC_EXTENSIONS = new Set([
+  ".css",
+  ".js",
+  ".map",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".svg",
+  ".ico",
+  ".woff",
+  ".woff2",
+  ".glb",
+  ".gltf",
+  ".bin",
+]);
 
 // Host facts fixed for the process lifetime — snapshot once instead of calling
 // os.platform/arch/hostname and os.cpus() (which allocates a per-CPU timing
@@ -177,7 +202,7 @@ async function handleRequest(
     }
 
     // Try to serve static files from public directory
-    if (await tryServeStatic(requestPath, method, res, listener)) {
+    if (await tryServeStatic(req, requestPath, method, res, listener)) {
       return;
     }
 
@@ -261,6 +286,14 @@ async function handleRequest(
 
     sendResponse(res, result);
   } catch (error) {
+    // Once the status line is out (a static file, a streamed render) there is no
+    // status left to change. Log and close, rather than raise a second error
+    // about headers already sent and lose the real one.
+    if (res.headersSent) {
+      console.error("Request error after the response started:", error);
+      res.end();
+      return;
+    }
     if (error instanceof Error && error.message === "Body too large") {
       sendResponse(res, {
         response: "Request body too large",
@@ -391,6 +424,7 @@ function parseCookies(req: http.IncomingMessage): Record<string, string> {
 }
 
 async function tryServeStatic(
+  req: http.IncomingMessage,
   requestPath: string,
   method: string,
   res: http.ServerResponse,
@@ -398,81 +432,148 @@ async function tryServeStatic(
 ): Promise<boolean> {
   if (method !== "GET") return false;
 
-  const staticExtensions = [
-    ".css",
-    ".js",
-    ".map",
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".gif",
-    ".svg",
-    ".ico",
-    ".woff",
-    ".woff2",
-    ".glb",
-    ".gltf",
-    ".bin",
-  ];
   const ext = path.extname(requestPath).toLowerCase();
+  if (!STATIC_EXTENSIONS.has(ext)) return false;
 
-  if (!staticExtensions.includes(ext)) return false;
-
-  // Check registered static directories (e.g. @jexs/client browser bundle)
-  for (const [prefix, localDir] of listener.staticDirs) {
-    if (requestPath.startsWith(prefix + "/") || requestPath === prefix) {
-      // safeRelative decodes: browsers percent-encode spaces and UTF-8, so
-      // without it a file named `foto ñ.png` is unreachable. Decoding is also
-      // what admits `..%2f`, which is why the guard is the same call.
-      const relative = safeRelative(localDir, requestPath.slice(prefix.length));
-      if (relative === null) continue;
-      const filePath = path.join(localDir, relative);
-
-      try {
-        const stat = await fs.promises.stat(filePath);
-        if (!stat.isFile()) continue;
-
-        const content = await fs.promises.readFile(filePath);
-        const headers: Record<string, string> = {
-          "Content-Type": getMimeType(ext),
-          "Cache-Control": cacheControlFor(requestPath, filePath),
-        };
-        if (path.basename(filePath) === "sw.js") headers["Service-Worker-Allowed"] = "/";
-        res.writeHead(200, headers);
-        res.end(content);
-        return true;
-      } catch {
-        continue;
-      }
+  for (const filePath of candidateFiles(requestPath, listener)) {
+    let stat: fs.Stats;
+    try {
+      stat = await fs.promises.stat(filePath);
+    } catch (err) {
+      // Nothing at this candidate is a reason to try the next one; anything
+      // else is a real failure and belongs to handleRequest.
+      if (isMissingFile(err)) continue;
+      throw err;
     }
-  }
+    // A directory in the way is not a static file, but a later candidate or a
+    // route may still answer.
+    if (!stat.isFile()) continue;
 
-  // Fall back to the configured public/ directory
-  const publicDir = listener.publicDir;
-  // Same decode-and-contain. Note the decoding stops here: `requestPath` itself
-  // stays encoded, because it also feeds route matching, where turning `%2f`
-  // into a separator would change which route a request matches.
-  const relative = safeRelative(publicDir, requestPath);
-  if (relative === null) return false;
-  const filePath = path.join(publicDir, relative);
-
-  try {
-    const stat = await fs.promises.stat(filePath);
-    if (!stat.isFile()) return false;
-
-    const content = await fs.promises.readFile(filePath);
-    const mimeType = getMimeType(ext);
-    const headers: Record<string, string> = {
-      "Content-Type": mimeType,
-      "Cache-Control": cacheControlFor(requestPath, filePath),
-    };
-    if (path.basename(filePath) === "sw.js") headers["Service-Worker-Allowed"] = "/";
-    res.writeHead(200, headers);
-    res.end(content);
+    await sendStaticFile(req, res, requestPath, filePath, ext, stat);
     return true;
-  } catch {
-    return false;
   }
+
+  return false;
+}
+
+/**
+ * Where `requestPath` could live, in precedence order: every registered static
+ * directory whose prefix it falls under (the @jexs/client browser bundle and
+ * friends), then the configured public/ directory.
+ *
+ * safeRelative decodes: browsers percent-encode spaces and UTF-8, so without it
+ * a file named `foto ñ.png` is unreachable. Decoding is also what admits
+ * `..%2f`, which is why the guard is the same call. The decoding stops here:
+ * `requestPath` itself stays encoded, because it also feeds route matching,
+ * where turning `%2f` into a separator would change which route matches.
+ */
+function* candidateFiles(requestPath: string, listener: Listener): Generator<string> {
+  for (const [prefix, localDir] of listener.staticDirs) {
+    if (!requestPath.startsWith(prefix + "/") && requestPath !== prefix) continue;
+    const relative = safeRelative(localDir, requestPath.slice(prefix.length));
+    if (relative !== null) yield path.join(localDir, relative);
+  }
+
+  const relative = safeRelative(listener.publicDir, requestPath);
+  if (relative !== null) yield path.join(listener.publicDir, relative);
+}
+
+/**
+ * Does this error mean nothing is there, as opposed to something being there
+ * and going wrong? Only the first may fall through to the route pipeline, which
+ * owns the 404. A file that exists but cannot be read (EACCES, EIO, a
+ * descriptor exhaustion) is a server failure, and swallowing it would report a
+ * permission problem as a missing page, with nothing logged to say otherwise.
+ */
+function isMissingFile(err: unknown): boolean {
+  if (!err || typeof err !== "object" || !("code" in err)) return false;
+  const code = (err as { code: unknown }).code;
+  return code === "ENOENT" || code === "ENOTDIR" || code === "ENAMETOOLONG";
+}
+
+/**
+ * Send one static file, answering a conditional GET with 304 where the client's
+ * copy is still good. The file is only read once that check has failed, so a
+ * revalidation costs a stat and nothing more.
+ */
+async function sendStaticFile(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  requestPath: string,
+  filePath: string,
+  ext: string,
+  stat: fs.Stats,
+): Promise<void> {
+  // Both the cache policy and the registration header turn on this one fact,
+  // so establish it once rather than taking the basename apart twice.
+  const isServiceWorker = path.basename(filePath) === "sw.js";
+  const etag = etagFor(stat);
+  const headers: Record<string, string> = {
+    "Cache-Control": cacheControlFor(requestPath, isServiceWorker),
+    "Last-Modified": stat.mtime.toUTCString(),
+    ETag: etag,
+  };
+  if (isServiceWorker) headers["Service-Worker-Allowed"] = "/";
+
+  if (isFresh(req.headers, etag, stat.mtime)) {
+    // No body on a 304, so nothing describing one either: the client keeps the
+    // bytes and the headers it already stored with them.
+    res.writeHead(304, headers);
+    res.end();
+    return;
+  }
+
+  const content = await fs.promises.readFile(filePath);
+  // Length from the buffer in hand rather than from the stat, which is one
+  // filesystem round trip out of date by now. Without it every asset goes out
+  // chunked, which costs framing and denies the client a total to count against.
+  res.writeHead(200, {
+    ...headers,
+    "Content-Type": getMimeType(ext),
+    "Content-Length": String(content.length),
+  });
+  res.end(content);
+}
+
+// Derived from size + mtime rather than the bytes, so freshness can be decided
+// from the stat alone without reading the file. That is exactly what makes it
+// weak: two writes in the same millisecond that keep the length are one tag.
+function etagFor(stat: fs.Stats): string {
+  return `W/"${stat.size.toString(16)}-${stat.mtime.getTime().toString(16)}"`;
+}
+
+/** Does the client already hold a good copy? RFC 9110 conditional GET rules. */
+function isFresh(
+  reqHeaders: http.IncomingHttpHeaders,
+  etag: string,
+  mtime: Date,
+): boolean {
+  // If-None-Match, when sent at all, decides on its own: a client that has an
+  // ETag gets no second opinion from the date.
+  const noneMatch = reqHeaders["if-none-match"];
+  if (typeof noneMatch === "string") {
+    if (noneMatch.trim() === "*") return true;
+    const current = withoutWeakPrefix(etag);
+    return noneMatch
+      .split(",")
+      .some((candidate) => withoutWeakPrefix(candidate.trim()) === current);
+  }
+
+  const modifiedSince = reqHeaders["if-modified-since"];
+  if (typeof modifiedSince === "string") {
+    const since = Date.parse(modifiedSince);
+    if (Number.isNaN(since)) return false;
+    // HTTP dates carry whole seconds, so compare at that resolution: the header
+    // we sent for an mtime of x.640s reads as x.000s coming back.
+    return Math.floor(mtime.getTime() / 1000) * 1000 <= since;
+  }
+
+  return false;
+}
+
+// Weak comparison: the W/ prefix takes no part in the match (RFC 9110).
+function withoutWeakPrefix(tag: string): string {
+  return tag.startsWith("W/") ? tag.slice(2) : tag;
 }
 
 function getMimeType(ext: string): string {
@@ -600,8 +701,8 @@ function sendResponse(res: http.ServerResponse, result: unknown): void {
 //   the filename) are immutable — long max-age + immutable saves revalidation.
 // - Everything else: 1h. Long enough to help repeat-visit performance, short
 //   enough that an unhashed CSS or image update propagates within an hour.
-function cacheControlFor(requestPath: string, filePath: string): string {
-  if (path.basename(filePath) === "sw.js") return "public, max-age=0, must-revalidate";
+function cacheControlFor(requestPath: string, isServiceWorker: boolean): string {
+  if (isServiceWorker) return "public, max-age=0, must-revalidate";
   if (requestPath.includes("/chunks/")) return "public, max-age=31536000, immutable";
   return "public, max-age=3600";
 }
