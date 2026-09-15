@@ -9,9 +9,10 @@ import { createResolver } from "@jexs/core";
 import type { Context } from "@jexs/core";
 import { loadNodePackages, entryContext, safeRelative } from "@jexs/server";
 import {
-  allowedKeysFor, openWindow, reopenPrimary, shellTemplate, targetWindow, windowNameOf,
-  wrapPage,
+  allowedKeysFor, openWindow, pageForWindowName, reopenPrimary, shellTemplate, targetWindow,
+  windowNameOf, wrapPage,
 } from "./nodes/Window.js";
+import { BROWSER_DIR, TEMPLATES_DIR } from "./paths.js";
 import { hasTray } from "./nodes/Tray.js";
 import { installBridge, rejectAll } from "./bridge.js";
 
@@ -40,13 +41,30 @@ async function main(): Promise<void> {
 
   await app.whenReady();
 
-  const nodes = await loadNodePackages(projectDir, { root: ".", env: "node" });
+  // The resolver root anchors `/`-prefixed template paths. Pointing it at the
+  // renderer templates rather than the project folder makes a leading slash mean
+  // the same thing it means in a server project, where `jexs run app/index.json
+  // app` passes the template directory as the root: "from my templates", not
+  // "from wherever the project happens to sit". It applies wherever a template
+  // runs, `app/main.json` included, so main-process startup reaches a page with
+  // `/index.json` rather than `../src/index.json`.
+  const nodes = await loadNodePackages(projectDir, { root: TEMPLATES_DIR, env: "node" });
   const resolver = createResolver(nodes);
-  const templatesDir = path.join(projectDir, "src");
-  const browserDir = path.join(projectDir, "dist", "browser");
+  const templatesDir = path.join(projectDir, TEMPLATES_DIR);
+  const browserDir = path.join(projectDir, BROWSER_DIR);
 
-  function mainContext(win?: BrowserWindow | null, dir: string = templatesDir): Context {
-    const ctx = entryContext(dir);
+  function mainContext(win?: BrowserWindow | null, dir?: string): Context {
+    // A call a page forwards to main resolves against that page's own directory,
+    // so `{ file: "part.json" }` means the same thing whether it ran while the
+    // template rendered (FileNode rebases per load) or after the client hydrated
+    // it and called back. A window with no page, and the shell render itself,
+    // fall back to the template root.
+    let base = dir;
+    if (base === undefined) {
+      const page = pageForWindowName(windowNameOf(win));
+      base = page === undefined ? templatesDir : path.dirname(path.join(templatesDir, page));
+    }
+    const ctx = entryContext(base);
     if (win) {
       const name = windowNameOf(win);
       if (name) ctx.windowName = name;
@@ -74,7 +92,11 @@ async function main(): Promise<void> {
       ctx._clientScript = "/client.js";
       ctx.page = rel;
       ctx.title = app.getName();
-      const html = await Promise.resolve(resolver(shellTemplate(), ctx));
+      // By presence rather than configuration: a project with no CSS step emits
+      // no file and gets no link, and one that builds a stylesheet next to its
+      // bundle needs no wiring to have it linked.
+      const stylesheets = existsSync(path.join(browserDir, "styles.css")) ? ["/styles.css"] : [];
+      const html = await Promise.resolve(resolver(shellTemplate(stylesheets), ctx));
       return new Response(String(html), { headers: { "content-type": "text/html; charset=utf-8" } });
     }
     // Without the guard `..%2f..%2f..%2fetc/passwd` reads an arbitrary file —

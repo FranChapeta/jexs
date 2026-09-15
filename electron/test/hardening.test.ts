@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createResolver, coreNodes } from "@jexs/core";
 import path from "node:path";
 import { safeRelative } from "@jexs/server";
-import { SHELL_CSP, registerWrap, resetWindows, shellTemplate, wrapPage } from "../src/nodes/Window.js";
+import { SHELL_CSP, pageForWindowName, registerWrap, resetWindows, shellTemplate, wrapPage } from "../src/nodes/Window.js";
 import { deniedKey } from "../src/bridge.js";
 
 test("the shell carries a CSP", () => {
@@ -28,6 +28,29 @@ test("the CSP blocks code execution without breaking normal app behavior", () =>
   assert.doesNotMatch(SHELL_CSP, /connect-src/);
   assert.doesNotMatch(SHELL_CSP, /img-src/);
   assert.doesNotMatch(SHELL_CSP, /style-src/);
+});
+
+// A forwarded call carries no record of which template issued it, so main looks
+// the page up from the window's wrap token to resolve relative loads against the
+// directory that template lives in.
+test("a window's page is recoverable for resolving its relative loads", () => {
+  resetWindows();
+  registerWrap("detail", "pages/detail.json");
+
+  assert.equal(pageForWindowName("detail"), "pages/detail.json");
+  // What the runner derives from it: the page's own directory, not the root.
+  assert.equal(path.dirname(path.join("/proj/src", pageForWindowName("detail")!)), path.join("/proj/src", "pages"));
+
+  // A window with no wrap token, and an unnamed one, both fall back to the root.
+  assert.equal(pageForWindowName("never-opened"), undefined);
+  assert.equal(pageForWindowName(undefined), undefined);
+});
+
+test("a closed window stops resolving to its old page", () => {
+  resetWindows();
+  registerWrap("detail", "pages/detail.json");
+  resetWindows();
+  assert.equal(pageForWindowName("detail"), undefined);
 });
 
 // Stands in for `resolver.keys`. `table` and `write` are siblings rather than

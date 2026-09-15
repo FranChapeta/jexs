@@ -128,4 +128,24 @@ test("shellTemplate resolves to a document with the page mounted and script inje
   assert.match(html, /<meta charset="utf-8">/);
   assert.match(html, /<script type="module" src="\/client\.js"><\/script>/);
   assert.match(html, /<body>/);
+  // Nothing seeded a stylesheet, so the head carries no link at all rather than
+  // an empty or dangling href.
+  assert.doesNotMatch(html, /<link/);
+});
+
+// The page is mounted into the body by the main process, so a stylesheet can
+// only reach the head by being handed to the shell.
+test("shellTemplate links the stylesheets it is given, in order", () => {
+  const resolve = createResolver(coreNodes());
+  const html = String(
+    resolve(shellTemplate(["/styles.css", "/theme.css"]), { title: "My App", page: "index.json" }),
+  );
+
+  assert.match(html, /<link rel="stylesheet" href="\/styles\.css">/);
+  // Order is the cascade, so it has to survive the round trip.
+  assert.ok(html.indexOf("/styles.css") < html.indexOf("/theme.css"));
+  // In the head, not the body: a link in the body still applies, but only after
+  // the document has begun rendering unstyled.
+  const head = html.slice(0, html.indexOf("<body"));
+  assert.match(head, /<link rel="stylesheet" href="\/theme\.css">/);
 });

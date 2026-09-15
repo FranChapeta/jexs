@@ -167,6 +167,20 @@ export function wrapPage(token: string | null): string | undefined {
   return token === null ? undefined : wrapTokens.get(token);
 }
 
+/**
+ * The template a named window is showing, via the wrap token it holds.
+ *
+ * Lets main resolve a call a page forwards against that page's own directory.
+ * Without it every forwarded `{ file }` resolves against the template root, so
+ * the same relative path means one thing while the template renders and another
+ * once the client hydrates and calls back.
+ */
+export function pageForWindowName(name: string | undefined): string | undefined {
+  if (name === undefined) return undefined;
+  const token = tokenByName.get(name);
+  return token === undefined ? undefined : wrapTokens.get(token);
+}
+
 /** Test seam: the current default, or null. */
 export function currentDefault(): string | null {
   return defaultWindowName;
@@ -273,7 +287,7 @@ export async function openWindow(opts: Record<string, unknown> = {}): Promise<st
 export const SHELL_CSP =
   "script-src 'self' app:; object-src 'none'; base-uri 'none'";
 
-export function shellTemplate(): unknown {
+export function shellTemplate(stylesheets: readonly string[] = []): unknown {
   return {
     tag: "html",
     content: [
@@ -283,6 +297,10 @@ export function shellTemplate(): unknown {
           { tag: "meta", charset: "utf-8" },
           { tag: "meta", "http-equiv": "Content-Security-Policy", content: SHELL_CSP },
           { tag: "meta", name: "viewport", content: "width=device-width, initial-scale=1" },
+          // The page is mounted into the body by this process, so it cannot reach
+          // this head: a stylesheet has to be handed in here. Kept in the given
+          // order, since that is the order the cascade resolves them in.
+          ...stylesheets.map((href) => ({ tag: "link", rel: "stylesheet", href })),
           { tag: "title", content: { var: "$title" } },
         ],
       },

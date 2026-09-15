@@ -1,0 +1,14 @@
+/**
+ * Project-relative directories the runner works from.
+ *
+ * `TEMPLATES_DIR` is both where renderer templates are read from AND the
+ * resolver root, so a leading slash in a template means "from my templates"
+ * rather than "from wherever the project sits". That is the same rule a server
+ * project gets from `jexs run app/index.json app`, where the template directory
+ * is passed as the root. The two uses share this constant because the whole
+ * point is that they cannot drift apart.
+ */
+export const TEMPLATES_DIR = "src";
+
+/** The `jexs bundle` output */
+export const BROWSER_DIR = "dist/browser";
