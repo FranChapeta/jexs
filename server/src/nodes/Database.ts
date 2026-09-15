@@ -411,10 +411,16 @@ function driverOptions(): string {
  * Open a knex instance, turning a missing driver into an instruction.
  *
  * The three drivers are OPTIONAL peers — knex declares them that way too, and
- * shipping all of them would make every install compile better-sqlite3 (64 MB,
- * native) to run a Postgres app. knex requires the driver lazily, so the failure
- * only ever reaches someone who asked for that database; its own message talks
- * about knex, which means nothing to someone writing JSON.
+ * shipping all of them would pull 26 MB of sqlite into a Postgres-only install.
+ * knex requires the driver lazily, so the failure only ever reaches someone who
+ * asked for that database; its own message talks about knex, which means
+ * nothing to someone writing JSON.
+ *
+ * Their peer ranges carry no upper bound on purpose. knex is what calls the
+ * driver APIs, this file only names them, so capping a major here would block
+ * consumers over a compatibility question we never ask. The sqlite floor is the
+ * one exception, set where upstream began supporting the whole of our `engines`
+ * Node range.
  */
 function createConnection(config: DatabaseConfig): KnexType {
   try {

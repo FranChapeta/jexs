@@ -1,6 +1,6 @@
 {
   "name": "@jexs/server",
-  "version": "0.9.0",
+  "version": "1.0.0",
   "license": "MIT",
   "description": "Node.js server runtime for Jexs — HTTP, routing, SQLite/MySQL/PostgreSQL, sessions, OAuth, email, web-push, WebSocket",
   "keywords": [
@@ -40,17 +40,20 @@
       "types": "./dist/index.d.ts"
     }
   },
+  "engines": {
+    "node": ">=24"
+  },
   "files": [
     "dist",
     "!dist/schema.json",
     "!dist/**/*.map"
   ],
   "peerDependencies": {
-    "@jexs/core": "^1.1.0",
-    "@jexs/physics": "^0.5.0",
-    "better-sqlite3": "^11.0.0",
-    "mysql2": "^3.6.0",
-    "pg": "^8.23.0"
+    "@jexs/core": "^1.2.0",
+    "@jexs/physics": "^0.6.0",
+    "better-sqlite3": ">=12.10.1",
+    "mysql2": ">=3.0.0",
+    "pg": ">=8.0.0"
   },
   "peerDependenciesMeta": {
     "@jexs/physics": {
@@ -71,22 +74,20 @@
     "ajv-formats": "^3.0.1",
     "bcrypt": "^6.0.0",
     "esbuild": "^0.28.1",
-    "ioredis": "^5.3.0",
+    "ioredis": "^6.0.0",
     "knex": "^3.1.0",
     "memjs": "^1.3.0",
-    "nodemailer": "^9.0.3",
+    "nodemailer": "^10.0.0",
     "web-push": "^3.6.0",
     "ws": "^8.19.0"
   },
   "devDependencies": {
-    "@types/bcrypt": "^5.0.0",
-    "@types/better-sqlite3": "^7.6.0",
-    "@types/node": "^20.0.0",
-    "@types/nodemailer": "^7.0.10",
-    "@types/uuid": "^9.0.0",
+    "@types/bcrypt": "^6.0.0",
+    "@types/node": "^24.0.0",
+    "@types/nodemailer": "^8.0.1",
     "@types/web-push": "^3.6.0",
     "@types/ws": "^8.18.1",
-    "better-sqlite3": "^11.0.0",
+    "better-sqlite3": "^13.0.0",
     "mysql2": "^3.6.0",
     "pg": "^8.23.0"
   }

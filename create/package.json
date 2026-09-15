@@ -24,11 +24,17 @@
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "engines": {
+    "node": ">=24"
+  },
   "files": [
     "dist",
     "!dist/**/*.map"
   ],
   "scripts": {
     "build": "tsc -b"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0"
   }
 }
