@@ -94,7 +94,7 @@ export class SchemaNode extends Node {
 
   private root: string;
 
-  constructor(root: string = "app") {
+  constructor(root: string = "src") {
     super();
     this.root = root;
   }

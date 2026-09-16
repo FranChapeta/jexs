@@ -12,3 +12,10 @@ export const TEMPLATES_DIR = "src";
 
 /** The `jexs bundle` output */
 export const BROWSER_DIR = "dist/browser";
+
+/**
+ * Optional main-process startup, relative to `TEMPLATES_DIR`. Runs before any
+ * window exists, for menus, a tray, or opening windows itself. Absent, the
+ * runner just opens a window on the default page.
+ */
+export const MAIN_TEMPLATE = "main.json";

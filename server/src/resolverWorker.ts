@@ -20,7 +20,7 @@ if (!isMainThread && parentPort) {
   // in `thread` steps resolve against the same base as the main thread.
   const root = workerData && typeof workerData === "object" && "root" in workerData
     ? String((workerData as { root: unknown }).root)
-    : "app";
+    : "src";
   const resolver = createResolver([...coreNodes(), ...serverNodes({ root })]);
   port.on("message", (req: ThreadRequest) => {
     const { rid, steps, params } = req;

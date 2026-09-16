@@ -12,7 +12,7 @@ import {
   allowedKeysFor, openWindow, pageForWindowName, reopenPrimary, shellTemplate, targetWindow,
   windowNameOf, wrapPage,
 } from "./nodes/Window.js";
-import { BROWSER_DIR, TEMPLATES_DIR } from "./paths.js";
+import { BROWSER_DIR, MAIN_TEMPLATE, TEMPLATES_DIR } from "./paths.js";
 import { hasTray } from "./nodes/Tray.js";
 import { installBridge, rejectAll } from "./bridge.js";
 
@@ -143,10 +143,12 @@ async function main(): Promise<void> {
   // Global shortcuts are an OS-level registration; release them explicitly.
   app.on("will-quit", () => { globalShortcut.unregisterAll(); });
 
-  // `app/main.json` resolves against the project root (FileNode falls back to the
-  // resolver root without FILE_DIR, then rebases to <proj>/app for its includes).
-  if (existsSync(path.join(projectDir, "app", "main.json"))) {
-    await Promise.resolve(resolver({ file: "app/main.json" }, mainContext(null, projectDir)));
+  // `src/main.json` sits with the templates rather than in a directory of its
+  // own, so a project has one place its JSON lives. It is main-process startup,
+  // not a page: nothing serves it, because `app://` only answers for a template
+  // openWindow minted a token for.
+  if (existsSync(path.join(templatesDir, MAIN_TEMPLATE))) {
+    await Promise.resolve(resolver({ file: MAIN_TEMPLATE }, mainContext()));
   } else {
     await openWindow({ title: app.getName() });
   }
@@ -166,6 +168,10 @@ function enableDevMode(templatesDir: string): void {
   try {
     watch(templatesDir, { recursive: true }, (_type, filename) => {
       if (filename && !filename.endsWith(".json")) return;
+      // main.json now lives with the templates, but it is main-process startup
+      // that already ran. Reloading windows would not pick up an edit to it, so
+      // the reload would only be noise.
+      if (filename && path.basename(filename) === MAIN_TEMPLATE) return;
       if (pending) clearTimeout(pending);
       pending = setTimeout(() => {
         pending = null;

@@ -35,7 +35,7 @@ function pair(value: unknown, name: string, shape: string): unknown[] {
 
 // APP_SECRET env is the primary source for the encryption key; the `secret.key`
 // file is a dev fallback, resolved under the root a CryptoNode is constructed
-// with (default "app"). Both the root and the cached key live on the node, so two
+// with (default "src"). Both the root and the cached key live on the node, so two
 // resolvers built at different roots read their own key file instead of the last
 // constructor silently winning for the whole process.
 
@@ -226,7 +226,7 @@ export class CryptoNode extends Node {
   keyFileDir: string;
   cachedKey: Buffer | null = null;
 
-  constructor(root: string = "app") {
+  constructor(root: string = "src") {
     super();
     this.keyFileDir = root;
   }

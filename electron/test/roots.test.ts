@@ -5,23 +5,23 @@ import os from "node:os";
 import path from "node:path";
 import { createResolver, coreNodes } from "@jexs/core";
 import { FileNode, entryContext } from "@jexs/server";
-import { TEMPLATES_DIR } from "../src/paths.js";
+import { MAIN_TEMPLATE, TEMPLATES_DIR } from "../src/paths.js";
 
 // A real project tree, because the whole question is which directory a path
 // lands in. The runner builds its resolver exactly this way: FileNode rooted at
-// the template directory, and `app/main.json` loaded against a project-root
-// context.
+// the template directory, which is also where every template lives.
 let project = "";
+let templates = "";
 let resolve: ReturnType<typeof createResolver>;
 let previousCwd = "";
 
 before(async () => {
   project = await fs.mkdtemp(path.join(os.tmpdir(), "jexs-roots-"));
-  await fs.mkdir(path.join(project, TEMPLATES_DIR), { recursive: true });
-  await fs.mkdir(path.join(project, "app"), { recursive: true });
+  templates = path.join(project, TEMPLATES_DIR);
+  await fs.mkdir(path.join(templates, "pages"), { recursive: true });
 
-  await fs.writeFile(path.join(project, TEMPLATES_DIR, "page.json"), JSON.stringify("from templates"));
-  await fs.writeFile(path.join(project, "app", "helper.json"), JSON.stringify("from app"));
+  await fs.writeFile(path.join(templates, "page.json"), JSON.stringify("from templates"));
+  await fs.writeFile(path.join(templates, "pages", "nested.json"), JSON.stringify("from pages"));
 
   // FileNode resolves its root against the working directory, which for the
   // runner is the project directory.
@@ -35,37 +35,50 @@ after(async () => {
   await fs.rm(project, { recursive: true, force: true });
 });
 
-const runMain = (main: unknown): Promise<unknown> => {
-  // What the runner does: load app/main.json by a relative path against a
-  // context rooted at the project directory.
-  return Promise.resolve(
-    (async () => {
-      await fs.writeFile(path.join(project, "app", "main.json"), JSON.stringify(main));
-      return resolve({ file: "app/main.json" }, entryContext(project));
-    })(),
-  );
+// What the runner does: load the main template by name against a context rooted
+// at the template directory.
+const runMain = async (main: unknown): Promise<unknown> => {
+  await fs.writeFile(path.join(templates, MAIN_TEMPLATE), JSON.stringify(main));
+  return resolve({ file: MAIN_TEMPLATE }, entryContext(templates));
 };
 
-test("a slash path inside app/main.json reaches the templates", async () => {
-  assert.equal(await runMain({ file: "/page.json" }), "from templates");
-});
-
-// The counterpart, so the rule is not "everything goes to src": a path with no
-// leading slash still means "next to the file doing the loading".
-test("a relative path inside app/main.json stays beside it", async () => {
-  assert.equal(await runMain({ file: "helper.json" }), "from app");
-});
-
-test("app/main.json itself still loads, despite the root moving to templates", async () => {
+test("the main template loads from the template directory", async () => {
   assert.equal(await runMain("main ran"), "main ran");
 });
 
-// The same rule a renderer template gets, which is the point of moving the root:
-// one meaning for a leading slash wherever a template runs.
-test("a slash path inside a renderer template reaches the templates too", async () => {
+test("a slash path inside the main template reaches the templates", async () => {
+  assert.equal(await runMain({ file: "/page.json" }), "from templates");
+});
+
+// The counterpart, so the rule is not "every path goes to the root": without a
+// leading slash a path still means "next to the file doing the loading".
+test("a relative path inside the main template stays beside it", async () => {
+  assert.equal(await runMain({ file: "pages/nested.json" }), "from pages");
+});
+
+// The same rule a page gets, which is the point of the root being the template
+// directory: one meaning for a leading slash wherever a template runs.
+test("a slash path inside a nested page reaches the templates too", async () => {
   await fs.writeFile(
-    path.join(project, TEMPLATES_DIR, "index.json"),
+    path.join(templates, "pages", "deep.json"),
     JSON.stringify({ file: "/page.json" }),
   );
-  assert.equal(await resolve({ file: "index.json" }, entryContext(path.join(project, TEMPLATES_DIR))), "from templates");
+  assert.equal(
+    await resolve({ file: "deep.json" }, entryContext(path.join(templates, "pages"))),
+    "from templates",
+  );
+});
+
+// A nested page loading a sibling by a bare name must not reach up to the root,
+// or two templates with the same name in different folders would collide.
+test("a relative path in a nested page resolves beside that page", async () => {
+  await fs.writeFile(path.join(templates, "pages", "sibling.json"), JSON.stringify("from pages"));
+  await fs.writeFile(
+    path.join(templates, "pages", "loader.json"),
+    JSON.stringify({ file: "sibling.json" }),
+  );
+  assert.equal(
+    await resolve({ file: "loader.json" }, entryContext(path.join(templates, "pages"))),
+    "from pages",
+  );
 });

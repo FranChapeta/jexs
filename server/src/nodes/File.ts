@@ -170,7 +170,7 @@ export class FileNode extends Node {
 
   private rootAbs: string;
 
-  constructor(root: string = "app") {
+  constructor(root: string = "src") {
     super();
     // Absolute resolver root: `/`-prefixed paths resolve against it; everything
     // else resolves relative to the file doing the loading.

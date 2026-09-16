@@ -21,11 +21,11 @@ import { StdioNode } from "./nodes/Stdio.js";
 /** Options for the {@link serverNodes} factory. */
 export interface ServerNodesOptions {
   /**
-   * Base directory the file-reading nodes resolve against: FileNode's app JSON,
+   * Base directory the file-reading nodes resolve against: FileNode's templates,
    * SchemaNode's schema directories, and CryptoNode's `secret.key` fallback.
-   * Defaults to `"app"` (the server layout). Pass `"."` to root at the cwd — e.g.
-   * a build script authored in JSON that needs to reach `node_modules` or
-   * `package.json`.
+   * Defaults to `"src"`, where a Jexs project's templates live, since they are
+   * its source. Pass `"."` to root at the cwd, e.g. a build script authored in
+   * JSON that needs to reach `node_modules` or `package.json`.
    */
   root?: string;
 }
@@ -36,7 +36,7 @@ export interface ServerNodesOptions {
  * `[...coreNodes(), ...serverNodes()]`. Individual node classes are exported below
  * for custom wiring.
  */
-export function serverNodes({ root = "app" }: ServerNodesOptions = {}): Node[] {
+export function serverNodes({ root = "src" }: ServerNodesOptions = {}): Node[] {
   return [
     new CryptoNode(root),
     new FileNode(root),
