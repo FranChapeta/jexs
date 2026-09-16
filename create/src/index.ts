@@ -3,6 +3,95 @@ import { createInterface, type Interface } from "node:readline/promises";
 import { mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
+// ── JSON output ───────────────────────────────────────────────────────────────
+
+/** JSON print width from the `.prettierrc.json` override this scaffold writes. */
+const JSON_PRINT_WIDTH = 320;
+
+/**
+ * Prettier gives an array one element per line, however short it is, once it
+ * holds more than one element and every one of them is an object with more than
+ * one key (or a multi-element array). A list of records reads as rows, so width
+ * does not get a vote. Matching it matters because element trees hit this on
+ * almost every `content` array.
+ */
+function alwaysBreaks(items: readonly unknown[]): boolean {
+  if (items.length <= 1) return false;
+  return items.every((item) => {
+    if (item === null || typeof item !== "object") return false;
+    return Array.isArray(item) ? item.length > 1 : Object.keys(item).length > 1;
+  });
+}
+
+/**
+ * Serialize the way the prettier config this scaffold ships would: a value goes
+ * on one line when it fits the JSON print width at its indentation, and breaks
+ * across lines with a two-space indent when it does not (`objectWrap: collapse`).
+ *
+ * `JSON.stringify(value, null, 2)` cannot express that, since it expands every
+ * object and array unconditionally. The difference is not cosmetic: it means a
+ * generated project is born unformatted by its own rules, so the first
+ * `npm run format` or format-on-save rewrites files nobody edited.
+ *
+ * `package.json` is the exception and keeps `JSON.stringify`: prettier picks the
+ * `json-stringify` parser from that filename, which never collapses.
+ */
+function formatJson(value: unknown, indent = 0): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+
+  const pad = " ".repeat(indent);
+  const padInner = " ".repeat(indent + 2);
+  const fits = (line: string): boolean =>
+    // A child that broke is already too wide at the deeper indent, so the parent
+    // on one line (which is longer still) cannot fit either.
+    indent + line.length <= JSON_PRINT_WIDTH && !line.includes("\n");
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "[]";
+    const parts = value.map((item) => formatJson(item, indent + 2));
+    const oneLine = `[${parts.join(", ")}]`;
+    if (!alwaysBreaks(value) && fits(oneLine)) return oneLine;
+    return `[\n${parts.map((part) => padInner + part).join(",\n")}\n${pad}]`;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length === 0) return "{}";
+  const parts = entries.map(([key, val]) => `${JSON.stringify(key)}: ${formatJson(val, indent + 2)}`);
+  const oneLine = `{ ${parts.join(", ")} }`;
+  if (fits(oneLine)) return oneLine;
+  return `{\n${parts.map((part) => padInner + part).join(",\n")}\n${pad}}`;
+}
+
+/**
+ * The Node floor a generated project declares, matching what the Jexs packages
+ * themselves require. Without it a project installs cleanly on an older Node and
+ * fails at runtime instead, with nothing pointing at the version as the cause.
+ *
+ * Travels with the release for the same reason the versions below do: it has to
+ * track the floor those packages declare.
+ */
+const NODE_ENGINE = ">=24";
+
+/**
+ * What a generated project pins the Jexs packages to.
+ *
+ * Concrete ranges rather than "latest", so a project scaffolded today keeps
+ * resolving to the line it was built against: "latest" writes itself into the
+ * generated package.json verbatim, which means every later install silently
+ * moves the project onto whatever has since been published, across majors.
+ *
+ * These travel with the release, so they belong to the release bump: whenever a
+ * package's version changes, its entry here changes with it.
+ */
+const JEXS_VERSIONS = {
+  "@jexs/core": "^1.2.0",
+  "@jexs/server": "^1.0.0",
+  "@jexs/client": "^1.0.0",
+  "@jexs/electron": "^0.7.0",
+  "@jexs/physics": "^0.6.0",
+  "@jexs/gl": "^0.6.0",
+} as const;
+
 // ── CLI flags ─────────────────────────────────────────────────────────────────
 
 interface CliFlags {
@@ -48,7 +137,7 @@ Scaffolds a new Jexs project.
 Options:
   --env <server|client|both|electron>   Which environment to install (default: prompt)
   --physics                    Include @jexs/physics and @jexs/gl (off by default)
-  --css <tailwind|none>        Styling setup (default: tailwind on server projects)
+  --css <tailwind|none>        Styling setup (default: tailwind, except client-only, which has no page)
   -h, --help                   Show this help
 
 Examples:
@@ -136,7 +225,7 @@ async function chooseFromOptions(
 // doesn't have to learn them by trial. Kept terse; long-form docs live on the
 // website. Sections gated on scaffold options stay out when they don't apply.
 
-function buildClaudeMd(useServer: boolean, useTailwind: boolean): string {
+function buildClaudeMd(useServer: boolean, useTailwind: boolean, useElectron: boolean): string {
   const lines: string[] = [];
 
   lines.push(`# Jexs project`);
@@ -146,11 +235,11 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean): string {
   lines.push(`## Pitfalls (read before authoring or editing JSON)`);
   lines.push(``);
   lines.push(`- **\`foreach\` returns only the LAST iteration's value.** Use \`map\` when you need an array of every result (rendering lists, building option arrays, etc.).`);
-  lines.push(`- **\`if\` / \`switch\` branches that are arrays return only the LAST value** (they go through \`resolveSteps\`). When a branch needs to render multiple elements, wrap them in a single container — e.g. \`then: { tag: "div", content: [<h2>, <table>] }\` — not \`then: [<h2>, <table>]\`.`);
+  lines.push(`- **\`if\` / \`switch\` branches that are arrays return only the LAST value** (they go through \`resolveSteps\`). When a branch needs to render multiple elements, wrap them in a single container, e.g. \`then: { tag: "div", content: [<h2>, <table>] }\`, not \`then: [<h2>, <table>]\`.`);
   if (useServer) {
-    lines.push(`- **\`{ "file": "x.json" }\` resolves the file's contents as a Jexs expression by default.** Pass \`"data": true\` for raw parsed JSON — required for data files, route trees, schema dumps, anything you do NOT want the resolver to evaluate. Without \`data\`, an array file is run as a step sequence and an object file is resolved as a single expression.`);
+    lines.push(`- **\`{ "file": "x.json" }\` resolves the file's contents as a Jexs expression by default.** Pass \`"data": true\` for raw parsed JSON, required for data files, route trees, schema dumps, anything you do NOT want the resolver to evaluate. Without \`data\`, an array file is run as a step sequence and an object file is resolved as a single expression.`);
   }
-  lines.push(`- **Element content interpolates \`$identifier\` tokens.** Undefined vars become empty strings — code samples like \`{ "var": "$result" }\` would display as \`{ "var": "" }\`. Wrap any literal-\`$\` content in \`{ "raw": "..." }\`:`);
+  lines.push(`- **Element content interpolates \`$identifier\` tokens.** Undefined vars become empty strings, so code samples like \`{ "var": "$result" }\` would display as \`{ "var": "" }\`. Wrap any literal-\`$\` content in \`{ "raw": "..." }\`:`);
   lines.push(`  \`\`\`json`);
   lines.push(`  { "tag": "code", "content": { "raw": "{ \\"var\\": \\"$result\\" }" } }`);
   lines.push(`  \`\`\``);
@@ -162,38 +251,59 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean): string {
 
   lines.push(`## Layout`);
   lines.push(``);
-  if (useServer) {
-    lines.push(`- \`app/\` — JSON templates the resolver loads. FileNode's default base directory.`);
-    lines.push(`- \`public/\` — static assets (CSS, images, favicons, fonts). Auto-served by the HTTP server for any GET on a static-extension URL.`);
-    lines.push(`- No JS bootstrap — \`npm run dev\` / \`npm start\` run \`jexs run app/index.json app\` (the \`jexs\` CLI from @jexs/server), which resolves \`app/index.json\`; its \`listen\` step(s) bind the port(s).`);
+  // Electron satisfies useServer (it runs a main-process resolver), so it has to
+  // be tested first or it inherits the HTTP server's layout, which describes
+  // neither its directories nor its commands.
+  if (useElectron) {
+    lines.push(`- \`src/\`: renderer templates. The main process resolves one to HTML and serves it over \`app://\`; \`src/index.json\` is the page the first window opens.`);
+    lines.push(`- \`src/main.json\`: OPTIONAL main-process startup, run before any window exists (menus, tray, extra windows). Without it the runner just opens a window on \`src/index.json\`.`);
+    lines.push(`- \`dist/browser/\`: \`jexs bundle\` output, and the only directory \`app://\` serves. Rebuilt from scratch on every bundle.`);
+    lines.push(`- Main-process nodes (\`file\`, \`query\`, \`dialog\`, …) are forwarded from the renderer, so renderer JSON calls them directly. A relative \`{ "file": "x.json" }\` resolves against the calling page's own directory.`);
+    lines.push(`- A \`/\`-prefixed path anchors at \`src/\`, from anywhere, including \`src/main.json\`, so main-process startup reaches a page with \`/index.json\`. Without the slash a path is relative to the file doing the loading.`);
     if (useTailwind) {
-      lines.push(`- \`input.css\` — Tailwind entry. Add custom styles here (\`@layer base { ... }\`, \`@apply\`, etc.).`);
-      lines.push(`- \`tailwind.config.js\` — scans \`./app/**/*.json\` for class names.`);
+      lines.push(`- \`input.css\`: Tailwind entry. Add custom styles here (\`@layer base { ... }\`, \`@apply\`, etc.).`);
+      lines.push(`- \`tailwind.config.js\`: scans \`./src/**/*.json\` for class names. The stylesheet builds to \`dist/browser/styles.css\` AFTER \`jexs bundle\`, which clears that directory, and the window shell links it.`);
+    }
+  } else if (useServer) {
+    lines.push(`- \`src/\`: JSON templates the resolver loads. FileNode's default base directory.`);
+    lines.push(`- \`public/\`: static assets (CSS, images, favicons, fonts). Auto-served by the HTTP server for any GET on a static-extension URL.`);
+    lines.push(`- No JS bootstrap: \`npm run dev\` / \`npm start\` run \`jexs run src/index.json src\` (the \`jexs\` CLI from @jexs/server), which resolves \`src/index.json\`; its \`listen\` step(s) bind the port(s).`);
+    if (useTailwind) {
+      lines.push(`- \`input.css\`: Tailwind entry. Add custom styles here (\`@layer base { ... }\`, \`@apply\`, etc.).`);
+      lines.push(`- \`tailwind.config.js\`: scans \`./src/**/*.json\` for class names.`);
     }
   } else {
-    lines.push(`- \`src/app.json\` — your entry expression. Browser-side Jexs apps load this via \`@jexs/client\`.`);
+    lines.push(`- \`src/index.json\`: your entry expression. Browser-side Jexs apps load this via \`@jexs/client\`.`);
   }
   lines.push(``);
 
-  if (useServer) {
+  if (useElectron) {
     lines.push(`## Scripts`);
     lines.push(``);
-    lines.push(`- \`npm run dev\` — \`jexs run app/index.json app --watch\` (restarts on changes under \`app/\`)${useTailwind ? ` + \`tailwindcss --watch\` in parallel via \`concurrently\`` : ``}.`);
+    lines.push(`- \`npm run dev\`: bundles the renderer${useTailwind ? `, compiles Tailwind` : ``}, then runs \`jexs-electron --dev\`, which opens devtools on every window and reloads them when a template under \`src/\` changes. Editing \`src/main.json\` does NOT reload, since main-process startup cannot be re-run in place.`);
+    lines.push(`- \`npm start\`: the same without devtools or watching.`);
+    lines.push(`- \`npm run build\`: bundles${useTailwind ? ` and compiles Tailwind` : ``}, then packages a distributable with electron-builder.`);
+    lines.push(`- \`npm run format\`: Prettier sweep over the JSON templates.`);
+    lines.push(``);
+  } else if (useServer) {
+    lines.push(`## Scripts`);
+    lines.push(``);
+    lines.push(`- \`npm run dev\`: \`jexs run src/index.json src --watch\` (restarts on changes under \`src/\`)${useTailwind ? ` + \`tailwindcss --watch\` in parallel via \`concurrently\`` : ``}.`);
     if (useTailwind) {
-      lines.push(`- \`npm run build\` — compiles Tailwind (minified). There's no JS build — the app is JSON run by \`jexs run\`.`);
+      lines.push(`- \`npm run build\`: compiles Tailwind (minified). There is no JS build, the app is JSON run by \`jexs run\`.`);
     }
-    lines.push(`- \`npm start\` — \`jexs run app/index.json app --prod\`. Run from the project root so FileNode and the static server find \`app/\` and \`public/\`. The \`--prod\` flag sets \`process.env.prod = "1"\`, so JSON templates can branch on \`{ "var": "$env.prod" }\` (e.g. picking port 80 in prod vs 3000 in dev).`);
-    lines.push(`- \`npm run format\` — Prettier sweep over JSON templates.`);
+    lines.push(`- \`npm start\`: \`jexs run src/index.json src --prod\`. Run from the project root so FileNode and the static server find \`src/\` and \`public/\`. The \`--prod\` flag sets \`process.env.prod = "1"\`, so JSON templates can branch on \`{ "var": "$env.prod" }\` (e.g. picking port 80 in prod vs 3000 in dev).`);
+    lines.push(`- \`npm run format\`: Prettier sweep over JSON templates.`);
     lines.push(``);
   }
 
   lines.push(`## Dev tools`);
   lines.push(``);
-  lines.push(`\`.mcp.json\` registers \`@jexs/mcp\` — an MCP server that gives AI assistants live introspection into the Jexs runtime. When editing JSON, prefer these tools over guessing:`);
+  lines.push(`\`.mcp.json\` registers \`@jexs/mcp\`: an MCP server that gives AI assistants live introspection into the Jexs runtime. When editing JSON, prefer these tools over guessing:`);
   lines.push(``);
-  lines.push(`- \`list_nodes\` — every registered handler key, grouped by Node class.`);
-  lines.push(`- \`inspect_file\` — shows which handler keys a JSON file uses (and which are unknown).`);
-  lines.push(`- \`resolve_expression\` — evaluates an arbitrary JSON expression against the live resolver.`);
+  lines.push(`- \`list_nodes\`: every registered handler key, grouped by Node class.`);
+  lines.push(`- \`inspect_file\`: shows which handler keys a JSON file uses (and which are unknown).`);
+  lines.push(`- \`resolve_expression\`: evaluates an arbitrary JSON expression against the live resolver.`);
   lines.push(``);
   lines.push(`MCP-compatible clients (Claude Code, Claude Desktop) pick the config up automatically.`);
   lines.push(``);
@@ -210,12 +320,19 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean): string {
 // The client then hydrates it. Add interactivity with the `events` key; load
 // nested components with `{ "file": "components/card.json" }`.
 
-function pageTemplate(title: string, description: string): unknown {
+/**
+ * The starter page. With tailwind on it carries a few utility classes, because
+ * a content glob that matches no classes at all makes the very first build warn
+ * that none were detected, and emits a stylesheet of reset rules and nothing
+ * else. A couple of real classes make the pipeline visible instead.
+ */
+function pageTemplate(title: string, description: string, styled = false): unknown {
   return {
     tag: "main",
+    ...(styled ? { class: "p-8" } : {}),
     content: [
-      { tag: "h1", content: title },
-      { tag: "p", content: description },
+      { tag: "h1", ...(styled ? { class: "text-3xl font-bold" } : {}), content: title },
+      { tag: "p", ...(styled ? { class: "mt-2 text-gray-600" } : {}), content: description },
     ],
   };
 }
@@ -267,11 +384,20 @@ async function main(): Promise<void> {
   const useServer = env === "server" || env === "both" || useElectron;
   const useClient = env === "client" || env === "both" || useElectron;
 
-  // CSS: default to tailwind on server projects (since they serve HTML and need
-  // a styles.css), default to none for client-only (which ships JSON-only). Flag
-  // overrides either way. `--css` not prompted for — assume the default is fine.
+  // CSS: default to tailwind wherever the project renders a page of its own, so
+  // server, both, and electron (whose renderer is served over app://). Default to
+  // none for client-only, which ships JSON and no page. Flag overrides either
+  // way. `--css` not prompted for: assume the default is fine.
   let useTailwind: boolean;
   if (flags.css === "tailwind") {
+    // A client-only project has no HTML of its own: whatever hosts the bundle
+    // supplies the page, so the scaffold has nowhere to build a stylesheet to and
+    // nothing to link it from. Refuse rather than install tailwindcss and wire up
+    // neither.
+    if (!useServer) {
+      console.error(`--css=tailwind needs a project that renders its own page. A client-only project is hosted by something else, which owns the HTML. Use --env=server, --env=both or --env=electron.`);
+      process.exit(1);
+    }
     useTailwind = true;
   } else if (flags.css === "none") {
     useTailwind = false;
@@ -279,8 +405,15 @@ async function main(): Promise<void> {
     console.error(`Invalid --css value "${flags.css}". Expected tailwind or none.`);
     process.exit(1);
   } else {
-    useTailwind = useServer && !useElectron;
+    useTailwind = useServer;
   }
+
+  // Where the compiled stylesheet lands, and the URL a page links it by. A server
+  // serves public/ at the root; electron's app:// handler serves dist/browser and
+  // nothing else, which is also why the electron build has to run tailwind AFTER
+  // `jexs bundle`, since that clears the directory before each build.
+  const cssOut = useElectron ? "dist/browser/styles.css" : "public/styles.css";
+  const cssHref = "/styles.css";
 
   const dir = join(process.cwd(), projectName);
   if (existsSync(dir)) {
@@ -294,63 +427,76 @@ async function main(): Promise<void> {
   if (useElectron) {
     // src/ holds the renderer's page templates (index.json, …). `jexs bundle`
     // compiles only JS; the runner serves a generated shell over app:// that mounts
-    // the template at runtime. No app/ by default — the runner opens the index.json
-    // window; add app/main.json only for custom main-process startup.
+    // the template at runtime. The runner opens the index.json window; add a
+    // src/main.json only for custom main-process startup.
     mkdirSync(join(dir, "src"));
   } else if (useServer) {
-    // app/ holds the JSON templates the resolver loads via FileNode (its default
+    // src/ holds the JSON templates the resolver loads via FileNode (its default
     // base directory). public/ is auto-served by the HTTP server for static
     // assets (CSS, images, favicons, fonts). The TS bootstrap and tailwind
     // entry CSS both live at the root.
-    mkdirSync(join(dir, "app"));
+    mkdirSync(join(dir, "src"));
     mkdirSync(join(dir, "public"));
   } else {
     mkdirSync(join(dir, "src"));
   }
 
-  const deps: Record<string, string> = { "@jexs/core": "latest" };
-  if (useServer) deps["@jexs/server"] = "latest";
-  if (useClient) deps["@jexs/client"] = "latest";
-  if (useElectron) deps["@jexs/electron"] = "latest";
-  if (usePhysics) { deps["@jexs/physics"] = "latest"; deps["@jexs/gl"] = "latest"; }
+  const deps: Record<string, string> = { "@jexs/core": JEXS_VERSIONS["@jexs/core"] };
+  if (useServer) deps["@jexs/server"] = JEXS_VERSIONS["@jexs/server"];
+  if (useClient) deps["@jexs/client"] = JEXS_VERSIONS["@jexs/client"];
+  if (useElectron) deps["@jexs/electron"] = JEXS_VERSIONS["@jexs/electron"];
+  if (usePhysics) {
+    deps["@jexs/physics"] = JEXS_VERSIONS["@jexs/physics"];
+    deps["@jexs/gl"] = JEXS_VERSIONS["@jexs/gl"];
+  }
 
   // The `jexs` CLI (from @jexs/server) provides `jexs schema` (autocomplete) and
   // `jexs bundle` (the browser build). Server/both projects already depend on it;
   // client-only projects pull it in as a devDep for those two commands.
-  const devDeps: Record<string, string> = { prettier: "^3.4.0" };
-  if (!useServer) devDeps["@jexs/server"] = "latest";
-  if (useServer && !useElectron) devDeps.concurrently = "^8.2.0";
+  // prettier >=3.5 is a real floor, not a tidy-up: the `.prettierrc.json` written
+  // below sets `objectWrap`, which 3.4 and earlier warn about and ignore.
+  // tailwind stays on 3.x deliberately. v4 moved the CLI out to @tailwindcss/cli
+  // and replaced the JS config with CSS directives, so it is a migration rather
+  // than a version bump.
+  const devDeps: Record<string, string> = { prettier: "^3.5.0" };
+  if (!useServer) devDeps["@jexs/server"] = JEXS_VERSIONS["@jexs/server"];
+  if (useServer && !useElectron) devDeps.concurrently = "^10.0.0";
   if (useTailwind) devDeps.tailwindcss = "^3.4.0";
-  if (useElectron) { devDeps.electron = "^43.0.0"; devDeps["electron-builder"] = "^24.13.0"; }
+  if (useElectron) { devDeps.electron = "^44.0.0"; devDeps["electron-builder"] = "^26.0.0"; }
 
   const scripts: Record<string, string> = {};
   if (useElectron) {
     // No JS bootstrap: `jexs bundle` builds the renderer (dist/browser, served
     // over app://), then `jexs-electron` (from @jexs/electron) opens the window
-    // showing src/index.json — or runs app/main.json against the main-process
+    // showing src/index.json, or runs src/main.json against the main-process
     // resolver if present.
     // dev:   `--dev` opens devtools on every window and reloads them when a
     //        template under src/ changes.
     // start: the same run without it, i.e. what a user sees.
     // build: packages a distributable with electron-builder.
-    scripts.dev = "jexs bundle && jexs-electron --dev";
-    scripts.bundle = "jexs bundle";
-    scripts.build = "jexs bundle && electron-builder";
-    scripts.start = "jexs bundle && jexs-electron";
+    // With tailwind the CSS is compiled into the bundle output, so it rides along
+    // in every script that bundles, and always after it.
+    const bundle = useTailwind
+      ? `jexs bundle && tailwindcss -i input.css -o ${cssOut} --minify`
+      : "jexs bundle";
+    scripts.dev = `${bundle} && jexs-electron --dev`;
+    scripts.bundle = bundle;
+    scripts.build = `${bundle} && electron-builder`;
+    scripts.start = `${bundle} && jexs-electron`;
     scripts.schema = "jexs schema";
     scripts.postinstall = "jexs schema";
-    scripts.format = "prettier --write \"app/**/*.json\"";
+    scripts.format = "prettier --write \"src/**/*.json\"";
   } else if (useServer) {
-    // There is no JS bootstrap — `jexs run` (the `jexs` CLI from @jexs/server) resolves
-    // app/index.json as steps; its `listen` step(s) bind the port(s). Passing `app` as the
-    // resolver root makes `/`-anchored file loads resolve under app/. cwd = project root, so
-    // FileNode and the static server find app/ and public/ where they live.
-    // dev:    `jexs run app/index.json app --watch` restarts the app on changes under app/.
+    // There is no JS bootstrap: `jexs run` (the `jexs` CLI from @jexs/server) resolves
+    // src/index.json as steps; its `listen` step(s) bind the port(s). Passing `src` as the
+    // resolver root makes `/`-anchored file loads resolve under src/. cwd = project root, so
+    // FileNode and the static server find src/ and public/ where they live.
+    // dev:    `jexs run src/index.json src --watch` restarts the app on changes under src/.
     //         With tailwind, the CSS compiler runs in --watch alongside it via
     //         concurrently, so new class names in JSON produce updated CSS.
     // build:  only the CSS step (when tailwind is on). No JS build.
-    // start:  `jexs run app/index.json app --prod`.
-    // format: prettier sweep over the JSON templates — the bulk of a Jexs app.
+    // start:  `jexs run src/index.json src --prod`.
+    // format: prettier sweep over the JSON templates, the bulk of a Jexs app.
     const tailwindWatch = "tailwindcss -i input.css -o public/styles.css --watch --minify";
     const tailwindBuild = "tailwindcss -i input.css -o public/styles.css --minify";
 
@@ -362,15 +508,15 @@ async function main(): Promise<void> {
     const cmds = [
       useTailwind ? `"${tailwindWatch}"` : null,
       `"jexs bundle --watch"`,
-      `"jexs run app/index.json app --watch"`,
+      `"jexs run src/index.json src --watch"`,
     ].filter(Boolean).join(" ");
     scripts.dev = `jexs bundle && concurrently -k -n ${names} ${cmds}`;
     scripts.bundle = "jexs bundle";
     scripts.build = useTailwind ? `${tailwindBuild} && jexs bundle` : "jexs bundle";
-    scripts.start  = "jexs run app/index.json app --prod";
+    scripts.start  = "jexs run src/index.json src --prod";
     scripts.schema = "jexs schema";
     scripts.postinstall = "jexs schema";
-    scripts.format = "prettier --write \"app/**/*.json\"";
+    scripts.format = "prettier --write \"src/**/*.json\"";
   } else {
     scripts.dev = "jexs bundle --watch";
     scripts.build = "jexs bundle";
@@ -379,12 +525,16 @@ async function main(): Promise<void> {
     scripts.format = "prettier --write \"src/**/*.json\"";
   }
 
-  // package.json
+  // package.json — the one JSON file that is NOT written through formatJson.
+  // Prettier infers the `json-stringify` parser from the filename, which prints
+  // exactly what `JSON.stringify(value, null, 2)` does and never collapses, so
+  // matching it here means matching prettier.
   writeFileSync(
     join(dir, "package.json"),
     JSON.stringify({
       name: projectName,
       type: "module",
+      engines: { node: NODE_ENGINE },
       ...(useElectron ? { main: "node_modules/@jexs/electron/dist/runner.js" } : {}),
       ...(Object.keys(scripts).length > 0 ? { scripts } : {}),
       dependencies: deps,
@@ -397,29 +547,32 @@ async function main(): Promise<void> {
   // third-party). Regenerated by the `postinstall` hook on every `npm install`.
   writeFileSync(
     join(dir, ".jexs-schema.json"),
-    JSON.stringify({ $ref: "./.jexs/combined.schema.json" }, null, 2) + "\n",
+    formatJson({ $ref: "./.jexs/combined.schema.json" }) + "\n",
   );
 
   // .vscode/settings.json — wires JSON schema for autocomplete + disables VS Code's
   // built-in JSON formatter so prettier handles it (consistent with the `format` script).
-  // electron/client author the renderer page in src/; server (and both) use app/.
-  const jsonGlobs = useElectron ? ["/src/**/*.json"] : useServer ? ["/app/**/*.json"] : ["/src/**/*.json"];
+  // Every layout keeps its templates in src/.
+  // Electron gets both, matching its `format` script: renderer templates in src/,
+  const jsonGlobs = useElectron
+    ? ["/src/**/*.json"]
+    : ["/src/**/*.json"];
   writeFileSync(
     join(dir, ".vscode", "settings.json"),
-    JSON.stringify({
+    formatJson({
       "editor.detectIndentation": false,
       "json.format.enable": false,
       "[json]":  { "editor.defaultFormatter": "esbenp.prettier-vscode" },
       "[jsonc]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
       "json.schemas": [{ "fileMatch": jsonGlobs, "url": "./.jexs-schema.json" }],
-    }, null, 2) + "\n",
+    }) + "\n",
   );
 
   // .prettierrc.json — printWidth 320 for JSON lets short objects collapse to one
   // line. Wide JSON templates are easier to scan than tall ones.
   writeFileSync(
     join(dir, ".prettierrc.json"),
-    JSON.stringify({
+    formatJson({
       "$schema": "https://json.schemastore.org/prettierrc",
       objectWrap: "collapse",
       printWidth: 220,
@@ -429,7 +582,7 @@ async function main(): Promise<void> {
         files: ["*.json", "*.jsonc"],
         options: { printWidth: 320, objectWrap: "collapse", tabWidth: 2 },
       }],
-    }, null, 2) + "\n",
+    }) + "\n",
   );
 
   // .gitignore — node_modules, generated schema (.jexs/), the browser bundle
@@ -437,17 +590,19 @@ async function main(): Promise<void> {
   // ignored: it's the stable $ref the committed .vscode/settings.json depends on,
   // so it must be tracked or a fresh clone loses autocomplete until the first
   // `npm install` regenerates the .jexs/ content it points to.
+  // An electron project's stylesheet is built into dist/browser, which `dist/`
+  // already covers, so only a served project needs the extra line.
   writeFileSync(
     join(dir, ".gitignore"),
-    "node_modules/\n.jexs/\ndist/\n" + (useTailwind ? "public/styles.css\n" : ""),
+    "node_modules/\n.jexs/\ndist/\n" + (useTailwind && !useElectron ? `${cssOut}\n` : ""),
   );
 
   // .gitattributes — GitHub Linguist treats JSON as a "data" language by default
   // and hides it from the repo language stats. In a Jexs project the JSON files
-  // under app/ (or src/ for client-only) are the actual source code, so we mark
+  // under src/ are the actual source code, so we mark
   // them detectable and reclassify them as JSON source. Config JSON at the root
   // (package.json, etc.) is intentionally left alone.
-  const templateDir = useServer ? "app" : "src";
+  const templateDir = "src";
   writeFileSync(
     join(dir, ".gitattributes"),
     `${templateDir}/**/*.json linguist-detectable=true\n` +
@@ -461,11 +616,11 @@ async function main(): Promise<void> {
   // entry and runs it, rooted at the project (cwd) for schema discovery.
   writeFileSync(
     join(dir, ".mcp.json"),
-    JSON.stringify({
+    formatJson({
       mcpServers: {
         "jexs-dev": { command: "npx", args: ["-y", "-p", "@jexs/server", "-p", "@jexs/mcp", "jexs", "run", "@jexs/mcp"] },
       },
-    }, null, 2) + "\n",
+    }) + "\n",
   );
 
   // .claude/settings.json — pre-approves the jexs-dev MCP server so Claude Code
@@ -473,9 +628,9 @@ async function main(): Promise<void> {
   // read-only (resolve/describe/list/inspect), so allowing them wholesale is safe.
   writeFileSync(
     join(dir, ".claude", "settings.json"),
-    JSON.stringify({
+    formatJson({
       permissions: { allow: ["mcp__jexs-dev"] },
-    }, null, 2) + "\n",
+    }) + "\n",
   );
 
   // CLAUDE.md — the conventions + gotchas an AI assistant should know before
@@ -484,14 +639,14 @@ async function main(): Promise<void> {
   // the website.
   writeFileSync(
     join(dir, "CLAUDE.md"),
-    buildClaudeMd(useServer, useTailwind),
+    buildClaudeMd(useServer, useTailwind, useElectron),
   );
 
   if (useElectron) {
     // Electron: jexs-electron opens the window and runs the main-process resolver;
     // the renderer loads the bundle from dist/browser. The app is just the renderer
     // page — src/index.json. For custom main-process startup (menus, extra windows,
-    // tray) add an optional app/main.json and the runner will run it instead.
+    // tray) add an optional src/main.json and the runner will run it instead.
 
     // src/index.json — the renderer page, authored as a JSON Element tree. Opening
     // a window resolves a shell that `{ file }`-imports this template in the main
@@ -500,9 +655,8 @@ async function main(): Promise<void> {
     // file, dialog, …) are auto-forwarded, so call them directly from renderer JSON.
     writeFileSync(
       join(dir, "src", "index.json"),
-      JSON.stringify(
-        pageTemplate(projectName, "Edit src/index.json — the renderer page. Main-process nodes like query and dialog are auto-forwarded, so call them directly from here."),
-        null, 2,
+      formatJson(
+        pageTemplate(projectName, "Edit src/index.json to change this page. Main-process nodes like query and dialog are auto-forwarded, so call them directly from here.", useTailwind),
       ) + "\n",
     );
 
@@ -512,56 +666,46 @@ async function main(): Promise<void> {
       join(dir, "electron-builder.yml"),
       `appId: com.example.${projectName.replace(/[^a-z0-9]/gi, "").toLowerCase() || "app"}\n` +
       `productName: ${projectName}\n` +
-      `files:\n  - dist/browser/**\n  - src/**/*.json\n  - app/**/*.json\n  - node_modules/**\n` +
+      `files:\n  - dist/browser/**\n  - src/**/*.json\n  - node_modules/**\n` +
       `asarUnpack:\n  - "**/*.node"\n` +
       `directories:\n  output: release\n`,
     );
   } else if (useServer) {
-    // No JS bootstrap: `npm run dev` / `npm start` invoke `jexs run app/index.json app` (the
-    // `jexs` CLI from @jexs/server) which builds the resolver, roots FileNode at app/, and
-    // resolves app/index.json — its `listen` step(s) bind the port(s).
+    // No JS bootstrap: `npm run dev` / `npm start` invoke `jexs run src/index.json src` (the
+    // `jexs` CLI from @jexs/server) which builds the resolver, roots FileNode at src/, and
+    // resolves src/index.json, its `listen` step(s) bind the port(s).
 
-    // app/index.json — minimal listener that returns a greeting from query string.
+    // src/index.json: minimal listener that returns a greeting from query string.
     writeFileSync(
-      join(dir, "app", "index.json"),
-      JSON.stringify([
+      join(dir, "src", "index.json"),
+      formatJson([
         {
           listen: { "if": { var: "$env.prod" }, then: 80, else: 3000 },
           client: true,
           do: [
             { var: "$request.query.name" },
             { "if": { var: "$result" }, then: { concat: ["Hello, ", { var: "$result" }, "!"] }, else: "Hello, world!" },
+            // With tailwind the greeting becomes a page, because a bare string
+            // response has no <head> to link the compiled stylesheet from and the
+            // CSS would be built on every run and loaded by nothing.
+            ...(useTailwind
+              ? [{
+                  tag: "html",
+                  content: [
+                    { tag: "head", content: [{ tag: "meta", charset: "utf-8" }, { tag: "link", rel: "stylesheet", href: cssHref }] },
+                    { tag: "body", class: "p-8", content: [{ tag: "h1", class: "text-3xl font-bold", content: { var: "$result" } }] },
+                  ],
+                }]
+              : []),
           ],
         },
-      ], null, 2) + "\n",
+      ]) + "\n",
     );
 
     // public/.gitkeep — preserves the empty directory in git so users have
     // somewhere obvious to drop CSS, images, favicons.
     writeFileSync(join(dir, "public", ".gitkeep"), "");
 
-    if (useTailwind) {
-      // input.css — the Tailwind entry at the project root. Classes get extracted
-      // from app/**/*.json at build time per the content glob in tailwind.config.js.
-      // This is also where you add custom styles (@layer, @apply, @font-face, etc.).
-      writeFileSync(
-        join(dir, "input.css"),
-        "@tailwind base;\n@tailwind components;\n@tailwind utilities;\n",
-      );
-
-      // tailwind.config.js — ESM (package.json has "type":"module"). Scans the
-      // JSON templates the resolver renders.
-      writeFileSync(
-        join(dir, "tailwind.config.js"),
-        `/** @type {import('tailwindcss').Config} */\n` +
-        `export default {\n` +
-        `  content: ["./app/**/*.json"],\n` +
-        `  darkMode: "class",\n` +
-        `  theme: { extend: {} },\n` +
-        `  plugins: [],\n` +
-        `};\n`,
-      );
-    }
   } else {
     // Client-only: the page as a JSON Element tree. `jexs bundle` compiles the
     // renderer to dist/browser (JS only); serve it behind a host that resolves the
@@ -569,10 +713,33 @@ async function main(): Promise<void> {
     // server) — the client then hydrates it.
     writeFileSync(
       join(dir, "src", "index.json"),
-      JSON.stringify(
-        pageTemplate(projectName, "Edit src/index.json — the page template, resolved to HTML by the host and hydrated by the client. Add interactivity with the events key."),
-        null, 2,
+      formatJson(
+        pageTemplate(projectName, "Edit src/index.json to change this page. The host resolves it to HTML and the client hydrates it. Add interactivity with the events key."),
       ) + "\n",
+    );
+  }
+
+  if (useTailwind) {
+    // input.css — the Tailwind entry at the project root. Classes are extracted
+    // from the JSON templates at build time per the content glob below. This is
+    // also where custom styles go (@layer, @apply, @font-face, and the rest).
+    writeFileSync(
+      join(dir, "input.css"),
+      "@tailwind base;\n@tailwind components;\n@tailwind utilities;\n",
+    );
+
+    // tailwind.config.js — ESM (package.json has "type":"module"). Scans wherever
+    // this project's templates live, which is the one thing that moves between
+    // layouts, though every layout now keeps them in src/.
+    writeFileSync(
+      join(dir, "tailwind.config.js"),
+      `/** @type {import('tailwindcss').Config} */\n` +
+      `export default {\n` +
+      `  content: ["./src/**/*.json"],\n` +
+      `  darkMode: "class",\n` +
+      `  theme: { extend: {} },\n` +
+      `  plugins: [],\n` +
+      `};\n`,
     );
   }
 
@@ -590,14 +757,14 @@ async function main(): Promise<void> {
     console.log(`  src/index.json`);
     console.log(`  electron-builder.yml`);
   } else if (useServer) {
-    console.log(`  app/index.json`);
+    console.log(`  src/index.json`);
     console.log(`  public/.gitkeep`);
-    if (useTailwind) {
-      console.log(`  input.css`);
-      console.log(`  tailwind.config.js`);
-    }
   } else {
     console.log(`  src/index.json`);
+  }
+  if (useTailwind) {
+    console.log(`  input.css`);
+    console.log(`  tailwind.config.js`);
   }
   console.log(`\nDone. Run:\n  cd ${projectName} && npm install${useServer ? " && npm run dev" : ""}`);
 }
