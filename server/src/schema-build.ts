@@ -3,7 +3,8 @@
 // PackageSchema straight from its Node classes' `static schema` (constructing
 // nothing), merges them, and writes:
 //   .jexs/combined.schema.json  — the editor autocomplete schema (VSCode $ref)
-//   .jexs/schema.json           — byKey/byNode/extraDefs for the MCP server
+//   .jexs/schema.json           — byKey/byNode/extraDefs (+ package attribution)
+//                                 for the MCP server
 // A prebuilt `dist/schema.json` (manifest `schema`) is used as a fallback for
 // packages that can't be imported/enumerated under plain Node (e.g. electron).
 
@@ -70,24 +71,51 @@ export async function collectPackageSchemas(projectDir: string): Promise<Package
   return schemas;
 }
 
-/** Merge per-package byKey/byNode/extraDefs into the flat view the MCP server reads. */
+/**
+ * Merge per-package byKey/byNode/extraDefs into the flat view the MCP server reads.
+ *
+ * Flattening loses which package a key or Node class came from, and `packages`
+ * alone can't recover it. `keyPackage`/`nodePackage` keep that edge so a consumer
+ * can regroup the flat maps by package (the docs site builds its per-package
+ * sections from them) without re-deriving every package schema itself.
+ */
 function mergeForMcp(schemas: PackageSchema[]): {
   byKey: Record<string, unknown>;
   byNode: Record<string, unknown>;
   extraDefs: Record<string, unknown>;
   packages: string[];
+  keyPackage: Record<string, string>;
+  nodePackage: Record<string, string>;
 } {
   const byKey: Record<string, unknown> = {};
   const byNode: Record<string, unknown> = {};
   const extraDefs: Record<string, unknown> = {};
   const packages: string[] = [];
+  const keyPackage: Record<string, string> = {};
+  const nodePackage: Record<string, string> = {};
+  // First-wins on collision, matching mergePackageSchemas and the runtime's
+  // first-handler-dispatches rule. `Object.assign` would be last-wins, which
+  // would hand a colliding key a different owner here than in the combined
+  // schema — and leave keyPackage naming a package whose entry isn't the one
+  // byKey kept.
   for (const s of schemas) {
-    Object.assign(byKey, s.byKey);
-    Object.assign(byNode, s.byNode);
-    Object.assign(extraDefs, s.extraDefs ?? {});
+    for (const [k, v] of Object.entries(s.byKey)) {
+      if (k in byKey) continue;
+      byKey[k] = v;
+      if (s.packageName) keyPackage[k] = s.packageName;
+    }
+    for (const [n, v] of Object.entries(s.byNode)) {
+      if (n in byNode) continue;
+      byNode[n] = v;
+      if (s.packageName) nodePackage[n] = s.packageName;
+    }
+    for (const [d, v] of Object.entries(s.extraDefs ?? {})) {
+      if (d in extraDefs) continue;
+      extraDefs[d] = v;
+    }
     if (s.packageName) packages.push(s.packageName);
   }
-  return { byKey, byNode, extraDefs, packages };
+  return { byKey, byNode, extraDefs, packages, keyPackage, nodePackage };
 }
 
 /**

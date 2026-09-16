@@ -147,3 +147,27 @@ test("`bubble` is only valid alongside `as` or `setVars`", () => {
   assert.equal(validAt("$defs/exprFlat", { concat: ["a"], bubble: true }), false);
   assert.equal(validAt("$defs/exprFlat", { bubble: true }), false);
 });
+
+test("mergePackageSchemas leaves the package schemas it is given intact", () => {
+  const pkg = buildPackageSchema([...coreNodes()], "@jexs/core", { onCollision: "skip" });
+  const before = structuredClone(pkg);
+
+  mergePackageSchemas([pkg], { onCollision: "skip" });
+
+  // The vp hoist used to swap each primary property for a `#/vp/<key>` ref and
+  // the catch-all pass used to stamp `additionalProperties` — both on the
+  // caller's own objects, leaving `pkg` full of refs into a document it does
+  // not contain. A second consumer of the same array (`jexs schema` writes
+  // .jexs/schema.json from it) saw the gutted version.
+  assert.deepEqual(pkg, before);
+  const primary = pkg.byKey.concat?.properties?.concat;
+  assert.ok(primary && !("$ref" in primary && Object.keys(primary).length === 1),
+    "primary property should still carry its own schema, not a bare $ref");
+});
+
+test("mergePackageSchemas is unaffected by merging the same schema twice", () => {
+  const pkg = buildPackageSchema([...coreNodes()], "@jexs/core", { onCollision: "skip" });
+  const first = mergePackageSchemas([pkg], { onCollision: "skip" });
+  const second = mergePackageSchemas([pkg], { onCollision: "skip" });
+  assert.deepEqual(second, first);
+});

@@ -830,6 +830,13 @@ export interface CombinedSchema {
  * Merges multiple per-package schemas into a single combined schema with
  * shared $defs, an exprFlat editor entry point, and the anti-cascade design
  * (every primary handler key listed flat in exprFlat.properties).
+ *
+ * The inputs are cloned on the way in, because the passes below rewrite what
+ * they take ownership of: the vp hoist swaps each primary property for a
+ * `$ref`, and the catch-all pass stamps `additionalProperties` onto every
+ * byKey entry. Aliasing the caller's objects would leave a PackageSchema
+ * gutted after a merge — the entries reduced to dangling `#/vp/*` refs whose
+ * target only exists in the CombinedSchema returned here.
  */
 export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuildOptions = {}): CombinedSchema {
   const byKey: Record<string, EmittedMethodSchema> = {};
@@ -844,7 +851,7 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
         collisions.push(`Handler key "${k}" appears in multiple packages.`);
         continue;
       }
-      byKey[k] = v;
+      byKey[k] = structuredClone(v);
     }
     for (const [sib, hosts] of Object.entries(pkg.siblingHosts ?? {})) {
       for (const h of hosts) (siblingHosts[sib] ??= new Set()).add(h);
@@ -854,14 +861,14 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
         collisions.push(`Node class "${n}" appears in multiple packages.`);
         continue;
       }
-      byNode[n] = v;
+      byNode[n] = structuredClone(v);
     }
     for (const [defName, defSchema] of Object.entries(pkg.extraDefs ?? {})) {
       if (defName in extraDefs) {
         collisions.push(`$defs name "${defName}" appears in multiple packages.`);
         continue;
       }
-      extraDefs[defName] = defSchema;
+      extraDefs[defName] = structuredClone(defSchema);
     }
   }
   reportCollisions(collisions, opts, "mergePackageSchemas");
