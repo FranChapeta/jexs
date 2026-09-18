@@ -234,7 +234,7 @@ export class ArrayNode extends Node {
     },
     map: {
       output: "array",
-      markdownDescription: "Transforms each item by resolving a template.\nEach iteration exposes the named variable (default `item`), `index`, and `loop` in context.\nWhen `do` is an array it is resolved as a literal (all elements), not as sequential steps.",
+      markdownDescription: "Transforms each item by resolving a template.\nEach iteration exposes the current element as `item` and its position as `index` (rename via the `item`/`index` siblings), plus `loop` (`item`, `index`, `key`, `first`, `last`, `length`).\nWhen `do` is an array it is resolved as a literal (all elements), not as sequential steps.",
       examples: [
         "{ \"map\": { \"var\": \"$nums\" }, \"as\": \"num\", \"do\": { \"multiply\": [{ \"var\": \"$num\" }, 2] } }",
       ],
@@ -242,6 +242,10 @@ export class ArrayNode extends Node {
         item: {
           type: "string",
           description: "Variable name for the current item (default `\"item\"`).",
+        },
+        index: {
+          type: "string",
+          description: "Variable name for the current index (default `\"index\"`).",
         },
         do: {
           required: true,
@@ -636,24 +640,29 @@ export class ArrayNode extends Node {
   }
 
   map(def: Record<string, unknown>, context: Context) {
-    const itemName = typeof def.item === "string" ? def.item : "item";
     const template = def.do;
     if (template === undefined) throw new Error("map needs a `do` template");
-    return resolve(def.map, context, arr => {
-      const items = this.toArray(arr);
-      const results: unknown[] = [];
-      let i = 0;
-      function next(): unknown {
-        if (i >= items.length) return results;
-        const idx = i++;
-        const item = items[idx];
-        const itemCtx: Context = childContext(context, {
-          [itemName]: item,
-          loop: { item, index: idx, key: idx, first: idx === 0, last: idx === items.length - 1, length: items.length },
-        });
-        return resolve(template, itemCtx, v => { results.push(v); return next(); });
-      }
-      return next();
+    // Same shape as `filter`/`find`/`reduce`: the item and index variable names
+    // are resolved first, so either may be handed in as an expression.
+    return resolveAll([def.item, def.index], context, ([itemRaw, indexRaw]) => {
+      const itemName = typeof itemRaw === "string" ? itemRaw : "item";
+      const indexName = typeof indexRaw === "string" ? indexRaw : "index";
+      return resolve(def.map, context, arr => {
+        const items = this.toArray(arr);
+        const results: unknown[] = [];
+        let i = 0;
+        function next(): unknown {
+          if (i >= items.length) return results;
+          const idx = i++;
+          const item = items[idx];
+          const itemCtx: Context = childContext(context, {
+            [itemName]: item, [indexName]: idx,
+            loop: { item, index: idx, key: idx, first: idx === 0, last: idx === items.length - 1, length: items.length },
+          });
+          return resolve(template, itemCtx, v => { results.push(v); return next(); });
+        }
+        return next();
+      });
     });
   }
 

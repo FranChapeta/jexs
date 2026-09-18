@@ -5,6 +5,29 @@ import { createResolver, coreNodes } from "../src/index.js";
 // The resolver the steps below run in; contexts are adopted at its entry points.
 const resolve = createResolver(coreNodes());
 
+test("map: exposes the index as `index`, like filter/find/reduce", () => {
+  const out = resolve({ map: ["a", "b", "c"], do: { concat: [{ var: "index" }, ":", { var: "item" }] } }, {});
+  assert.deepEqual(out, ["0:a", "1:b", "2:c"]);
+});
+
+test("map: renames the index via the `index` sibling", () => {
+  const out = resolve({ map: ["a", "b"], item: "x", index: "i", do: { concat: [{ var: "i" }, "=", { var: "x" }] } }, {});
+  assert.deepEqual(out, ["0=a", "1=b"]);
+});
+
+test("map: item/index names may be expressions, resolved before use", () => {
+  const out = resolve(
+    { map: ["a", "b"], item: { var: "$itemVar" }, index: { var: "$indexVar" }, do: { concat: [{ var: "i" }, "=", { var: "n" }] } },
+    { itemVar: "n", indexVar: "i" },
+  );
+  assert.deepEqual(out, ["0=a", "1=b"]);
+});
+
+test("map: `loop` still carries the position, alongside the bare index", () => {
+  const out = resolve({ map: ["a", "b"], do: { concat: [{ var: "$loop.index" }, "/", { var: "$loop.length" }] } }, {});
+  assert.deepEqual(out, ["0/2", "1/2"]);
+});
+
 test("filter: renames the item via the `item` sibling", () => {
   const out = resolve({ filter: [[1, 2, 3], { gt: [{ var: "n" }, 1] }], item: "n" }, {});
   assert.deepEqual(out, [2, 3]);
