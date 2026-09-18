@@ -55,3 +55,39 @@ export function validate(schema: object, data: unknown): ValidationResult {
   const errors = (fn.errors ?? []).map(formatError);
   return { valid: false, errors };
 }
+
+/** One error, with the pieces a caller needs to rank or filter it. */
+export interface DetailedError {
+  /** Dotted instance path, `""` for the document root. */
+  path: string;
+  message: string;
+  /** The Ajv keyword that failed, e.g. `"type"`, `"anyOf"`, `"additionalProperties"`. */
+  keyword: string;
+}
+
+export interface DetailedValidationResult {
+  valid: boolean;
+  errors: DetailedError[];
+}
+
+/**
+ * Validate, keeping each error's path and keyword separate rather than flattened
+ * into prose.
+ *
+ * `validate` above is right for a handful of errors on a small table row. A
+ * document validated against a large `anyOf` union produces hundreds, most of
+ * them the union's own bookkeeping, and the only way to reduce that to the few
+ * that name the actual mistake is to rank by path depth and drop the combinator
+ * keywords, neither of which survives being formatted into a string.
+ */
+export function validateDetailed(schema: object, data: unknown): DetailedValidationResult {
+  const fn = getValidator(schema);
+  const valid = fn(data) as boolean;
+  if (valid) return { valid: true, errors: [] };
+  const errors = (fn.errors ?? []).map(err => ({
+    path: err.instancePath ? err.instancePath.replace(/^\//, "").replace(/\//g, ".") : "",
+    message: err.message ?? "is invalid",
+    keyword: err.keyword,
+  }));
+  return { valid: false, errors };
+}

@@ -1,9 +1,9 @@
 import fs from "fs/promises";
 import path from "path";
-import { Node, Context, NodeValue, resolve } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll } from "@jexs/core";
 import { TableJsonSchema, ColumnSchema, ColumnDbMeta, tableNameOf } from "./Query.js";
 import { sha256 } from "./Crypto.js";
-import { validate, getValidator } from "../validate.js";
+import { validate, validateDetailed, getValidator } from "../validate.js";
 import type { JexsNodeSchema } from "@jexs/core";
 
 /**
@@ -29,6 +29,7 @@ export class SchemaNode extends Node {
         "get",
         "list",
         "validator",
+        "validate",
       ],
       markdownDescription: "Registers table schemas for use by QueryNode. The operation is the primary value.",
       examples: [
@@ -61,6 +62,16 @@ export class SchemaNode extends Node {
           markdownDescription: "Sets a global schema validator step sequence.",
           siblings: {
             run: { steps: true, description: "Step sequence to run as a schema validator." },
+          },
+        },
+        validate: {
+          output: "object",
+          outputDescription: "`{ valid, errors }`, where each error is `{ path, message, keyword }` and `path` is dotted (`\"\"` for the root).",
+          markdownDescription: "Validates `data` against a JSON Schema (draft 2020-12): either a `document` handed in, or the schema registered for `table`. Returns the result rather than throwing, so the caller decides what a failure means.",
+          siblings: {
+            data: { description: "The value to check. Pass it through a `var` (loaded with `data: true`) when it is itself a Jexs template, otherwise it resolves as an expression before it can be checked." },
+            document: { description: "The JSON Schema document to check against. Reusing the same object across calls reuses the compiled validator, so load it once and pass it by `var`." },
+            table: { type: "string", description: "Name of a registered table schema to check against, instead of `document`." },
           },
         },
       },
@@ -112,6 +123,9 @@ export class SchemaNode extends Node {
           SchemaNode.globalValidator = def.run;
         }
         return null;
+      }
+      if (op === "validate") {
+        return doValidate(def, context);
       }
       return doRegister(def, this.root);
     });
@@ -312,6 +326,39 @@ export class SchemaNode extends Node {
         return value;
     }
   }
+}
+
+/**
+ * `{ "schema": "validate", "data": ..., "document"|"table": ... }`.
+ *
+ * `data` is resolved (it is normally a `var` holding an already-parsed value),
+ * `document` is resolved too so it can be handed over by `var`, which is also
+ * what keeps the compiled validator cached, since `getValidator` keys on the
+ * schema object's identity and a `var` yields the same reference every call.
+ */
+function doValidate(def: Record<string, unknown>, context: Context): NodeValue {
+  return resolveAll([def.document ?? null, def.table ?? null, def.data ?? null], context, ([documentRaw, tableRaw, data]) => {
+    let schema: object | undefined;
+    if (documentRaw !== null && typeof documentRaw === "object") {
+      schema = documentRaw as object;
+    } else if (typeof tableRaw === "string") {
+      schema = SchemaNode.get(tableRaw);
+      if (!schema) {
+        return { valid: false, errors: [{ path: "", message: `no schema registered for table "${tableRaw}"`, keyword: "table" }] };
+      }
+    }
+    if (!schema) {
+      return { valid: false, errors: [{ path: "", message: "no schema to validate against: pass `document` or `table`", keyword: "document" }] };
+    }
+    // A schema that won't compile is the caller's mistake, not the data's, so it
+    // is reported in the same shape rather than thrown past them.
+    try {
+      return validateDetailed(schema, data);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { valid: false, errors: [{ path: "", message: `invalid schema: ${message}`, keyword: "schema" }] };
+    }
+  });
 }
 
 async function doRegister(def: Record<string, unknown>, root: string): Promise<unknown> {
