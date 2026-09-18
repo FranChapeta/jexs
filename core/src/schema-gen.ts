@@ -303,6 +303,13 @@ export interface PackageSchema {
   /** sibling name → host method keys that declare it. The merge step uses this to
    *  gate dispatch for siblings that share a handler-key name (e.g. `session`). */
   siblingHosts?: Record<string, string[]>;
+  /** method key → owning Node class. `byNode` reversed, so naming an op's class
+   *  is a lookup rather than a scan of every class's key list. */
+  keyNode?: Record<string, string>;
+  /** method key → its siblings with prose, flattened from the authored schema
+   *  (own + per-variant + the Node's `commonSiblings`). Documentation only: the
+   *  validating form of the same information is `properties`/`allOf`/`$ref`. */
+  siblingDocs?: Record<string, SiblingDoc[]>;
 }
 
 export interface EmittedMethodSchema {
@@ -566,6 +573,69 @@ function collectMethodSiblings(method: JexsMethodSchema): string[] {
   return out;
 }
 
+/** One sibling key of a method, flattened for documentation consumers. */
+export interface SiblingDoc {
+  name: string;
+  description?: string;
+  /** The step is invalid without it. */
+  required?: boolean;
+  /** Which operation it belongs to, when it is variant-specific. Nested variants
+   *  join with `" > "`, e.g. `"connect > host"`. */
+  variant?: string;
+}
+
+/**
+ * The same walk as {@link collectMethodSiblings}, keeping the prose.
+ *
+ * A documentation consumer (the MCP `describe_op` tool) wants what the author
+ * wrote: this sibling, this description, required or not, and which operation it
+ * belongs to. The EMITTED schema has all of that too, but scattered by the
+ * lowering that makes it a valid JSON Schema: shared siblings behind a `$ref`
+ * into `$defs`, variant siblings inside `allOf` branches discriminated by
+ * `if/properties/<key>/const`, and a description-less stub left in `properties`
+ * for each. Reading it back out of that shape is a round trip that loses nested
+ * variants, so the flattening happens here instead, against the authored types.
+ */
+function methodSiblingDocs(
+  methodKey: string,
+  method: JexsMethodSchema,
+  commonSiblings: Record<string, JexsPropertySchema> | undefined,
+): SiblingDoc[] {
+  // Keyed by variant path + name: one name routinely means different things in
+  // different operations (SchemaNode's `table` is an inline document under
+  // `register` and a table NAME under `get`), so they are separate entries.
+  const out = new Map<string, SiblingDoc>();
+
+  const add = (name: string, prop: JexsPropertySchema, variant?: string): void => {
+    if (name === methodKey) return;
+    // JSON-encoded pair rather than a joined string: both halves are authored
+    // names, so no single separator character is safely outside their alphabet.
+    const key = JSON.stringify([variant ?? null, name]);
+    if (out.has(key)) return;
+    const description = prop.markdownDescription ?? prop.description;
+    out.set(key, {
+      name,
+      ...(description ? { description } : {}),
+      ...(prop.required ? { required: true } : {}),
+      ...(variant ? { variant } : {}),
+    });
+  };
+
+  const walk = (m: JexsMethodSchema, variant?: string): void => {
+    for (const [name, prop] of Object.entries(m.siblings ?? {})) add(name, prop, variant);
+    for (const [vName, v] of Object.entries(m.variants ?? {})) {
+      walk(v, variant ? `${variant} > ${vName}` : vName);
+    }
+  };
+  walk(method);
+
+  // Last: they apply to every method on the node, so a method's own declaration
+  // of the same name is the more specific one and wins.
+  for (const [name, prop] of Object.entries(commonSiblings ?? {})) add(name, prop);
+
+  return [...out.values()];
+}
+
 /**
  * Options shared by {@link buildPackageSchema} and {@link mergePackageSchemas}
  * for handling duplicate handler keys / node classes / `$defs` names.
@@ -618,6 +688,8 @@ export function buildPackageSchema(
   const addSiblingHost = (sibling: string, host: string) => {
     (siblingHosts[sibling] ??= new Set()).add(host);
   };
+  /** method key → its siblings with prose, for documentation consumers. */
+  const siblingDocs: Record<string, SiblingDoc[]> = {};
 
   for (const n of nodes) {
     // Resolve to the class (constructor) — works for both instances and classes.
@@ -653,6 +725,8 @@ export function buildPackageSchema(
         continue;
       }
       compiled[methodKey] = compileMethod(methodKey, method, nodeClass);
+      const docs = methodSiblingDocs(methodKey, method, nodeCommonSiblings);
+      if (docs.length > 0) siblingDocs[methodKey] = docs;
       for (const sib of collectMethodSiblings(method)) addSiblingHost(sib, methodKey);
     }
 
@@ -676,7 +750,9 @@ export function buildPackageSchema(
   // on the fly via `{ type: "object", dependentSchemas: byNode[name].map(...) }`.
   const byKey: Record<string, EmittedMethodSchema> = {};
   const byNode: Record<string, EmittedNodeSchema> = {};
+  const keyNode: Record<string, string> = {};
   for (const [methodKey, m] of Object.entries(compiled)) {
+    keyNode[methodKey] = m.ownerNode;
     const entry: EmittedMethodSchema = { properties: m.properties };
     if (m.output !== undefined) entry.output = m.output;
     if (m.outputDescription !== undefined) entry.outputDescription = m.outputDescription;
@@ -704,6 +780,8 @@ export function buildPackageSchema(
       Object.entries(siblingHosts).map(([sib, hosts]) => [sib, [...hosts]]),
     );
   }
+  if (Object.keys(keyNode).length > 0) out.keyNode = keyNode;
+  if (Object.keys(siblingDocs).length > 0) out.siblingDocs = siblingDocs;
   return out;
 }
 
@@ -724,7 +802,7 @@ function pickDesc(p: MaybeMeta | undefined): string {
  * Includes the method's own description, a bulleted list of sibling properties
  * with their descriptions, and the first example as a fenced code block.
  */
-function buildRichMarkdown(methodKey: string, m: EmittedMethodSchema): string {
+function buildRichMarkdown(methodKey: string, m: EmittedMethodSchema, docs: SiblingDoc[] | undefined): string {
   const primary = m.properties[methodKey] as MaybeMeta | undefined;
   let md = pickDesc(primary);
 
@@ -737,18 +815,22 @@ function buildRichMarkdown(methodKey: string, m: EmittedMethodSchema): string {
       return `- \`${v.key}\`${out}${desc}`;
     });
     md = (md ? md + "\n\n" : "") + "**Operations:**\n" + ops.join("\n");
-  } else {
-    const isRequired = new Set(m.required ?? []);
-    const siblings = Object.entries(m.properties)
-      .filter(([k]) => k !== methodKey)
-      .map(([k, v]) => {
-        const desc = pickDesc(v as MaybeMeta);
-        const req = isRequired.has(k) ? " *(required)*" : "";
-        return desc ? `- \`${k}\`${req}: ${desc}` : `- \`${k}\`${req}`;
-      });
-    if (siblings.length > 0) {
-      md = (md ? md + "\n\n" : "") + "**Properties:**\n" + siblings.join("\n");
-    }
+  }
+
+  // Siblings come from `siblingDocs`, not from `m.properties`: by this point the
+  // emitted form has scattered them (shared ones behind a `$ref`, variant-specific
+  // ones into `allOf` with only a stub left inline), so reading `properties` here
+  // would silently drop every `commonSiblings` key and every variant's keys.
+  // Listed for variants methods too, under the operations, since an operation's
+  // options are exactly what the reader needs next.
+  if (docs && docs.length > 0) {
+    const lines = docs.map(d => {
+      const req = d.required ? " *(required)*" : "";
+      const scope = d.variant ? ` *(with \`${methodKey}: "${d.variant}"\`)*` : "";
+      const desc = d.description ? `: ${d.description}` : "";
+      return `- \`${d.name}\`${req}${scope}${desc}`;
+    });
+    md = (md ? md + "\n\n" : "") + "**Properties:**\n" + lines.join("\n");
   }
 
   if (m.outputDescription) {
@@ -788,7 +870,7 @@ export const GLOBAL_KEY_DOCS: Record<string, { markdownDescription: string; exam
   },
   catch: {
     markdownDescription:
-      "Step array to run if this expression throws an HTTP error. The `$error` context variable carries `{ status, message }`.",
+      "Step array to run if this expression throws. Catches ANY error, not just HTTP ones. The `$error` context variable carries `{ message }`, plus `status` when the thrower was an HTTP error (and whatever further variables it offered, e.g. `fetch`'s `$response`).",
     examples: ["{ \"query-select\": \"users\", \"catch\": [{ \"var\": \"$error.message\" }] }"],
   },
   then: {
@@ -807,12 +889,16 @@ export const GLOBAL_KEY_DOCS: Record<string, { markdownDescription: string; exam
  *  exprFlat. `then` is also a sibling of `if` (LogicNode's branch); the emission
  *  loop gates it via `siblingHosts` so it validates as the branch under `if` and
  *  as a continuation everywhere else. */
-const UNIVERSAL: Record<string, { ref: EmittedSchema; markdownDescription: string }> = {
-  as:     { ref: { ...REF.strOrExpr },  markdownDescription: GLOBAL_KEY_DOCS.as.markdownDescription },
-  return: { ref: { ...REF.anyVal },     markdownDescription: GLOBAL_KEY_DOCS.return.markdownDescription },
-  catch:  { ref: { ...REF.steps },      markdownDescription: GLOBAL_KEY_DOCS.catch.markdownDescription },
-  then:   { ref: { ...REF.steps },      markdownDescription: GLOBAL_KEY_DOCS.then.markdownDescription },
-  bubble: { ref: { ...REF.boolOrExpr }, markdownDescription: GLOBAL_KEY_DOCS.bubble.markdownDescription },
+// `examples` rides along with the prose: a standard JSON Schema annotation, so
+// Ajv ignores it and the editor renders it on hover. It also makes exprFlat the
+// complete published record of the global keys, which is what the MCP server
+// reads them from rather than keeping a hand-copied list of its own.
+const UNIVERSAL: Record<string, { ref: EmittedSchema; markdownDescription: string; examples?: string[] }> = {
+  as:     { ref: { ...REF.strOrExpr },  ...GLOBAL_KEY_DOCS.as },
+  return: { ref: { ...REF.anyVal },     ...GLOBAL_KEY_DOCS.return },
+  catch:  { ref: { ...REF.steps },      ...GLOBAL_KEY_DOCS.catch },
+  then:   { ref: { ...REF.steps },      ...GLOBAL_KEY_DOCS.then },
+  bubble: { ref: { ...REF.boolOrExpr }, ...GLOBAL_KEY_DOCS.bubble },
 };
 
 export interface CombinedSchema {
@@ -844,6 +930,7 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
   const extraDefs: Record<string, EmittedSchema> = {};
   const collisions: string[] = [];
   const siblingHosts: Record<string, Set<string>> = {};
+  const siblingDocs: Record<string, SiblingDoc[]> = {};
 
   for (const pkg of packages) {
     for (const [k, v] of Object.entries(pkg.byKey)) {
@@ -852,6 +939,9 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
         continue;
       }
       byKey[k] = structuredClone(v);
+    }
+    for (const [k, v] of Object.entries(pkg.siblingDocs ?? {})) {
+      if (!(k in siblingDocs)) siblingDocs[k] = v;
     }
     for (const [sib, hosts] of Object.entries(pkg.siblingHosts ?? {})) {
       for (const h of hosts) (siblingHosts[sib] ??= new Set()).add(h);
@@ -886,7 +976,7 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
   for (const [methodKey, m] of Object.entries(byKey)) {
     const primaryEntry = m.properties[methodKey];
     if (!primaryEntry) continue;
-    const md = buildRichMarkdown(methodKey, m);
+    const md = buildRichMarkdown(methodKey, m, siblingDocs[methodKey]);
     if (md) primaryEntry.markdownDescription = md;
     vp[methodKey] = primaryEntry;
     m.properties[methodKey] = { $ref: `#/vp/${methodKey}` };
@@ -941,7 +1031,7 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
       // e.g. `if`'s scalar/array branch), otherwise it's the universal value (steps
       // for `then`). `dependentSchemas` constrains the whole object, so the else
       // wraps the constraint back onto this property, not the object.
-      exprFlatProperties[name] = { markdownDescription: info.markdownDescription };
+      exprFlatProperties[name] = { markdownDescription: info.markdownDescription, ...(info.examples ? { examples: info.examples } : {}) };
       exprFlatDependentSchemas[name] = {
         if: { anyOf: hosts.map(h => ({ required: [h] })) },
         then: true,
@@ -951,6 +1041,7 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
       exprFlatProperties[name] = {
         ...info.ref,
         markdownDescription: info.markdownDescription,
+        ...(info.examples ? { examples: info.examples } : {}),
       };
     }
   }

@@ -13,7 +13,7 @@ import { pathToFileURL } from "node:url";
 import path from "node:path";
 import {
   buildPackageSchema, mergePackageSchemas,
-  type Node, type PackageSchema,
+  type Node, type PackageSchema, type SiblingDoc,
 } from "@jexs/core";
 import { walkJexsPackages, enumerateNodeClasses, type DiscoveredPackage } from "./discover.js";
 
@@ -78,6 +78,9 @@ export async function collectPackageSchemas(projectDir: string): Promise<Package
  * alone can't recover it. `keyPackage`/`nodePackage` keep that edge so a consumer
  * can regroup the flat maps by package (the docs site builds its per-package
  * sections from them) without re-deriving every package schema itself.
+ *
+ * `keyNode` and `siblingDocs` are carried straight through from each package
+ * schema, where `buildPackageSchema` derives them from the authored node schemas.
  */
 function mergeForMcp(schemas: PackageSchema[]): {
   byKey: Record<string, unknown>;
@@ -86,6 +89,8 @@ function mergeForMcp(schemas: PackageSchema[]): {
   packages: string[];
   keyPackage: Record<string, string>;
   nodePackage: Record<string, string>;
+  keyNode: Record<string, string>;
+  siblingDocs: Record<string, SiblingDoc[]>;
 } {
   const byKey: Record<string, unknown> = {};
   const byNode: Record<string, unknown> = {};
@@ -93,6 +98,8 @@ function mergeForMcp(schemas: PackageSchema[]): {
   const packages: string[] = [];
   const keyPackage: Record<string, string> = {};
   const nodePackage: Record<string, string> = {};
+  const keyNode: Record<string, string> = {};
+  const siblingDocs: Record<string, SiblingDoc[]> = {};
   // First-wins on collision, matching mergePackageSchemas and the runtime's
   // first-handler-dispatches rule. `Object.assign` would be last-wins, which
   // would hand a colliding key a different owner here than in the combined
@@ -109,13 +116,20 @@ function mergeForMcp(schemas: PackageSchema[]): {
       byNode[n] = v;
       if (s.packageName) nodePackage[n] = s.packageName;
     }
+    for (const [k, v] of Object.entries(s.keyNode ?? {})) {
+      if (!(k in keyNode)) keyNode[k] = v;
+    }
+    for (const [k, v] of Object.entries(s.siblingDocs ?? {})) {
+      if (!(k in siblingDocs)) siblingDocs[k] = v;
+    }
     for (const [d, v] of Object.entries(s.extraDefs ?? {})) {
       if (d in extraDefs) continue;
       extraDefs[d] = v;
     }
     if (s.packageName) packages.push(s.packageName);
   }
-  return { byKey, byNode, extraDefs, packages, keyPackage, nodePackage };
+
+  return { byKey, byNode, extraDefs, packages, keyPackage, nodePackage, keyNode, siblingDocs };
 }
 
 /**

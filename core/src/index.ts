@@ -8,7 +8,7 @@ export type {
 
 export {
   buildPackageSchema, mergePackageSchemas,
-  type PackageSchema, type CombinedSchema, type EmittedSchema,
+  type PackageSchema, type CombinedSchema, type EmittedSchema, type SiblingDoc,
   type EmittedMethodSchema, type EmittedNodeSchema, type SchemaBuildOptions,
 } from "./schema-gen.js";
 
