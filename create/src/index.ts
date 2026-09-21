@@ -84,12 +84,13 @@ const NODE_ENGINE = ">=24";
  * package's version changes, its entry here changes with it.
  */
 const JEXS_VERSIONS = {
-  "@jexs/core": "^1.2.0",
-  "@jexs/server": "^1.0.0",
+  "@jexs/core": "^1.3.0",
+  "@jexs/server": "^1.1.0",
   "@jexs/client": "^1.0.0",
   "@jexs/electron": "^0.7.0",
   "@jexs/physics": "^0.6.0",
   "@jexs/gl": "^0.6.0",
+  "@jexs/mcp": "^0.10.0",
 } as const;
 
 // ── CLI flags ─────────────────────────────────────────────────────────────────
@@ -299,11 +300,15 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean, useElectron: bo
 
   lines.push(`## Dev tools`);
   lines.push(``);
-  lines.push(`\`.mcp.json\` registers \`@jexs/mcp\`: an MCP server that gives AI assistants live introspection into the Jexs runtime. When editing JSON, prefer these tools over guessing:`);
+  lines.push(`\`.mcp.json\` registers \`@jexs/mcp\`: an MCP server that gives AI assistants live introspection into the Jexs runtime. It runs the copy installed in \`node_modules\`, and reads the \`.jexs/\` schemas that \`npm run schema\` generates. When editing JSON, prefer these tools over guessing:`);
   lines.push(``);
-  lines.push(`- \`list_nodes\`: every registered handler key, grouped by Node class.`);
-  lines.push(`- \`inspect_file\`: shows which handler keys a JSON file uses (and which are unknown).`);
-  lines.push(`- \`resolve_expression\`: evaluates an arbitrary JSON expression against the live resolver.`);
+  lines.push(`- \`search_ops\`: find an operation by name or description. Start here.`);
+  lines.push(`- \`describe_op\`: one operation's siblings, required keys, return type and examples. Also covers the global step keys (\`as\`, \`return\`, \`catch\`, \`then\`, \`bubble\`).`);
+  lines.push(`- \`list_nodes\`: every registered handler key, grouped by Node class. Large; use \`search_ops\` unless you want the whole surface.`);
+  lines.push(`- \`describe_def\`: a shared \`#/$defs/\` shape, e.g. \`_routeNode\`.`);
+  lines.push(`- \`validate_file\`: check a template against the project schema (what the editor uses).`);
+  lines.push(`- \`inspect_file\`: which handler keys a file uses, plus likely typos and dispatch foot-guns.`);
+  lines.push(`- \`resolve_expression\`: evaluate a JSON expression against the live resolver.`);
   lines.push(``);
   lines.push(`MCP-compatible clients (Claude Code, Claude Desktop) pick the config up automatically.`);
   lines.push(``);
@@ -458,7 +463,11 @@ async function main(): Promise<void> {
   // tailwind stays on 3.x deliberately. v4 moved the CLI out to @tailwindcss/cli
   // and replaced the JS config with CSS directives, so it is a migration rather
   // than a version bump.
-  const devDeps: Record<string, string> = { prettier: "^3.5.0" };
+  // @jexs/mcp is pinned rather than fetched with `npx -y` at launch: the MCP
+  // server reads the `.jexs/` schemas this project's own @jexs/server generated,
+  // so the two have to be the same release. Installing it also means the server
+  // starts offline and without a registry round-trip on every editor launch.
+  const devDeps: Record<string, string> = { prettier: "^3.5.0", "@jexs/mcp": JEXS_VERSIONS["@jexs/mcp"] };
   if (!useServer) devDeps["@jexs/server"] = JEXS_VERSIONS["@jexs/server"];
   if (useServer && !useElectron) devDeps.concurrently = "^10.0.0";
   if (useTailwind) devDeps.tailwindcss = "^3.4.0";
@@ -614,18 +623,26 @@ async function main(): Promise<void> {
   // @jexs/mcp is a 100% JSON package (no bin), so it's launched via the `jexs`
   // CLI from @jexs/server: `jexs run @jexs/mcp` resolves the package's `jexs`
   // entry and runs it, rooted at the project (cwd) for schema discovery.
+  //
+  // Both packages are devDependencies, so this runs the INSTALLED copies rather
+  // than whatever `npx -y` would fetch. That matters because the server reads the
+  // `.jexs/` schemas this project's @jexs/server generated on postinstall: fetched
+  // latest against a pinned generator is exactly how the two drift apart. The
+  // relative path is deliberate too, since MCP clients launch the server with the
+  // project root as cwd, which is also what roots the resolver.
   writeFileSync(
     join(dir, ".mcp.json"),
     formatJson({
       mcpServers: {
-        "jexs-dev": { command: "npx", args: ["-y", "-p", "@jexs/server", "-p", "@jexs/mcp", "jexs", "run", "@jexs/mcp"] },
+        "jexs-dev": { command: "node", args: ["node_modules/@jexs/server/dist/cli.js", "run", "@jexs/mcp"] },
       },
     }) + "\n",
   );
 
   // .claude/settings.json — pre-approves the jexs-dev MCP server so Claude Code
-  // doesn't prompt for each introspection call. The @jexs/mcp tools are all
-  // read-only (resolve/describe/list/inspect), so allowing them wholesale is safe.
+  // doesn't prompt for each introspection call. The @jexs/mcp tools only read
+  // (search/describe/list/inspect/validate); `resolve_expression` evaluates against
+  // a live resolver, so it can do whatever a template can.
   writeFileSync(
     join(dir, ".claude", "settings.json"),
     formatJson({
