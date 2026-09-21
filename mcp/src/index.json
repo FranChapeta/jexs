@@ -235,7 +235,10 @@
                         "then": { "concat": ["Returns", { "if": { "notEmpty": { "var": "$entry.output" } }, "then": { "concat": [" (", { "var": "$entry.output" }, ")"] }, "else": "" }, ": ", { "var": "$entry.outputDescription" }] },
                         "else": { "if": { "notEmpty": { "var": "$entry.output" } }, "then": { "concat": ["Returns: ", { "var": "$entry.output" }] }, "else": "" }
                       },
-                      { "as": "sibs", "coalesce": [{ "var": { "concat": ["$siblingDocs.", { "var": "$op" }] } }, []] },
+                      { "as": "allSibs", "coalesce": [{ "var": { "concat": ["$siblingDocs.", { "var": "$op" }] } }, []] },
+                      { "as": "sibMode", "eq": [{ "var": "$entry.variantBy" }, "sibling"] },
+                      { "as": "triggers", "if": { "var": "$sibMode" }, "then": { "map": { "coalesce": [{ "var": "$entry.variantDocs" }, []] }, "item": "v", "do": { "var": "$v.key" } }, "else": [] },
+                      { "as": "sibs", "filter": [{ "var": "$allSibs" }, { "not": { "and": [{ "includes": [{ "var": "$triggers" }, { "var": "$item.name" }] }, { "empty": { "var": "$item.variant" } }] } }] },
                       {
                         "as": "sibBlock",
                         "if": { "notEmpty": { "var": "$sibs" } },
@@ -252,7 +255,7 @@
                                       "  - ",
                                       { "var": "$s.name" },
                                       { "if": { "var": "$s.required" }, "then": " (required)", "else": "" },
-                                      { "if": { "notEmpty": { "var": "$s.variant" } }, "then": { "concat": [" [only with ", { "var": "$op" }, ": \"", { "var": "$s.variant" }, "\"]"] }, "else": "" },
+                                      { "if": { "notEmpty": { "var": "$s.variant" } }, "then": { "if": { "var": "$sibMode" }, "then": { "concat": [" [only with ", { "var": "$s.variant" }, "]"] }, "else": { "concat": [" [only with ", { "var": "$op" }, ": \"", { "if": { "contains": [{ "var": "$s.variant" }, " > "] }, "then": { "replace": [{ "var": "$s.variant" }, " > ", "\" + "], "all": false }, "else": { "concat": [{ "var": "$s.variant" }, "\""] } }, "]"] } }, "else": "" },
                                       { "if": { "notEmpty": { "var": "$s.description" } }, "then": { "concat": [": ", { "var": "$s.description" }] }, "else": "" }
                                     ]
                                   }
@@ -269,7 +272,7 @@
                         "if": { "notEmpty": { "var": "$entry.variantDocs" } },
                         "then": {
                           "concat": [
-                            "Operations (value of this key):\n",
+                            { "if": { "var": "$sibMode" }, "then": { "concat": ["Operations (each selected by that sibling key, alongside ", { "var": "$op" }, "'s own value):\n"] }, "else": "Operations (value of this key):\n" },
                             {
                               "join": [
                                 {

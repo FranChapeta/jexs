@@ -323,6 +323,12 @@ export interface EmittedMethodSchema {
   /** Build-only: TOP-LEVEL variant docs for the hover "Operations" list (nesting
    *  is flattened away in `variantOutputs`, so docs come from here). Stripped. */
   variantDocs?: VariantDoc[];
+  /** Build-only: how `variantDocs` keys select their operation — the primary
+   *  key's VALUE (`{ "schema": "register" }`) or the PRESENCE of a sibling of
+   *  that name (`{ "file": "x.json", "write": … }`). Without it a consumer cannot
+   *  tell the two apart and renders sibling-mode ops as if they were values.
+   *  Stripped. */
+  variantBy?: "sibling" | "value";
   /** Conditional sibling constraints for variants methods. Emitted (real schema). */
   allOf?: EmittedSchema[];
   /** Siblings the handler refuses to run without. Emitted (real schema): the entry
@@ -370,6 +376,7 @@ interface CompiledMethod {
   ownerNode: string;
   variantOutputs?: VariantOutput[];
   variantDocs?: VariantDoc[];
+  variantBy?: "sibling" | "value";
   allOf?: EmittedSchema[];
   required?: string[];
 }
@@ -456,6 +463,7 @@ function compileVariantMethod(
     ownerNode,
     variantOutputs,
     variantDocs,
+    variantBy: variantMode({ variantBy, enum: primary.enum }),
     allOf: allOf.length > 0 ? allOf : undefined,
     required: required.length > 0 ? required : undefined,
   };
@@ -467,6 +475,26 @@ interface VariantSpec {
   variantBy?: JexsMethodSchema["variantBy"];
   output?: string;
   enum?: readonly unknown[];
+}
+
+/**
+ * The one place the discriminator mode is decided. `walkVariants` (which emits
+ * the conditions), `compileVariantMethod` (which records the mode for consumers)
+ * and `methodSiblingDocs` (which documents a sibling-mode trigger as the sibling
+ * it is) must all agree, so they all call this rather than re-deriving it.
+ */
+function variantMode(spec: { variantBy?: JexsMethodSchema["variantBy"]; enum?: readonly unknown[] }): "sibling" | "value" {
+  return spec.variantBy ?? (spec.enum ? "value" : "sibling");
+}
+
+/**
+ * In sibling-mode the variant key names a real sibling carrying the op's input,
+ * so it is registered in `properties` and belongs in the sibling docs. A DOTTED
+ * key is the exception: it tests a clause inside a nested object, whose own
+ * schema already declares it, so it is not a root sibling.
+ */
+function isTriggerSibling(mode: "sibling" | "value", key: string): boolean {
+  return mode === "sibling" && !key.includes(".");
 }
 
 /**
@@ -500,7 +528,7 @@ function walkVariants(
   properties: Record<string, EmittedSchema>,
   allOf: EmittedSchema[],
 ): VariantOutput[] {
-  const mode = spec.variantBy ?? (spec.enum ? "value" : "sibling");
+  const mode = variantMode(spec);
   const out: VariantOutput[] = [];
   const localConds: EmittedSchema[] = [];
 
@@ -514,7 +542,7 @@ function walkVariants(
     // Sibling-mode: the trigger key is itself a sibling carrying the op's input —
     // unless it's dotted, in which case the target lives inside a nested object
     // (e.g. `options`) whose own schema already registers/validates it.
-    if (mode === "sibling" && !key.includes(".")) {
+    if (isTriggerSibling(mode, key)) {
       const { output: _o, outputDescription: _od, siblings: _s, variants: _v, variantBy: _vb, ...triggerProp } = variant;
       properties[key] = expandProperty(triggerProp);
     }
@@ -623,7 +651,18 @@ function methodSiblingDocs(
 
   const walk = (m: JexsMethodSchema, variant?: string): void => {
     for (const [name, prop] of Object.entries(m.siblings ?? {})) add(name, prop, variant);
+    const mode = variantMode(m);
     for (const [vName, v] of Object.entries(m.variants ?? {})) {
+      // In sibling-mode the variant key IS a sibling — `walkVariants` registers it
+      // in `properties` for exactly that reason — so it has to be documented as
+      // one. Skipping it left `{ "file": "x.json", "write": … }`'s `write` visible
+      // only as a variant, which reads as `{ "file": "write" }`; `audio-load`,
+      // whose siblings are ALL triggers, documented none at all. The prose is the
+      // trigger property's own, the same text `walkVariants` puts in `properties`.
+      if (isTriggerSibling(mode, vName)) {
+        const { output: _o, outputDescription: _od, siblings: _s, variants: _v, variantBy: _vb, ...triggerProp } = v;
+        add(vName, triggerProp, variant);
+      }
       walk(v, variant ? `${variant} > ${vName}` : vName);
     }
   };
@@ -758,6 +797,7 @@ export function buildPackageSchema(
     if (m.outputDescription !== undefined) entry.outputDescription = m.outputDescription;
     if (m.variantOutputs !== undefined) entry.variantOutputs = m.variantOutputs;
     if (m.variantDocs !== undefined) entry.variantDocs = m.variantDocs;
+    if (m.variantBy !== undefined) entry.variantBy = m.variantBy;
     if (m.allOf !== undefined) entry.allOf = m.allOf;
     if (m.required !== undefined) entry.required = m.required;
     // 2020-12 evaluates $ref siblings, so the local `properties` (primary key)
@@ -798,6 +838,18 @@ function pickDesc(p: MaybeMeta | undefined): string {
 }
 
 /**
+ * Spells out the condition a variant-scoped sibling lives under. Only the FIRST
+ * segment depends on the method's mode — it is the primary key's value in
+ * value-mode and a sibling's presence otherwise; every nested level is
+ * sibling-mode by the authoring contract, so the rest are always presence.
+ */
+function variantScope(methodKey: string, variant: string, mode: "sibling" | "value" | undefined): string {
+  const [first, ...nested] = variant.split(" > ");
+  const head = mode === "sibling" ? `\`${first}\`` : `\`${methodKey}: "${first}"\``;
+  return [head, ...nested.map(s => `\`${s}\``)].join(" + ");
+}
+
+/**
  * Composes the rich markdownDescription for a primary handler key's hover.
  * Includes the method's own description, a bulleted list of sibling properties
  * with their descriptions, and the first example as a fenced code block.
@@ -807,14 +859,19 @@ function buildRichMarkdown(methodKey: string, m: EmittedMethodSchema, docs: Sibl
   let md = pickDesc(primary);
 
   // Variants methods document their (top-level) operations, each with its output
-  // type — the variant keys ARE the operations.
+  // type — the variant keys ARE the operations. How one is SELECTED depends on the
+  // mode, and saying it wrong inverts the syntax: a sibling-mode op reads as
+  // `{ "file": "x.json", "write": … }`, never `{ "file": "write" }`.
+  const sibMode = m.variantBy === "sibling";
+  const triggers = new Set(sibMode ? (m.variantDocs ?? []).map(v => v.key) : []);
   if (m.variantDocs && m.variantDocs.length > 0) {
     const ops = m.variantDocs.map(v => {
       const out = v.output ? ` → ${v.output}` : "";
       const desc = v.description ? `: ${v.description}` : "";
       return `- \`${v.key}\`${out}${desc}`;
     });
-    md = (md ? md + "\n\n" : "") + "**Operations:**\n" + ops.join("\n");
+    const how = sibMode ? "each selected by that sibling key" : `value of \`${methodKey}\``;
+    md = (md ? md + "\n\n" : "") + `**Operations** *(${how})*:\n` + ops.join("\n");
   }
 
   // Siblings come from `siblingDocs`, not from `m.properties`: by this point the
@@ -823,10 +880,13 @@ function buildRichMarkdown(methodKey: string, m: EmittedMethodSchema, docs: Sibl
   // would silently drop every `commonSiblings` key and every variant's keys.
   // Listed for variants methods too, under the operations, since an operation's
   // options are exactly what the reader needs next.
-  if (docs && docs.length > 0) {
-    const lines = docs.map(d => {
+  // A sibling-mode trigger is already listed above WITH its output type, so listing
+  // it again here would just be the same key twice.
+  const rest = (docs ?? []).filter(d => !(triggers.has(d.name) && !d.variant));
+  if (rest.length > 0) {
+    const lines = rest.map(d => {
       const req = d.required ? " *(required)*" : "";
-      const scope = d.variant ? ` *(with \`${methodKey}: "${d.variant}"\`)*` : "";
+      const scope = d.variant ? ` *(with ${variantScope(methodKey, d.variant, m.variantBy)})*` : "";
       const desc = d.description ? `: ${d.description}` : "";
       return `- \`${d.name}\`${req}${scope}${desc}`;
     });
@@ -1171,6 +1231,7 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
     delete m.outputDescription;
     delete m.variantOutputs;
     delete m.variantDocs;
+    delete m.variantBy;
   }
 
   const combined: CombinedSchema = {
