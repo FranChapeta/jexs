@@ -1,29 +1,35 @@
 [
   {
-    "name": "resolve_expression",
-    "description": "Resolve a Jexs JSON expression through the live resolver and return the result. Pass the expression as JSON (object/array/value), not a string.",
+    "name": "search_ops",
+    "description": "Find Jexs operations by name or description. Start here: there are hundreds of ops, and this returns only the matching ones with their package, owning Node class and return type. Follow up with describe_op for the full signature.",
     "inputSchema": {
       "type": "object",
       "properties": {
-        "expression": { "description": "A Jexs JSON expression to resolve, e.g. { \"concat\": [\"a\", \"b\"] }." }
+        "query": { "type": "string", "description": "Text to look for in operation names and descriptions, e.g. \"sort\", \"http\", \"base64\"." },
+        "package": { "type": "string", "description": "Optional. Restrict to one package, e.g. \"@jexs/server\"." }
       },
-      "required": ["expression"]
+      "required": ["query"]
+    }
+  },
+  {
+    "name": "describe_op",
+    "description": "Show the full signature of a Jexs operation: owning Node class and package, description, return type, sibling keys (with which are required and which belong to a specific operation), variant operations, and examples. Also accepts a global step key (as, return, catch, then, bubble).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "op": { "type": "string", "description": "Operation key, e.g. \"if\", \"foreach\", \"directory\", or a global step key like \"then\"." }
+      },
+      "required": ["op"]
     }
   },
   {
     "name": "list_nodes",
-    "description": "List every registered Jexs node class and its operation keys (variant ops shown inline), plus the global step keys.",
-    "inputSchema": { "type": "object", "properties": {} }
-  },
-  {
-    "name": "describe_op",
-    "description": "Show the schema for a Jexs operation: description, return type, siblings, variant ops, examples, and the raw schema entry.",
+    "description": "List every registered Jexs Node class and its operation keys (variant ops shown inline), plus the global step keys. Large: prefer search_ops unless you want the whole surface.",
     "inputSchema": {
       "type": "object",
       "properties": {
-        "op": { "type": "string", "description": "Operation key, e.g. \"if\", \"foreach\", \"directory\"." }
-      },
-      "required": ["op"]
+        "package": { "type": "string", "description": "Optional. Only list Node classes from this package, e.g. \"@jexs/client\"." }
+      }
     }
   },
   {
@@ -38,14 +44,37 @@
     }
   },
   {
-    "name": "inspect_file",
-    "description": "Read a Jexs JSON file and report which node operation keys it uses, plus its structure.",
+    "name": "validate_file",
+    "description": "Validate a Jexs JSON file against the project's generated schema (the same one the editor uses) and report where it fails. Use this to check a template you just wrote.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "filePath": { "type": "string", "description": "Path to the JSON file, relative to the resolver root." }
       },
       "required": ["filePath"]
+    }
+  },
+  {
+    "name": "inspect_file",
+    "description": "Read a Jexs JSON file and report which node operation keys it uses, any keys that look like typos, and advisory lint about dispatch foot-guns.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "filePath": { "type": "string", "description": "Path to the JSON file, relative to the resolver root." }
+      },
+      "required": ["filePath"]
+    }
+  },
+  {
+    "name": "resolve_expression",
+    "description": "Resolve a Jexs JSON expression through the live resolver and return the result. Pass the expression as JSON (object/array/value), not a string. It runs against a real server resolver with full node access, so it can read files, hit the network and touch the database exactly as the app would.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "expression": { "description": "A Jexs JSON expression to resolve, e.g. { \"concat\": [\"a\", \"b\"] }." },
+        "vars": { "type": "object", "description": "Optional. Context variables to seed, so the expression can read them via { \"var\": \"$name\" }." }
+      },
+      "required": ["expression"]
     }
   }
 ]

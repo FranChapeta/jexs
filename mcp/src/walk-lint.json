@@ -5,7 +5,7 @@
       "return": {
         "flatten": {
           "map": { "var": "$node" },
-          "do": { "exec": { "var": "$walkLint" }, "params": { "node": { "var": "$item" }, "path": { "concat": [{ "var": "$path" }, "[]"] } } }
+          "do": { "exec": { "var": "$walkLint" }, "params": { "node": { "var": "$item" }, "path": { "concat": [{ "var": "$path" }, "[", { "var": "$index" }, "]"] } } }
         }
       }
     }
@@ -14,13 +14,18 @@
 
   { "as": "keys", "keys": { "var": "$node" } },
   { "as": "nonGlobal", "filter": [{ "var": "$keys" }, { "not": { "includes": [{ "var": "$globalNames" }, { "var": "$item" }] } }] },
-  { "as": "handlerKeys", "filter": [{ "var": "$nonGlobal" }, { "includes": [{ "var": "$opNames" }, { "var": "$item" }] }] },
+  { "as": "opKeys", "filter": [{ "var": "$nonGlobal" }, { "includes": [{ "var": "$opNames" }, { "var": "$item" }] }] },
+
+  { "as": "dispatcher", "first": { "var": "$opKeys" } },
+  { "as": "ownSiblings", "map": { "coalesce": [{ "var": { "concat": ["$siblingDocs.", { "var": "$dispatcher" }] } }, []] }, "item": "s", "do": { "var": "$s.name" } },
+  { "as": "handlerKeys", "filter": [{ "var": "$opKeys" }, { "not": { "includes": [{ "var": "$ownSiblings" }, { "var": "$item" }] } }] },
+
   { "as": "where", "if": { "empty": { "var": "$path" } }, "then": "(root)", "else": { "var": "$path" } },
 
   {
     "as": "warn",
     "if": { "gt": [{ "count": { "var": "$handlerKeys" } }, 1] },
-    "then": { "concat": [{ "var": "$where" }, ": ambiguous — multiple handler keys (", { "join": [{ "var": "$handlerKeys" }, ", "] }, "); only the first one dispatches."] },
+    "then": { "concat": [{ "var": "$where" }, ": ambiguous, multiple handler keys (", { "join": [{ "var": "$handlerKeys" }, ", "] }, "); only the first one dispatches."] },
     "else": {
       "if": {
         "and": [
@@ -29,7 +34,7 @@
           { "neq": [{ "first": { "var": "$nonGlobal" } }, { "first": { "var": "$handlerKeys" } }] }
         ]
       },
-      "then": { "concat": [{ "var": "$where" }, ": collision risk — first key \"", { "first": { "var": "$nonGlobal" } }, "\" isn't a handler but \"", { "first": { "var": "$handlerKeys" } }, "\" is, so this object dispatches as \"", { "first": { "var": "$handlerKeys" } }, "\". If it is data, load it with { \"data\": true } or rename the key."] },
+      "then": { "concat": [{ "var": "$where" }, ": collision risk, first key \"", { "first": { "var": "$nonGlobal" } }, "\" isn't a handler but \"", { "first": { "var": "$handlerKeys" } }, "\" is, so this object dispatches as \"", { "first": { "var": "$handlerKeys" } }, "\". If it is data, load it with { \"data\": true } or rename the key."] },
       "else": ""
     }
   },

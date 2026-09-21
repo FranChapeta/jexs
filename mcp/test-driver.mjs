@@ -3,6 +3,11 @@
 // runs a full MCP session (initialize -> tools/list -> a tools/call for each tool
 // -> ping -> an unknown method), and prints a snippet of each response.
 //
+// This is the eyeball tool, for reading what the server actually says. The
+// assertions live in mcp/test/mcp.test.ts and run under `npm test`; the one check
+// kept here is that every request got a reply, since that is the failure a printed
+// transcript hides most easily.
+//
 //   node mcp/test-driver.mjs        (run from the repo root, after `npm run build`)
 import { spawn } from "node:child_process";
 
@@ -19,6 +24,9 @@ const requests = [
   { jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "describe_def", arguments: { name: "routeNode" } } },
   { jsonrpc: "2.0", id: 8, method: "tools/call", params: { name: "inspect_file", arguments: { filePath: "mcp/src/index.json" } } },
   { jsonrpc: "2.0", id: 9, method: "ping" },
+  { jsonrpc: "2.0", id: 10, method: "tools/call", params: { name: "search_ops", arguments: { query: "sort" } } },
+  { jsonrpc: "2.0", id: 11, method: "tools/call", params: { name: "validate_file", arguments: { filePath: "mcp/test/fixtures/invalid.json" } } },
+  { jsonrpc: "2.0", id: 12, method: "tools/call", params: { name: "describe_op", arguments: { op: "mpa" } } },
   { jsonrpc: "2.0", id: 99, method: "does/not/exist" },
 ];
 
@@ -61,5 +69,13 @@ console.log("describe_op as  :", snip(responses.get(6)));
 console.log("describe_def    :", snip(responses.get(7)));
 console.log("inspect_file    :", snip(responses.get(8)));
 console.log("ping            :", JSON.stringify(responses.get(9)?.result));
+console.log("search_ops      :", snip(responses.get(10)));
+console.log("validate_file   :", snip(responses.get(11)));
+console.log("describe_op typo:", snip(responses.get(12)));
 console.log("unknown method  :", snip(responses.get(99)));
-console.log("total responses :", responses.size, "/ 10");
+const expected = requests.filter(r => r.id !== undefined).length;
+console.log("total responses :", responses.size, "/", expected);
+if (responses.size !== expected) {
+  console.error("MISSING RESPONSES - a request got no reply at all.");
+  process.exitCode = 1;
+}

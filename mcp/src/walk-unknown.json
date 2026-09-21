@@ -1,0 +1,60 @@
+[
+  {
+    "if": { "isType": [{ "var": "$node" }, "array"] },
+    "then": {
+      "return": {
+        "flatten": {
+          "map": { "var": "$node" },
+          "do": { "exec": { "var": "$walkUnknown" }, "params": { "node": { "var": "$item" }, "path": { "concat": [{ "var": "$path" }, "[", { "var": "$index" }, "]"] } } }
+        }
+      }
+    }
+  },
+  { "if": { "not": { "isType": [{ "var": "$node" }, "object"] } }, "then": { "return": [] } },
+
+  { "as": "keys", "keys": { "var": "$node" } },
+  { "as": "opKeys", "filter": [{ "var": "$keys" }, { "includes": [{ "var": "$opNames" }, { "var": "$item" }] }] },
+  { "as": "dispatcher", "first": { "var": "$opKeys" } },
+  { "as": "ownSiblings", "map": { "coalesce": [{ "var": { "concat": ["$siblingDocs.", { "var": "$dispatcher" }] } }, []] }, "item": "s", "do": { "var": "$s.name" } },
+  { "as": "known", "merge": [{ "var": "$opNames" }, { "var": "$globalNames" }, { "var": "$ownSiblings" }] },
+
+  {
+    "as": "here",
+    "if": { "empty": { "var": "$dispatcher" } },
+    "then": [],
+    "else": {
+      "map": {
+        "filter": [
+          { "var": "$keys" },
+          {
+            "and": [
+              { "not": { "includes": [{ "var": "$known" }, { "var": "$item" }] } },
+              { "notEmpty": { "exec": { "var": "$suggest" }, "params": { "needle": { "var": "$item" }, "haystack": { "var": "$known" } } } }
+            ]
+          }
+        ]
+      },
+      "item": "k",
+      "do": {
+        "concat": [
+          { "if": { "empty": { "var": "$path" } }, "then": "(root)", "else": { "var": "$path" } },
+          ".", { "var": "$k" },
+          " is not a key of \"", { "var": "$dispatcher" }, "\", did you mean: ",
+          { "join": [{ "exec": { "var": "$suggest" }, "params": { "needle": { "var": "$k" }, "haystack": { "var": "$known" } } }, ", "] },
+          "?"
+        ]
+      }
+    }
+  },
+
+  {
+    "as": "childHits",
+    "flatten": {
+      "map": { "entries": { "var": "$node" } },
+      "item": "e",
+      "do": { "exec": { "var": "$walkUnknown" }, "params": { "node": { "var": "$e.value" }, "path": { "concat": [{ "if": { "empty": { "var": "$path" } }, "then": "", "else": { "concat": [{ "var": "$path" }, "."] } }, { "var": "$e.key" }] } } }
+    }
+  },
+
+  { "return": { "merge": [{ "var": "$here" }, { "var": "$childHits" }] } }
+]

@@ -1,0 +1,5 @@
+[
+  { "fetch": "/api/thing", "cache": "no-store", "as": "thing" },
+  { "concat": ["a", "b"], "upper": "c" },
+  { "label": "not a handler", "sha256": "x" }
+]

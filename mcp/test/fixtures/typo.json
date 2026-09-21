@@ -1,0 +1,3 @@
+[
+  { "map": { "var": "$numbers" }, "doo": { "multiply": [{ "var": "$item" }, 2] } }
+]

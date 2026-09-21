@@ -1,0 +1,4 @@
+[
+  { "as": "greeting", "concat": ["Hello, ", { "var": "$name" }] },
+  { "var": "$greeting" }
+]
