@@ -23,11 +23,15 @@ npm install @jexs/core
 | `VariablesNode` | `var`, `setVars` | Read/write context by dot-path |
 | `LogicNode` | `if`, `switch`, `foreach`, `and`, `or`, `not`, `eq`, `lt`, `gt`, ... | Branching, iteration, comparisons |
 | `ElementNode` | `tag` | Render an HTML element tree to a string |
-| `StringNode` | `concat`, `replace`, `split`, `trim`, ... | String ops |
-| `ArrayNode` | `map`, `filter`, `length`, `join`, `sort`, ... | Array ops |
+| `StringNode` | `concat`, `replace`, `split`, `trim`, `join`, `length`, ... | String ops |
+| `ArrayNode` | `map`, `filter`, `reduce`, `sort`, `count`, `groupBy`, ... | Array ops |
+| `ObjectNode` | `keys`, `values`, `entries`, `pick`, `omit`, `deepMerge`, ... | Object ops |
 | `MathNode` | `sum`, `avg`, `min`, `max`, `clamp`, `random`, ... | Numeric ops |
-| `DateNode` | `now`, `date-format`, `date-add`, ... | Dates |
-| `TimerNode` | `setTimeout`, `setInterval`, `clearTimer` | Timing |
+| `ColorNode` | `toRgb`, `toHex`, `lighten`, `darken`, `mix`, `contrast`, ... | Color ops |
+| `DateNode` | `dateNow`, `dateFormat`, `dateAdd`, `dateDiff`, ... | Dates |
+| `TimerNode` | `tick`, `cron` | Timing |
+| `FetchNode` | `fetch` | HTTP requests |
+| `WorkerNode` | `thread` | Run steps off the main thread |
 | `ErrorNode` | `error` | Throw `{ status, message }` HTTP errors |
 
 ## Quick example
@@ -35,7 +39,7 @@ npm install @jexs/core
 ```ts
 import { createResolver, coreNodes } from "@jexs/core";
 
-const resolve = createResolver(coreNodes);
+const resolve = createResolver(coreNodes());
 
 const ctx = { user: { name: "Ada" } };
 
@@ -61,7 +65,7 @@ class UpperNode extends Node {
   }
 }
 
-const resolve = createResolver([...coreNodes, new UpperNode()]);
+const resolve = createResolver([...coreNodes(), new UpperNode()]);
 resolve({ upper: "hello" }, {}); // → "HELLO"
 ```
 

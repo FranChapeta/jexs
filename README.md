@@ -2,7 +2,7 @@
 
 **JSON Expression System**
 
-A Jexs app is JSON. Each object key dispatches to a typed Node class: `{ "if": ..., "then": ..., "else": ... }`, `{ "tag": "div", "content": [...] }`, `{ "query": "users", "where": {...} }`. Nodes can be sync or async; the resolver walks the tree, dispatches on keys, and threads a per-request context.
+A Jexs app is JSON. Each object key dispatches to a typed Node class: `{ "if": ..., "then": ..., "else": ... }`, `{ "tag": "div", "content": [...] }`, `{ "query": "select", "table": "users", "options": {...} }`. Nodes can be sync or async; the resolver walks the tree, dispatches on keys, and threads a per-request context.
 
 ## Quick start
 
@@ -65,7 +65,7 @@ Setting `"client": true` makes the server serve the `@jexs/client` browser bundl
   { "tag": "body", "content": [
     { "tag": "h1", "content": ["Members"] },
     { "tag": "ul", "content": [
-      { "foreach": { "query": "users", "limit": 50 }, "item": "user", "do":
+      { "map": { "query": "select", "table": "users", "options": { "limit": 50 } }, "item": "user", "do":
         { "tag": "li", "content": [{ "var": "$user.name" }] }
       }
     ] }
@@ -78,7 +78,7 @@ Setting `"client": true` makes the server serve the `@jexs/client` browser bundl
 ```json
 [{ "type": "click", "do": [
   { "fetch": "/api/like", "method": "POST", "as": "result" },
-  { "dom-set": { "var": "$target" }, "class": { "liked": true } }
+  { "toggleClass": [{ "var": "$target" }, "liked"] }
 ] }]
 ```
 

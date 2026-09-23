@@ -51,7 +51,7 @@ files, make network calls and touch the database exactly as the app would.
 ## How it works
 
 There is no launcher. `jexs run @jexs/mcp` reads this package's `package.json` `"jexs":
-"src/index.json"` and runs that entry through a `[...coreNodes, ...serverNodes({ root })]` resolver
+"src/index.json"` and runs that entry through a `[...coreNodes(), ...serverNodes({ root })]` resolver
 rooted at the cwd. `FileNode` resolves a relative `{ file }` against the loading file's own
 directory, so the template's siblings are just `"tools.json"`, `"walk.json"`, wherever the package is
 installed; a `/`-prefixed path anchors at `root`, which is how it reads the target project's files.

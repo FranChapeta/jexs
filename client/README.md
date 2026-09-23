@@ -20,8 +20,9 @@ npm install @jexs/client @jexs/core
 
 | Node | Keys | Purpose |
 |---|---|---|
-| `DomNode` | `dom-set`, `dom-get`, `dom-append`, `dom-remove`, `dom-query`, ... | Mutate the DOM |
-| `AudioNode` | `audio-play`, `audio-stop`, `audio-volume`, ... | Web Audio playback |
+| `DomNode` | `setText`, `setHtml`, `getValue`, `setValue`, `addClass`, `toggleClass`, `setAttr`, `querySelector`, `append`, `removeEl`, ... | Read and mutate the DOM |
+| `AudioNode` | `audio-load`, `audio-play`, `audio-stop`, `audio-volume`, `audio-master`, ... | Web Audio playback |
+| `StorageNode` | `storage-get`, `storage-set`, `storage-remove`, `storage` | `localStorage` / `sessionStorage` |
 
 **Lazy-loaded nodes** (only fetched when first used):
 
@@ -29,9 +30,11 @@ npm install @jexs/client @jexs/core
 - `list-*` — sortable / serializable lists
 - `ws-*` — WebSocket client
 - `push-*` — web-push subscription
-- `rtc` — WebRTC peer connection
+- `rtc-*` — WebRTC peer connection
 - `gl-*` — pulls in `@jexs/gl`
 - `entity-*`, `physics-*`, `v-*`, `collision-*`, `joint-*`, `parseGLB`, ... — pulls in `@jexs/physics`
+
+`sw-*` (`ServiceWorkerNode`) is not in this set: it registers in the service-worker entry point (`sw.js`), which runs its own resolver.
 
 ## Usage from HTML
 
@@ -44,7 +47,7 @@ Drop the bundle in a page and Jexs auto-initializes on `DOMContentLoaded`:
   "type": "click",
   "do": [
     { "fetch": "/api/like", "method": "POST", "as": "result" },
-    { "dom-set": { "var": "$target" }, "class": { "liked": true } }
+    { "toggleClass": [{ "var": "$target" }, "liked"] }
   ]
 }]'>Like</button>
 ```
