@@ -25,7 +25,7 @@ import type { WorkerLike } from "@jexs/core";
 import { detectCollision, resolveCollision, wakeBody, isRotated, usesMeshCollision, maskAllows } from "../collision.js";
 import { solveConstraints, type Constraint, type ConstraintType } from "../constraints.js";
 import { SpatialGrid } from "../SpatialGrid.js";
-import type { JexsNodeSchema } from "@jexs/core";
+import type { JexsNodeSchema, JexsPropertySchema } from "@jexs/core";
 
 // Re-export types and functions that the barrel (index.ts) needs from submodules
 export { wakeBody } from "../collision.js";
@@ -967,6 +967,12 @@ export class CollisionNode extends Node {
 
 // ─── JointNode — constraint management via JMS templates ─────────────────────
 
+/** The separation a distance or spring joint holds; a hinge pins it to zero. */
+const REST_LENGTH: JexsPropertySchema = {
+  type: "number",
+  description: "Rest length (default: current distance between entities).",
+};
+
 export class JointNode extends Node {
   static schema: JexsNodeSchema = {
     "joint-add": {
@@ -984,7 +990,41 @@ export class JointNode extends Node {
             "spring",
             "hinge",
           ],
+          default: "distance",
           description: "Constraint type (default `\"distance\"`).",
+          variants: {
+            distance: {
+              description: "Holds the two anchors at `restLength` apart.",
+              siblings: { restLength: REST_LENGTH },
+            },
+            spring: {
+              description: "Pulls the anchors toward `restLength` with a damped spring force.",
+              siblings: {
+                restLength: REST_LENGTH,
+                stiffness: {
+                  type: "number",
+                  description: "Constraint stiffness 0–1 (default `0.5`).",
+                },
+                damping: {
+                  type: "number",
+                  description: "Constraint damping 0–1 (default `0.1`).",
+                },
+              },
+            },
+            hinge: {
+              description: "Pins the two anchors together, optionally limiting the relative angle.",
+              siblings: {
+                minAngle: {
+                  type: "number",
+                  description: "Lower limit of B's angle relative to A, in degrees. Enforced only when `maxAngle` is set too.",
+                },
+                maxAngle: {
+                  type: "number",
+                  description: "Upper limit of B's angle relative to A, in degrees. Enforced only when `minAngle` is set too.",
+                },
+              },
+            },
+          },
         },
         a: {
           type: "string",
@@ -994,17 +1034,15 @@ export class JointNode extends Node {
           type: "string",
           description: "ID of second entity.",
         },
-        restLength: {
-          type: "number",
-          description: "Rest length (default: current distance between entities).",
+        anchorA: {
+          type: "array",
+          items: { type: "number" },
+          description: "Attachment point on A as an `[x, y]` offset from its position (default `[0, 0]`).",
         },
-        stiffness: {
-          type: "number",
-          description: "Constraint stiffness 0–1 (default `0.5`).",
-        },
-        damping: {
-          type: "number",
-          description: "Constraint damping 0–1 (default `0.1`).",
+        anchorB: {
+          type: "array",
+          items: { type: "number" },
+          description: "Attachment point on B as an `[x, y]` offset from its position (default `[0, 0]`).",
         },
       },
     },

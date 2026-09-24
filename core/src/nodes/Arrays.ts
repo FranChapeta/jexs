@@ -357,6 +357,7 @@ export class ArrayNode extends Node {
             "disjunction",
             "unit",
           ],
+          default: "conjunction",
           description: "Grouping relation: `\"conjunction\"` (and, default), `\"disjunction\"` (or), or `\"unit\"`.",
         },
         style: {
@@ -366,6 +367,7 @@ export class ArrayNode extends Node {
             "short",
             "narrow",
           ],
+          default: "long",
           description: "Length of the connector words (default `\"long\"`).",
         },
       },

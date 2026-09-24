@@ -1,7 +1,24 @@
 import { Node, Context, NodeValue } from "./Node.js";
 import { resolve, resolveAll } from "../Resolver.js";
 import { parseInterval } from "./Timer.js";
-import type { JexsNodeSchema } from "../schema.js";
+import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
+
+/** The output format the timestamp-producing ops share: `ms` stays a number, the
+ *  others format it as a string. `fallback` is the op's own default, which the
+ *  runtime applies when `format` is omitted. */
+function formatSibling(fallback: "ms" | "datetime"): JexsPropertySchema {
+  return {
+    type: "string",
+    enum: ["ms", "iso", "datetime"],
+    default: fallback,
+    description: `Output format (default \`"${fallback}"\`).`,
+    variants: {
+      ms: { output: "number", description: "Unix milliseconds." },
+      iso: { output: "string", description: "ISO-8601, e.g. `2026-07-01T12:00:00.000Z`." },
+      datetime: { output: "string", description: "`YYYY-MM-DD HH:MM:SS` in UTC." },
+    },
+  };
+}
 
 export class DateNode extends Node {
   static schema: JexsNodeSchema = {
@@ -30,15 +47,7 @@ export class DateNode extends Node {
         "{ \"dateAdd\": [{ \"dateNow\": \"ms\" }, \"7d\"], \"format\": \"iso\" }",
       ],
       siblings: {
-        format: {
-          type: "string",
-          enum: [
-            "ms",
-            "iso",
-            "datetime",
-          ],
-          description: "Output format (default `\"ms\"`).",
-        },
+        format: formatSibling("ms"),
       },
     },
     dateFormat: {
@@ -48,15 +57,7 @@ export class DateNode extends Node {
         "{ \"dateFormat\": { \"var\": \"$createdAt\" }, \"format\": \"iso\" }",
       ],
       siblings: {
-        format: {
-          type: "string",
-          enum: [
-            "ms",
-            "iso",
-            "datetime",
-          ],
-          description: "Output format (default `\"datetime\"`).",
-        },
+        format: formatSibling("datetime"),
       },
     },
     dateParse: {
@@ -90,6 +91,7 @@ export class DateNode extends Node {
             "day",
             "week",
           ],
+          default: "ms",
           description: "Unit of the result (default `\"ms\"`).",
         },
       },
@@ -136,17 +138,10 @@ export class DateNode extends Node {
             "month",
             "year",
           ],
+          default: "day",
           description: "Boundary unit (default `\"day\"`).",
         },
-        format: {
-          type: "string",
-          enum: [
-            "ms",
-            "iso",
-            "datetime",
-          ],
-          description: "Output format (default `\"ms\"`).",
-        },
+        format: formatSibling("ms"),
       },
     },
     dateEndOf: {
@@ -167,17 +162,10 @@ export class DateNode extends Node {
             "month",
             "year",
           ],
+          default: "day",
           description: "Boundary unit (default `\"day\"`).",
         },
-        format: {
-          type: "string",
-          enum: [
-            "ms",
-            "iso",
-            "datetime",
-          ],
-          description: "Output format (default `\"ms\"`).",
-        },
+        format: formatSibling("ms"),
       },
     },
     dateRelative: {
@@ -220,6 +208,7 @@ export class DateNode extends Node {
             "always",
             "auto",
           ],
+          default: "always",
           description: "`\"always\"` (default, e.g. \"1 day ago\") or `\"auto\"` (uses \"yesterday\"/\"tomorrow\" where available).",
         },
         style: {
@@ -229,6 +218,7 @@ export class DateNode extends Node {
             "short",
             "narrow",
           ],
+          default: "long",
           description: "Length of the phrasing (default `\"long\"`).",
         },
       },

@@ -100,6 +100,10 @@ const ENTITY_FIELDS: Record<string, P> = {
   dirZ:      { type: "number", description: "Z of the direction a `light`'s cone points (default `-1`). Read only when `coneAngle` is set." },
 };
 
+/** The fields only one shape reads, which `entity-add` scopes to that `type`; the
+ *  rest apply to every shape. `entity-update` has no `type`, so it takes them all. */
+const { lineWidth, radius, coneAngle, dirX, dirY, dirZ, ...SHARED_FIELDS } = ENTITY_FIELDS;
+
 /**
  * Every key the entity ops act on themselves. Derived from `ENTITY_FIELDS` so a
  * newly declared field is recognised by the same edit, plus `GLOBAL_KEYS` (which
@@ -215,9 +219,21 @@ export class EntityNode extends Node {
         type: {
           type: "string",
           enum: [...ENTITY_TYPES],
+          default: "quad",
           markdownDescription: "Entity shape (default `\"quad\"`). A shape with depth (`scale[2]` above 0) is drawn solid and flat otherwise, so a `circle` is a disc or a cylinder and a `triangle` a triangle or a cone.\r\n`line`, `line-strip` and `points` take their geometry from `vertices`; `mesh` draws the mesh named by `mesh`, taking its scale from the mesh bounds and colliding against its BVH; `ramp` collides as a slope rather than a box; `light` and `pivot` are never drawn.",
+          variants: {
+            light: {
+              siblings: { radius },
+              // A cone's direction means nothing until it has an angle.
+              variants: { coneAngle: { ...coneAngle, siblings: { dirX, dirY, dirZ } } },
+            },
+            line: { siblings: { lineWidth } },
+            "line-strip": { siblings: { lineWidth } },
+          },
         },
-        ...ENTITY_FIELDS,
+        ...SHARED_FIELDS,
+        // A new entity starts from the defaults; `entity-update` leaves an omitted field as it is.
+        blend: { ...SHARED_FIELDS.blend, default: "normal" },
         pooled: {
           type: "boolean",
           description: "Reuse a pooled slot for this entity.",

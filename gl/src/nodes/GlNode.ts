@@ -455,13 +455,17 @@ export class GlNode extends Node {
           type: "string",
           description: "CSS color string for the text fill.",
         },
+      },
+      variants: {
         msdf: {
           type: "string",
           description: "Name of a registered `gl-font` to render this text via the MSDF path (crisp at any scale, recolorable). When set, `font` is ignored and `size` controls the px size.",
-        },
-        size: {
-          type: "number",
-          description: "Font size in px for the MSDF path (when `msdf` is set). Default `32`.",
+          siblings: {
+            size: {
+              type: "number",
+              description: "Font size in px for the MSDF path. Default `32`.",
+            },
+          },
         },
       },
     },

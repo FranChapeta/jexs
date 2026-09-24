@@ -142,6 +142,103 @@ const cases: Case[] = [
     expr: { foreach: [1], item: { fetch: "/api/name" }, do: "y" } },
   { label: "string-slot rejects fetch full (object-output) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { foreach: [1], item: { fetch: "/api/name", full: true }, do: "y" } },
+  // `type` is a sibling whose VALUE narrows the output; `full` still wins over it.
+  { label: "string-slot accepts fetch type text (string-output) (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { foreach: [1], item: { fetch: "/api/name", type: "text" }, do: "y" } },
+  { label: "number-slot rejects fetch type text (string-output) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { sleep: { fetch: "/api/n", type: "text" } } },
+  { label: "string-slot rejects fetch full + type text (full wins: object) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { foreach: [1], item: { fetch: "/api/name", full: true, type: "text" }, do: "y" } },
+
+  // `method` defaults to GET; only the methods that send a body take `body`, and HEAD resolves to null.
+  { label: "fetch POST with a body (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { fetch: "/api/users", method: "POST", body: { name: "x" } } },
+  { label: "fetch GET with a body (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { fetch: "/api/users", method: "GET", body: { name: "x" } } },
+  { label: "fetch with a body and no method, i.e. GET (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { fetch: "/api/users", body: { name: "x" } } },
+  { label: "fetch with an expression method and a body (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { fetch: "/api/users", method: { var: "$m" }, body: { name: "x" } } },
+  { label: "string-slot rejects fetch HEAD (null-output) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { foreach: [1], item: { fetch: "/api/name", method: "HEAD" }, do: "y" } },
+  { label: "null-slot accepts fetch HEAD (PASS)", schemaRef: "$defs/exprFlat_null", expectValid: true,
+    expr: { fetch: "/api/name", method: "HEAD" } },
+  { label: "string-slot rejects fetch HEAD + type text (method is declared first: null) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { foreach: [1], item: { fetch: "/api/name", method: "HEAD", type: "text" }, do: "y" } },
+
+  // Date `format`: `ms` is a number, `iso`/`datetime` strings; each op defaults its own.
+  { label: "number-slot accepts dateAdd (default ms) (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { sleep: { dateAdd: [0, "1d"] } } },
+  { label: "string-slot rejects dateAdd (default ms: number) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { foreach: [1], item: { dateAdd: [0, "1d"] }, do: "y" } },
+  { label: "string-slot accepts dateAdd format iso (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { foreach: [1], item: { dateAdd: [0, "1d"], format: "iso" }, do: "y" } },
+  { label: "string-slot accepts dateFormat (default datetime) (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { foreach: [1], item: { dateFormat: 0 }, do: "y" } },
+  { label: "string-slot rejects dateFormat format ms (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { foreach: [1], item: { dateFormat: 0, format: "ms" }, do: "y" } },
+  { label: "string-slot accepts dateStartOf with an expression format (number or string) (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { foreach: [1], item: { dateStartOf: 0, format: { var: "$f" } }, do: "y" } },
+  { label: "boolean-slot rejects dateEndOf with an expression format (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { foreach: [1], do: "y", parallel: { dateEndOf: 0, format: { var: "$f" } } } },
+
+  // joint-add: each constraint type reads its own siblings; `type` defaults to distance.
+  { label: "joint-add spring with stiffness (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { "joint-add": "j", type: "spring", a: "x", b: "y", stiffness: 0.8, damping: 0.2 } },
+  { label: "joint-add distance with stiffness (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "joint-add": "j", type: "distance", a: "x", b: "y", stiffness: 0.8 } },
+  { label: "joint-add without type (distance) with stiffness (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "joint-add": "j", a: "x", b: "y", stiffness: 0.8 } },
+  { label: "joint-add hinge with angle limits and anchors (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { "joint-add": "j", type: "hinge", a: "x", b: "y", minAngle: -45, maxAngle: 45, anchorA: [0, 10] } },
+  { label: "joint-add hinge with a restLength (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "joint-add": "j", type: "hinge", a: "x", b: "y", restLength: 10 } },
+
+  // gl-text: `size` is the MSDF path's, typed under `msdf`.
+  { label: "gl-text msdf with a non-number size (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "gl-text": "t", text: "hi", msdf: "roboto", size: "big" } },
+  { label: "gl-text msdf with a size (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { "gl-text": "t", text: "hi", msdf: "roboto", size: 24 } },
+
+  // Exclusive variant siblings on other value-selected ops; Element's `tag` opts out.
+  { label: "database raw refuses connect's ssl (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { database: "raw", sql: "select 1", ssl: true } },
+  { label: "cache-connect memory refuses redis's tls (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "cache-connect": "memory", tls: true } },
+  { label: "tag div with an anchor's href (valid, tag is not exclusive)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { tag: "div", href: "/x" } },
+
+  // cache-connect: every driver inherits the method's string output, endpoint variants included.
+  { label: "number-slot rejects cache-connect redis + url (string-output) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { sleep: { "cache-connect": "redis", url: "redis://x" } } },
+  { label: "string-slot accepts cache-connect redis + url (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { foreach: [1], item: { "cache-connect": "redis", url: "redis://x" }, do: "y" } },
+
+  // `cache`'s ops cover its whole enum and resolve to null or an object, so an op
+  // from an expression is one of those: fine in a null slot, wrong in a string one.
+  { label: "null-slot accepts cache with an expression op (PASS)", schemaRef: "$defs/exprFlat_null", expectValid: true,
+    expr: { cache: { var: "$op" } } },
+  { label: "string-slot rejects cache with an expression op (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { foreach: [1], item: { cache: { var: "$op" } }, do: "y" } },
+  { label: "null-slot rejects cache stats (object-output) (FAIL)", schemaRef: "$defs/exprFlat_null", expectValid: false,
+    expr: { cache: "stats" } },
+
+  // entity-add: shape-owned fields are typed under their `type` value.
+  { label: "entity-add light with a non-number radius (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "entity-add": "lamp", type: "light", radius: "far" } },
+  { label: "entity-add light with a numeric radius (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { "entity-add": "lamp", type: "light", radius: 40, coneAngle: 30, dirX: 1 } },
+  { label: "entity-add light cone with a non-number dirX (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "entity-add": "lamp", type: "light", coneAngle: 30, dirX: "left" } },
+  // Variant siblings are exclusive: `radius` belongs to lights only.
+  { label: "entity-add quad refuses a light's radius (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "entity-add": "box", type: "quad", radius: 40 } },
+  { label: "entity-add with an expression type refuses nothing (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { "entity-add": "box", type: { var: "$shape" }, radius: 40 } },
+  { label: "entity-add line with a non-number lineWidth (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "entity-add": "wire", type: "line", vertices: [0, 0, 1, 1], lineWidth: "thick" } },
+  { label: "entity-update still types every field flat (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "entity-update": "lamp", radius: "far" } },
 
   // EmailNode: `list` and `icalEvent` carry shapes of their own, told apart from
   // an expression that produces one by the presence of the shape's required key.
@@ -473,4 +570,5 @@ for (const c of cases) {
 }
 
 console.log(`\n${pass} passed, ${fail} failed.`);
+
 process.exit(fail > 0 ? 1 : 0);

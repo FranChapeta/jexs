@@ -1,7 +1,7 @@
 import { Node, Context, NodeValue } from "./Node.js";
 import { resolveObj } from "../Resolver.js";
 import { createHttpError } from "../errors.js";
-import type { JexsNodeSchema } from "../schema.js";
+import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
 
 const TEXT_EXT = new Set([
   "txt", "html", "htm", "css", "svg", "md", "js", "ts", "tsx", "jsx",
@@ -28,6 +28,10 @@ const PASSTHROUGH: readonly (readonly [string, readonly string[]])[] = [
 
 /** Methods that never carry a request body */
 const BODYLESS = new Set(["GET", "HEAD"]);
+
+const BODY: JexsPropertySchema = {
+  markdownDescription: "Request body. Strings, ArrayBuffers, typed arrays, `Blob`, `FormData` and `URLSearchParams` are sent verbatim; any other value is JSON-serialized and defaults `Content-Type` to `application/json`.",
+};
 
 /** Classify URL by file extension. Returns "json" | "text" | "binary" | "unknown". */
 function classifyUrlExt(url: string): "json" | "text" | "binary" | "unknown" {
@@ -108,10 +112,13 @@ export class FetchNode extends Node {
         method: {
           type: "string",
           enum: METHODS,
+          default: "GET",
           description: "HTTP method (default `\"GET\"`). `GET` and `HEAD` never send a body.",
-        },
-        body: {
-          markdownDescription: "Request body. Strings, ArrayBuffers, typed arrays, `Blob`, `FormData` and `URLSearchParams` are sent verbatim; any other value is JSON-serialized and defaults `Content-Type` to `application/json`. Ignored on GET and HEAD.",
+          variants: {
+            HEAD: { output: "null", markdownDescription: "Fetches only the headers, so the step resolves to `null` (pass `full` to read them)." },
+            // Every method the runtime sends a body with carries the `body` sibling.
+            ...Object.fromEntries(METHODS.filter(m => !BODYLESS.has(m)).map(m => [m, { siblings: { body: BODY } }])),
+          },
         },
         headers: {
           map: true,
@@ -124,6 +131,9 @@ export class FetchNode extends Node {
           type: "string",
           enum: DECODE_KINDS,
           markdownDescription: "Force how the response body is decoded, instead of inferring it from the URL extension and Content-Type. Use it when the server sends the wrong Content-Type, or when the URL carries no extension.",
+          variants: {
+            text: { output: "string", markdownDescription: "Decode the body as text." },
+          },
         },
         throw: {
           type: "boolean",
@@ -149,6 +159,7 @@ export class FetchNode extends Node {
         redirect: {
           type: "string",
           enum: REDIRECTS,
+          default: "follow",
           markdownDescription: "How to treat a 3xx: follow it (default), throw, or with `\"manual\"` hand it back to you. Outside Node the browser opaque-filters a manual redirect: `status` comes back `0` with no headers, and only the fact that it redirected survives.",
         },
         cache: {

@@ -297,6 +297,7 @@ export class StringNode extends Node {
             "NFKC",
             "NFKD",
           ],
+          default: "NFC",
           description: "Normalization form (default `\"NFC\"`).",
         },
       },
@@ -317,6 +318,7 @@ export class StringNode extends Node {
             "word",
             "sentence",
           ],
+          default: "grapheme",
           description: "Segment boundary type (default `\"grapheme\"`).",
         },
         locale: {

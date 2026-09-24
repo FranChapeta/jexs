@@ -113,6 +113,7 @@ export class CryptoNode extends Node {
         encoding: {
           type: "string",
           enum: ENCODINGS,
+          default: "hex",
           description: "Digest encoding (default `\"hex\"`).",
         },
       },
@@ -133,11 +134,13 @@ export class CryptoNode extends Node {
         algorithm: {
           type: "string",
           enum: ALGORITHMS,
+          default: "sha256",
           description: "Hash backing the MAC (default `\"sha256\"`).",
         },
         encoding: {
           type: "string",
           enum: ENCODINGS,
+          default: "hex",
           description: "Output encoding (default `\"hex\"`).",
         },
       },
