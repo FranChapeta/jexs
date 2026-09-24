@@ -71,9 +71,23 @@ export const FIELD_OFFSETS: Record<string, number> = {
 
 // ─── Metadata side table ─────────────────────────────────────────────────────
 
+/** Every entity shape the store and the renderers understand. `EntityType`
+ *  derives from it and EntityNode's `entity-add` enum spreads it. */
+export const ENTITY_TYPES = [
+  "quad", "triangle", "points", "circle", "line", "line-strip",
+  "sphere", "cylinder", "cone", "light", "ramp", "pivot", "mesh",
+] as const;
+
+export type EntityType = (typeof ENTITY_TYPES)[number];
+
+/** Blend modes a renderer may apply to an entity. */
+export const BLEND_MODES = ["normal", "additive", "multiply", "screen"] as const;
+
+export type BlendMode = (typeof BLEND_MODES)[number];
+
 export interface EntityMeta {
   id: string;
-  type: "quad" | "triangle" | "points" | "circle" | "line" | "line-strip" | "sphere" | "cylinder" | "cone" | "light" | "ramp" | "pivot" | "mesh";
+  type: EntityType;
   group: string;
   mask: string[];
   vertices?: number[];
@@ -84,11 +98,17 @@ export interface EntityMeta {
   normalScale?: number;
   lineWidth?: number;
   shader?: string;
-  blend?: "normal" | "additive" | "multiply" | "screen";
+  blend?: BlendMode;
   dirty: number;
   borderRadius?: number;
   emissive?: boolean;
   billboard?: boolean;
+  /** Point/spot light inputs, read by the renderer for `type: "light"`. */
+  radius?: number;
+  coneAngle?: number;
+  dirX?: number;
+  dirY?: number;
+  dirZ?: number;
   parent?: string;
   children: string[];
   /**

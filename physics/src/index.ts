@@ -1,6 +1,8 @@
 // ── Entity Store ──
 export {
   EntityStore, type EntityMeta,
+  ENTITY_TYPES, type EntityType,
+  BLEND_MODES, type BlendMode,
   STRIDE, FIELD_OFFSETS,
   F_TX, F_TY, F_TZ,
   F_SX, F_SY, F_SZ,

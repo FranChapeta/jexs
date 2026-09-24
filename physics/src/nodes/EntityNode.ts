@@ -7,7 +7,7 @@
  *
  * Supported operations:
  * - { "entity-init": "store-id", "width": 800, "height": 600 }
- * - { "entity-add": id, type, group, mask, x, y, w, h, ... }
+ * - { "entity-add": id, type, group, mask, translation, scale, ... }
  * - { "entity-remove": id }
  * - { "entity-move": id, x, y, angle }
  * - { "entity-update": id, ... }
@@ -18,9 +18,10 @@
  * - { "entity-get": id }               — full entity object
  */
 
-import { Node, Context, NodeValue, resolve, resolveObj } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveObj, GLOBAL_KEYS } from "@jexs/core";
 import {
   EntityStore, EntityMeta, FIELD_OFFSETS,
+  ENTITY_TYPES, BLEND_MODES,
   STRIDE,
   F_TX, F_TY, F_TZ,
   F_SX, F_SY, F_SZ,
@@ -32,17 +33,84 @@ import {
   FLAG_VISIBLE, FLAG_PHYSICS, FLAG_FIXED, FLAG_POOLED, FLAG_TRIGGER, FLAG_CCD,
   DIRTY_TRANSFORM, DIRTY_VISUAL, DIRTY_TEXT, DIRTY_Z,
 } from "../EntityStore.js";
-import type { JexsNodeSchema } from "@jexs/core";
+import type { JexsNodeSchema, JexsPropertySchema } from "@jexs/core";
 
+type P = JexsPropertySchema;
+
+/** A numeric vector sibling; the arity lives in the description. */
+const vec = (description: string): P => ({ type: "array", items: { type: "number" }, description });
+
+/**
+ * Every writable field on an entity, shared by `entity-add` and `entity-update`.
+ * Declared before the class because the static schema initializer reads it and a
+ * `const` is not hoisted. Anything not listed here (nor in `KNOWN_KEYS`) is kept
+ * verbatim on the entity's `custom` metadata rather than rejected.
+ */
+const ENTITY_FIELDS: Record<string, P> = {
+  group:    { type: "string", description: "Collision group name (default `\"default\"`)." },
+  mask:     { type: "array", items: { type: "string" }, description: "Collision groups this entity is tested against (default `[\"default\"]`)." },
+  mesh:     { type: "string", description: "Id of a mesh registered in the store. Under `entity-add: \"mesh\"` its bounds also become the entity's scale, so the collision AABB matches the geometry; on any other shape the mesh is render-only." },
+  vertices: { type: "array", items: { type: "number" }, description: "Flat vertex list, for the `line`, `line-strip` and `points` types." },
+  parent:   { type: "string", description: "Id of a parent entity: this entity's transform becomes relative to it. Pass an empty value to detach." },
+
+  translation: vec("Position `[x, y, z]` (default `[0, 0, 0]`). This is the position field; there is no `x`/`y`."),
+  scale:       vec("Size `[sx, sy, sz]` (default `[1, 1, 1]`). This is the size field; there is no `w`/`h`."),
+  rotation:    vec("Rotation quaternion `[qx, qy, qz, qw]` (default `[0, 0, 0, 1]`)."),
+  angle:       { type: "number", description: "Z-axis rotation in degrees, converted to `rotation` for you." },
+  rx:          { type: "number", description: "X-axis rotation in degrees, converted to `rotation` for you." },
+  ry:          { type: "number", description: "Y-axis rotation in degrees, converted to `rotation` for you." },
+  "rotation-velocity": vec("Derive `rotation` from a velocity vector `[x, y, z]`, so the entity faces the way it travels."),
+
+  vx: { type: "number", description: "Velocity along X." },
+  vy: { type: "number", description: "Velocity along Y." },
+  vz: { type: "number", description: "Velocity along Z." },
+  ax: { type: "number", description: "Constant acceleration along X, added to gravity each step." },
+  ay: { type: "number", description: "Constant acceleration along Y, added to gravity each step." },
+  az: { type: "number", description: "Constant acceleration along Z, added to gravity each step." },
+
+  mass:        { type: "number", description: "Body mass (default `1`). `0` makes it infinitely heavy, so collisions never move it." },
+  restitution: { type: "number", description: "Bounciness from 0 (dead stop) to 1 (no energy lost)." },
+  friction:    { type: "number", description: "Surface friction applied on contact." },
+  damping:     { type: "number", description: "Per-entity velocity damping from 0 to 1, overriding the world's `damping`." },
+  moveX:       { type: "number", description: "Pin the X velocity each step, after gravity and damping, for driven (character-style) movement. Pass `null` to hand the axis back to the simulation." },
+  moveY:       { type: "number", description: "Pin the Y velocity each step, after gravity and damping, for driven (character-style) movement. Pass `null` to hand the axis back to the simulation." },
+
+  physics: { type: "boolean", description: "Simulate this entity. Without it the entity is drawn but never stepped." },
+  fixed:   { type: "boolean", description: "Immovable body: it collides but is never moved by a collision." },
+  visible: { type: "boolean", description: "Draw this entity (default `true`). Hiding one hides its children too." },
+
+  color:        vec("RGBA `[r, g, b, a]`, each 0 to 1 (default `[1, 1, 1, 1]`)."),
+  uv:           vec("Texture sub-rect `[u, v, w, h]`, for drawing one frame out of an atlas."),
+  opacity:      { type: "number", description: "Opacity from 0 to 1." },
+  texture:      { type: "string", description: "Name of a texture loaded with `gl-texture`." },
+  normalMap:    { type: "string", description: "Name of a texture to light the surface with as a normal map." },
+  normalScale:  { type: "number", description: "How strongly `normalMap` perturbs the surface." },
+  lineWidth:    { type: "number", description: "Line width in pixels, read for the `line` and `line-strip` shapes." },
+  borderRadius: { type: "number", description: "Corner radius in pixels, rounding the box an entity with depth (`scale[2]` above 0) is drawn as. It replaces the shape's geometry outright, so it is for a quad." },
+  shader:       { type: "string", description: "Name of a custom shader registered with `gl-shader`." },
+  blend:        { type: "string", enum: [...BLEND_MODES], description: "Blend mode (default `\"normal\"`)." },
+  emissive:     { type: "boolean", description: "Draw at full color, unlit by the scene's lights." },
+  billboard:    { type: "boolean", description: "Keep the entity turned to face the camera." },
+
+  // A `light` entity's own inputs, which `collectPointLights` reads per frame.
+  radius:    { type: "number", description: "How far a `light` reaches, in world units (default `30`)." },
+  coneAngle: { type: "number", description: "Half-angle of a `light`'s cone. `0`, the default, leaves it a point light shining every way." },
+  dirX:      { type: "number", description: "X of the direction a `light`'s cone points (default `0`). Read only when `coneAngle` is set." },
+  dirY:      { type: "number", description: "Y of the direction a `light`'s cone points (default `0`). Read only when `coneAngle` is set." },
+  dirZ:      { type: "number", description: "Z of the direction a `light`'s cone points (default `-1`). Read only when `coneAngle` is set." },
+};
+
+/**
+ * Every key the entity ops act on themselves. Derived from `ENTITY_FIELDS` so a
+ * newly declared field is recognised by the same edit, plus `GLOBAL_KEYS` (which
+ * the resolver owns, not the entity), the op keys, and the `entity-update` extras
+ * that are not shared fields. Anything outside this set is kept verbatim on the
+ * entity's `custom` metadata.
+ */
 const KNOWN_KEYS = new Set([
-  "entity-add", "entity-update", "gl-update", "as", "type",
-  "translation", "scale", "rotation",
-  "angle", "rx", "ry", "rotation-velocity", // convenience converters → quaternion
-  "vx", "vy", "vz", "ax", "ay", "az",
-  "mass", "restitution", "friction", "damping", "color", "uv",
-  "moveX", "moveY", "visible", "physics", "fixed",
-  "vertices", "mesh", "group", "mask", "texture", "normalMap", "normalScale", "lineWidth", "shader", "blend", "opacity", "text",
-  "borderRadius", "emissive", "billboard", "pooled", "parent",
+  ...Object.keys(ENTITY_FIELDS),
+  ...GLOBAL_KEYS,
+  "entity-add", "entity-update", "gl-update", "type", "pooled", "text",
 ]);
 
 /** Convert a Z-axis angle (degrees) to a quaternion [qx,qy,qz,qw]. */
@@ -139,69 +207,17 @@ export class EntityNode extends Node {
     "entity-add": {
       type: "string",
       output: "null",
-      markdownDescription: "Adds an entity to the active store. Pass `id`, `type` (`\"quad\"`, `\"circle\"`, `\"line\"`, `\"polygon\"`, etc.),\r\n`x`, `y`, `w`, `h`, `color`, `group`, and physics properties (`mass`, `restitution`, `friction`, `damping`).\r\nSet `physics: true` to enable simulation and `fixed: true` for immovable bodies.\r\nPass `pooled: true` to reuse a pooled slot for better performance.",
+      markdownDescription: "Adds an entity to the active store, under the id in `entity-add`.\r\nThe transform is `translation` / `scale` / `rotation` (there is no `x`/`y`/`w`/`h`); `angle`, `rx`, `ry` and `rotation-velocity` are shorthands that build the quaternion for you.\r\nSet `physics: true` to simulate it and `fixed: true` for an immovable body, and `pooled: true` to reuse a pooled slot.\r\nAny sibling not listed here is kept verbatim on the entity's `custom` metadata.",
       examples: [
-        "{ \"entity-add\": \"player\", \"type\": \"quad\", \"x\": 100, \"y\": 100, \"w\": 32, \"h\": 32, \"color\": [1,0,0,1] }",
+        "{ \"entity-add\": \"player\", \"type\": \"quad\", \"translation\": [100, 100, 0], \"scale\": [32, 32, 1], \"color\": [1,0,0,1] }",
       ],
       siblings: {
         type: {
           type: "string",
-          enum: [
-            "quad",
-            "circle",
-            "triangle",
-            "line",
-            "line-strip",
-            "points",
-            "sphere",
-            "cylinder",
-            "cone",
-            "ramp",
-            "light",
-            "pivot",
-          ],
-          description: "Entity type (default `\"quad\"`).",
+          enum: [...ENTITY_TYPES],
+          markdownDescription: "Entity shape (default `\"quad\"`). A shape with depth (`scale[2]` above 0) is drawn solid and flat otherwise, so a `circle` is a disc or a cylinder and a `triangle` a triangle or a cone.\r\n`line`, `line-strip` and `points` take their geometry from `vertices`; `mesh` draws the mesh named by `mesh`, taking its scale from the mesh bounds and colliding against its BVH; `ramp` collides as a slope rather than a box; `light` and `pivot` are never drawn.",
         },
-        color: {
-          type: "array",
-          items: {
-            type: "number",
-          },
-          description: "RGBA color array with values from 0 to 1 (default `[1,1,1,1]`).",
-        },
-        group: {
-          type: "string",
-          description: "Collision group name (default `\"default\"`).",
-        },
-        scale: {
-          type: "array",
-          items: {
-            type: "number",
-          },
-          description: "Scale array [sx, sy, sz] (default `[1,1,1]`).",
-        },
-        translation: {
-          type: "array",
-          items: {
-            type: "number",
-          },
-          description: "Translation array [x, y, z] (default `[0,0,0]`).",
-        },
-        rotation: {
-          type: "array",
-          items: {
-            type: "number",
-          },
-          description: "Rotation array [qx, qy, qz, qw] (default `[0,0,0,1]`).",
-        },
-        physics: {
-          type: "boolean",
-          description: "Enable physics simulation.",
-        },
-        fixed: {
-          type: "boolean",
-          description: "Immovable body (kinematic).",
-        },
+        ...ENTITY_FIELDS,
         pooled: {
           type: "boolean",
           description: "Reuse a pooled slot for this entity.",
@@ -247,10 +263,24 @@ export class EntityNode extends Node {
     "entity-update": {
       type: "string",
       output: "null",
-      markdownDescription: "Updates any writable fields on an entity by id. Supports all fields from `entity-add`\r\nplus `text` (object with `content`, `font`, `fill`), `vertices`, `shader`, `blend`, etc.",
+      markdownDescription: "Updates writable fields on an existing entity, by the id in `entity-update`. Every field `entity-add` takes (except `type` and `pooled`, both fixed once a slot is allocated), plus `text` and the `trigger` / `ccd` collision flags.\r\nA no-op when no entity has that id.",
       examples: [
-        "{ \"entity-update\": \"player\", \"x\": { \"var\": \"$x\" }, \"color\": [1, 0, 0, 1] }",
+        "{ \"entity-update\": \"player\", \"translation\": [{ \"var\": \"$x\" }, 0, 0], \"color\": [1, 0, 0, 1] }",
       ],
+      siblings: {
+        ...ENTITY_FIELDS,
+        text: {
+          description: "Text to draw on the entity: `{ content, font, fill }`, or a bare string for the defaults (`16px sans-serif`, white).",
+        },
+        trigger: {
+          type: "boolean",
+          description: "Report collisions without resolving them, so the entity is a sensor rather than a solid.",
+        },
+        ccd: {
+          type: "boolean",
+          description: "Continuous collision detection, for a body fast enough to tunnel through a wall in one step.",
+        },
+      },
     },
     "entity-clear": {
       output: "null",
@@ -447,6 +477,11 @@ export class EntityNode extends Node {
       if (r["borderRadius"] !== undefined) meta.borderRadius = Number(r["borderRadius"]);
       if (r["emissive"]     !== undefined) meta.emissive    = !!r["emissive"];
       if (r["billboard"]    !== undefined) meta.billboard   = !!r["billboard"];
+      if (r["radius"]       !== undefined) meta.radius      = Number(r["radius"]);
+      if (r["coneAngle"]    !== undefined) meta.coneAngle   = Number(r["coneAngle"]);
+      if (r["dirX"]         !== undefined) meta.dirX        = Number(r["dirX"]);
+      if (r["dirY"]         !== undefined) meta.dirY        = Number(r["dirY"]);
+      if (r["dirZ"]         !== undefined) meta.dirZ        = Number(r["dirZ"]);
 
       for (const key of keys) {
         if (!KNOWN_KEYS.has(key)) meta.custom[key] = r[key];
@@ -532,7 +567,7 @@ export class EntityNode extends Node {
       const meta = store.meta[slot]!;
 
       for (const key of Object.keys(r)) {
-        if (key === "entity-update" || key === "as") continue;
+        if (key === "entity-update" || GLOBAL_KEYS.has(key)) continue;
         const v = r[key];
           switch (key) {
             case "translation": {
@@ -642,6 +677,12 @@ export class EntityNode extends Node {
             case "borderRadius": meta.borderRadius = Number(v); meta.dirty |= DIRTY_VISUAL; break;
             case "emissive":    meta.emissive  = !!v; meta.dirty |= DIRTY_VISUAL; break;
             case "billboard":   meta.billboard = !!v; meta.dirty |= DIRTY_VISUAL; break;
+            // Read fresh from the store each frame, so no dirty flag.
+            case "radius":      meta.radius    = Number(v); break;
+            case "coneAngle":   meta.coneAngle = Number(v); break;
+            case "dirX":        meta.dirX      = Number(v); break;
+            case "dirY":        meta.dirY      = Number(v); break;
+            case "dirZ":        meta.dirZ      = Number(v); break;
             case "parent":      store.setParent(id, v ? String(v) : undefined); break;
             case "text": {
               if (v && typeof v === "object") {
@@ -760,6 +801,11 @@ export class EntityNode extends Node {
         if (prop === "lineWidth") return meta.lineWidth ?? null;
         if (prop === "shader")    return meta.shader ?? null;
         if (prop === "blend")     return meta.blend ?? "normal";
+        if (prop === "radius")    return meta.radius ?? null;
+        if (prop === "coneAngle") return meta.coneAngle ?? null;
+        if (prop === "dirX")      return meta.dirX ?? null;
+        if (prop === "dirY")      return meta.dirY ?? null;
+        if (prop === "dirZ")      return meta.dirZ ?? null;
 
         const b = slot * STRIDE;
         const d = store.data;

@@ -50,11 +50,11 @@ export function collectPointLights(inst: GlInstance, store: EntityStore): void {
     pl[oi + 1] = d[lb + F_TY] + d[lb + F_SY] * 0.5;
     pl[oi + 2] = d[lb + F_TZ] + (d[lb + F_SZ] || 0);
     pl[oi + 3] = d[lb + F_CR]; pl[oi + 4] = d[lb + F_CG]; pl[oi + 5] = d[lb + F_CB];
-    pl[oi + 6] = (meta.custom?.radius as number) ?? 30;
-    pl[oi + 7] = (meta.custom?.coneAngle as number) ?? 0;
-    pl[oi + 8] = (meta.custom?.dirX as number) ?? 0;
-    pl[oi + 9] = (meta.custom?.dirY as number) ?? 0;
-    pl[oi + 10] = (meta.custom?.dirZ as number) ?? -1;
+    pl[oi + 6] = meta.radius ?? 30;
+    pl[oi + 7] = meta.coneAngle ?? 0;
+    pl[oi + 8] = meta.dirX ?? 0;
+    pl[oi + 9] = meta.dirY ?? 0;
+    pl[oi + 10] = meta.dirZ ?? -1;
     pl[oi + 11] = 0;
     inst.pointLightCount++;
   }

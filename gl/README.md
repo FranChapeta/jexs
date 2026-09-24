@@ -18,19 +18,22 @@ A single `GlNode` exposes the full renderer through JSON keys:
 
 | Key | Purpose |
 |---|---|
-| `gl-init` | Set up the WebGL2 context, attach to a canvas, configure shadows/SSAO/post |
+| `gl-init` | Set up the WebGL2 context on a canvas selector, with a clear color, depth test and an `on-frame` loop |
 | `gl-destroy` | Tear down the context |
-| `gl-camera` | Move / orient / look-at the camera |
-| `gl-register-mesh` | Register a mesh (typically from `parseGLB`) for instanced rendering |
-| `gl-texture` | Load and bind a texture |
-| `gl-text` | Render bitmap text in 3D space |
+| `gl-camera` | Move / orient / look-at the camera, follow an entity, shake |
+| `gl-register-mesh` | Upload an imported mesh (typically from `parseGLB`) to the GPU for instanced rendering |
+| `gl-texture` `gl-atlas` `gl-font` | Load textures, sprite atlases and bitmap fonts |
+| `gl-frame` | Set a static atlas frame on an entity |
+| `gl-text` | Render bitmap text |
 | `gl-shader` | Bind a custom shader |
-| `gl-animate` | Drive a per-entity animation |
-| `gl-tween` | Tween a value with an easing function |
+| `gl-animate` `gl-tween` | Drive a per-entity animation, or tween a value with an easing function |
+| `gl-tilemap` `gl-tilemap-set` | Build and edit a tilemap layer |
+| `gl-trail` `gl-trail-remove` | Attach a motion trail to an entity |
+| `gl-particle` | Emit a particle burst |
 | `gl-transition` | Cross-fade post-process effects |
 | `gl-blur` | Apply a separable Gaussian blur |
 | `gl-ssao` | Toggle screen-space ambient occlusion |
-| `gl-hit` | Pick an entity under the cursor (mouse/touch raycast) |
+| `gl-hit` `gl-raycast` | Pick an entity under the cursor, or cast a ray into the scene |
 
 Rendering reads directly from `@jexs/physics`'s `EntityStore` — there's no scene graph to maintain; whatever's in the store is what gets drawn.
 
@@ -38,20 +41,26 @@ Rendering reads directly from `@jexs/physics`'s `EntityStore` — there's no sce
 
 ```json
 [
-  { "entity-init": { "capacity": 5000 } },
-  { "gl-init": {
-    "canvas": "#scene",
-    "shadows": true,
-    "ssao": true,
-    "fog": { "color": [0.5, 0.6, 0.7], "density": 0.02 }
+  { "entity-init": "world", "width": 800, "height": 600 },
+  { "gl-init": "#scene", "width": 800, "height": 600, "depth": true, "clear": [0.05, 0.06, 0.08, 1] },
+
+  { "fetch": "/models/robot.glb", "as": "buf" },
+  { "parseGLB": { "var": "$buf" }, "name": "robot", "as": "scene" },
+
+  { "foreach": { "values": { "var": "$scene.meshes" } }, "item": "m", "do": {
+    "gl-register-mesh": { "var": "$m.id" },
+    "bounds":    { "var": "$m.bounds" },
+    "positions": { "var": "$m.positions" },
+    "normals":   { "var": "$m.normals" },
+    "uvs":       { "var": "$m.uvs" },
+    "indices":   { "var": "$m.indices" },
+    "material":  { "var": "$m.material" }
   } },
 
-  { "parseGLB": "/models/robot.glb", "as": "robot" },
-  { "gl-register-mesh": { "var": "$robot" } },
+  { "first": { "keys": { "var": "$scene.meshes" } }, "as": "meshId" },
+  { "entity-add": "robot-1", "type": "mesh", "mesh": { "var": "$meshId" }, "translation": [0, 0, -5] },
 
-  { "entity-add": { "mesh": "robot", "position": [0, 0, -5] } },
-
-  { "gl-camera": { "position": [0, 2, 5], "lookAt": [0, 0, 0] } }
+  { "gl-camera": true, "z": 5, "lookAt": [0, 0, 0] }
 ]
 ```
 
