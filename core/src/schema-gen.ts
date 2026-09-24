@@ -105,7 +105,7 @@ const FILTERED_REF: Record<Exclude<JexsType, "object">, EmittedSchema> = {
 
 export type EmittedSchema = Record<string, unknown>;
 
-const METADATA_KEYS = ["description", "markdownDescription", "examples"] as const;
+const METADATA_KEYS = ["description", "markdownDescription", "examples", "default"] as const;
 
 function liftMetadata(prop: JexsPropertySchema, target: EmittedSchema): void {
   for (const k of METADATA_KEYS) {
@@ -129,6 +129,10 @@ function typeOrExprRef(t: JexsType): EmittedSchema {
  * fragment. Markers like `tuple`, `map`, `steps`, `literal` are resolved away.
  */
 export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
+  if (prop.default !== undefined && prop.enum && !prop.enum.includes(prop.default)) {
+    throw new Error(`default ${JSON.stringify(prop.default)} is not one of the enum values ${JSON.stringify(prop.enum)}.`);
+  }
+
   // Direct $ref: emit the ref with metadata. $ref siblings are evaluated in
   // JSON Schema 2020-12, so markdownDescription stays accessible for hover.
   if (prop.$ref) {
@@ -145,7 +149,7 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
     const props: Record<string, EmittedSchema> = {};
     const required: string[] = [];
     for (const [k, v] of Object.entries(prop.properties)) {
-      props[k] = expandProperty(v);
+      props[k] = expandNested(v, `nested property "${k}"`);
       if (v.required) required.push(k);
     }
     const out: EmittedSchema = {
@@ -171,7 +175,7 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
     // list — a variadic tail, when `max` exceeds its length — fall back to anyVal;
     // without a prefix, every slot is anyVal (any literal OR expression).
     if (prop.prefixItems) {
-      out.prefixItems = prop.prefixItems.map(expandProperty);
+      out.prefixItems = prop.prefixItems.map((p, i) => expandNested(p, `tuple slot ${i}`));
       if (max > prop.prefixItems.length) out.items = { ...REF.anyVal };
     } else {
       out.items = { ...REF.anyVal };
@@ -258,7 +262,7 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
   if (prop.literal && prop.type) {
     const out: EmittedSchema = { type: prop.type };
     if (prop.enum) out.enum = [...prop.enum];
-    if (prop.items && prop.type === "array") out.items = expandProperty(prop.items);
+    if (prop.items && prop.type === "array") out.items = expandNested(prop.items, "items");
     liftMetadata(prop, out);
     return out;
   }
@@ -266,7 +270,7 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
   if (prop.type === "array" && prop.items) {
     const out: EmittedSchema = {
       if: { type: "array" },
-      then: { items: expandProperty(prop.items) },
+      then: { items: expandNested(prop.items, "items") },
       else: { ...FILTERED_REF.array },
     };
     liftMetadata(prop, out);
@@ -282,6 +286,16 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
   const out: EmittedSchema = { ...REF.anyVal };
   liftMetadata(prop, out);
   return out;
+}
+
+/** A value inside a property (a nested key, an array item, a tuple slot). Variants
+ *  select through a step's own keys, so one declared down here could never be
+ *  selected and is rejected rather than silently ignored. */
+function expandNested(prop: JexsPropertySchema, where: string): EmittedSchema {
+  if (prop.variants) {
+    throw new Error(`variants are valid on a method's primary key, its siblings and its variants, not on a ${where}.`);
+  }
+  return expandProperty(prop);
 }
 
 // ── Package schema build ───────────────────────────────────────────────────────
@@ -316,19 +330,14 @@ export interface EmittedMethodSchema {
   properties: Record<string, EmittedSchema>;
   output?: string;
   outputDescription?: string;
-  /** Build-only: flattened per-(possibly nested)-variant output + discriminator
-   *  condition, used by the filtered-variant loop for output narrowing. Stripped
-   *  on emit. */
+  /** Build-only: the output as ordered rules, the first whose condition holds
+   *  deciding, used by the filtered-variant loop for output narrowing. Absent when
+   *  `output` alone decides. Stripped on emit. */
   variantOutputs?: VariantOutput[];
-  /** Build-only: TOP-LEVEL variant docs for the hover "Operations" list (nesting
-   *  is flattened away in `variantOutputs`, so docs come from here). Stripped. */
-  variantDocs?: VariantDoc[];
-  /** Build-only: how `variantDocs` keys select their operation — the primary
-   *  key's VALUE (`{ "schema": "register" }`) or the PRESENCE of a sibling of
-   *  that name (`{ "file": "x.json", "write": … }`). Without it a consumer cannot
-   *  tell the two apart and renders sibling-mode ops as if they were values.
-   *  Stripped. */
-  variantBy?: "sibling" | "value";
+  /** Build-only: the operations selected by the primary key's VALUE, for the
+   *  hover "Operations" list. Operations selected by a sibling's presence are
+   *  documented on that sibling in `siblingDocs` instead. Stripped. */
+  variantDocs?: ValueDoc[];
   /** Conditional sibling constraints for variants methods. Emitted (real schema). */
   allOf?: EmittedSchema[];
   /** Siblings the handler refuses to run without. Emitted (real schema): the entry
@@ -341,18 +350,21 @@ export interface EmittedMethodSchema {
   additionalProperties?: EmittedSchema;
 }
 
-/** One (possibly nested) variant's discriminator condition + resolved output
- *  type, used by the filtered-variant loop to gate output-type narrowing. The
- *  `cond` is the full composed condition (parent ∧ child). Build-only. */
+/** One output rule: while `cond` holds (and no earlier rule's does), the method
+ *  resolves to `output`, or to one of them when it is a list (absent means any).
+ *  `when` is `cond` before emitting, kept so rules that can never hold together
+ *  are recognised. Build-only. */
 export interface VariantOutput {
   cond: EmittedSchema;
-  output?: string;
+  when: WhenTest[];
+  output?: string | string[];
 }
 
-/** A top-level variant's doc entry for hover. Build-only. */
-export interface VariantDoc {
-  key: string;
+/** An operation selected by a property's value, for documentation. */
+export interface ValueDoc {
+  value: unknown;
   output?: string;
+  outputDescription?: string;
   description?: string;
 }
 
@@ -369,236 +381,380 @@ export interface VariantDoc {
  */
 export type EmittedNodeSchema = string[];
 
-interface CompiledMethod {
-  properties: Record<string, EmittedSchema>;
-  output?: string;
-  outputDescription?: string;
-  ownerNode: string;
-  variantOutputs?: VariantOutput[];
-  variantDocs?: VariantDoc[];
-  variantBy?: "sibling" | "value";
-  allOf?: EmittedSchema[];
-  required?: string[];
-}
+// ── Method normalization ───────────────────────────────────────────────────────
 
-function compileMethod(
-  methodKey: string,
-  method: JexsMethodSchema,
-  ownerNode: string,
-): CompiledMethod {
-  const { output, outputDescription, siblings, variants, variantBy, ...primary } = method;
-
-  if (variants) {
-    return compileVariantMethod(methodKey, primary, variants, variantBy, siblings, output, outputDescription, ownerNode);
-  }
-
-  const properties: Record<string, EmittedSchema> = {
-    [methodKey]: expandProperty(primary),
-  };
-  const required: string[] = [];
-  for (const [k, v] of Object.entries(siblings ?? {})) {
-    properties[k] = expandProperty(v);
-    if (v.required) required.push(k);
-  }
-  return {
-    properties,
-    output,
-    outputDescription,
-    ownerNode,
-    required: required.length > 0 ? required : undefined,
-  };
+/** One discriminator test on the way to a variant: a VALUE test when `value` is
+ *  present (the key holds exactly that value), otherwise a PRESENCE test. A
+ *  dotted key reaches into a nested object (`options.returning`). */
+export interface WhenTest {
+  key: string;
+  value?: unknown;
+  /** `value` is the property's `default`, so the test also holds when the key is absent. */
+  default?: true;
 }
 
 /**
- * Compile a multi-op method declared via `variants`. The variant map KEY is the
- * discriminator: in sibling-mode (no `enum`) it's a sibling whose presence selects
- * the variant; in value-mode (primary has an `enum`) it's the primary key's value.
- *
- * Variants NEST: a variant may itself declare `variants` (always sibling-mode at
- * nested levels). `walkVariants` flattens the tree into `variantOutputs` whose
- * conditions are `allOf`-composed down the path — so output can narrow on, e.g.,
- * the query value AND a `returning` sibling's presence. A level's `output` is the
- * fallback when none of its variants match (e.g. FileNode `file` → "any" load
- * mode + a `write` variant → boolean; query `update` → "number" + `returning` →
- * array). `variantDocs` keeps the TOP-LEVEL ops for hover.
+ * One node of a method's authored tree, with every discriminator rule already
+ * applied: the method itself (the root), one of its variants, or a variant of one
+ * of its siblings. The emitted schema, the sibling-host index and the sibling docs
+ * are all folds over this tree, so the rules for which property a variant tests
+ * and what it registers live in `normalizeMethod` alone.
  */
-function compileVariantMethod(
-  methodKey: string,
-  primary: JexsPropertySchema,
-  variants: NonNullable<JexsMethodSchema["variants"]>,
-  variantBy: JexsMethodSchema["variantBy"],
-  commonSiblings: Record<string, JexsPropertySchema> | undefined,
-  output: string | undefined,
-  outputDescription: string | undefined,
-  ownerNode: string,
-): CompiledMethod {
-  const properties: Record<string, EmittedSchema> = {
-    [methodKey]: expandProperty(primary),
-  };
-  // Method-level siblings apply to every variant (e.g. `flags` for regex), so a
-  // required one is required for every operation and belongs on the base entry.
-  // A variant's OWN required siblings are gated by its discriminator in walkVariants.
-  const required: string[] = [];
-  for (const [k, v] of Object.entries(commonSiblings ?? {})) {
-    properties[k] = expandProperty(v);
-    if (v.required) required.push(k);
-  }
-  const allOf: EmittedSchema[] = [];
-  const variantOutputs = walkVariants(
-    { variants, variantBy, output, enum: primary.enum },
-    methodKey, null, properties, allOf,
-  );
-
-  // Top-level ops for hover (nesting is flattened in variantOutputs).
-  const variantDocs: VariantDoc[] = Object.entries(variants).map(([key, v]) => ({
-    key,
-    output: v.output ?? output,
-    description: v.markdownDescription ?? v.description ?? v.outputDescription,
-  }));
-
-  return {
-    properties,
-    output,
-    outputDescription,
-    ownerNode,
-    variantOutputs,
-    variantDocs,
-    variantBy: variantMode({ variantBy, enum: primary.enum }),
-    allOf: allOf.length > 0 ? allOf : undefined,
-    required: required.length > 0 ? required : undefined,
-  };
+interface Scope {
+  /** The variant key; the method key at the root. */
+  name: string;
+  schema: JexsMethodSchema;
+  /** The tests that select this scope, outermost first. Empty at the root. */
+  when: WhenTest[];
+  /** Every test in `when`, emitted and composed. Null at the root, which is always selected. */
+  cond: EmittedSchema | null;
+  /** A sibling-mode variant IS a sibling carrying the operation's input, so it is
+   *  registered as a property and documented as one. */
+  trigger: boolean;
+  /** Variants selected through this scope's own property. */
+  variants: VariantGroup;
+  /** Variants selected through this scope's siblings, by sibling, in declaration order. */
+  siblingVariants: Map<string, VariantGroup>;
 }
 
-/** A variants-bearing spec (top method or a nested variant). */
-interface VariantSpec {
-  variants: NonNullable<JexsMethodSchema["variants"]>;
-  variantBy?: JexsMethodSchema["variantBy"];
-  output?: string;
-  enum?: readonly unknown[];
+/** The variants selected through one property. */
+interface VariantGroup {
+  /** The property the variants are declared on, and the key it is written as
+   *  (null for presence-selected variants under a value, which test no property). */
+  owner: JexsPropertySchema;
+  subject: string | null;
+  /** Where the variants hang: the scope that declares them. */
+  parent: Parent;
+  scopes: Scope[];
+  /** Set when the variants cover every value of the property's `enum` and each
+   *  declares its own `output`: the property must hold one of those values, so a
+   *  step that names it through an expression still resolves to one of their
+   *  outputs rather than to the enclosing fallback. Where that holds, i.e. where
+   *  the property is present. */
+  covering: Parent | null;
+}
+
+/** A scope's direct children: its own variants, then its siblings'. */
+function childrenOf(scope: Scope): Scope[] {
+  return [scope.variants, ...scope.siblingVariants.values()].flatMap(g => g.scopes);
 }
 
 /**
- * The one place the discriminator mode is decided. `walkVariants` (which emits
- * the conditions), `compileVariantMethod` (which records the mode for consumers)
- * and `methodSiblingDocs` (which documents a sibling-mode trigger as the sibling
- * it is) must all agree, so they all call this rather than re-deriving it.
+ * The one place the discriminator mode is decided: `enum` means the variant keys
+ * are values, otherwise they name siblings tested for presence.
  */
-function variantMode(spec: { variantBy?: JexsMethodSchema["variantBy"]; enum?: readonly unknown[] }): "sibling" | "value" {
+function variantMode(spec: { variantBy?: JexsPropertySchema["variantBy"]; enum?: readonly unknown[] }): "sibling" | "value" {
   return spec.variantBy ?? (spec.enum ? "value" : "sibling");
 }
 
-/**
- * In sibling-mode the variant key names a real sibling carrying the op's input,
- * so it is registered in `properties` and belongs in the sibling docs. A DOTTED
- * key is the exception: it tests a clause inside a nested object, whose own
- * schema already declares it, so it is not a root sibling.
- */
-function isTriggerSibling(mode: "sibling" | "value", key: string): boolean {
-  return mode === "sibling" && !key.includes(".");
+function normalizeMethod(methodKey: string, method: JexsMethodSchema): Scope {
+  return scopeOf(methodKey, method, methodKey, [], null, false, methodKey);
+}
+
+/** `subject` is the property this scope's own variants test, or null when the
+ *  scope is a value (which has no property of its own to test). */
+function scopeOf(
+  name: string,
+  schema: JexsMethodSchema,
+  subject: string | null,
+  when: WhenTest[],
+  cond: EmittedSchema | null,
+  trigger: boolean,
+  methodKey: string,
+): Scope {
+  const scope: Scope = {
+    name, schema, when, cond, trigger,
+    variants: { owner: schema, subject, parent: { name, when, cond }, scopes: [], covering: null },
+    siblingVariants: new Map(),
+  };
+  // This scope's own property is present wherever the scope is selected: the
+  // primary key always, a trigger by its own test.
+  if (schema.variants) scope.variants = childScopes(schema, subject, scope, scope, methodKey);
+  for (const [sibling, prop] of Object.entries(schema.siblings ?? {})) {
+    if (!prop.variants) continue;
+    // A value test already requires the sibling; presence-selected variants of
+    // a sibling apply only alongside it, so that presence joins their condition.
+    const present = within(scope, { key: sibling });
+    const parent = variantMode(prop) === "value" ? scope : present;
+    scope.siblingVariants.set(sibling, childScopes(prop, sibling, parent, present, methodKey));
+  }
+  return scope;
+}
+
+/** Where child scopes hang: the parent's name (for errors) and its condition. */
+type Parent = Pick<Scope, "name" | "when" | "cond">;
+
+function within(parent: Parent, test: WhenTest): Parent {
+  const local = testCond(test);
+  return { name: parent.name, when: [...parent.when, test], cond: parent.cond ? { allOf: [parent.cond, local] } : local };
+}
+
+/** `present` is where `subject` is known to be present, for the covering rule. */
+function childScopes(
+  owner: JexsPropertySchema,
+  subject: string | null,
+  parent: Parent,
+  present: Parent,
+  methodKey: string,
+): VariantGroup {
+  const mode = variantMode(owner);
+  if (mode === "value" && subject === null) {
+    throw new Error(
+      `"${methodKey}": the variants under "${parent.name}" select by value, but "${parent.name}" is itself a value, not a property. Only presence-selected variants can nest there.`,
+    );
+  }
+  const variants = Object.entries(owner.variants ?? {});
+  const keys = new Set(variants.map(([key]) => key));
+  const covers = mode === "value"
+    && owner.enum !== undefined
+    && owner.enum.every(e => keys.has(String(e)))
+    && variants.every(([, v]) => v.output !== undefined);
+  const scopes = variants.map(([key, variant]) => {
+    let test: WhenTest = { key };
+    if (mode === "value") {
+      const value = variantValue(owner, key, subject!, methodKey);
+      test = owner.default !== undefined && owner.default === value
+        ? { key: subject!, value, default: true }
+        : { key: subject!, value };
+    }
+    const { when, cond } = within(parent, test);
+    // A trigger is a real sibling, so the variants nested under it test IT; a
+    // dotted key names a clause inside a nested object, whose own schema
+    // declares it, so it is tested but never registered at the root.
+    const trigger = mode === "sibling" && !key.includes(".");
+    return scopeOf(key, variant, mode === "sibling" ? key : null, when, cond, trigger, methodKey);
+  });
+  return { owner, subject, parent, scopes, covering: covers ? present : null };
+}
+
+/** The value a value-mode variant key stands for: the `enum` entry it spells, so
+ *  a boolean or number enum matches its real value, or, with no `enum`, the key
+ *  converted by the property's `type`. */
+function variantValue(owner: JexsPropertySchema, key: string, subject: string, methodKey: string): unknown {
+  if (owner.enum) {
+    const hit = owner.enum.find(e => String(e) === key);
+    if (hit === undefined) {
+      throw new Error(`"${methodKey}": variant "${key}" of "${subject}" is not one of its enum values.`);
+    }
+    return hit;
+  }
+  if (owner.type === "boolean" && (key === "true" || key === "false")) return key === "true";
+  if (owner.type === "number" && key.trim() !== "" && Number.isFinite(Number(key))) return Number(key);
+  return key;
 }
 
 /**
- * A sibling-mode presence condition. A plain key tests a root sibling; a DOTTED
- * key (e.g. `options.returning`) tests a NESTED property's presence — letting a
- * variant narrow on a clause that lives inside a nested object (so the user's
- * data stays regular, e.g. `returning` stays in `options`) rather than forcing
- * it to the root. `{ required: ["returning"] }` ⇒ `{ properties: { options: {
- * required: ["returning"] } } }`.
+ * A test, emitted. `{ required: ["write"] }` for presence and
+ * `{ properties: { type: { const: "light" } }, required: ["type"] }` for a value;
+ * a DOTTED key nests it, so `options.returning` becomes
+ * `{ properties: { options: { required: ["returning"] } } }` and a clause can
+ * select a variant from inside a nested object without being forced to the root.
  */
-function presenceCond(key: string): EmittedSchema {
-  const parts = key.split(".");
-  let cond: EmittedSchema = { required: [parts[parts.length - 1]] };
-  for (let i = parts.length - 2; i >= 0; i--) {
-    cond = { properties: { [parts[i]]: cond } };
+function testCond(test: WhenTest): EmittedSchema {
+  const parts = test.key.split(".");
+  const last = parts[parts.length - 1];
+  // `properties` holds when the key is absent, so a default value's test simply
+  // leaves out `required`.
+  let cond: EmittedSchema = !("value" in test) ? { required: [last] }
+    : test.default ? { properties: { [last]: { const: test.value } } }
+    : { properties: { [last]: { const: test.value } }, required: [last] };
+  for (let i = parts.length - 2; i >= 0; i--) cond = { properties: { [parts[i]]: cond } };
+  return cond;
+}
+
+/** Every scope under `scope` (not `scope` itself), parents before children. */
+function descendants(scope: Scope): Scope[] {
+  const out: Scope[] = [];
+  for (const child of childrenOf(scope)) out.push(child, ...descendants(child));
+  return out;
+}
+
+// ── Method emission ────────────────────────────────────────────────────────────
+
+/**
+ * The validating form of a method. Root siblings go straight into `properties`;
+ * a variant's siblings are enforced only under its condition, through `allOf`,
+ * with a permissive stub left in `properties` so that one name can carry a
+ * different shape in each operation (per-op `options`) without either clobbering
+ * the other. The stub never overwrites an existing entry: a root sibling (e.g.
+ * ElementNode's `content`, which routes children to exprFlat) or an earlier
+ * variant's stub must survive, with this variant's shape layered on top.
+ */
+function emitMethod(methodKey: string, root: Scope, common: ReadonlySet<string>): EmittedMethodSchema {
+  const properties: Record<string, EmittedSchema> = { [methodKey]: expandProperty(root.schema) };
+  const required: string[] = [];
+  const allOf: EmittedSchema[] = [];
+
+  for (const scope of [root, ...descendants(root)]) {
+    if (scope.trigger) properties[scope.name] = expandProperty(scope.schema);
+    const gated: Record<string, EmittedSchema> = {};
+    const gatedRequired: string[] = [];
+    for (const [k, v] of Object.entries(scope.schema.siblings ?? {})) {
+      if (!scope.cond) {
+        properties[k] = expandProperty(v);
+        if (v.required) required.push(k);
+        continue;
+      }
+      if (!(k in properties)) properties[k] = {};
+      gated[k] = expandProperty(v);
+      if (v.required) gatedRequired.push(k);
+    }
+    if (scope.cond && Object.keys(gated).length > 0) {
+      // `required` rides the SAME gate as the shapes: a sibling a variant cannot
+      // run without is only missing while that variant is selected.
+      const then: EmittedSchema = { properties: gated };
+      if (gatedRequired.length > 0) then.required = gatedRequired;
+      allOf.push({ if: scope.cond, then });
+    }
   }
+  allOf.push(...exclusions(root, new Set([methodKey, ...common])));
+
+  const entry: EmittedMethodSchema = { properties };
+  const { output, outputDescription } = root.schema;
+  if (output !== undefined) entry.output = output;
+  if (outputDescription !== undefined) entry.outputDescription = outputDescription;
+  const rules = outputRules(root);
+  // Nothing after an unconditional rule can decide (a covering primary key's
+  // rule shadows the root's own fallback).
+  const always = rules.findIndex(r => Object.keys(r.cond).length === 0);
+  rules.length = always + 1;
+  // A single rule is the root's own `output`, which `output` already says.
+  if (rules.length > 1 || rules[0].output !== output) entry.variantOutputs = rules;
+  const values = valueDocs(root.variants.scopes, output);
+  if (values) entry.variantDocs = values;
+  if (allOf.length > 0) entry.allOf = allOf;
+  if (required.length > 0) entry.required = required;
+  return entry;
+}
+
+/**
+ * Refusals for exclusive variant siblings (see JexsPropertySchema.exclusive). For
+ * each value-selected group, a sibling declared nowhere but inside its variants
+ * (anywhere in their subtrees, triggers included) is refused wherever the group
+ * applies and its property holds a literal value, or is absent with a `default`,
+ * whose variant does not declare it. `open` names siblings that are never
+ * refused: the method key and the Node's `commonSiblings`.
+ */
+function exclusions(root: Scope, open: ReadonlySet<string>): EmittedSchema[] {
+  const all = [root, ...descendants(root)];
+  const declaring = new Map<string, Scope[]>();
+  for (const s of all) {
+    for (const name of [...(s.trigger ? [s.name] : []), ...Object.keys(s.schema.siblings ?? {})]) {
+      if (!open.has(name)) declaring.set(name, [...(declaring.get(name) ?? []), s]);
+    }
+  }
+
+  const out: EmittedSchema[] = [];
+  for (const group of all.flatMap(s => [s.variants, ...s.siblingVariants.values()])) {
+    const subject = group.subject;
+    if (subject === null || group.scopes.length === 0 || group.owner.exclusive === false
+      || variantMode(group.owner) !== "value") continue;
+    // Each scope inside the group, mapped to the value that selects it.
+    const valueOf = new Map<Scope, unknown>();
+    for (const v of group.scopes) {
+      for (const s of [v, ...descendants(v)]) valueOf.set(s, v.when[v.when.length - 1].value);
+    }
+    // Names confined to the group, bucketed by the values that allow them.
+    const buckets = new Map<string, { allowed: unknown[]; names: string[] }>();
+    for (const [name, scopes] of declaring) {
+      if (!scopes.every(s => valueOf.has(s))) continue;
+      const allowed = [...new Set(scopes.map(s => valueOf.get(s)))];
+      const key = JSON.stringify(allowed);
+      if (!buckets.has(key)) buckets.set(key, { allowed, names: [] });
+      buckets.get(key)!.names.push(name);
+    }
+    for (const { allowed, names } of buckets.values()) {
+      const refused = refusedUnless(subject, allowed, group.owner.default);
+      out.push({
+        if: group.parent.cond ? { allOf: [group.parent.cond, refused] } : refused,
+        then: { properties: Object.fromEntries(names.map(n => [n, false])) },
+      });
+    }
+  }
+  return out;
+}
+
+/** `key` holds a literal outside `allowed`, or is absent while its default is. An
+ *  expression (an object) is never refused: it could resolve to any value. */
+function refusedUnless(key: string, allowed: unknown[], fallback: unknown): EmittedSchema {
+  const parts = key.split(".");
+  const last = parts[parts.length - 1];
+  const outside: EmittedSchema = { not: { anyOf: [{ type: "object" }, { enum: allowed }] } };
+  let cond: EmittedSchema = fallback !== undefined && !allowed.includes(fallback)
+    ? { properties: { [last]: outside } }
+    : { properties: { [last]: outside }, required: [last] };
+  for (let i = parts.length - 2; i >= 0; i--) cond = { properties: { [parts[i]]: cond } };
   return cond;
 }
 
 /**
- * Recursively flatten a variants tree into output-narrowing entries, registering
- * each variant's siblings into `properties`/`allOf`. `baseCond` is the parent's
- * composed discriminator (null at the top). value-mode is only valid at the top
- * (it reads `methodKey`'s value); nested levels are sibling-mode (variant key =
- * sibling presence, dotted for a nested clause).
+ * The method's output as ordered rules, the first whose condition holds deciding
+ * (the precedence JexsMethodSchema documents): a scope's own variants, then its
+ * siblings' variants, then its own `output` when it declares one. A scope with no
+ * `output` of its own adds no closing rule, so when none of its descendants
+ * match, the enclosing scope's later rules decide; that is how it inherits both
+ * the enclosing output and the enclosing siblings' refinements. The root always
+ * closes the list, so every step matches some rule.
+ *
+ * A covering group (see VariantGroup) closes itself too: when its property is
+ * present but no value rule matched, the value came from an expression and is
+ * still one of the covered ones, so the step resolves to one of their outputs.
  */
-function walkVariants(
-  spec: VariantSpec,
-  methodKey: string,
-  baseCond: EmittedSchema | null,
-  properties: Record<string, EmittedSchema>,
-  allOf: EmittedSchema[],
-): VariantOutput[] {
-  const mode = variantMode(spec);
-  const out: VariantOutput[] = [];
-  const localConds: EmittedSchema[] = [];
-
-  for (const [key, variant] of Object.entries(spec.variants)) {
-    const localCond: EmittedSchema = mode === "value"
-      ? { properties: { [methodKey]: { const: key } }, required: [methodKey] }
-      : presenceCond(key);
-    localConds.push(localCond);
-    const cond: EmittedSchema = baseCond ? { allOf: [baseCond, localCond] } : localCond;
-
-    // Sibling-mode: the trigger key is itself a sibling carrying the op's input —
-    // unless it's dotted, in which case the target lives inside a nested object
-    // (e.g. `options`) whose own schema already registers/validates it.
-    if (isTriggerSibling(mode, key)) {
-      const { output: _o, outputDescription: _od, siblings: _s, variants: _v, variantBy: _vb, ...triggerProp } = variant;
-      properties[key] = expandProperty(triggerProp);
-    }
-
-    // Extra siblings: REAL shape enforced only under this variant's discriminator
-    // via `allOf`; base `properties` stays permissive so a same-named sibling with
-    // different shapes per variant (e.g. per-op `options`) isn't clobbered.
-    // Guard: never overwrite an existing base — a method-level sibling (e.g.
-    // ElementNode's `content`, which routes children to exprFlat) or an
-    // earlier variant's permissive `{}` must survive, with this variant's shape
-    // layered on via the gated `allOf` below.
-    const extra: Record<string, EmittedSchema> = {};
-    const extraRequired: string[] = [];
-    for (const [sk, sv] of Object.entries(variant.siblings ?? {})) {
-      if (!(sk in properties)) properties[sk] = {};
-      extra[sk] = expandProperty(sv);
-      if (sv.required) extraRequired.push(sk);
-    }
-    if (Object.keys(extra).length > 0) {
-      // `required` rides the SAME discriminator gate as the shapes: a sibling a
-      // variant cannot run without is only missing when that variant is selected.
-      const then: EmittedSchema = { properties: extra };
-      if (extraRequired.length > 0) then.required = extraRequired;
-      allOf.push({ if: cond, then });
-    }
-
-    if (variant.variants) {
-      // Nested variants compose: recurse with this variant's condition as base.
-      out.push(...walkVariants(
-        { variants: variant.variants, variantBy: variant.variantBy, output: variant.output, enum: variant.enum },
-        key, cond, properties, allOf,
-      ));
-    } else {
-      out.push({ cond, output: variant.output ?? spec.output });
+function outputRules(scope: Scope): VariantOutput[] {
+  const rules: VariantOutput[] = [];
+  for (const group of [scope.variants, ...scope.siblingVariants.values()]) {
+    const inner = group.scopes.flatMap(outputRules);
+    rules.push(...inner);
+    if (group.covering) {
+      rules.push({ cond: group.covering.cond ?? {}, when: group.covering.when, output: anyOf(inner.map(r => r.output)) });
     }
   }
-
-  // Fallback: this level's `output` applies when none of its variants match.
-  if (spec.output !== undefined) {
-    const none: EmittedSchema = localConds.length > 0 ? { not: { anyOf: localConds } } : {};
-    out.push({ cond: baseCond ? { allOf: [baseCond, none] } : none, output: spec.output });
+  if (scope.cond === null || scope.schema.output !== undefined) {
+    rules.push({ cond: scope.cond ?? {}, when: scope.when, output: scope.schema.output });
   }
-
-  return out;
+  return rules;
 }
 
-/** All sibling-property names a method can carry (its own siblings + every
- *  variant's, recursively). Used to map sibling names to their host ops. */
-function collectMethodSiblings(method: JexsMethodSchema): string[] {
-  const out: string[] = [];
-  const walk = (m: JexsMethodSchema) => {
-    for (const k of Object.keys(m.siblings ?? {})) out.push(k);
-    if (m.variants) for (const v of Object.values(m.variants)) walk(v);
-  };
-  walk(method);
-  return out;
+/** The outputs a step may have when it has one of `outputs`: a single type, a
+ *  list of several, or undefined (any) once any of them is unknown. */
+function anyOf(outputs: VariantOutput["output"][]): VariantOutput["output"] {
+  const all = new Set<string>();
+  for (const o of outputs) {
+    if (o === undefined || o === "any") return undefined;
+    for (const t of Array.isArray(o) ? o : [o]) all.add(t);
+  }
+  return all.size === 1 ? [...all][0] : [...all];
+}
+
+/** Two rules that test one key against different values can never both hold. */
+function disjoint(a: WhenTest[], b: WhenTest[]): boolean {
+  return a.some(x => "value" in x && b.some(y => "value" in y && y.key === x.key && y.value !== x.value));
+}
+
+/** Every sibling name a method can carry: each scope's siblings, and each trigger,
+ *  which is a sibling too. Used to map sibling names to the ops that host them. */
+function siblingNames(root: Scope): string[] {
+  return [root, ...descendants(root)].flatMap(s => [
+    ...(s.trigger ? [s.name] : []),
+    ...Object.keys(s.schema.siblings ?? {}),
+  ]);
+}
+
+/** The value-selected operations among `scopes`, or undefined when they are
+ *  selected by presence (and so documented as the siblings they are). A scope
+ *  that declares no output shows `inherited`, when given. */
+function valueDocs(scopes: Scope[], inherited?: string): ValueDoc[] | undefined {
+  if (scopes.length === 0 || scopes[0].trigger || !("value" in scopes[0].when[scopes[0].when.length - 1])) return undefined;
+  return scopes.map(s => {
+    const output = s.schema.output ?? inherited;
+    const description = s.schema.markdownDescription ?? s.schema.description;
+    return {
+      value: s.when[s.when.length - 1].value,
+      ...(output !== undefined ? { output } : {}),
+      ...(s.schema.outputDescription !== undefined ? { outputDescription: s.schema.outputDescription } : {}),
+      ...(description !== undefined ? { description } : {}),
+    };
+  });
 }
 
 /** One sibling key of a method, flattened for documentation consumers. */
@@ -607,70 +763,74 @@ export interface SiblingDoc {
   description?: string;
   /** The step is invalid without it. */
   required?: boolean;
-  /** Which operation it belongs to, when it is variant-specific. Nested variants
-   *  join with `" > "`, e.g. `"connect > host"`. */
-  variant?: string;
+  /** What must hold for this sibling to apply, outermost first; absent when it
+   *  always applies. `[{ key: "database", value: "connect" }, { key: "host" }]`
+   *  reads `database: "connect"` + `host`. */
+  when?: WhenTest[];
+  /** Set on a sibling whose PRESENCE selects an operation: what it resolves to. */
+  output?: string;
+  outputDescription?: string;
+  /** Set on a sibling whose VALUE selects operations: one entry per value. */
+  values?: ValueDoc[];
 }
 
 /**
- * The same walk as {@link collectMethodSiblings}, keeping the prose.
- *
- * A documentation consumer (the MCP `describe_op` tool) wants what the author
- * wrote: this sibling, this description, required or not, and which operation it
- * belongs to. The EMITTED schema has all of that too, but scattered by the
- * lowering that makes it a valid JSON Schema: shared siblings behind a `$ref`
- * into `$defs`, variant siblings inside `allOf` branches discriminated by
- * `if/properties/<key>/const`, and a description-less stub left in `properties`
- * for each. Reading it back out of that shape is a round trip that loses nested
- * variants, so the flattening happens here instead, against the authored types.
+ * A method's siblings with the prose the author wrote: this sibling, this
+ * description, required or not, when it applies, and what it selects. The EMITTED
+ * schema carries all of that too, but scattered by the lowering that makes it
+ * valid JSON Schema (shared siblings behind a `$ref`, variant siblings inside
+ * `allOf` branches, a description-less stub left in `properties`), so reading it
+ * back out would be a lossy round trip.
  */
-function methodSiblingDocs(
+function siblingDocsOf(
   methodKey: string,
-  method: JexsMethodSchema,
+  root: Scope,
   commonSiblings: Record<string, JexsPropertySchema> | undefined,
 ): SiblingDoc[] {
-  // Keyed by variant path + name: one name routinely means different things in
+  // Keyed by condition + name: one name routinely means different things in
   // different operations (SchemaNode's `table` is an inline document under
   // `register` and a table NAME under `get`), so they are separate entries.
   const out = new Map<string, SiblingDoc>();
 
-  const add = (name: string, prop: JexsPropertySchema, variant?: string): void => {
+  const add = (name: string, prop: JexsPropertySchema, when: WhenTest[], extra: Partial<SiblingDoc> = {}): void => {
     if (name === methodKey) return;
-    // JSON-encoded pair rather than a joined string: both halves are authored
-    // names, so no single separator character is safely outside their alphabet.
-    const key = JSON.stringify([variant ?? null, name]);
+    const key = JSON.stringify([when, name]);
     if (out.has(key)) return;
     const description = prop.markdownDescription ?? prop.description;
     out.set(key, {
       name,
       ...(description ? { description } : {}),
       ...(prop.required ? { required: true } : {}),
-      ...(variant ? { variant } : {}),
+      ...(when.length > 0 ? { when } : {}),
+      ...extra,
     });
   };
 
-  const walk = (m: JexsMethodSchema, variant?: string): void => {
-    for (const [name, prop] of Object.entries(m.siblings ?? {})) add(name, prop, variant);
-    const mode = variantMode(m);
-    for (const [vName, v] of Object.entries(m.variants ?? {})) {
-      // In sibling-mode the variant key IS a sibling — `walkVariants` registers it
-      // in `properties` for exactly that reason — so it has to be documented as
-      // one. Skipping it left `{ "file": "x.json", "write": … }`'s `write` visible
-      // only as a variant, which reads as `{ "file": "write" }`; `audio-load`,
-      // whose siblings are ALL triggers, documented none at all. The prose is the
-      // trigger property's own, the same text `walkVariants` puts in `properties`.
-      if (isTriggerSibling(mode, vName)) {
-        const { output: _o, outputDescription: _od, siblings: _s, variants: _v, variantBy: _vb, ...triggerProp } = v;
-        add(vName, triggerProp, variant);
-      }
-      walk(v, variant ? `${variant} > ${vName}` : vName);
+  const walk = (scope: Scope): void => {
+    for (const [name, prop] of Object.entries(scope.schema.siblings ?? {})) {
+      const values = valueDocs(scope.siblingVariants.get(name)?.scopes ?? []);
+      add(name, prop, scope.when, values ? { values } : {});
     }
+    for (const v of childrenOf(scope)) {
+      // A trigger is the sibling that selects its operation, so the operation is
+      // documented here, on it, once: `{ "file": "x.json", "write": … }`. It
+      // applies wherever its own test (the last) is evaluated.
+      if (v.trigger) {
+        const values = valueDocs(v.variants.scopes);
+        add(v.name, v.schema, v.when.slice(0, -1), {
+          ...(v.schema.output !== undefined ? { output: v.schema.output } : {}),
+          ...(v.schema.outputDescription !== undefined ? { outputDescription: v.schema.outputDescription } : {}),
+          ...(values ? { values } : {}),
+        });
+      }
+    }
+    for (const child of childrenOf(scope)) walk(child);
   };
-  walk(method);
+  walk(root);
 
   // Last: they apply to every method on the node, so a method's own declaration
   // of the same name is the more specific one and wins.
-  for (const [name, prop] of Object.entries(commonSiblings ?? {})) add(name, prop);
+  for (const [name, prop] of Object.entries(commonSiblings ?? {})) add(name, prop, []);
 
   return [...out.values()];
 }
@@ -715,7 +875,12 @@ export function buildPackageSchema(
   packageName?: string,
   opts: SchemaBuildOptions = {},
 ): PackageSchema {
-  const compiled: Record<string, CompiledMethod> = {};
+  // byKey is the canonical store; byNode is a compact index of method names per
+  // Node class. Consumers wanting a full per-Node dispatch schema construct it
+  // on the fly via `{ type: "object", dependentSchemas: byNode[name].map(...) }`.
+  const byKey: Record<string, EmittedMethodSchema> = {};
+  const byNode: Record<string, EmittedNodeSchema> = {};
+  const keyNode: Record<string, string> = {};
   const collisions: string[] = [];
   const extraDefs: Record<string, EmittedSchema> = {};
   /** Per-Node $defs ref to a shared siblings block (built from `commonSiblings`). */
@@ -745,6 +910,10 @@ export function buildPackageSchema(
       const siblingsDefName = `_${nodeClass}Siblings`;
       const expandedProps: Record<string, EmittedSchema> = {};
       for (const [k, v] of Object.entries(nodeCommonSiblings)) {
+        // A shared block has no method whose output or `allOf` it could gate.
+        if (v.variants) {
+          throw new Error(`${nodeClass}: commonSiblings "${k}" declares variants; declare it on each method's siblings instead.`);
+        }
         expandedProps[k] = expandProperty(v);
       }
       extraDefs[siblingsDefName] = { properties: expandedProps };
@@ -756,17 +925,25 @@ export function buildPackageSchema(
     }
 
     for (const [methodKey, method] of Object.entries(schema)) {
-      const prior = compiled[methodKey];
-      if (prior && prior.ownerNode !== nodeClass) {
+      const prior = keyNode[methodKey];
+      if (prior && prior !== nodeClass) {
         collisions.push(
-          `Handler key "${methodKey}" is declared by both ${prior.ownerNode} and ${nodeClass}.`,
+          `Handler key "${methodKey}" is declared by both ${prior} and ${nodeClass}.`,
         );
         continue;
       }
-      compiled[methodKey] = compileMethod(methodKey, method, nodeClass);
-      const docs = methodSiblingDocs(methodKey, method, nodeCommonSiblings);
+      const root = normalizeMethod(methodKey, method);
+      const entry = emitMethod(methodKey, root, new Set(Object.keys(nodeCommonSiblings ?? {})));
+      // 2020-12 evaluates $ref siblings, so the local `properties` (primary key)
+      // applies in addition to the shared siblings block from the ref'd schema.
+      const ref = nodeSiblingsRef[nodeClass];
+      if (ref) entry.$ref = ref;
+      byKey[methodKey] = entry;
+      keyNode[methodKey] = nodeClass;
+      (byNode[nodeClass] ??= []).push(methodKey);
+      const docs = siblingDocsOf(methodKey, root, nodeCommonSiblings);
       if (docs.length > 0) siblingDocs[methodKey] = docs;
-      for (const sib of collectMethodSiblings(method)) addSiblingHost(sib, methodKey);
+      for (const sib of siblingNames(root)) addSiblingHost(sib, methodKey);
     }
 
     // Per-Node $defs contributions (e.g. RouterNode's _routeNode tree shape).
@@ -783,30 +960,6 @@ export function buildPackageSchema(
   }
 
   reportCollisions(collisions, opts, `buildPackageSchema(${packageName ?? "?"})`);
-
-  // byKey is the canonical store; byNode is a compact index of method names per
-  // Node class. Consumers wanting a full per-Node dispatch schema construct it
-  // on the fly via `{ type: "object", dependentSchemas: byNode[name].map(...) }`.
-  const byKey: Record<string, EmittedMethodSchema> = {};
-  const byNode: Record<string, EmittedNodeSchema> = {};
-  const keyNode: Record<string, string> = {};
-  for (const [methodKey, m] of Object.entries(compiled)) {
-    keyNode[methodKey] = m.ownerNode;
-    const entry: EmittedMethodSchema = { properties: m.properties };
-    if (m.output !== undefined) entry.output = m.output;
-    if (m.outputDescription !== undefined) entry.outputDescription = m.outputDescription;
-    if (m.variantOutputs !== undefined) entry.variantOutputs = m.variantOutputs;
-    if (m.variantDocs !== undefined) entry.variantDocs = m.variantDocs;
-    if (m.variantBy !== undefined) entry.variantBy = m.variantBy;
-    if (m.allOf !== undefined) entry.allOf = m.allOf;
-    if (m.required !== undefined) entry.required = m.required;
-    // 2020-12 evaluates $ref siblings, so the local `properties` (primary key)
-    // applies in addition to the shared siblings block from the ref'd schema.
-    const ref = nodeSiblingsRef[m.ownerNode];
-    if (ref) entry.$ref = ref;
-    byKey[methodKey] = entry;
-    (byNode[m.ownerNode] ??= []).push(methodKey);
-  }
 
   const out: PackageSchema = {
     $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -837,16 +990,16 @@ function pickDesc(p: MaybeMeta | undefined): string {
   return p?.markdownDescription ?? p?.description ?? "";
 }
 
-/**
- * Spells out the condition a variant-scoped sibling lives under. Only the FIRST
- * segment depends on the method's mode — it is the primary key's value in
- * value-mode and a sibling's presence otherwise; every nested level is
- * sibling-mode by the authoring contract, so the rest are always presence.
- */
-function variantScope(methodKey: string, variant: string, mode: "sibling" | "value" | undefined): string {
-  const [first, ...nested] = variant.split(" > ");
-  const head = mode === "sibling" ? `\`${first}\`` : `\`${methodKey}: "${first}"\``;
-  return [head, ...nested.map(s => `\`${s}\``)].join(" + ");
+/** Spells out a `when` path: `` `database: "connect"` + `host` ``. */
+function formatWhen(when: WhenTest[]): string {
+  return when.map(t => "value" in t ? `\`${t.key}: ${JSON.stringify(t.value)}\`` : `\`${t.key}\``).join(" + ");
+}
+
+/** One operation line: `` - `connect` → object: Opens… ``. */
+function formatValue(v: ValueDoc, indent = ""): string {
+  const out = v.output ? ` → ${v.output}` : "";
+  const text = v.description ?? v.outputDescription;
+  return `${indent}- \`${String(v.value)}\`${out}${text ? `: ${text}` : ""}`;
 }
 
 /**
@@ -858,20 +1011,11 @@ function buildRichMarkdown(methodKey: string, m: EmittedMethodSchema, docs: Sibl
   const primary = m.properties[methodKey] as MaybeMeta | undefined;
   let md = pickDesc(primary);
 
-  // Variants methods document their (top-level) operations, each with its output
-  // type — the variant keys ARE the operations. How one is SELECTED depends on the
-  // mode, and saying it wrong inverts the syntax: a sibling-mode op reads as
-  // `{ "file": "x.json", "write": … }`, never `{ "file": "write" }`.
-  const sibMode = m.variantBy === "sibling";
-  const triggers = new Set(sibMode ? (m.variantDocs ?? []).map(v => v.key) : []);
+  // Operations selected by the primary key's value. Those selected by a sibling's
+  // presence are that sibling's own entry below, with the output it selects.
   if (m.variantDocs && m.variantDocs.length > 0) {
-    const ops = m.variantDocs.map(v => {
-      const out = v.output ? ` → ${v.output}` : "";
-      const desc = v.description ? `: ${v.description}` : "";
-      return `- \`${v.key}\`${out}${desc}`;
-    });
-    const how = sibMode ? "each selected by that sibling key" : `value of \`${methodKey}\``;
-    md = (md ? md + "\n\n" : "") + `**Operations** *(${how})*:\n` + ops.join("\n");
+    const ops = m.variantDocs.map(v => formatValue(v));
+    md = (md ? md + "\n\n" : "") + `**Operations** *(value of \`${methodKey}\`)*:\n` + ops.join("\n");
   }
 
   // Siblings come from `siblingDocs`, not from `m.properties`: by this point the
@@ -880,15 +1024,14 @@ function buildRichMarkdown(methodKey: string, m: EmittedMethodSchema, docs: Sibl
   // would silently drop every `commonSiblings` key and every variant's keys.
   // Listed for variants methods too, under the operations, since an operation's
   // options are exactly what the reader needs next.
-  // A sibling-mode trigger is already listed above WITH its output type, so listing
-  // it again here would just be the same key twice.
-  const rest = (docs ?? []).filter(d => !(triggers.has(d.name) && !d.variant));
-  if (rest.length > 0) {
-    const lines = rest.map(d => {
+  if (docs && docs.length > 0) {
+    const lines = docs.flatMap(d => {
       const req = d.required ? " *(required)*" : "";
-      const scope = d.variant ? ` *(with ${variantScope(methodKey, d.variant, m.variantBy)})*` : "";
-      const desc = d.description ? `: ${d.description}` : "";
-      return `- \`${d.name}\`${req}${scope}${desc}`;
+      const out = d.output ? ` → ${d.output}` : "";
+      const scope = d.when ? ` *(with ${formatWhen(d.when)})*` : "";
+      const text = d.description ?? d.outputDescription;
+      const head = `- \`${d.name}\`${req}${out}${scope}${text ? `: ${text}` : ""}`;
+      return [head, ...(d.values ?? []).map(v => formatValue(v, "  "))];
     });
     md = (md ? md + "\n\n" : "") + "**Properties:**\n" + lines.join("\n");
   }
@@ -908,13 +1051,11 @@ function buildRichMarkdown(methodKey: string, m: EmittedMethodSchema, docs: Sibl
 
 /**
  * Global step keys handled by the resolver itself rather than any Node, so they
- * may appear as a sibling on any step but never show up in `list_nodes`. This is
- * the single source of truth for their docs — consumed by `UNIVERSAL` (below,
- * for the JSON schema) and re-exported for the MCP introspection tools so
- * `describe_op return` works.
+ * may appear as a sibling on any step but never show up in `list_nodes`. The keys
+ * themselves are GLOBAL_KEYS in Resolver.ts; this is the single source of truth
+ * for their docs, consumed by `UNIVERSAL` (below, for the JSON schema) and
+ * re-exported for the MCP introspection tools so `describe_op return` works.
  */
-/** Prose for the global step keys, for autocomplete. The keys themselves are
- *  GLOBAL_KEYS in Resolver.ts; this only describes them. */
 export const GLOBAL_KEY_DOCS: Record<string, { markdownDescription: string; examples?: string[] }> = {
   as: {
     markdownDescription:
@@ -1164,7 +1305,7 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
   // base `exprFlat` (all allowed keys' value+dependent schemas, the universal
   // keys, and `additionalProperties`) and only overrides the differences:
   //   - keys whose output can't match T → `properties: { key: false }` (reject).
-  //   - variant keys accepted only under a discriminator → `dependentSchemas:
+  //   - keys that match only under some discriminators → `dependentSchemas:
   //     { key: <gate> }`, ANDed (via the outer allOf) onto the base's method
   //     schema for that key.
   // Keys whose output matches unconditionally are simply inherited (not relisted),
@@ -1178,34 +1319,31 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
   for (const target of OUTPUT_TYPES) {
     const rejected: Record<string, false> = {};
     const gated: Record<string, EmittedSchema> = {};
+    const accepts = (o: VariantOutput["output"]): boolean =>
+      Array.isArray(o) ? o.some(accepts) : o === undefined || o === "any" || o === target;
     for (const [methodKey, m] of Object.entries(byKey)) {
-      // Variants method: accept the key in this bucket only under the
-      // discriminator of a variant whose output matches the bucket (an
-      // any/absent-output variant matches every bucket, but still only under its
-      // own discriminator). A method-level fallback output applies when NO
-      // variant's discriminator holds.
-      if (m.variantOutputs) {
-        const outMatches = (o: string | undefined) => o === undefined || o === "any" || o === target;
-        const accept: EmittedSchema[] = m.variantOutputs.filter(v => outMatches(v.output)).map(v => v.cond);
-        // A method-level `output` is the fallback when no variant matches.
-        if (m.output !== undefined && outMatches(m.output)) {
-          const allConds = m.variantOutputs.map(v => v.cond);
-          accept.push(allConds.length > 0 ? { not: { anyOf: allConds } } : {});
-        }
-        if (accept.length === 0) {
-          rejected[methodKey] = false;
-        } else if (!accept.some(c => Object.keys(c).length === 0)) {
-          // Not a tautology (`{}` = always accept): gate the key on the
-          // accepting discriminators. The base supplies the method schema.
-          gated[methodKey] = accept.length === 1 ? accept[0] : { anyOf: accept };
-        }
-        // else: unconditionally accepted → inherit from base, nothing to emit.
-        continue;
-      }
-      const out = m.output;
-      if (!(out === undefined || out === "any" || out === target)) {
-        rejected[methodKey] = false; // wrong output type → reject; allowed ones inherit.
-      }
+      // The first rule whose condition holds decides the output, so a rule with
+      // an output that fits this bucket accepts the key only where no EARLIER rule
+      // with an output that doesn't fit holds. Earlier rules that fit need no
+      // exclusion (either way the key is accepted), and neither do rules that
+      // test one key against another value, which can never hold together.
+      const rules = m.variantOutputs ?? [{ cond: {}, when: [], output: m.output }];
+      const clauses: EmittedSchema[] = [];
+      let always = false;
+      rules.forEach((rule, i) => {
+        if (always || !accepts(rule.output)) return;
+        const earlier = rules.slice(0, i)
+          .filter(e => !accepts(e.output) && !disjoint(e.when, rule.when))
+          .map(e => e.cond);
+        const unless: EmittedSchema | null = earlier.length === 0 ? null
+          : { not: earlier.length === 1 ? earlier[0] : { anyOf: earlier } };
+        const empty = Object.keys(rule.cond).length === 0;
+        if (empty && !unless) always = true;
+        else clauses.push(!unless ? rule.cond : empty ? unless : { allOf: [rule.cond, unless] });
+      });
+      if (always) continue;                          // inherit from base, nothing to emit
+      if (clauses.length === 0) rejected[methodKey] = false;
+      else gated[methodKey] = clauses.length === 1 ? clauses[0] : { anyOf: clauses };
     }
     const override: EmittedSchema = { properties: rejected };
     const deps: Record<string, EmittedSchema> = { ...gated };
@@ -1231,7 +1369,6 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
     delete m.outputDescription;
     delete m.variantOutputs;
     delete m.variantDocs;
-    delete m.variantBy;
   }
 
   const combined: CombinedSchema = {
@@ -1259,7 +1396,7 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
 
 // ── Structural shape dedup ──────────────────────────────────────────────────────
 
-const DEDUP_METADATA = new Set(["markdownDescription", "examples", "description"]);
+const DEDUP_METADATA = new Set(["markdownDescription", "examples", "description", "default"]);
 // JSON Schema 2020-12 keywords whose values hold subschema(s) WE emit. Used to
 // walk only real schema positions (never `properties`/`required` CONTAINERS or
 // data like `enum`/`const`), so replacing a node with `{ $ref }` stays valid.

@@ -110,6 +110,7 @@ export class ElementNode extends Node {
       // `variants`, but custom elements and arbitrary attributes still validate
       // (the variants only ADD known-attribute hints, never restrict).
       variantBy: "value",
+      exclusive: false,
       markdownDescription: "Renders an HTML element. Attributes are flat keys on the object; `content` holds children.\r\n`class` accepts a string, array, or `{ className: bool }` map. `style` accepts a camel- or kebab-case object.\r\nFor `<style>`/`<script>` the `content` is emitted as literal text (no escaping/translation); a `<style>` object `content` is compiled to CSS, and a `<script>` with a JSON `type` (`application/json` or a `+json` media type such as `application/ld+json`) has its `content` resolved and serialized to safely-escaped JSON.\r\nAdd an `\"if\"` key to conditionally render. Wire DOM events via an `\"events\"` object.",
       outputDescription: "An HTML **string**. When an `\"if\"` key is present and falsy, renders to an empty string `\"\"`. String content has `$identifier` tokens interpolated, so wrap literal `$` content in `{ \"raw\": \"…\" }`.",
       examples: [
