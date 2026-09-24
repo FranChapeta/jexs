@@ -366,8 +366,9 @@ export interface GlTween {
   duration: number;
   elapsed: number;
   easing: (t: number) => number;
-  then: unknown[] | null;  // steps to run on complete
-  context: Context | null;
+  /** Settles the `gl-tween` step: on completion, when a newer tween takes over
+   *  all of its fields, or when the scene is destroyed. */
+  done: () => void;
 }
 
 export interface GpuParticleEmitter {

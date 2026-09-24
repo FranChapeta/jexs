@@ -6,22 +6,15 @@
 import { STRIDE, F_CR, F_CG, F_CB, F_CA } from "@jexs/physics";
 import type { GlInstance, GlTween } from "./types.js";
 import { EASINGS, TWEENABLE_KEYS } from "./easing.js";
-import type { Context } from "@jexs/core";
-
-/** Completed tween callback info, returned for the caller to execute. */
-export interface TweenCallback {
-  then: unknown[];
-  context: Context;
-}
 
 /**
- * Tick all active tweens. Returns completed `then` callbacks for the caller to dispatch.
- * Marks inst.dirty = true if any tweens were active.
+ * Tick all active tweens, settling each one that finishes. Returns whether any
+ * finished. Marks inst.dirty = true if any tweens were active.
  */
-export function tickTweens(inst: GlInstance, dt: number): TweenCallback[] | null {
-  if (inst.tweens.length === 0) return null;
+export function tickTweens(inst: GlInstance, dt: number): boolean {
+  if (inst.tweens.length === 0) return false;
   const d = inst.store.data;
-  let callbacks: TweenCallback[] | null = null;
+  let finished = false;
 
   for (let i = inst.tweens.length - 1; i >= 0; i--) {
     const tw = inst.tweens[i];
@@ -34,14 +27,18 @@ export function tickTweens(inst: GlInstance, dt: number): TweenCallback[] | null
     }
     if (done) {
       inst.tweens[i] = inst.tweens[inst.tweens.length - 1]; inst.tweens.pop();
-      if (tw.then && tw.context) {
-        if (!callbacks) callbacks = [];
-        callbacks.push({ then: tw.then, context: tw.context });
-      }
+      tw.done();
+      finished = true;
     }
   }
   inst.dirty = true;
-  return callbacks;
+  return finished;
+}
+
+/** Settle every pending tween without finishing it, for a scene being destroyed. */
+export function settleTweens(tweens: GlTween[]): void {
+  for (const tw of tweens) tw.done();
+  tweens.length = 0;
 }
 
 /**
@@ -93,7 +90,7 @@ export function cancelConflictingTweens(tweens: GlTween[], slot: number, fields:
         keptE.push(tw.ends[j]);
       }
     }
-    if (keptF.length === 0) { tweens[i] = tweens[tweens.length - 1]; tweens.pop(); continue; }
+    if (keptF.length === 0) { tweens[i] = tweens[tweens.length - 1]; tweens.pop(); tw.done(); continue; }
     tw.fields = keptF; tw.starts = keptS; tw.ends = keptE;
   }
 }

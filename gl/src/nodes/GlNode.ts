@@ -17,7 +17,7 @@ import {
 import type { GlInstance, GpuParticleEmitter } from "../gl/types.js";
 export type { GlCamera, GlInstance } from "../gl/types.js";
 import { EASINGS, TWEENABLE_KEYS } from "../gl/easing.js";
-import { tickTweens, cancelConflictingTweens } from "../gl/tweening.js";
+import { tickTweens, cancelConflictingTweens, settleTweens } from "../gl/tweening.js";
 import { updateCameraFollow, updateCameraShake } from "../gl/camera.js";
 import { collectPointLights, uploadPointLights, setSceneUniforms } from "../gl/lighting.js";
 import { parseBloom, ensureFBOs, applyPostProcessing } from "../gl/postProcess.js";
@@ -529,9 +529,11 @@ export class GlNode extends Node {
     "gl-tween": {
       type: "string",
       output: "null",
-      markdownDescription: "Animates numeric entity properties over time. Pass entity id, target values (`x`, `y`, `w`, `h`, `angle`, `opacity`, `color`, etc.),\n`duration` (seconds), and `easing` (e.g. `\"easeOutQuad\"`, `\"linear\"`). Pass `then` steps to run on completion.",
+      markdownDescription: "Animates numeric entity properties over time. Pass entity id, target values (`x`, `y`, `w`, `h`, `angle`, `opacity`, `color`, etc.),\n`duration` (seconds), and `easing` (e.g. `\"easeOutQuad\"`, `\"linear\"`).\nThe step finishes when the tween does, so a step list waits for it; add `then` to carry on without waiting and run steps once it finishes. It also finishes early when a newer tween takes over all of its properties, or the scene is destroyed.",
+      outputDescription: "`null`, once the tween finishes.",
       examples: [
         "{ \"gl-tween\": \"player\", \"x\": 400, \"y\": 300, \"duration\": 0.5, \"easing\": \"easeInOutCubic\" }",
+        "{ \"gl-tween\": \"door\", \"y\": 0, \"then\": [{ \"entity-remove\": \"door\" }] }",
       ],
       siblings: {
         duration: {
@@ -548,11 +550,8 @@ export class GlNode extends Node {
             "easeOutBounce",
             "easeOutElastic",
           ],
+          default: "easeOutQuad",
           description: "Easing function name.",
-        },
-        then: {
-          type: "array",
-          description: "Steps to run when the tween completes.",
         },
       },
     },
@@ -1582,10 +1581,7 @@ export class GlNode extends Node {
   ["gl-tween"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-    const thenBranch = Array.isArray(def["then"]) ? def["then"] as unknown[] : null;
-    const resolvable: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(def)) { if (k !== "then") resolvable[k] = v; }
-    return resolveObj(resolvable, context, r => {
+    return resolveObj(def, context, r => {
       const id = String(r["gl-tween"]);
       const slot = inst.store.slot(id);
       if (slot === -1) return null;
@@ -1615,10 +1611,13 @@ export class GlNode extends Node {
       }
       if (fields.length === 0) return null;
       cancelConflictingTweens(inst.tweens, slot, fields);
-      inst.tweens.push({ slot, fields, starts, ends, duration, elapsed: 0, easing, then: thenBranch, context: thenBranch ? { ...context } : null });
-      inst.dirty = true;
-      GlNode.scheduleRender(inst);
-      return null;
+      // Settles when the tween does, which is what the resolver's global `then`
+      // waits on; without `then`, a step list waits here.
+      return new Promise<null>(done => {
+        inst.tweens.push({ slot, fields, starts, ends, duration, elapsed: 0, easing, done: () => done(null) });
+        inst.dirty = true;
+        GlNode.scheduleRender(inst);
+      });
     });
   }
 
@@ -1760,6 +1759,7 @@ export class GlNode extends Node {
   }
 
   private static destroyInstance(inst: GlInstance, selector: string): void {
+    settleTweens(inst.tweens);
     if (inst.rafId !== null) { cancelAnimationFrame(inst.rafId); inst.rafId = null; }
     if (inst.resizeObserver) inst.resizeObserver.disconnect();
     // Clean up textures
@@ -1933,7 +1933,7 @@ export class GlNode extends Node {
       inst.lastTime = time;
 
       // Update tweens (animations are ticked inline during render)
-      GlNode.tickTweensAndDispatch(inst, delta);
+      GlNode.tickTweensAndSchedule(inst, delta);
 
       // Update trail positions (auto-remove if entity gone)
       if (updateTrails(inst)) inst.dirty = true;
@@ -2016,25 +2016,11 @@ export class GlNode extends Node {
     });
   }
 
-  private static tickTweensAndDispatch(inst: GlInstance, dt: number): void {
-    const callbacks = tickTweens(inst, dt);
-    if (callbacks) {
-      // Sync-fast-path: run sync callbacks inline, only schedule a microtask for async ones.
-      // Avoids N microtask schedules per frame when many tweens complete at once.
-      for (const cb of callbacks) {
-        let r: unknown;
-        try {
-          r = runSteps(cb.then, cb.context);
-        } catch (err) {
-          console.error("[GL] Error in tween steps:", err);
-          continue;
-        }
-        if (r instanceof Promise) {
-          r.catch(err => console.error("[GL] Error in tween steps:", err));
-        }
-      }
-    }
-    if (inst.tweens.length > 0 || callbacks) GlNode.scheduleRender(inst);
+  private static tickTweensAndSchedule(inst: GlInstance, dt: number): void {
+    // A finished tween settles its step, whose continuation may change the scene
+    // again, so one more frame is scheduled after the last tween ends.
+    const finished = tickTweens(inst, dt);
+    if (inst.tweens.length > 0 || finished) GlNode.scheduleRender(inst);
   }
 
   private static render(inst: GlInstance, delta: number): void {
