@@ -5,17 +5,16 @@ import { validate } from "../validate.js";
 /**
  * Route handler structure.
  *
- * `query` and `body` are standard JSON Schema (draft 2020-12) objects, validated
- * by the shared Ajv validator against the request's query string / parsed body.
- * URL path params are matched and constrained structurally via `paramName` /
- * `paramRegex` at each route node, not by a handler schema.
+ * `queryParams` and `body` are standard JSON Schema (draft 2020-12) objects,
+ * validated by the shared Ajv validator against the request's query string /
+ * parsed body. URL path params are matched and constrained structurally via
+ * `paramName` / `paramRegex` at each route node, not by a handler schema.
  */
 interface RouteHandler {
-  file?: string;
+  file?: unknown;
   run?: unknown[];
-  query?: Record<string, unknown>;
+  queryParams?: Record<string, unknown>;
   body?: Record<string, unknown>;
-  options?: Record<string, unknown>;
 }
 
 /**
@@ -84,7 +83,7 @@ export class RouterNode extends Node {
   static schema: JexsNodeSchema = {
     routes: {
       $ref: "#/$defs/_routesSlot",
-      markdownDescription: "Matches the incoming request path and method against a route tree, then executes the handler.\nSupports exact segments, `*` (single param with optional `paramName`/`paramRegex`),\n`**` (catch-all), conditional `\"if\"` guards per node, and query/body validation.\n\nA `WS` method handler that calls `socket-accept` completes a WebSocket upgrade.\nStep expressions inside `run` are validated as Jexs expressions; any other key on a handler is treated as a Jexs expression and evaluated directly.",
+      markdownDescription: "Matches the incoming request path and method against a route tree, then executes the handler.\nSupports exact segments, `*` (single param with optional `paramName`/`paramRegex`),\n`**` (catch-all), conditional `\"if\"` guards per node, and `queryParams`/`body` validation.\n\nA handler is a `file` to render or a `run` of steps, never both, or an expression resolving to one of those. A `WS` handler completes a WebSocket upgrade by calling `socket-accept` as a `run` step.",
       outputDescription: "The matched handler's result. A `file`/`run` step that renders to a string is wrapped as `{ response: <html> }`; a handler that returns an object passes it through unchanged, as either a response envelope (`{ response, responseStatus, responseType, responseHeaders }`) or a bare JSON value. Throws a 404 HTTP error when no route matches, so use a catch-all route (`**`) or wrap calls in `catch` to handle not-found.",
       examples: [
         "{ \"routes\": { \"children\": { \"users\": { \"methods\": { \"GET\": { \"file\": \"pages/users.json\" } } } } } }",
@@ -125,15 +124,19 @@ export class RouterNode extends Node {
     _routeHandler: {
       type: "object",
       properties: {
-        file:    { type: "string" },
+        // FileNode resolves this value, so it takes an expression too.
+        file:    { $ref: "#/$defs/strOrExpr" },
         run:     { $ref: "#/$defs/steps" },
-        // `query`/`body` values are themselves JSON Schemas — describe them with
+        // `queryParams`/`body` values are themselves JSON Schemas — describe them with
         // the 2020-12 meta-schema so editors give full JSON-Schema autocomplete
         // inside them (NOT exprFlat: these are static author-time schemas).
-        query:   { $ref: "#/$defs/_jsonSchema" },
-        body:    { $ref: "#/$defs/_jsonSchema" },
-        options: { type: "object" },
+        queryParams: { $ref: "#/$defs/_jsonSchema" },
+        body:        { $ref: "#/$defs/_jsonSchema" },
       },
+      // One node to an object: a handler is a template, a step list or a bare
+      // expression, never two. A step list already covers both, file last:
+      //   { "run": [ { …, "as": "user" }, { "file": "pages/user.json" } ] }
+      not: { required: ["file", "run"] },
     },
     _jsonSchema: { $ref: "https://json-schema.org/draft/2020-12/schema" },
   };
@@ -153,7 +156,17 @@ export class RouterNode extends Node {
         context,
       );
       if (!handler) throw createHttpError(404, "Not Found");
-      return executeHandler(handler, context);
+      if (isHandlerShape(handler)) return executeHandler(handler, context);
+
+      // Not a `file`/`run` object, so the handler is an expression that has to
+      // produce one. What it produces is the handler, `queryParams` and `body`
+      // included, and takes the same path as an inline object.
+      return resolve(handler, context, value => {
+        if (!isHandlerShape(value)) {
+          throw createHttpError(500, `${method} ${path}: a route handler must be, or resolve to, a "file" or "run" object`);
+        }
+        return executeHandler(value, context);
+      }) as NodeValue;
     };
 
     // Fast path: the value is already a literal route tree. Skip resolve() —
@@ -317,7 +330,23 @@ async function executeHandler(
   handler: RouteHandler,
   context: Context,
 ): Promise<unknown> {
-  // CSRF validation for state-changing methods (only when session exists)
+  checkRequest(handler, context);
+
+  if (Array.isArray(handler.run)) {
+    const result = await Promise.resolve(runSteps(handler.run, context));
+    return isResponse(result) ? result : asBody(result ?? null);
+  }
+  // A `file`, then, since `isHandlerShape` admits nothing else. Resolved through
+  // the resolver so FileNode loads it and ElementNode renders it.
+  return resolve(handler, context, asBody);
+}
+
+/**
+ * The request checks a handler declares: a CSRF token on a state-changing
+ * method, then its query/body schemas. Read from the handler that runs, so an
+ * expression handler's come from whatever it resolved to.
+ */
+function checkRequest(handler: RouteHandler, context: Context): void {
   const CSRF_SAFE_METHODS = ["GET", "HEAD", "OPTIONS", "WS"];
   const reqMethod = context.request?.method?.toUpperCase() ?? "GET";
   const sessionToken = (context.session as Record<string, unknown> | undefined)?._csrf;
@@ -330,49 +359,18 @@ async function executeHandler(
     }
   }
 
-  // Validate query string
-  if (handler.query) {
-    validateAgainstSchema(handler.query, context.request?.query as Record<string, unknown> ?? {}, "query");
+  if (handler.queryParams) {
+    validateAgainstSchema(handler.queryParams, context.request?.query as Record<string, unknown> ?? {}, "query");
   }
 
-  // Validate body parameters
   if (handler.body) {
     validateAgainstSchema(handler.body, context.request?.body as Record<string, unknown> ?? {}, "body");
   }
+}
 
-  // Execute run steps
-  let lastResult: unknown = null;
-  if (handler.run && Array.isArray(handler.run)) {
-    const result = await Promise.resolve(runSteps(handler.run, context));
-    if (isResponse(result)) return result;
-    lastResult = result ?? null;
-  }
-
-  // Resolve file template through the resolver (FileNode + ElementNode)
-  if (handler.file) {
-    const rendered = await resolve(handler, context);
-    if (typeof rendered === "string") {
-      return { response: rendered };
-    }
-    return rendered;
-  }
-
-  // Expression handler: anything beyond the structured route-config keys is
-  // treated as a Jexs expression. Enables WS routes (socket-accept) and other
-  // bare-expression handlers without requiring a `run` wrapper.
-  if (handler.run === undefined && handler.file === undefined) {
-    const { query: _q, body: _b, options: _o, ...expr } = handler as Record<string, unknown>;
-    if (Object.keys(expr).length > 0) {
-      lastResult = await Promise.resolve(resolve(expr, context));
-    }
-  }
-
-  // If run steps produced a string, wrap as HTML response
-  if (typeof lastResult === "string") {
-    return { response: lastResult };
-  }
-
-  return lastResult;
+/** A string renders as HTML; anything else is sent as it stands. */
+function asBody(value: unknown): unknown {
+  return typeof value === "string" ? { response: value } : value;
 }
 
 /**
@@ -389,6 +387,15 @@ function validateAgainstSchema(
   if (!valid) {
     throw createHttpError(400, `Invalid ${label}: ${errors.join("; ")}`);
   }
+}
+
+/**
+ * A value the router can execute as a handler rather than send as a body. Tests
+ * what the branches above actually act on, so a match always leaves by one of
+ * them and the resolve below never reaches this function twice.
+ */
+function isHandlerShape(value: unknown): value is RouteHandler {
+  return isObject(value) && (Array.isArray(value.run) || !!value.file);
 }
 
 /**
