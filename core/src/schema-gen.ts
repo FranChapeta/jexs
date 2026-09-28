@@ -142,7 +142,7 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
     return out;
   }
 
-  // Nested object with a declared inner shape (e.g. a query's `options`). One
+  // Nested object with a declared inner shape (e.g. a file filter's `{ name, extensions }`). One
   // level of `properties` + `additionalProperties` (default false to catch
   // typos). Values recurse via expandProperty; `additionalProperties: false`
   // carries no recursive catch-all, so this is safe for the depth budget.
@@ -382,8 +382,7 @@ export type EmittedNodeSchema = string[];
 // ── Method normalization ───────────────────────────────────────────────────────
 
 /** One discriminator test on the way to a variant: a VALUE test when `value` is
- *  present (the key holds exactly that value), otherwise a PRESENCE test. A
- *  dotted key reaches into a nested object (`options.returning`). */
+ *  present (the key holds exactly that value), otherwise a PRESENCE test. */
 export interface WhenTest {
   key: string;
   value?: unknown;
@@ -516,11 +515,9 @@ function childScopes(
         : { key: subject!, value };
     }
     const { when, cond } = within(parent, test);
-    // A trigger is a real sibling, so the variants nested under it test IT; a
-    // dotted key names a clause inside a nested object, whose own schema
-    // declares it, so it is tested but never registered at the root.
-    const trigger = mode === "sibling" && !key.includes(".");
-    return scopeOf(key, variant, mode === "sibling" ? key : null, when, cond, trigger, methodKey);
+    // A trigger is a real sibling, so the variants nested under it test IT.
+    const trigger = mode === "sibling";
+    return scopeOf(key, variant, trigger ? key : null, when, cond, trigger, methodKey);
   });
   return { owner, subject, parent, scopes, covering: covers ? present : null };
 }
@@ -543,21 +540,16 @@ function variantValue(owner: JexsPropertySchema, key: string, subject: string, m
 
 /**
  * A test, emitted. `{ required: ["write"] }` for presence and
- * `{ properties: { type: { const: "light" } }, required: ["type"] }` for a value;
- * a DOTTED key nests it, so `options.returning` becomes
- * `{ properties: { options: { required: ["returning"] } } }` and a clause can
- * select a variant from inside a nested object without being forced to the root.
+ * `{ properties: { type: { const: "light" } }, required: ["type"] }` for a value.
  */
 function testCond(test: WhenTest): EmittedSchema {
-  const parts = test.key.split(".");
-  const last = parts[parts.length - 1];
+  const { key } = test;
   // `properties` holds when the key is absent, so a default value's test simply
   // leaves out `required`.
-  let cond: EmittedSchema = !("value" in test) ? { required: [last] }
-    : test.default ? { properties: { [last]: { const: test.value } } }
-    : { properties: { [last]: { const: test.value } }, required: [last] };
-  for (let i = parts.length - 2; i >= 0; i--) cond = { properties: { [parts[i]]: cond } };
-  return cond;
+  if (!("value" in test)) return { required: [key] };
+  return test.default
+    ? { properties: { [key]: { const: test.value } } }
+    : { properties: { [key]: { const: test.value } }, required: [key] };
 }
 
 /** Every scope under `scope` (not `scope` itself), parents before children. */
@@ -573,7 +565,7 @@ function descendants(scope: Scope): Scope[] {
  * The validating form of a method. Root siblings go straight into `properties`;
  * a variant's siblings are enforced only under its condition, through `allOf`,
  * with a permissive stub left in `properties` so that one name can carry a
- * different shape in each operation (per-op `options`) without either clobbering
+ * different shape in each operation without either clobbering
  * the other. The stub never overwrites an existing entry: a root sibling (e.g.
  * ElementNode's `content`, which routes children to exprFlat) or an earlier
  * variant's stub must survive, with this variant's shape layered on top.
@@ -675,14 +667,10 @@ function exclusions(root: Scope, open: ReadonlySet<string>): EmittedSchema[] {
 /** `key` holds a literal outside `allowed`, or is absent while its default is. An
  *  expression (an object) is never refused: it could resolve to any value. */
 function refusedUnless(key: string, allowed: unknown[], fallback: unknown): EmittedSchema {
-  const parts = key.split(".");
-  const last = parts[parts.length - 1];
   const outside: EmittedSchema = { not: { anyOf: [{ type: "object" }, { enum: allowed }] } };
-  let cond: EmittedSchema = fallback !== undefined && !allowed.includes(fallback)
-    ? { properties: { [last]: outside } }
-    : { properties: { [last]: outside }, required: [last] };
-  for (let i = parts.length - 2; i >= 0; i--) cond = { properties: { [parts[i]]: cond } };
-  return cond;
+  return fallback !== undefined && !allowed.includes(fallback)
+    ? { properties: { [key]: outside } }
+    : { properties: { [key]: outside }, required: [key] };
 }
 
 /**

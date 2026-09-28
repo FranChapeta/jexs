@@ -88,7 +88,8 @@ export abstract class Node {
    * reachable only through a property that refs them. An entry whose name DOESN'T
    * start with `_` is also a ROOT DOCUMENT KIND: a file whose root object has every
    * key the entry `required`s must match it, and every other file is Jexs (steps
-   * or an expression).
+   * or an expression). SchemaNode's `tableSchema` is one, so a file with
+   * `properties` and `table` at its root is checked as a table document.
    *
    * The required keys are the only thing that tells a kind apart, so choose keys
    * only that kind of document has: a kind requiring just `type` would claim

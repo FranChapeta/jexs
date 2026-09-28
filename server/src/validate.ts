@@ -8,8 +8,8 @@
  * Framework-agnostic: returns errors rather than throwing, so callers decide
  * how to surface them (HTTP 400 in Router, a plain Error in QueryNode).
  *
- * `strict: false` lets schemas carry custom annotation keywords (e.g. table
- * schemas' `x-db` / `x-entity`) without Ajv rejecting them.
+ * `strict: false` lets schemas carry keywords Ajv does not know (a table
+ * document's `table`, `sqlType`, `x-entity`, ...) without rejecting them.
  */
 import AjvModule from "ajv/dist/2020.js";
 import addFormatsModule from "ajv-formats";

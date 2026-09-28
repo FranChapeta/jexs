@@ -1,16 +1,28 @@
 import fs from "fs/promises";
 import path from "path";
 import { Node, Context, NodeValue, resolve, resolveAll } from "@jexs/core";
-import { TableJsonSchema, ColumnSchema, ColumnDbMeta, tableNameOf } from "./Query.js";
+import { TableJsonSchema, ColumnSchema } from "./Query.js";
 import { sha256 } from "./Crypto.js";
 import { validate, validateDetailed, getValidator } from "../validate.js";
 import type { JexsNodeSchema } from "@jexs/core";
+
+/** The functions a column's `computed` may name, each deriving the column from another on insert. */
+const COMPUTE_FNS: Record<string, (value: string) => string> = { sha256 };
+
+const JSON_TYPES = ["string", "number", "integer", "boolean", "object", "array", "null"];
+const SQL_TYPES = [
+  "integer", "int", "biginteger", "bigint", "smallint", "tinyint", "float", "double", "decimal",
+  "varchar", "string", "text", "template", "mediumtext", "longtext", "boolean", "bool",
+  "date", "datetime", "timestamp", "time", "json", "jsonb", "binary", "blob", "uuid",
+];
+const REFERENTIAL = ["CASCADE", "SET NULL", "RESTRICT", "NO ACTION"];
+const strings = { type: "array", items: { type: "string" } };
 
 /**
  * SchemaNode - Manages table schema registration and data validation.
  *
  * Table schemas are authored as JSON Schema (draft 2020-12) documents: the
- * `properties` map defines columns, with DDL metadata under `x-db`. Insert/
+ * `properties` map defines columns, beside the settings that build the table. Insert/
  * update data is validated against the document by the shared Ajv validator
  * (see ../validate.ts), after coercion + computed-column enrichment.
  *
@@ -18,9 +30,113 @@ import type { JexsNodeSchema } from "@jexs/core";
  * { "$schema": "register", "path": "db/tables" }
  *
  * Register inline:
- * { "$schema": "register", "table": { "x-db": { "table": "migrations" }, "properties": { ... } } }
+ * { "$schema": "register", "table": { "table": "migrations", "properties": { ... } } }
  */
 export class SchemaNode extends Node {
+  /** `tableSchema` is a table document: JSON Schema for its rows, beside the
+   *  settings that build and guard the table (display settings go under
+   *  `x-entity`). It is a root document kind, so a file whose root has
+   *  `properties` and `table` is checked as one. */
+  static schemaDefs: Record<string, Record<string, unknown>> = {
+    tableSchema: {
+      type: "object",
+      required: ["properties", "table"],
+      properties: {
+        type:       { const: "object" },
+        required:   { ...strings, description: "Columns every row must have." },
+        properties: { type: "object", additionalProperties: { $ref: "#/$defs/_tableColumn" }, description: "The columns, by name." },
+        table:      { type: "string", description: "The table's name." },
+        primaryKey: { ...strings, description: "A composite primary key. A single-column key is set on its column instead." },
+        indexes: {
+          type: "object",
+          description: "Indexes, by name.",
+          additionalProperties: {
+            type: "object",
+            required: ["columns"],
+            additionalProperties: false,
+            properties: {
+              type:    { enum: ["index", "unique", "fulltext"], default: "index" },
+              columns: { anyOf: [{ type: "string" }, strings] },
+            },
+          },
+        },
+        foreignKeys: {
+          type: "object",
+          description: "Foreign keys, by name.",
+          additionalProperties: {
+            type: "object",
+            required: ["column", "references"],
+            additionalProperties: false,
+            properties: {
+              column: { type: "string" },
+              references: {
+                type: "object",
+                required: ["table", "column"],
+                additionalProperties: false,
+                properties: { table: { type: "string" }, column: { type: "string" } },
+              },
+              onDelete: { enum: REFERENTIAL },
+              onUpdate: { enum: REFERENTIAL },
+            },
+          },
+        },
+        options: {
+          type: "object",
+          additionalProperties: false,
+          description: "MySQL table options; other databases ignore them.",
+          properties: { engine: { type: "string" }, charset: { type: "string" }, collate: { type: "string" } },
+        },
+        validator: { $ref: "#/$defs/steps", description: "Steps run before each query on this table, after the global validator, with `operation`, `schema` and `query`. Not run for the table's own `create`." },
+        "x-entity": { $ref: "#/$defs/_tableEntity" },
+      },
+    },
+    _tableColumn: {
+      type: "object",
+      description: "A column: JSON Schema for its values, beside the SQL settings that build it.",
+      properties: {
+        type:          { anyOf: [{ enum: JSON_TYPES }, { type: "array", items: { enum: JSON_TYPES } }] },
+        default:       { description: "JSON Schema's default, the value a row is given. The column's SQL default is `sqlDefault`." },
+        sqlType:       { enum: SQL_TYPES, description: "The SQL type; without it, mapped from the JSON Schema `type`." },
+        sqlDefault:    { type: ["string", "number", "boolean", "null"], description: "The column's SQL default. `CURRENT_TIMESTAMP` is passed through as SQL." },
+        length:        { type: "integer", description: "Length of a `varchar` (default 255); `maxLength` wins when both are set." },
+        precision:     { type: "integer" },
+        scale:         { type: "integer" },
+        primaryKey:    { type: "boolean" },
+        autoIncrement: { type: "boolean" },
+        unique:        { type: "boolean" },
+        unsigned:      { type: "boolean" },
+        comment:       { type: "string" },
+        computed: {
+          type: "object",
+          propertyNames: { enum: Object.keys(COMPUTE_FNS) },
+          additionalProperties: { type: "string" },
+          description: "Fill this column on insert from another, by function: `{ \"sha256\": \"password\" }`.",
+        },
+      },
+    },
+    _tableEntity: {
+      type: "object",
+      description: "Display settings for admin and listing templates; the server does not read them.",
+      properties: {
+        label:       { type: "string" },
+        singular:    { type: "string" },
+        icon:        { type: "object" },
+        listColumns: strings,
+        orderBy: {
+          type: "object",
+          properties: { column: { type: "string" }, direction: { enum: ["asc", "desc"] } },
+        },
+        color: { type: "string" },
+      },
+    },
+    /** `create`'s `schema`: a table document, or a name, `"*"` or a step producing one. */
+    _tableSchemaSlot: {
+      if: { type: "object", anyOf: [{ required: ["properties"] }, { required: ["table"] }] },
+      then: { $ref: "#/$defs/tableSchema" },
+      else: { $ref: "#/$defs/strOrExpr" },
+    },
+  };
+
   static schema: JexsNodeSchema = {
     schema: {
       type: "string",
@@ -42,7 +158,7 @@ export class SchemaNode extends Node {
           markdownDescription: "Registers schemas from a directory `path` or an inline `table` document.",
           siblings: {
             path: { type: "string", description: "Directory of JSON schema files to load." },
-            table: { description: "A table JSON Schema document to register inline." },
+            table: { $ref: "#/$defs/tableSchema", description: "A table document to register inline." },
           },
         },
         get: {
@@ -59,9 +175,9 @@ export class SchemaNode extends Node {
         },
         validator: {
           output: "null",
-          markdownDescription: "Sets a global schema validator step sequence.",
+          markdownDescription: "Sets the global validator: steps run before every query on every table, create and drop included, to authorize it. They see `operation`, the table document as `schema`, and `query` (`table`, `where`, `data`, ...), which they may narrow. Refuse with `{ \"$error\": 403 }`. A table's own `validator` runs after this one, never instead of it. Queries with `system: true` skip both, so pass it for the app's own queries, such as creating tables at startup.",
           siblings: {
-            run: { steps: true, description: "Step sequence to run as a schema validator." },
+            run: { steps: true, description: "Steps run before each query." },
           },
         },
         validate: {
@@ -84,21 +200,18 @@ export class SchemaNode extends Node {
   /** Cache of `required`-stripped clones used to validate partial updates. */
   private static updateSchemas: WeakMap<TableJsonSchema, object> = new WeakMap();
 
-  private static computeFns: Record<string, (value: string) => string> = {
-    sha256,
-  };
 
   /** Columns automatically added to every table schema. */
   private static readonly COMMON_COLUMNS: Record<string, ColumnSchema> = {
-    system:     { type: "integer", default: 0, "x-db": { sqlType: "boolean", default: 0 } },
-    created_at: { type: "string", "x-db": { sqlType: "timestamp", default: "CURRENT_TIMESTAMP" } },
+    system:     { type: "integer", default: 0, sqlType: "boolean", sqlDefault: 0 },
+    created_at: { type: "string", sqlType: "timestamp", sqlDefault: "CURRENT_TIMESTAMP" },
   };
 
   static injectCommonColumns(schema: TableJsonSchema): void {
     if (!schema.properties) return;
     for (const [name, col] of Object.entries(this.COMMON_COLUMNS)) {
       if (!(name in schema.properties)) {
-        schema.properties[name] = { ...col, "x-db": { ...col["x-db"] } };
+        schema.properties[name] = { ...col };
       }
     }
   }
@@ -136,10 +249,13 @@ export class SchemaNode extends Node {
   // ============================================
 
   static register(schema: TableJsonSchema): void {
+    if (typeof schema.table !== "string" || schema.properties === null || typeof schema.properties !== "object") {
+      throw new Error("A table document needs a `table` name and `properties`.");
+    }
     // Compile eagerly so a malformed schema throws at registration, not on the
     // first insert.
     getValidator(schema);
-    this.schemas.set(tableNameOf(schema), schema);
+    this.schemas.set(schema.table, schema);
   }
 
   static getAll(): TableJsonSchema[] {
@@ -177,25 +293,23 @@ export class SchemaNode extends Node {
     }
 
     for (const [colName, col] of Object.entries(props)) {
-      const db = col["x-db"] ?? {};
-
-      if (db.computed && result[colName] === undefined) {
+      if (col.computed && result[colName] === undefined) {
         // Read source values from the original row: a computed column's source
         // (e.g. a plaintext password) is often not itself a stored column.
-        this.fillComputed(result, row, colName, db.computed);
+        this.fillComputed(result, row, colName, col.computed);
       }
 
-      if (db.autoIncrement) {
+      if (col.autoIncrement) {
         delete result[colName];
         continue;
       }
 
       if (result[colName] !== undefined) {
-        result[colName] = this.coerceType(result[colName], col, colName, tableNameOf(schema));
+        result[colName] = this.coerceType(result[colName], col, colName, schema.table);
       }
     }
 
-    this.assertValid(schema, result, tableNameOf(schema));
+    this.assertValid(schema, result, schema.table);
     return result;
   }
 
@@ -211,8 +325,7 @@ export class SchemaNode extends Node {
     for (const [key, value] of Object.entries(data)) {
       if (!(key in props)) continue;
       const col = props[key];
-      const db = col["x-db"] ?? {};
-      if (db.autoIncrement || db.computed) continue;
+      if (col.autoIncrement || col.computed) continue;
       if (this.coercionType(col) === "timestamp") continue;
       result[key] = this.coerceType(value, col, key, tableName);
     }
@@ -252,21 +365,20 @@ export class SchemaNode extends Node {
     computed: Record<string, string>,
   ): void {
     for (const [fn, sourceCol] of Object.entries(computed)) {
-      const computeFn = this.computeFns[fn];
+      const computeFn = COMPUTE_FNS[fn];
       if (computeFn && source[sourceCol] !== undefined) {
         target[colName] = computeFn(String(source[sourceCol]));
       }
     }
   }
 
-  /** The type name driving coercion: `x-db.sqlType` if present, else the JSON
+  /** The type name driving coercion: `sqlType` if present, else the JSON
    *  Schema `type` (first non-null when an array). */
   private static coercionType(col: ColumnSchema): string {
-    const db: ColumnDbMeta = col["x-db"] ?? {};
     const jsonType = Array.isArray(col.type)
       ? col.type.find((t) => t !== "null")
       : col.type;
-    return (db.sqlType ?? jsonType ?? "").toLowerCase();
+    return (col.sqlType ?? jsonType ?? "").toLowerCase();
   }
 
   /**
@@ -367,7 +479,7 @@ async function doRegister(def: Record<string, unknown>, root: string): Promise<u
     const schema = def.table as TableJsonSchema;
     SchemaNode.injectCommonColumns(schema);
     SchemaNode.register(schema);
-    return { registered: [tableNameOf(schema)] };
+    return { registered: [schema.table] };
   }
 
   // Directory path
@@ -384,10 +496,11 @@ async function doRegister(def: Record<string, unknown>, root: string): Promise<u
       );
       for (const content of contents) {
         const schema = JSON.parse(content) as TableJsonSchema;
-        if (schema["x-db"]?.table) {
+        // The same keys that make the editor treat a file as a table document.
+        if ("properties" in schema && "table" in schema) {
           SchemaNode.injectCommonColumns(schema);
           SchemaNode.register(schema);
-          registered.push(tableNameOf(schema));
+          registered.push(schema.table);
         }
       }
     } catch (error) {

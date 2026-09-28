@@ -77,7 +77,7 @@ export interface JexsPropertySchema {
   map?: boolean;
   /** Strictly an array of step expressions. */
   steps?: boolean;
-  /** Nested object with a declared inner shape (e.g. a query's `options`). Emits
+  /** Nested object with a declared inner shape (e.g. a file filter's `{ name, extensions }`). Emits
    *  `{ type: "object", properties, additionalProperties }`. `additionalProperties`
    *  defaults to `false` so typos in the nested keys are caught. */
   properties?: Record<string, JexsPropertySchema>;
@@ -96,8 +96,7 @@ export interface JexsPropertySchema {
    *   - sibling-mode (otherwise): the variant key names a root sibling whose
    *     PRESENCE selects it. That sibling is the variant's own input, so the
    *     variant's property fields (`type`, `enum`, ...) type it, and its own
-   *     `variants` discriminate on it in turn. A DOTTED key tests a clause inside
-   *     a nested object (`options.returning`) and registers nothing at the root.
+   *     `variants` discriminate on it in turn.
    *
    * Valid on a method's primary key, on a sibling, and on a variant. A value-mode
    * variant is a value, not a property, so the variants nested under it can only

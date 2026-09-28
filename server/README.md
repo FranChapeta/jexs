@@ -55,12 +55,12 @@ npm install @jexs/server @jexs/core
         "api": { "children": {
           "users": { "methods": {
             "GET": { "run": [
-              { "$query": "select", "table": "users", "options": { "orderBy": { "id": "desc" }, "limit": 50 } }
+              { "$query": "select", "table": "users", "orderBy": { "id": "desc" }, "limit": 50 }
             ] },
             "POST": {
               "body": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" } } },
               "run": [
-                { "$query": "insert", "table": "users", "options": { "data": { "$var": "request.body" } } }
+                { "$query": "insert", "table": "users", "data": { "$var": "request.body" } }
               ]
             }
           } }

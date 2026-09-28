@@ -97,38 +97,32 @@ const cases: Case[] = [
   { label: "schema list (array-output) standalone", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $schema: "list" } },
 
-  // QueryNode: `{ $query: <op>, table, options }` value-mode shape.
+  // QueryNode: `{ $query: <op>, table, ...clauses }` value-mode shape.
   { label: "query select (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $query: "select", table: "users", options: { where: { id: { $var: "id" } }, first: true, leftJoin: [{ table: "roles", on: { "users.role_id": "roles.id" } }] } } },
-  { label: "query update with increment + options.returning (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $query: "update", table: "posts", options: { where: { id: 1 }, increment: { views: 1 }, returning: ["views"] } } },
-  // Root-level returning is tolerated (permissive catch-all) but does NOT trigger
-  // narrowing — only `options.returning` does. So in an array slot it stays number.
-  { label: "root returning doesn't narrow update to array (array-slot FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
-    expr: { $concat: { $query: "update", table: "t", returning: ["id"], options: { where: { id: 1 } } } } },
-  // Dotted nested-presence narrowing: update is number, but array with options.returning.
+    expr: { $query: "select", table: "users", where: { id: { $var: "id" } }, first: true, leftJoin: [{ table: "roles", on: { "users.role_id": "roles.id" } }] } },
+  { label: "query update with increment + returning (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $query: "update", table: "posts", where: { id: 1 }, increment: { views: 1 }, returning: ["views"] } },
+  // Presence narrowing: update is a number, but an array with returning.
   { label: "number-slot accepts update WITHOUT returning (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $sleep: { $query: "update", table: "t", options: { where: { id: 1 } } } } },
-  { label: "number-slot rejects update WITH options.returning (now array) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
-    expr: { $sleep: { $query: "update", table: "t", options: { where: { id: 1 }, returning: ["id"] } } } },
-  { label: "array-slot accepts update WITH options.returning (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $concat: { $query: "update", table: "t", options: { where: { id: 1 }, returning: ["id"] } } } },
+    expr: { $sleep: { $query: "update", table: "t", where: { id: 1 } } } },
+  { label: "number-slot rejects update WITH returning (now array) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $sleep: { $query: "update", table: "t", where: { id: 1 }, returning: ["id"] } } },
+  { label: "array-slot accepts update WITH returning (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $concat: { $query: "update", table: "t", where: { id: 1 }, returning: ["id"] } } },
   { label: "array-slot rejects update WITHOUT returning (number) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
-    expr: { $concat: { $query: "update", table: "t", options: { where: { id: 1 } } } } },
+    expr: { $concat: { $query: "update", table: "t", where: { id: 1 } } } },
   { label: "query count with leftJoin + distinct (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $query: "count", table: "users", options: { distinct: true, columns: ["email"], leftJoin: [{ table: "orders", on: { "users.id": "orders.user_id" } }] } } },
+    expr: { $query: "count", table: "users", distinct: true, columns: ["email"], leftJoin: [{ table: "orders", on: { "users.id": "orders.user_id" } }] } },
   { label: "query upsert with merge subset (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $query: "upsert", table: "users", options: { data: { id: 1, name: "x" }, conflict: ["id"], merge: ["name"] } } },
+    expr: { $query: "upsert", table: "users", data: { id: 1, name: "x" }, conflict: ["id"], merge: ["name"] } },
   { label: "query insert with ignore (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $query: "insert", table: "users", options: { data: { name: "x" }, ignore: true } } },
+    expr: { $query: "insert", table: "users", data: { name: "x" }, ignore: true } },
   { label: "query cross-op option: select with data (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
-    expr: { $query: "select", table: "users", options: { data: { name: "x" } } } },
-  { label: "query option typo (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
-    expr: { $query: "select", table: "users", options: { wheer: { id: 1 } } } },
+    expr: { $query: "select", table: "users", data: { name: "x" } } },
   { label: "query invalid op (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
-    expr: { $query: "frobnicate", options: { table: "users" } } },
+    expr: { $query: "frobnicate", table: "users" } },
   { label: "string-slot rejects query count (number-output) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
-    expr: { $foreach: [1], item: { $query: "count", options: { table: "users" } }, do: "y" } },
+    expr: { $foreach: [1], item: { $query: "count", table: "users" }, do: "y" } },
 
   // FetchNode: `full` is a sibling-mode variant, so it narrows the output from
   // the decoded body ("any") to the `{ status, ok, headers, body, url }` envelope.
@@ -199,6 +193,35 @@ const cases: Case[] = [
     expr: { "$gl-text": "t", text: "hi", msdf: "roboto", size: "big" } },
   { label: "gl-text msdf with a size (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { "$gl-text": "t", text: "hi", msdf: "roboto", size: 24 } },
+
+  // Table documents: register's `table`, create's `schema`, and db/tables/*.json files.
+  { label: "table document (valid)", schemaRef: "$defs/tableSchema", expectValid: true,
+    expr: { type: "object", required: ["email"], properties: {
+      id: { type: "integer", primaryKey: true, autoIncrement: true },
+      email: { type: "string", format: "email", sqlType: "varchar", length: 255, unique: true },
+      password: { type: "string", computed: { sha256: "password" } },
+      created: { type: "string", sqlType: "timestamp", sqlDefault: "CURRENT_TIMESTAMP" },
+    }, table: "users", indexes: { by_email: { columns: "email" } }, validator: [{ $var: "query" }] } },
+  { label: "table document with a non-string table name (FAIL)", schemaRef: "$defs/tableSchema", expectValid: false,
+    expr: { properties: {}, table: 5 } },
+  { label: "table document with an unknown sqlType (FAIL)", schemaRef: "$defs/tableSchema", expectValid: false,
+    expr: { properties: { n: { sqlType: "varchr" } }, table: "t" } },
+  { label: "table document with an unknown compute function (FAIL)", schemaRef: "$defs/tableSchema", expectValid: false,
+    expr: { properties: { n: { computed: { md5: "x" } } }, table: "t" } },
+  { label: "table document with a malformed foreign key (FAIL)", schemaRef: "$defs/tableSchema", expectValid: false,
+    expr: { properties: {}, table: "t", foreignKeys: { fk: { column: "a" } } } },
+  { label: "a table file at the root (valid)", schemaRef: "", expectValid: true,
+    expr: { properties: { id: { type: "integer", primaryKey: true } }, table: "t" } },
+  { label: "a broken table file at the root (FAIL)", schemaRef: "", expectValid: false,
+    expr: { properties: {}, table: "t", indexes: { i: {} } } },
+  { label: "plain data at the root is not a table file (valid)", schemaRef: "", expectValid: true,
+    expr: { properties: { a: 1 } } },
+  { label: "register with a table document (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $schema: "register", table: { properties: { id: { type: "integer" } }, table: "t" } } },
+  { label: "create by name, and from a var (valid)", schemaRef: "", expectValid: true,
+    expr: [{ $query: "create", schema: "users" }, { $query: "create", schema: { $var: "doc" } }] },
+  { label: "create with a broken inline document (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $query: "create", schema: { properties: {}, table: 5 } } },
 
   // Exclusive variant siblings on other value-selected ops; Element's `tag` opts out.
   { label: "database raw refuses connect's ssl (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
@@ -448,13 +471,13 @@ const cases: Case[] = [
   // `map: true, type: ["object", "array"]`: query `data` is the one slot whose
   // runtime takes a row map OR a list of them.
   { label: "query insert: row with an `email` column (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $query: "insert", table: "users", options: { data: { email: "a@b.c", name: "Bob" } } } },
+    expr: { $query: "insert", table: "users", data: { email: "a@b.c", name: "Bob" } } },
   { label: "query insert: many rows with `email` columns (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $query: "insert", table: "users", options: { data: [{ email: "a@b.c" }, { email: "c@d.e" }] } } },
+    expr: { $query: "insert", table: "users", data: [{ email: "a@b.c" }, { email: "c@d.e" }] } },
   { label: "query insert: data as a whole expression (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $query: "insert", table: "users", options: { data: { $var: "row" } } } },
+    expr: { $query: "insert", table: "users", data: { $var: "row" } } },
   { label: "query insert: rows must be objects, not scalars (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
-    expr: { $query: "insert", table: "users", options: { data: ["a", "b"] } } },
+    expr: { $query: "insert", table: "users", data: ["a", "b"] } },
 
   // `concat` stringifies whatever it gets, so its items are untyped. Typing them
   // `string` sent expressions to exprFlat_string, which rejects every number-output
@@ -505,7 +528,7 @@ const cases: Case[] = [
   { label: "a variable named `email` needs no subject (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $setVars: { email: "a@b.c" } } },
   { label: "a row with an `email` column needs no subject (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $query: "insert", table: "users", options: { data: [{ email: "a@b.c" }] } } },
+    expr: { $query: "insert", table: "users", data: [{ email: "a@b.c" }] } },
 
   // `steps: true` takes an array of expressions OR a single one, since runSteps
   // normalizes a lone expression into a one-step sequence. Both stay type-checked;

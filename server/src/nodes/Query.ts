@@ -1,11 +1,12 @@
 import { Knex as KnexType } from "knex";
-import { Node, Context, NodeValue, resolve, resolveAll, runSteps } from "@jexs/core";
+import { Node, Context, NodeValue, ownedKey, resolve, resolveObj, runSteps } from "@jexs/core";
 import { DatabaseNode } from "./Database.js";
 import { SchemaNode } from "./Schema.js";
-import type { JexsNodeSchema } from "@jexs/core";
+import type { JexsMethodSchema, JexsNodeSchema, JexsOutput, JexsPropertySchema } from "@jexs/core";
 
 const VALID_QUERY_TYPES = new Set(["select","insert","upsert","update","delete","count","create","drop","alter"]);
-const WHERE_OPS = new Set(["eq","neq","ne","!=","gt",">","gte",">=","lt","<","lte","<=","like","notLike","in","notIn","between","notBetween","null"]);
+/** Set on the context a validator runs in, so its own queries skip validation. A symbol, so no template can read or set it. */
+const VALIDATING = Symbol("validating");
 
 /**
  * Valid SQL value types that Knex accepts
@@ -87,32 +88,10 @@ export interface QueryDefinition {
 }
 
 /**
- * SQL/DDL metadata for a column, attached under the `x-db` annotation key so the
- * containing document stays valid JSON Schema (Ajv ignores unknown keywords).
- */
-export interface ColumnDbMeta {
-  /** SQL column type for DDL (e.g. `varchar`, `biginteger`, `timestamp`).
-   *  Falls back to a mapping from the JSON Schema `type` when omitted. */
-  sqlType?: string;
-  length?: number;
-  precision?: number;
-  scale?: number;
-  primaryKey?: boolean;
-  autoIncrement?: boolean;
-  unique?: boolean;
-  unsigned?: boolean;
-  onUpdate?: string;
-  default?: string | number | boolean | null;
-  comment?: string;
-  /** Derive this column from another on insert, e.g. `{ "sha256": "password" }`. */
-  computed?: Record<string, string>;
-  /** Mask the value in output. */
-  secret?: boolean;
-}
-
-/**
- * A column definition: a standard JSON Schema property (`type`, `maxLength`,
- * `enum`, `pattern`, `format`, ...) plus optional `x-db` DDL metadata.
+ * A column: a JSON Schema property (`type`, `maxLength`, `enum`, `pattern`,
+ * `format`, `default`, ...) that validates the column's values, beside the SQL
+ * settings that build it. Ajv ignores the SQL keys. `default` is JSON Schema's;
+ * the column's SQL default is `sqlDefault`.
  */
 export interface ColumnSchema {
   type?: string | string[];
@@ -121,7 +100,23 @@ export interface ColumnSchema {
   pattern?: string;
   format?: string;
   default?: unknown;
-  "x-db"?: ColumnDbMeta;
+  /** SQL column type (e.g. `varchar`, `biginteger`, `timestamp`). Mapped from
+   *  the JSON Schema `type` when omitted. */
+  sqlType?: string;
+  length?: number;
+  precision?: number;
+  scale?: number;
+  primaryKey?: boolean;
+  autoIncrement?: boolean;
+  unique?: boolean;
+  unsigned?: boolean;
+  /** The column's SQL default. `CURRENT_TIMESTAMP` is passed through as SQL. */
+  sqlDefault?: string | number | boolean | null;
+  comment?: string;
+  /** Derive this column from another on insert, e.g. `{ "sha256": "password" }`. */
+  computed?: Record<string, string>;
+  /** Mask the value in output. */
+  secret?: boolean;
   [key: string]: unknown;
 }
 
@@ -147,23 +142,6 @@ export interface ForeignKeyDef {
 }
 
 /**
- * Table-level SQL/DDL metadata, under the `x-db` annotation key.
- */
-export interface TableDbMeta {
-  table: string;
-  indexes?: Record<string, IndexDef>;
-  primaryKey?: string[];
-  foreignKeys?: Record<string, ForeignKeyDef>;
-  options?: {
-    engine?: string;
-    charset?: string;
-    collate?: string;
-  };
-  /** Per-table step validator run by QueryNode before queries. `false` opts out. */
-  validator?: unknown[] | false;
-}
-
-/**
  * UI/entity metadata, under the `x-entity` annotation key. Not used by the
  * server runtime; consumed by admin/listing templates.
  */
@@ -177,22 +155,32 @@ export interface TableEntityMeta {
 }
 
 /**
- * A table schema authored as a JSON Schema (draft 2020-12) document. The
- * `properties` map defines columns; DDL/runtime metadata live under `x-db`, and
- * UI metadata under `x-entity`, so the document validates as plain JSON Schema.
+ * A table document: JSON Schema (draft 2020-12) for its rows, whose
+ * `properties` are the columns, beside the settings that build and guard the
+ * table. Ajv ignores those keys, so the document validates rows as it is. UI
+ * metadata lives under `x-entity`.
  */
 export interface TableJsonSchema {
   type?: "object";
   required?: string[];
   properties: Record<string, ColumnSchema>;
-  "x-db": TableDbMeta;
+  /** The table's name. */
+  table: string;
+  indexes?: Record<string, IndexDef>;
+  /** A composite primary key; a single-column one is set on its column. */
+  primaryKey?: string[];
+  foreignKeys?: Record<string, ForeignKeyDef>;
+  /** MySQL table options. */
+  options?: {
+    engine?: string;
+    charset?: string;
+    collate?: string;
+  };
+  /** Steps QueryNode runs before each query on this table, after the global
+   *  validator (see `runValidators`). Not run for the table's own `create`. */
+  validator?: unknown[];
   "x-entity"?: TableEntityMeta;
   [key: string]: unknown;
-}
-
-/** The table name a schema document declares. */
-export function tableNameOf(schema: TableJsonSchema): string {
-  return schema["x-db"].table;
 }
 
 export interface JoinDefinition {
@@ -224,19 +212,10 @@ export type WhereValue =
   | { isNull?: boolean }
   | { isNotNull?: boolean };
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-type P = import("@jexs/core").JexsPropertySchema;
-
-/** Schemas for the clauses that live inside `options`, by name (DRY). Declared
- *  before the class so the static schema initializer can read them (a `const`
- *  is not hoisted). The keys are nested under `options` and resolved by VALUE by
- *  QueryNode, so unprefixed names (`first`, `groupBy`, `schema`) don't collide
- *  with other nodes' handler keys. */
-const OPT: Record<string, P> = {
-  where:        { description: "WHERE clause: `{ column: value }` or nested `or`/`and`." },
+/** The clauses a query op takes as siblings, by name. Declared before the class
+ *  so the static schema initializer can read them (a `const` is not hoisted). */
+const CLAUSE: Record<string, JexsPropertySchema> = {
+  where:        { description: "WHERE clause: `{ column: value }`, an operator object (`{ column: { gt: 5 } }`), or nested `or`/`and`." },
   data:         { map: true, type: ["object", "array"], description: "Row data: an object, or an array of rows." },
   orderBy:      { description: "ORDER BY: `{ column: 'asc' | 'desc' }`." },
   groupBy:      { description: "GROUP BY column name or array of names." },
@@ -249,69 +228,50 @@ const OPT: Record<string, P> = {
   leftJoin:     { type: "array", description: "LEFT JOIN clauses." },
   rightJoin:    { type: "array", description: "RIGHT JOIN clauses." },
   group_concat: { description: "GROUP_CONCAT aggregate." },
-  schema:       { description: "Table schema reference or inline document (create)." },
+  schema:       { $ref: "#/$defs/_tableSchemaSlot", description: "Table to create (create): a registered name, `\"*\"` for every registered table, or a table document, kept as written so its `validator` stays steps. Load a document file with `data: true`." },
   conflict:     { type: "array", description: "Conflict target columns (upsert)." },
   merge:        { type: "array", description: "Columns to update on conflict (upsert); omit to merge all." },
   ignore:       { type: "boolean", description: "INSERT OR IGNORE on conflict (insert)." },
   addColumns:   { description: "Columns to add (alter)." },
-  returning:    { type: "array", description: "Columns to RETURN (SQLite >=3.35 / Postgres); makes update/delete resolve to the affected rows." },
+  returning:    { type: "array", description: "Columns to RETURN (SQLite >=3.35 / Postgres)." },
   increment:    { description: "Atomic increment `{ col: amount }` (update)." },
   decrement:    { description: "Atomic decrement `{ col: amount }` (update)." },
 };
 
-/** Build the nested `options` schema for an op from a subset of OPT keys. */
-function opts(...keys: string[]): P {
-  return {
-    description: "Op-specific query clauses.",
-    properties: Object.fromEntries(keys.map(k => [k, OPT[k]])),
-    additionalProperties: false,
-  };
-}
-
 /**
- * A variant entry: per-op `output` + its `options` shape. Pass `narrowOnReturning`
- * for update/delete: a dotted nested-presence variant narrows the output from
- * `output` (the row count) to `array` (the affected rows) when `options.returning`
- * is present — so `returning` stays a regular `options` clause.
+ * A value-mode variant: the op's `output` and the clauses it accepts. update and
+ * delete resolve to a row count, and to the affected rows instead when
+ * `returning` is present, so there `returning` is a presence variant.
  */
-function op(
-  output: import("@jexs/core").JexsOutput,
-  markdown: string,
-  optionKeys: string[],
-  narrowOnReturning?: boolean,
-): import("@jexs/core").JexsMethodSchema {
-  const m: import("@jexs/core").JexsMethodSchema = {
-    output, markdownDescription: markdown, siblings: { options: opts(...optionKeys) },
+function op(output: JexsOutput, markdown: string, clauses: string[], rowsWhenReturning = false): JexsMethodSchema {
+  const siblings = Object.fromEntries(clauses.map(k => [k, CLAUSE[k]]));
+  if (!rowsWhenReturning) return { output, markdownDescription: markdown, siblings };
+  return {
+    output, markdownDescription: markdown, siblings,
+    variants: { returning: { ...CLAUSE.returning, output: "array", outputDescription: "The affected rows." } },
   };
-  if (narrowOnReturning) {
-    m.variants = {
-      "options.returning": { output: "array", markdownDescription: "With `returning`, resolves to the affected rows instead of the count." },
-    };
-  }
-  return m;
 }
 
 /**
- * QueryNode — one `query` key whose value is the SQL operation; `table` is the
- * target and `options` carries the op-specific clauses, e.g.
- *   { "$query": "select", "table": "users", "options": { "where": { "id": 1 }, "first": true } }
- * The op is a value-mode discriminator (per-op output narrowing); `options` is a
- * nested object whose VALUES QueryNode resolves itself, so its keys never hit the
- * resolver's dispatch and need no `query-` prefix.
+ * QueryNode: one `query` key whose value is the SQL operation; `table` is the
+ * target and the op's clauses sit beside it, e.g.
+ *   { "$query": "select", "table": "users", "where": { "id": 1 }, "first": true }
+ * The op is a value-mode discriminator, so each op accepts only its own clauses
+ * and narrows the output.
  */
 export class QueryNode extends Node {
   static schema: JexsNodeSchema = {
     query: {
       type: "string",
       enum: ["select", "insert", "upsert", "update", "delete", "count", "create", "drop", "alter"],
-      markdownDescription: "Runs a database query. The value is the SQL operation; `table` is the target and `options` holds the op-specific clauses.",
+      markdownDescription: "Runs a database query. The value is the SQL operation; `table` is the target and the op's clauses (`where`, `data`, `first`, ...) sit beside it.",
       examples: [
-        "{ \"$query\": \"select\", \"table\": \"users\", \"options\": { \"where\": { \"id\": { \"$var\": \"id\" } }, \"first\": true } }",
+        "{ \"$query\": \"select\", \"table\": \"users\", \"where\": { \"id\": { \"$var\": \"id\" } }, \"first\": true }",
       ],
       siblings: {
         table:      { type: "string",  description: "Target table." },
         connection: { type: "string",  description: "Named DB connection (default if omitted)." },
-        system:     { type: "boolean", description: "Skip the schema validator." },
+        system:     { type: "boolean", description: "Skip the validators: for the app's own queries, such as creating tables at startup, which have no request to authorize." },
       },
       variants: {
         select: op("any", "Reads rows. Returns an array (or the single row / `null` with `first`).",
@@ -320,12 +280,10 @@ export class QueryNode extends Node {
           ["data", "ignore", "returning"]),
         upsert: op("any", "Inserts or updates on `conflict`. `merge` limits which columns update.",
           ["data", "conflict", "merge", "returning"]),
-        // update/delete return a row COUNT, narrowing to an array of rows when the
-        // `options.returning` clause is present (dotted nested-presence variant).
         update: op("number", "Updates matching rows. `increment`/`decrement` apply atomic deltas. Returns the row count (or rows with `returning`).",
-          ["where", "data", "increment", "decrement", "returning"], true),
+          ["where", "data", "increment", "decrement"], true),
         delete: op("number", "Deletes matching rows (requires `where`). Returns the row count (or rows with `returning`).",
-          ["where", "returning"], true),
+          ["where"], true),
         count:  op("number", "Counts matching rows; supports joins and `distinct` + `columns`.",
           ["where", "distinct", "columns", "innerJoin", "leftJoin", "rightJoin"]),
         create: op("array", "Creates table(s) from a registered `schema` or inline document. Returns a per-table status array.",
@@ -343,188 +301,84 @@ export class QueryNode extends Node {
 }
 
 async function execQuery(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  const options = isObject(def.options) ? def.options : {};
-  const [queryRaw, tableRaw] = await Promise.all([
-    resolve(def.$query ?? null, context),
-    resolve(def.table ?? null, context),
-  ]);
-  // Flatten { $query, table, ...options } into the QueryDefinition shape the
-  // execute* helpers already consume.
-  const flat: Record<string, unknown> = {
-    ...options,
-    query: queryRaw == null ? undefined : String(queryRaw),
-    table: tableRaw == null ? undefined : String(tableRaw),
-    system: def.system,
-  };
-
+  // Every clause is a sibling holding plain data (column names, `where`
+  // operators, row keys), so the step resolves in one pass. `schema` is the
+  // exception: a table document carries `validator` steps that must reach
+  // the registry as steps, so only a step producing the document is resolved.
+  const { schema, ...clauses } = def;
+  const r = await resolveObj(clauses, context, r => r);
+  if (schema !== undefined) r.schema = isStep(schema) ? await resolve(schema, context) : schema;
+  const query = toQuery(r);
   // Omitted `connection` falls back to whichever opened first; getKnex owns
   // that chain, so this does not repeat it.
-  const connRaw = await resolve(def.connection ?? null, context);
-  const knex = DatabaseNode.getKnex(context, connRaw == null ? undefined : String(connRaw));
+  const knex = DatabaseNode.getKnex(context, r.connection == null ? undefined : String(r.connection));
 
-  const resolvedQuery = await resolveQueryDef(flat, context);
+  if (!r.system) await runValidators(query, context);
 
-  if (!def.system) await runValidator(resolvedQuery, context);
-
-  const first = resolvedQuery.first === true;
-
-  switch (resolvedQuery.type) {
-    case "select":  return executeSelect(knex, resolvedQuery, first) as Promise<NodeValue>;
-    case "insert":  return executeInsert(knex, resolvedQuery) as Promise<NodeValue>;
-    case "upsert":  return executeUpsert(knex, resolvedQuery) as Promise<NodeValue>;
-    case "update":  return executeUpdate(knex, resolvedQuery) as Promise<NodeValue>;
-    case "delete":  return executeDelete(knex, resolvedQuery) as Promise<NodeValue>;
-    case "count":   return executeCount(knex, resolvedQuery) as Promise<NodeValue>;
-    case "create":  return executeCreate(knex, resolvedQuery) as Promise<NodeValue>;
-    case "drop":    return executeDrop(knex, resolvedQuery) as Promise<NodeValue>;
-    case "alter":   return executeAlter(knex, resolvedQuery) as Promise<NodeValue>;
-    default: throw new Error(`Unknown query type: ${resolvedQuery.type}`);
+  switch (query.type) {
+    case "select":  return executeSelect(knex, query, query.first === true) as Promise<NodeValue>;
+    case "insert":  return executeInsert(knex, query) as Promise<NodeValue>;
+    case "upsert":  return executeUpsert(knex, query) as Promise<NodeValue>;
+    case "update":  return executeUpdate(knex, query) as Promise<NodeValue>;
+    case "delete":  return executeDelete(knex, query) as Promise<NodeValue>;
+    case "count":   return executeCount(knex, query) as Promise<NodeValue>;
+    case "create":  return executeCreate(knex, query) as Promise<NodeValue>;
+    case "drop":    return executeDrop(knex, query) as Promise<NodeValue>;
+    case "alter":   return executeAlter(knex, query) as Promise<NodeValue>;
   }
 }
 
-/**
- * Run the schema validator before a query executes.
- * Returns a response object to abort, or undefined to continue.
- */
-async function runValidator(
-  query: QueryDefinition,
-  context: Context,
-): Promise<void> {
-  if (!query.table || (context as Record<string, unknown>).$validating) {
-    return;
-  }
-
-  const tableSchema = SchemaNode.get(query.table);
-  const tableValidator = tableSchema?.["x-db"]?.validator;
-  const validator = tableValidator !== undefined ? tableValidator : SchemaNode.globalValidator;
-
-  if (!validator || !Array.isArray(validator)) return;
-
-  const validatorContext: Context = {
-    ...context,
-    $validating: true,
-    schema: tableSchema ?? { "x-db": { table: query.table }, properties: {} },
-    operation: query.type === "count" ? "select" : query.type,
-  };
-
-  await Promise.resolve(runSteps(validator, validatorContext));
+/** A value that dispatches: an object with a `$` op key. */
+function isStep(value: unknown): boolean {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    && Object.keys(value).some(k => ownedKey(k) !== null);
 }
 
-
-/**
- * Resolve a query definition, protecting where/data/orderBy keys (column
- * names) from being matched by nodes like StringNode ("slug", "title", etc.).
- * Uses the schema registry to identify column names.
- */
-async function resolveQueryDef(
-  def: Record<string, unknown>,
-  context: Context,
-): Promise<QueryDefinition> {
-  const {
-    where, data, orderBy, groupBy, schema, group_concat, conflict, increment, decrement,
-    addColumns,
-    connection: _connection, system: _system, as: _as, query: queryType,
-    // Static clauses (table, first, columns, limit, offset, distinct, joins,
-    // returning, merge, ignore) flow through `rest` into the query unchanged.
-    ...rest
-  } = def;
-
-  const query = validateQuery({ ...rest, query: queryType });
-
-  const tableSchema = query.table ? SchemaNode.get(query.table) : undefined;
-  const columns = tableSchema?.properties
-    ? new Set(Object.keys(tableSchema.properties))
-    : undefined;
-
-  const rd = async (d: unknown) => await resolveColumnValues(d, columns, context) as Record<string, unknown>;
-
-  await Promise.all([
-    where
-      ? resolveColumnValues(where, columns, context).then(v => { query.where = v as WhereClause; })
-      : null,
-    data !== undefined
-      ? (Array.isArray(data) ? Promise.all(data.map(rd)) : rd(data))
-          .then(v => { query.data = v as QueryDefinition["data"]; })
-      : null,
-    Promise.resolve(resolveAll(
-      [orderBy ?? null, groupBy ?? null, schema ?? null, group_concat ?? null, conflict ?? null, increment ?? null, decrement ?? null],
-      context,
-      ([rOrderBy, rGroupBy, rSchema, rGroupConcat, rConflict, rIncrement, rDecrement]) => {
-        if (rOrderBy     !== null) query.orderBy      = rOrderBy     as QueryDefinition["orderBy"];
-        if (rGroupBy     !== null) query.groupBy      = rGroupBy     as QueryDefinition["groupBy"];
-        if (rSchema      !== null) query.schema       = rSchema      as string | TableJsonSchema;
-        if (rGroupConcat !== null) query.group_concat = rGroupConcat as QueryDefinition["group_concat"];
-        if (rConflict    !== null) query.conflict     = rConflict    as string[];
-        if (rIncrement   !== null) query.increment    = rIncrement   as Record<string, number>;
-        if (rDecrement   !== null) query.decrement    = rDecrement   as Record<string, number>;
-        return null;
-      },
-    )),
-  ]);
-
-  if (addColumns) query.addColumns = addColumns as Record<string, ColumnSchema>;
-
-  return query;
+/** The table documents a query touches: every table `create` makes, otherwise
+ *  the one it names (a stand-in when it is not registered, so the global
+ *  validator still sees the table name). */
+function tablesOf(query: QueryDefinition): TableJsonSchema[] {
+  if (query.type === "create") return resolveSchemas(query.schema);
+  if (!query.table) return [];
+  return [SchemaNode.get(query.table) ?? { table: query.table, properties: {} }];
 }
 
 /**
- * Resolve an object that maps column names to values. Keys matching known
- * columns are preserved and only their values resolved. If no key matches
- * a column, the whole object is resolved as an expression (e.g. {"$var":"x"}).
+ * Run the validators before a query executes, once per table it touches: the
+ * global validator, then the table's own `validator`, so a table can add
+ * checks but never lift the app-wide ones. They see the table document as
+ * `schema`, the operation as `operation` and the query itself as `query`,
+ * which they may narrow (e.g. add an owner to `where`) since this is the object
+ * that runs. A validator refuses by throwing (`{ "$error": 403 }`).
  */
-async function resolveColumnValues(
-  obj: unknown,
-  columns: Set<string> | undefined,
-  context: Context,
-): Promise<unknown> {
-  if (!isObject(obj)) return resolve(obj, context);
-
-  const keys = Object.keys(obj);
-  const hasColumnKey = columns
-    ? keys.some((k) => {
-        const bare = k.includes(".") ? k.split(".").pop()! : k;
-        return columns.has(bare) || k === "or" || k === "and";
-      })
-    : false;
-
-  if (!hasColumnKey) return resolve(obj, context);
-
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(obj)) {
-    if ((key === "or" || key === "and") && Array.isArray(value)) {
-      result[key] = await Promise.all(value.map((item) => resolveColumnValues(item, columns, context)));
-    } else if (isObject(value) && Object.keys(value).some((k) => WHERE_OPS.has(k))) {
-      // Where operator object — resolve inner values only, not the outer structure
-      const op: Record<string, unknown> = {};
-      for (const [opKey, opVal] of Object.entries(value)) {
-        op[opKey] = Array.isArray(opVal)
-          ? await Promise.all(opVal.map((v: unknown) => resolve(v, context)))
-          : await resolve(opVal, context);
-      }
-      result[key] = op;
-    } else {
-      result[key] = await resolve(value, context);
+async function runValidators(query: QueryDefinition, context: Context): Promise<void> {
+  if (Reflect.get(context, VALIDATING) === true) return;
+  const operation = query.type === "count" ? "select" : query.type;
+  for (const schema of tablesOf(query)) {
+    // A table being created cannot approve its own creation: its document is
+    // the caller's, so only the global validator judges it.
+    const own = query.type === "create" ? undefined : schema.validator;
+    const validatorContext: Context & { [VALIDATING]: true } = { ...context, [VALIDATING]: true, schema, query, operation };
+    for (const steps of [SchemaNode.globalValidator, own]) {
+      if (Array.isArray(steps)) await Promise.resolve(runSteps(steps, validatorContext));
     }
   }
-  return result;
 }
 
-/**
- * Validate query structure at runtime
- */
-function validateQuery(q: Record<string, unknown>): QueryDefinition {
-  const type = q.query;
+/** The resolved step as the QueryDefinition the execute* helpers consume: its clauses, without the resolver's `$` keys or the connection settings. */
+function toQuery(r: Record<string, unknown>): QueryDefinition {
+  const type = r.$query;
   if (typeof type !== "string" || !VALID_QUERY_TYPES.has(type)) {
     throw new Error(`Invalid query type: "${type}". Must be one of: ${[...VALID_QUERY_TYPES].join(", ")}`);
   }
-
-  q.type = type;
-
-  if (type !== "create" && typeof q.table !== "string") {
+  if (type !== "create" && typeof r.table !== "string") {
     throw new Error("Query must have a table property");
   }
-
-  return q as unknown as QueryDefinition;
+  const query: Record<string, unknown> = { type };
+  for (const [k, v] of Object.entries(r)) {
+    if (ownedKey(k) === null && k !== "connection" && k !== "system") query[k] = v;
+  }
+  return query as unknown as QueryDefinition;
 }
 
 /**
@@ -759,8 +613,7 @@ async function executeCreate(
   for (const schema of schemas) {
     // Register schema for validation/computed columns
     SchemaNode.register(schema);
-    const tableName = tableNameOf(schema);
-    const db = schema["x-db"];
+    const tableName = schema.table;
 
     try {
       // Check if table exists
@@ -779,9 +632,15 @@ async function executeCreate(
       const required = new Set(schema.required ?? []);
       await knex.schema.createTable(tableName, (table) => {
         buildColumns(table, schema.properties, required, knex);
-        if (db.indexes) buildIndexes(table, db.indexes);
-        if (db.foreignKeys)
-          buildForeignKeys(table, db.foreignKeys);
+        if (schema.primaryKey) table.primary(schema.primaryKey);
+        // MySQL table options; Knex refuses them on any other database.
+        if (schema.options && knex.client.dialect === "mysql") {
+          if (schema.options.engine) table.engine(schema.options.engine);
+          if (schema.options.charset) table.charset(schema.options.charset);
+          if (schema.options.collate) table.collate(schema.options.collate);
+        }
+        if (schema.indexes) buildIndexes(table, schema.indexes);
+        if (schema.foreignKeys) buildForeignKeys(table, schema.foreignKeys);
       });
 
       console.log(`[QueryNode] Created table: ${tableName}`);
@@ -829,7 +688,7 @@ async function syncMissingColumns(
   knex: KnexType,
   schema: TableJsonSchema,
 ): Promise<string[]> {
-  const tableName = tableNameOf(schema);
+  const tableName = schema.table;
   const existingCols = await knex(tableName).columnInfo();
   const existingNames = new Set(Object.keys(existingCols));
   const missing: [string, ColumnSchema][] = [];
@@ -839,10 +698,9 @@ async function syncMissingColumns(
       // Strip non-constant defaults (e.g. CURRENT_TIMESTAMP) — SQLite rejects
       // these on ALTER TABLE. notNull is not applied (empty required set below),
       // since existing rows already have NULL.
-      const safeDef: ColumnSchema = { ...col, "x-db": { ...col["x-db"] } };
-      const db = safeDef["x-db"]!;
-      if (typeof db.default === "string" && /current_timestamp/i.test(db.default)) {
-        delete db.default;
+      const safeDef: ColumnSchema = { ...col };
+      if (typeof safeDef.sqlDefault === "string" && /current_timestamp/i.test(safeDef.sqlDefault)) {
+        delete safeDef.sqlDefault;
       }
       if (typeof safeDef.default === "string" && /current_timestamp/i.test(safeDef.default)) {
         delete safeDef.default;
@@ -928,9 +786,9 @@ function resolveSchemas(
 
 /**
  * Map a JSON Schema `type` to a SQL column type, used as a fallback when a
- * column omits `x-db.sqlType`. JSON Schema's type vocabulary is coarser than
+ * column omits `sqlType`. JSON Schema's type vocabulary is coarser than
  * SQL's, so authors needing precise types (varchar vs text, bigint, timestamp)
- * should set `x-db.sqlType`.
+ * should set `sqlType`.
  */
 function jsonTypeToSql(type: string | string[] | undefined): string {
   const t = Array.isArray(type) ? type.find((x) => x !== "null") : type;
@@ -947,7 +805,7 @@ function jsonTypeToSql(type: string | string[] | undefined): string {
 
 /**
  * Build columns from a JSON Schema `properties` map. Reads JSON Schema keywords
- * (`type`, `maxLength`) plus `x-db` DDL metadata. NOT NULL is derived from
+ * (`type`, `maxLength`) and the SQL keys beside them. NOT NULL is derived from
  * membership in `required`.
  */
 function buildColumns(
@@ -957,21 +815,20 @@ function buildColumns(
   knex: KnexType,
 ): void {
   for (const [name, col] of Object.entries(properties)) {
-    const db = col["x-db"] ?? {};
-    const sqlType = (db.sqlType ?? jsonTypeToSql(col.type)).toLowerCase();
-    const length = col.maxLength ?? db.length ?? 255;
+    const sqlType = (col.sqlType ?? jsonTypeToSql(col.type)).toLowerCase();
+    const length = col.maxLength ?? col.length ?? 255;
     let column: KnexType.ColumnBuilder;
 
     switch (sqlType) {
       case "integer":
       case "int":
-        column = db.autoIncrement
+        column = col.autoIncrement
           ? table.increments(name)
           : table.integer(name);
         break;
       case "biginteger":
       case "bigint":
-        column = db.autoIncrement
+        column = col.autoIncrement
           ? table.bigIncrements(name)
           : table.bigInteger(name);
         break;
@@ -982,13 +839,13 @@ function buildColumns(
         column = table.tinyint(name);
         break;
       case "float":
-        column = table.float(name, db.precision, db.scale);
+        column = table.float(name, col.precision, col.scale);
         break;
       case "double":
-        column = table.double(name, db.precision, db.scale);
+        column = table.double(name, col.precision, col.scale);
         break;
       case "decimal":
-        column = table.decimal(name, db.precision ?? 8, db.scale ?? 2);
+        column = table.decimal(name, col.precision ?? 8, col.scale ?? 2);
         break;
       case "varchar":
       case "string":
@@ -1041,13 +898,13 @@ function buildColumns(
     }
 
     // Apply modifiers
-    if (!db.autoIncrement) {
-      if (db.primaryKey) column.primary();
-      if (db.unsigned) column.unsigned();
+    if (!col.autoIncrement) {
+      if (col.primaryKey) column.primary();
+      if (col.unsigned) column.unsigned();
     }
     if (required.has(name)) column.notNullable();
-    if (db.unique && !db.primaryKey) column.unique();
-    const defaultValue = db.default ?? (col.default as string | number | boolean | null | undefined);
+    if (col.unique && !col.primaryKey) column.unique();
+    const defaultValue = col.sqlDefault ?? (col.default as string | number | boolean | null | undefined);
     if (defaultValue !== undefined) {
       if (defaultValue === "CURRENT_TIMESTAMP") {
         column.defaultTo(knex.raw("CURRENT_TIMESTAMP"));
@@ -1055,7 +912,7 @@ function buildColumns(
         column.defaultTo(defaultValue);
       }
     }
-    if (db.comment) column.comment(db.comment);
+    if (col.comment) column.comment(col.comment);
   }
 }
 
