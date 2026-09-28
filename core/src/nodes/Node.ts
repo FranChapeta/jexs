@@ -85,17 +85,16 @@ export abstract class Node {
    * `{ $ref: "#/$defs/<name>" }` on a property.
    *
    * Naming convention: entries whose names start with `_` are internal helpers,
-   * reachable only through a property that refs them. Entries whose names DON'T
-   * start with `_` are ALSO added to the combined schema's top-level `anyOf`, so a
-   * whole file may be written in that shape.
+   * reachable only through a property that refs them. An entry whose name DOESN'T
+   * start with `_` is also a ROOT DOCUMENT KIND: a file whose root object has every
+   * key the entry `required`s must match it, and every other file is Jexs (steps
+   * or an expression).
    *
-   * Prefer `_`. A root branch is an alternative the file only has to satisfy ONE
-   * of, so a permissive shape there passes files that every other branch rejects.
-   * RouterNode's `_routeNode` was root-matchable for exactly one reason (a bare
-   * routes tree whose top-level segment collides with a handler key) and, because
-   * it recurses through `additionalProperties`, ended up accepting any object of
-   * objects, masking broken expressions at the file root. Nothing is
-   * root-matchable today.
+   * The required keys are the only thing that tells a kind apart, so choose keys
+   * only that kind of document has: a kind requiring just `type` would claim
+   * ordinary templates. The build refuses a kind with no `required`, one requiring
+   * a `$` op key, and two kinds requiring the same keys; when one kind's keys
+   * include another's, the more specific one is tested first.
    */
   static schemaDefs?: Record<string, Record<string, unknown>>;
 

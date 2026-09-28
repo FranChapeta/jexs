@@ -1081,7 +1081,51 @@ export interface CombinedSchema {
   vp: Record<string, EmittedSchema>;
   byKey: Record<string, EmittedMethodSchema>;
   byNode: Record<string, EmittedNodeSchema>;
-  anyOf: EmittedSchema[];
+  /** The file root (see `rootSchema`): a document kind's `if`/`then`, chained
+   *  through `else` down to a Jexs file, which is steps or an expression (`anyOf`). */
+  if?: EmittedSchema;
+  then?: EmittedSchema;
+  else?: EmittedSchema;
+  anyOf?: EmittedSchema[];
+}
+
+type RootSchema = Pick<CombinedSchema, "if" | "then" | "else" | "anyOf">;
+
+/**
+ * The file root. A non-underscored extraDefs entry is a ROOT DOCUMENT KIND: a
+ * file whose root object has every key the kind `required`s must be that kind
+ * (a table document, say), and any other file is Jexs. A kind is told apart only
+ * by its `required` keys, so it must declare some and none may be a `$` op key
+ * (that would capture steps); two kinds with the same keys cannot be told apart
+ * at all. Kinds are tested most specific first, so one whose keys include
+ * another's wins over it.
+ */
+function rootSchema(extraDefs: Record<string, unknown>): RootSchema {
+  const kinds = Object.entries(extraDefs)
+    .filter(([name]) => !name.startsWith("_"))
+    .map(([name, def]) => {
+      const required = isSchemaObj(def) && Array.isArray(def.required) ? def.required.map(String) : [];
+      if (required.length === 0) {
+        throw new Error(`Root $defs "${name}" needs a \`required\` list: its required keys are how a file is recognized as one.`);
+      }
+      const op = required.find(k => k.startsWith(KEY_PREFIX));
+      if (op !== undefined) throw new Error(`Root $defs "${name}" requires "${op}", an op key, so it would capture steps.`);
+      return { name, required: [...required].sort() };
+    });
+  for (let i = 0; i < kinds.length; i++) {
+    for (let j = i + 1; j < kinds.length; j++) {
+      if (kinds[i].required.join() === kinds[j].required.join()) {
+        throw new Error(`Root $defs "${kinds[i].name}" and "${kinds[j].name}" require the same keys, so no file can be told apart as one or the other.`);
+      }
+    }
+  }
+  kinds.sort((a, b) => b.required.length - a.required.length || a.name.localeCompare(b.name));
+
+  let root: RootSchema = { anyOf: [{ ...REF.steps }, { ...REF.exprFlat }] };
+  for (const kind of kinds.reverse()) {
+    root = { if: { type: "object", required: kind.required }, then: { $ref: `#/$defs/${kind.name}` }, else: root };
+  }
+  return root;
 }
 
 /**
@@ -1130,8 +1174,6 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
     }
   }
   reportCollisions(collisions, opts, "mergePackageSchemas");
-  // Underscore convention: non-underscored extraDefs entries are root-matchable.
-  const rootMatches = Object.keys(extraDefs).filter(name => !name.startsWith("_"));
 
   // Two canonical stores at the schema root:
   //   - byKey/<k> = method-dispatch schema (sibling constraints), used by
@@ -1309,11 +1351,7 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
     vp,
     byKey,
     byNode,
-    anyOf: [
-      { ...REF.steps },
-      { ...REF.exprFlat },
-      ...rootMatches.map(name => ({ $ref: `#/$defs/${name}` })),
-    ],
+    ...rootSchema(extraDefs),
   };
   dedupeShapes(combined);
   return combined;
@@ -1385,13 +1423,16 @@ interface DedupMode {
  * body is `JSON.parse(key)` — the key IS canonical JSON. Returns true if anything
  * was hoisted. Walks only real schema positions, so `{ $ref }` is always valid.
  */
+const ROOT_PARTS = ["if", "then", "else"] as const;
+
 function dedupePass(combined: CombinedSchema, mode: DedupMode, counter: { n: number }): boolean {
   const defs = combined.$defs as Record<string, Record<string, unknown>>;
   const roots: Record<string, unknown>[] = [
     ...Object.values(combined.vp),
     ...Object.values(combined.byKey),
     ...Object.values(defs),
-    ...combined.anyOf,
+    ...ROOT_PARTS.map(k => combined[k]),
+    ...(combined.anyOf ?? []),
   ].filter(isSchemaObj);
 
   const counts = new Map<string, number>();
@@ -1430,7 +1471,11 @@ function dedupePass(combined: CombinedSchema, mode: DedupMode, counter: { n: num
     if (newDefs.has(dk)) mapChildSchemas(defs[dk], transform);  // descend only — never alias to self
     else defs[dk] = transform(defs[dk]);
   }
-  combined.anyOf = combined.anyOf.map(e => isSchemaObj(e) ? transform(e) : e);
+  for (const k of ROOT_PARTS) {
+    const part = combined[k];
+    if (isSchemaObj(part)) combined[k] = transform(part);
+  }
+  if (combined.anyOf) combined.anyOf = combined.anyOf.map(e => isSchemaObj(e) ? transform(e) : e);
   return true;
 }
 
