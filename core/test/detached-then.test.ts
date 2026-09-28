@@ -14,8 +14,8 @@ test("a `then` step inside detached steps still does not block the sequence", as
   const ctx: Context = {};
 
   await resolver.runStepsDetached([
-    { sleep: 30, then: [{ var: "$result" }] },
-    { concat: ["second"] },
+    { $sleep: 30, $then: [{ $var: "result" }] },
+    { $concat: ["second"] },
   ], ctx);
 
   order.push("returned");
@@ -24,21 +24,21 @@ test("a `then` step inside detached steps still does not block the sequence", as
   assert.deepEqual(order, ["returned"]);
 });
 
-test("handleErr reads `catch` only, so a `then` sibling cannot be mistaken for one", async () => {
+test("handleErr reads `$catch` only, so a `then` sibling cannot be mistaken for one", async () => {
   const resolver = createResolver(coreNodes());
-  const withThen = { do: [{ error: 500, message: "boom" }], then: [{ concat: ["x"] }] };
+  const withThen = { do: [{ $error: 500, message: "boom" }], $then: [{ $concat: ["x"] }] };
 
-  // No `catch` on the def -> the failure must still surface, not be swallowed
+  // No `$catch` on the def -> the failure must still surface, not be swallowed
   // by the presence of `then`.
   await assert.rejects(resolver.runStepsDetached(withThen.do, {}, withThen), /boom/);
 });
 
-test("a `catch` on the def is honored while `then` is present", async () => {
+test("a `$catch` on the def is honored while `then` is present", async () => {
   const resolver = createResolver(coreNodes());
   const both = {
-    do: [{ error: 500, message: "boom" }],
-    then: [{ concat: ["ignored"] }],
-    catch: [{ concat: ["caught: ", { var: "$error.message" }] }],
+    do: [{ $error: 500, message: "boom" }],
+    $then: [{ $concat: ["ignored"] }],
+    $catch: [{ $concat: ["caught: ", { $var: "error.message" }] }],
   };
   assert.equal(await resolver.runStepsDetached(both.do, {}, both), "caught: boom");
 });
@@ -50,10 +50,10 @@ test("`then` on a step still fires at that step's completion, unchanged", async 
   // Two things this pins beyond the fire-and-forget itself: `then` is a STEP
   // key, so it needs runSteps rather than resolving a bare array (which would
   // resolve elements in parallel); and its steps run in a childContext, so the
-  // write needs `bubble` to reach the caller's scope.
+  // write needs `$bubble` to reach the caller's scope.
   const out = await resolver.runSteps([
-    { concat: ["work"], then: [{ setVars: { landed: { var: "$result" } }, bubble: true }] },
-    { concat: ["next"] },
+    { $concat: ["work"], $then: [{ $setVars: { landed: { $var: "result" } }, $bubble: true }] },
+    { $concat: ["next"] },
   ], ctx);
   assert.equal(out, "next");
   await tick();

@@ -21,8 +21,8 @@ export class StorageNode extends Node {
       type: "string",
       markdownDescription: "Reads a value from `localStorage` (or `sessionStorage` if `session: true`). Returns the JSON-parsed value, the raw string if parsing fails, or `null` if the key is absent.",
       examples: [
-        "{ \"storage-get\": \"username\" }",
-        "{ \"storage-get\": \"cart\", \"session\": true }",
+        "{ \"$storage-get\": \"username\" }",
+        "{ \"$storage-get\": \"cart\", \"session\": true }",
       ],
     },
     "storage-set": {
@@ -33,8 +33,8 @@ export class StorageNode extends Node {
       ],
       markdownDescription: "Writes a value under a key. Pass `[\"key\", value]`. Non-string values are JSON-encoded. Returns the stored value.",
       examples: [
-        "{ \"storage-set\": [\"username\", \"Alice\"] }",
-        "{ \"storage-set\": [\"prefs\", { \"theme\": \"dark\" }] }",
+        "{ \"$storage-set\": [\"username\", \"Alice\"] }",
+        "{ \"$storage-set\": [\"prefs\", { \"theme\": \"dark\" }] }",
       ],
     },
     "storage-remove": {
@@ -42,7 +42,7 @@ export class StorageNode extends Node {
       output: "boolean",
       markdownDescription: "Deletes the entry under `key`. Returns `true`.",
       examples: [
-        "{ \"storage-remove\": \"username\" }",
+        "{ \"$storage-remove\": \"username\" }",
       ],
     },
     // Keyless bulk ops fold into the bare `storage` key (value-mode); the keyed
@@ -52,8 +52,8 @@ export class StorageNode extends Node {
       enum: ["clear", "keys"],
       markdownDescription: "Storage bulk operation (the value is the op). Honors `session`.",
       examples: [
-        "{ \"storage\": \"keys\" }",
-        "{ \"storage\": \"clear\", \"session\": true }",
+        "{ \"$storage\": \"keys\" }",
+        "{ \"$storage\": \"clear\", \"session\": true }",
       ],
       variants: {
         clear: { output: "boolean", markdownDescription: "Clears every entry in the selected store. Returns `true`." },
@@ -73,14 +73,14 @@ export class StorageNode extends Node {
   };
 
   ["storage-get"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["storage-get"], def.session], context, ([keyRaw, sessionRaw]) => {
+    return resolveAll([def["$storage-get"], def.session], context, ([keyRaw, sessionRaw]) => {
       const store = pickStore(sessionRaw);
       return decode(store.getItem(String(keyRaw)));
     });
   }
 
   ["storage-set"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["storage-set"], def.session], context, ([argsRaw, sessionRaw]) => {
+    return resolveAll([def["$storage-set"], def.session], context, ([argsRaw, sessionRaw]) => {
       if (!Array.isArray(argsRaw) || argsRaw.length < 2) return null;
       const [keyRaw, value] = argsRaw;
       const store = pickStore(sessionRaw);
@@ -90,7 +90,7 @@ export class StorageNode extends Node {
   }
 
   ["storage-remove"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["storage-remove"], def.session], context, ([keyRaw, sessionRaw]) => {
+    return resolveAll([def["$storage-remove"], def.session], context, ([keyRaw, sessionRaw]) => {
       const store = pickStore(sessionRaw);
       store.removeItem(String(keyRaw));
       return true;
@@ -98,7 +98,7 @@ export class StorageNode extends Node {
   }
 
   ["storage"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def.storage, def.session], context, ([op, sessionRaw]) => {
+    return resolveAll([def.$storage, def.session], context, ([op, sessionRaw]) => {
       const store = pickStore(sessionRaw);
       switch (op) {
         case "clear":

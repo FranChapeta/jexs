@@ -41,26 +41,26 @@ Rendering reads directly from `@jexs/physics`'s `EntityStore` — there's no sce
 
 ```json
 [
-  { "entity-init": "world", "width": 800, "height": 600 },
-  { "gl-init": "#scene", "width": 800, "height": 600, "depth": true, "clear": [0.05, 0.06, 0.08, 1] },
+  { "$entity-init": "world", "width": 800, "height": 600 },
+  { "$gl-init": "#scene", "width": 800, "height": 600, "depth": true, "clear": [0.05, 0.06, 0.08, 1] },
 
-  { "fetch": "/models/robot.glb", "as": "buf" },
-  { "parseGLB": { "var": "$buf" }, "name": "robot", "as": "scene" },
+  { "$fetch": "/models/robot.glb", "$as": "buf" },
+  { "$parseGLB": { "$var": "buf" }, "name": "robot", "$as": "scene" },
 
-  { "foreach": { "values": { "var": "$scene.meshes" } }, "item": "m", "do": {
-    "gl-register-mesh": { "var": "$m.id" },
-    "bounds":    { "var": "$m.bounds" },
-    "positions": { "var": "$m.positions" },
-    "normals":   { "var": "$m.normals" },
-    "uvs":       { "var": "$m.uvs" },
-    "indices":   { "var": "$m.indices" },
-    "material":  { "var": "$m.material" }
+  { "$foreach": { "$values": { "$var": "scene.meshes" } }, "item": "m", "do": {
+    "$gl-register-mesh": { "$var": "m.id" },
+    "bounds":    { "$var": "m.bounds" },
+    "positions": { "$var": "m.positions" },
+    "normals":   { "$var": "m.normals" },
+    "uvs":       { "$var": "m.uvs" },
+    "indices":   { "$var": "m.indices" },
+    "material":  { "$var": "m.material" }
   } },
 
-  { "first": { "keys": { "var": "$scene.meshes" } }, "as": "meshId" },
-  { "entity-add": "robot-1", "type": "mesh", "mesh": { "var": "$meshId" }, "translation": [0, 0, -5] },
+  { "$first": { "$keys": { "$var": "scene.meshes" } }, "$as": "meshId" },
+  { "$entity-add": "robot-1", "type": "mesh", "mesh": { "$var": "meshId" }, "translation": [0, 0, -5] },
 
-  { "gl-camera": true, "z": 5, "lookAt": [0, 0, 0] }
+  { "$gl-camera": true, "z": 5, "lookAt": [0, 0, 0] }
 ]
 ```
 

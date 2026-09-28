@@ -17,7 +17,7 @@ const requests = [
   { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "driver", version: "0" } } },
   { jsonrpc: "2.0", method: "notifications/initialized" },
   { jsonrpc: "2.0", id: 2, method: "tools/list" },
-  { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "resolve_expression", arguments: { expression: { concat: ["Hello, ", { if: { var: "$x" }, then: "A", else: "world" }, "!"] } } } },
+  { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "resolve_expression", arguments: { expression: { $concat: ["Hello, ", { $if: { $var: "x" }, then: "A", else: "world" }, "!"] } } } },
   { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "list_nodes", arguments: {} } },
   { jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "describe_op", arguments: { op: "directory" } } },
   { jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "describe_op", arguments: { op: "as" } } },

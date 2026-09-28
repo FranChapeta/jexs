@@ -31,14 +31,10 @@ export class TrayNode extends Node {
       markdownDescription:
         "Put an icon in the system tray. The value is the icon path, relative to the project root.\nCalling it again updates the existing tray in place rather than adding a second one, so this doubles as the update path for the tooltip or the menu.\n**A tray app outlives its windows**: closing the last window no longer quits on Windows or Linux, because minimize-to-tray is the whole point. Give the tray menu a Quit item, or the app becomes unkillable from the UI.",
       examples: [
-        "{ \"tray\": \"assets/icon.png\", \"tooltip\": \"My App\", \"items\": [{ \"label\": \"Quit\", \"role\": \"quit\" }] }",
+        "{ \"$tray\": \"assets/icon.png\", \"tooltip\": \"My App\", \"items\": [{ \"label\": \"Quit\", \"role\": \"quit\" }] }",
       ],
       siblings: {
         tooltip: { type: "string", description: "Hover text for the tray icon." },
-        // Named `items`, not `menu`: `menu` is a handler key, and the resolver
-        // dispatches on the first key it recognizes in an object. As a sibling it
-        // would make { "menu": [...], "tray": "icon.png" } set the APPLICATION
-        // menu and never create the tray -- silently, and depending on key order.
         items: {
           type: "array",
           items: { $ref: "#/$defs/_menuItem" },
@@ -50,14 +46,14 @@ export class TrayNode extends Node {
     "tray-destroy": {
       output: "null",
       markdownDescription: "Remove the tray icon. This also restores the normal quit rule, so closing the last window ends the app again.",
-      examples: ["{ \"tray-destroy\": true }"],
+      examples: ["{ \"$tray-destroy\": true }"],
     },
   };
 
-  // `menu` and `do` must reach their builders raw, so only the scalar siblings
+  // `items` and `do` must reach their builders raw, so only the scalar siblings
   // go through the resolver.
   tray(def: Record<string, unknown>, context: Context): NodeValue {
-    const scalars = { tray: def.tray, tooltip: def.tooltip };
+    const scalars = { tray: def.$tray, tooltip: def.tooltip };
     return resolveObj(scalars, context, async (r) => {
       const { Tray, nativeImage, Menu } = await import("electron");
       const iconPath = typeof r.tray === "string" ? r.tray : "";

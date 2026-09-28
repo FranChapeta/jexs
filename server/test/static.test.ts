@@ -42,7 +42,7 @@ before(async () => {
   // One route answering "routed", so a test can tell "fell through to the
   // routes" apart from "the static path handled it".
   await resolver.resolve(
-    { listen: PORT, client: true, do: [{ response: "routed" }] },
+    { $listen: PORT, client: true, do: [{ response: "routed" }] },
     {},
   );
 });

@@ -46,8 +46,8 @@ Drop the bundle in a page and Jexs auto-initializes on `DOMContentLoaded`:
 <button data-jexs-events='[{
   "type": "click",
   "do": [
-    { "fetch": "/api/like", "method": "POST", "as": "result" },
-    { "toggleClass": [{ "var": "$target" }, "liked"] }
+    { "$fetch": "/api/like", "method": "POST", "$as": "result" },
+    { "$toggleClass": [{ "$var": "target" }, "liked"] }
   ]
 }]'>Like</button>
 ```
@@ -63,7 +63,7 @@ hydrate();              // scan the whole document
 hydrate(myElement);     // or just a subtree
 ```
 
-The client shares its event context across handlers (so `$value`, `$target`, `$event` from the previous click are still available in the next), which lets you compose chains of handlers naturally.
+The client shares its event context across handlers (so `value`, `target`, `event` from the previous click are still available in the next), which lets you compose chains of handlers naturally.
 
 ## License
 

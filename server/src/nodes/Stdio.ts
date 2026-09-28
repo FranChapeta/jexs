@@ -59,14 +59,14 @@ export class StdioNode extends Node {
     "stdio-listen": {
       type: "boolean",
       output: "null",
-      markdownDescription: "Starts a newline-delimited JSON (NDJSON) listener on stdin. Each line is parsed as JSON, set as `$message` in context, and `on-message` steps are run. `console.log` is redirected to stderr to keep stdout clean for protocol data. Use `stdio-write` inside the steps to send output.",
+      markdownDescription: "Starts a newline-delimited JSON (NDJSON) listener on stdin. Each line is parsed as JSON, set as `message` in context, and `on-message` steps are run. `console.log` is redirected to stderr to keep stdout clean for protocol data. Use `stdio-write` inside the steps to send output.",
       examples: [
-        "{ \"stdio-listen\": true, \"on-message\": [{ \"stdio-write\": { \"var\": \"$message\" } }] }",
+        "{ \"$stdio-listen\": true, \"on-message\": [{ \"$stdio-write\": { \"$var\": \"message\" } }] }",
       ],
       siblings: {
         "on-message": {
           steps: true,
-          description: "Steps run per NDJSON line with `$message` in context.",
+          description: "Steps run per NDJSON line with `message` in context.",
         },
         "on-close": {
           steps: true,
@@ -78,15 +78,15 @@ export class StdioNode extends Node {
       output: "null",
       markdownDescription: "Writes a value to stdout followed by a newline. Strings pass through unchanged; everything else is JSON-encoded.",
       examples: [
-        "{ \"stdio-write\": { \"ok\": true } }",
-        "{ \"stdio-write\": \"hello\" }",
+        "{ \"$stdio-write\": { \"ok\": true } }",
+        "{ \"$stdio-write\": \"hello\" }",
       ],
     },
     "stdio-prompt": {
       output: "string",
       markdownDescription: "Writes a prompt to stdout and reads one line from stdin, resolving to the entered text (trailing newline stripped). Lines are buffered so piped/redirected input works, and resolves to `\"\"` at end of input (EOF), so a non-interactive run never hangs. For interactive CLIs; mutually exclusive with `stdio-listen`. Call `stdio-close` after the last prompt so the process can exit.",
       examples: [
-        "{ \"stdio-prompt\": \"Project name: \", \"as\": \"name\" }",
+        "{ \"$stdio-prompt\": \"Project name: \", \"$as\": \"name\" }",
       ],
     },
     "stdio-close": {
@@ -94,7 +94,7 @@ export class StdioNode extends Node {
       output: "null",
       markdownDescription: "Closes the interactive stdin reader opened by `stdio-prompt`, releasing stdin so the process can exit. Call once, after the final `stdio-prompt`.",
       examples: [
-        "{ \"stdio-close\": true }",
+        "{ \"$stdio-close\": true }",
       ],
     },
   };
@@ -159,7 +159,7 @@ export class StdioNode extends Node {
   }
 
   ["stdio-write"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["stdio-write"], context, value => {
+    return resolve(def["$stdio-write"], context, value => {
       process.stdout.write(encode(value) + "\n");
       return null;
     });
@@ -170,7 +170,7 @@ export class StdioNode extends Node {
       console.error("[StdioNode] stdin is owned by stdio-listen; stdio-prompt cannot read it");
       return null;
     }
-    return resolve(def["stdio-prompt"], context, text => getReader().ask(String(text)));
+    return resolve(def["$stdio-prompt"], context, text => getReader().ask(String(text)));
   }
 
   ["stdio-close"](): NodeValue {

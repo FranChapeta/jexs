@@ -289,22 +289,22 @@ export const SHELL_CSP =
 
 export function shellTemplate(stylesheets: readonly string[] = []): unknown {
   return {
-    tag: "html",
+    $tag: "html",
     content: [
       {
-        tag: "head",
+        $tag: "head",
         content: [
-          { tag: "meta", charset: "utf-8" },
-          { tag: "meta", "http-equiv": "Content-Security-Policy", content: SHELL_CSP },
-          { tag: "meta", name: "viewport", content: "width=device-width, initial-scale=1" },
+          { $tag: "meta", charset: "utf-8" },
+          { $tag: "meta", "http-equiv": "Content-Security-Policy", content: SHELL_CSP },
+          { $tag: "meta", name: "viewport", content: "width=device-width, initial-scale=1" },
           // The page is mounted into the body by this process, so it cannot reach
           // this head: a stylesheet has to be handed in here. Kept in the given
           // order, since that is the order the cascade resolves them in.
-          ...stylesheets.map((href) => ({ tag: "link", rel: "stylesheet", href })),
-          { tag: "title", content: { var: "$title" } },
+          ...stylesheets.map((href) => ({ $tag: "link", rel: "stylesheet", href })),
+          { $tag: "title", content: { $var: "title" } },
         ],
       },
-      { tag: "body", content: [{ file: { var: "$page" } }] },
+      { $tag: "body", content: [{ $file: { $var: "page" } }] },
     ],
   };
 }
@@ -333,7 +333,7 @@ export class WindowNode extends Node {
       markdownDescription:
         "Open a BrowserWindow showing a JSON page template over `app://` — the value is the template file from `src/` (e.g. `settings.json`, default `index.json`). A generated shell mounts it at runtime; there is no HTML file.\nThe window is registered under `name`, or under the template's basename (`settings.json` becomes `settings`, deduped `settings-2`). The first window opened becomes the default target for every other `window-*` op.",
       outputDescription: "The name the window was registered under — pass it to `window-close` and friends.",
-      examples: ["{ \"window-open\": \"settings.json\", \"width\": 480, \"height\": 320 }"],
+      examples: ["{ \"$window-open\": \"settings.json\", \"width\": 480, \"height\": 320 }"],
       siblings: {
         name: { type: "string", description: "Register the window under this name instead of the template basename." },
         width: { type: "number", description: "Window width in pixels." },
@@ -345,7 +345,7 @@ export class WindowNode extends Node {
           type: "array",
           items: { type: "string" },
           description:
-            "Ops this window's page may ask the main process for. Omit for no restriction.\nList ops only — a sibling travels with its op, so `[\"query\"]` already covers `{ \"query\": \"select\", \"table\": \"saves\" }`. Nested values are checked too, so a denied op cannot hide in a sibling slot.\nYour own menu, tray and shortcut handlers are unaffected — they run in main and never cross the IPC channel this limits.",
+            "Ops this window's page may ask the main process for. Omit for no restriction.\nList ops only — a sibling travels with its op, so `[\"query\"]` already covers `{ \"$query\": \"select\", \"table\": \"saves\" }`. Nested values are checked too, so a denied op cannot hide in a sibling slot.\nYour own menu, tray and shortcut handlers are unaffected — they run in main and never cross the IPC channel this limits.",
         },
         titleBarStyle: {
           type: "string",
@@ -361,57 +361,57 @@ export class WindowNode extends Node {
       type: ["string", "boolean"],
       output: "null",
       markdownDescription: "Close a window. The value names it; `true` closes the calling window, falling back to the default.",
-      examples: ["{ \"window-close\": true }", "{ \"window-close\": \"settings\" }"],
+      examples: ["{ \"$window-close\": true }", "{ \"$window-close\": \"settings\" }"],
     },
     "window-focus": {
       type: ["string", "boolean"],
       output: "null",
       markdownDescription: "Bring a window to the front, restoring it first if minimized.",
-      examples: ["{ \"window-focus\": \"main\" }"],
+      examples: ["{ \"$window-focus\": \"main\" }"],
     },
     "window-min": {
       type: ["string", "boolean"],
       output: "null",
       markdownDescription: "Minimize a window.",
-      examples: ["{ \"window-min\": true }"],
+      examples: ["{ \"$window-min\": true }"],
     },
     "window-max": {
       type: ["string", "boolean"],
       output: "null",
       markdownDescription: "Maximize a window, or unmaximize it if already maximized.",
-      examples: ["{ \"window-max\": true }"],
+      examples: ["{ \"$window-max\": true }"],
     },
     "window-restore": {
       type: ["string", "boolean"],
       output: "null",
       markdownDescription: "Restore a minimized or maximized window to its normal size.",
-      examples: ["{ \"window-restore\": true }"],
+      examples: ["{ \"$window-restore\": true }"],
     },
     "window-reload": {
       type: ["string", "boolean"],
       output: "null",
       markdownDescription: "Reload a window's page template.",
-      examples: ["{ \"window-reload\": true }"],
+      examples: ["{ \"$window-reload\": true }"],
     },
     "window-devtools": {
       type: ["string", "boolean"],
       output: "null",
       markdownDescription: "Toggle the developer tools for a window.",
-      examples: ["{ \"window-devtools\": true }"],
+      examples: ["{ \"$window-devtools\": true }"],
     },
 
     "window-title": {
       type: "string",
       output: "null",
       markdownDescription: "Set a window's title.",
-      examples: ["{ \"window-title\": \"Untitled - Editor\" }"],
+      examples: ["{ \"$window-title\": \"Untitled - Editor\" }"],
       siblings: { window: WINDOW_SIBLING },
     },
     "window-bounds": {
       type: "object",
       output: "null",
       markdownDescription: "Move and/or resize a window. Any of `x`, `y`, `width`, `height` may be omitted to leave that axis alone.",
-      examples: ["{ \"window-bounds\": { \"width\": 900, \"height\": 600 } }"],
+      examples: ["{ \"$window-bounds\": { \"width\": 900, \"height\": 600 } }"],
       siblings: { window: WINDOW_SIBLING },
       properties: {
         x: { type: "number", description: "Left edge in screen pixels." },
@@ -425,7 +425,7 @@ export class WindowNode extends Node {
       output: "array",
       markdownDescription: "List every open window with its name, id, title, state and bounds.",
       outputDescription: "An array of `{ name, id, title, visible, minimized, maximized, focused, bounds }` objects, in the order the windows were opened.",
-      examples: ["{ \"window-list\": true }"],
+      examples: ["{ \"$window-list\": true }"],
     },
 
     "window-run": {
@@ -434,7 +434,7 @@ export class WindowNode extends Node {
       markdownDescription:
         "Run steps inside a window's page, where the DOM lives.\nMost of the time this is unnecessary — a DOM op written in a main-process handler is forwarded to the default window automatically. Reach for this when you need a *specific* window, since a per-op `window` sibling is impossible: DOM ops are declared by `@jexs/client`, and one package cannot add a sibling to another package's op.\nSteps are sent unresolved and run in the target renderer against the page context, so they see the same state the page's own event handlers do.",
       outputDescription: "Whatever the last step evaluates to, brought back across the bridge.",
-      examples: ["{ \"window-run\": [{ \"setText\": [\"#status\", \"Saved\"] }], \"window\": \"editor\" }"],
+      examples: ["{ \"$window-run\": [{ \"$setText\": [\"#status\", \"Saved\"] }], \"window\": \"editor\" }"],
       siblings: {
         window: WINDOW_SIBLING,
         params: { map: true, description: "Values merged into the steps' scope, resolved in the main process before they cross." },
@@ -449,7 +449,7 @@ export class WindowNode extends Node {
   ["window-open"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveObj(def, context, async (r) => {
       return openWindow({
-        page: r["window-open"],
+        page: r["$window-open"],
         name: r.name,
         width: r.width,
         height: r.height,
@@ -463,14 +463,14 @@ export class WindowNode extends Node {
   }
 
   ["window-close"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["window-close"], context, (t) => {
+    return resolve(def["$window-close"], context, (t) => {
       targetWindow(t, context)?.close();
       return null;
     });
   }
 
   ["window-focus"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["window-focus"], context, (t) => {
+    return resolve(def["$window-focus"], context, (t) => {
       const win = targetWindow(t, context);
       if (!win) return null;
       if (win.isMinimized()) win.restore();
@@ -480,14 +480,14 @@ export class WindowNode extends Node {
   }
 
   ["window-min"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["window-min"], context, (t) => {
+    return resolve(def["$window-min"], context, (t) => {
       targetWindow(t, context)?.minimize();
       return null;
     });
   }
 
   ["window-max"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["window-max"], context, (t) => {
+    return resolve(def["$window-max"], context, (t) => {
       const win = targetWindow(t, context);
       if (!win) return null;
       if (win.isMaximized()) win.unmaximize();
@@ -497,7 +497,7 @@ export class WindowNode extends Node {
   }
 
   ["window-restore"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["window-restore"], context, (t) => {
+    return resolve(def["$window-restore"], context, (t) => {
       const win = targetWindow(t, context);
       if (!win) return null;
       if (win.isMinimized()) win.restore();
@@ -507,14 +507,14 @@ export class WindowNode extends Node {
   }
 
   ["window-reload"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["window-reload"], context, (t) => {
+    return resolve(def["$window-reload"], context, (t) => {
       targetWindow(t, context)?.reload();
       return null;
     });
   }
 
   ["window-devtools"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["window-devtools"], context, (t) => {
+    return resolve(def["$window-devtools"], context, (t) => {
       targetWindow(t, context)?.webContents.toggleDevTools();
       return null;
     });
@@ -523,7 +523,7 @@ export class WindowNode extends Node {
   ["window-title"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveObj(def, context, (r) => {
       const win = targetWindow(r.window, context);
-      if (win) win.setTitle(this.toString(r["window-title"]));
+      if (win) win.setTitle(this.toString(r["$window-title"]));
       return null;
     });
   }
@@ -531,7 +531,7 @@ export class WindowNode extends Node {
   ["window-bounds"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveObj(def, context, (r) => {
       const win = targetWindow(r.window, context);
-      const bounds = boundsOptions(r["window-bounds"]);
+      const bounds = boundsOptions(r["$window-bounds"]);
       if (win && Object.keys(bounds).length > 0) win.setBounds(bounds);
       return null;
     });
@@ -541,7 +541,7 @@ export class WindowNode extends Node {
    * Ship a step array to a window and run it there.
    *
    * The steps are read RAW and never resolved here: resolving in main would turn
-   * `{"setText": ...}` into a plain object, because main has no DOM handler for
+   * `{"$setText": ...}` into a plain object, because main has no DOM handler for
    * it. Only `window` and `params` resolve, so main-side values can cross.
    *
    * The result comes back over the same correlation-id transport as any other
@@ -551,9 +551,9 @@ export class WindowNode extends Node {
     return resolve(def.window ?? null, context, target => {
       const win = targetWindow(target, context);
       if (!win) throw noWindowError("window-run");
-      if (!this.isObject(def.params)) return runInRenderer(win, def["window-run"]);
+      if (!this.isObject(def.params)) return runInRenderer(win, def["$window-run"]);
       return resolveObj(def.params, context, params =>
-        runInRenderer(win, def["window-run"], params),
+        runInRenderer(win, def["$window-run"], params),
       );
     });
   }

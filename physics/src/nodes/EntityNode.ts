@@ -6,19 +6,19 @@
  * On the server, use entity-* keys directly for authoritative game state.
  *
  * Supported operations:
- * - { "entity-init": "store-id", "width": 800, "height": 600 }
- * - { "entity-add": id, type, group, mask, translation, scale, ... }
- * - { "entity-remove": id }
- * - { "entity-move": id, x, y, angle }
- * - { "entity-update": id, ... }
- * - { "entity-clear": true }
- * - { "entity-list": group | true }
- * - { "entity-nearest": group, x, y }
- * - { "entity-get": id, prop }          — single property
- * - { "entity-get": id }               — full entity object
+ * - { "$entity-init": "store-id", "width": 800, "height": 600 }
+ * - { "$entity-add": id, type, group, mask, translation, scale, ... }
+ * - { "$entity-remove": id }
+ * - { "$entity-move": id, x, y, angle }
+ * - { "$entity-update": id, ... }
+ * - { "$entity-clear": true }
+ * - { "$entity-list": group | true }
+ * - { "$entity-nearest": group, x, y }
+ * - { "$entity-get": id, prop }         — single property
+ * - { "$entity-get": id }               — full entity object
  */
 
-import { Node, Context, NodeValue, resolve, resolveObj, GLOBAL_KEYS } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveObj, ownedKey } from "@jexs/core";
 import {
   EntityStore, EntityMeta, FIELD_OFFSETS,
   ENTITY_TYPES, BLEND_MODES,
@@ -105,16 +105,15 @@ const ENTITY_FIELDS: Record<string, P> = {
 const { lineWidth, radius, coneAngle, dirX, dirY, dirZ, ...SHARED_FIELDS } = ENTITY_FIELDS;
 
 /**
- * Every key the entity ops act on themselves. Derived from `ENTITY_FIELDS` so a
- * newly declared field is recognised by the same edit, plus `GLOBAL_KEYS` (which
- * the resolver owns, not the entity), the op keys, and the `entity-update` extras
- * that are not shared fields. Anything outside this set is kept verbatim on the
- * entity's `custom` metadata.
+ * Every sibling the entity ops act on themselves. Derived from `ENTITY_FIELDS` so
+ * a newly declared field is recognised by the same edit, plus the `entity-update`
+ * extras that are not shared fields. Anything outside this set, other than the
+ * `$` keys the resolver owns (the op and the global step keys), is kept verbatim
+ * on the entity's `custom` metadata.
  */
 const KNOWN_KEYS = new Set([
   ...Object.keys(ENTITY_FIELDS),
-  ...GLOBAL_KEYS,
-  "entity-add", "entity-update", "gl-update", "type", "pooled", "text",
+  "type", "pooled", "text",
 ]);
 
 /** Convert a Z-axis angle (degrees) to a quaternion [qx,qy,qz,qw]. */
@@ -191,7 +190,7 @@ export class EntityNode extends Node {
       output: "null",
       markdownDescription: "Creates a new entity store and sets it as the active context store.\r\nPass `width` and `height` to define the world bounds.",
       examples: [
-        "{ \"entity-init\": \"world\", \"width\": 800, \"height\": 600 }",
+        "{ \"$entity-init\": \"world\", \"width\": 800, \"height\": 600 }",
       ],
       siblings: {
         width: {
@@ -213,7 +212,7 @@ export class EntityNode extends Node {
       output: "null",
       markdownDescription: "Adds an entity to the active store, under the id in `entity-add`.\r\nThe transform is `translation` / `scale` / `rotation` (there is no `x`/`y`/`w`/`h`); `angle`, `rx`, `ry` and `rotation-velocity` are shorthands that build the quaternion for you.\r\nSet `physics: true` to simulate it and `fixed: true` for an immovable body, and `pooled: true` to reuse a pooled slot.\r\nAny sibling not listed here is kept verbatim on the entity's `custom` metadata.",
       examples: [
-        "{ \"entity-add\": \"player\", \"type\": \"quad\", \"translation\": [100, 100, 0], \"scale\": [32, 32, 1], \"color\": [1,0,0,1] }",
+        "{ \"$entity-add\": \"player\", \"type\": \"quad\", \"translation\": [100, 100, 0], \"scale\": [32, 32, 1], \"color\": [1,0,0,1] }",
       ],
       siblings: {
         type: {
@@ -245,7 +244,7 @@ export class EntityNode extends Node {
       output: "null",
       markdownDescription: "Removes an entity from the store by id. Pass `pooled: true` to release back to the pool instead.",
       examples: [
-        "{ \"entity-remove\": \"bullet-1\" }",
+        "{ \"$entity-remove\": \"bullet-1\" }",
       ],
       siblings: {
         pooled: {
@@ -259,7 +258,7 @@ export class EntityNode extends Node {
       output: "null",
       markdownDescription: "Updates `x`, `y`, and/or `angle` on an entity. Cheaper than `entity-update` for transform-only changes.",
       examples: [
-        "{ \"entity-move\": \"player\", \"x\": { \"var\": \"$x\" }, \"y\": { \"var\": \"$y\" } }",
+        "{ \"$entity-move\": \"player\", \"x\": { \"$var\": \"x\" }, \"y\": { \"$var\": \"y\" } }",
       ],
       siblings: {
         x: {
@@ -281,7 +280,7 @@ export class EntityNode extends Node {
       output: "null",
       markdownDescription: "Updates writable fields on an existing entity, by the id in `entity-update`. Every field `entity-add` takes (except `type` and `pooled`, both fixed once a slot is allocated), plus `text` and the `trigger` / `ccd` collision flags.\r\nA no-op when no entity has that id.",
       examples: [
-        "{ \"entity-update\": \"player\", \"translation\": [{ \"var\": \"$x\" }, 0, 0], \"color\": [1, 0, 0, 1] }",
+        "{ \"$entity-update\": \"player\", \"translation\": [{ \"$var\": \"x\" }, 0, 0], \"color\": [1, 0, 0, 1] }",
       ],
       siblings: {
         ...ENTITY_FIELDS,
@@ -307,7 +306,7 @@ export class EntityNode extends Node {
       output: "array",
       markdownDescription: "Returns all entities in the active store as an array of plain objects.\r\nPass a group name to filter, or `true` to return all groups.",
       examples: [
-        "{ \"entity-list\": \"enemies\" }",
+        "{ \"$entity-list\": \"enemies\" }",
       ],
     },
     "entity-nearest": {
@@ -315,7 +314,7 @@ export class EntityNode extends Node {
       output: "object",
       markdownDescription: "Returns the entity in `group` closest to the given `x`, `y` point, with an added `distance` field.",
       examples: [
-        "{ \"entity-nearest\": \"enemies\", \"x\": { \"var\": \"$player.x\" }, \"y\": { \"var\": \"$player.y\" } }",
+        "{ \"$entity-nearest\": \"enemies\", \"x\": { \"$var\": \"player.x\" }, \"y\": { \"$var\": \"player.y\" } }",
       ],
       siblings: {
         x: {
@@ -332,7 +331,7 @@ export class EntityNode extends Node {
       type: "string",
       markdownDescription: "Gets a single property or the full object for an entity. Pass `id` as the value and `prop` for a single field.\r\nOmit `prop` to get the full entity object. Supports all data fields plus `worldX`, `worldY`, `worldZ`.",
       examples: [
-        "{ \"entity-get\": \"player\", \"prop\": \"x\" }",
+        "{ \"$entity-get\": \"player\", \"prop\": \"x\" }",
       ],
       siblings: {
         prop: {
@@ -348,7 +347,7 @@ export class EntityNode extends Node {
 
   ["entity-init"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveObj(def, context, r => {
-      const id = String(r["entity-init"]);
+      const id = String(r["$entity-init"]);
       // `shared:true` backs the store with growable SharedArrayBuffers so the host
       // (Server worker_threads / Client Web Worker) can step physics off-thread.
       // The store quietly stays non-shared if growable SAB is unsupported.
@@ -373,7 +372,7 @@ export class EntityNode extends Node {
     return resolveObj(def, context, r => {
       const keys = Object.keys(def);
 
-      const id     = String(r["entity-add"]);
+      const id     = String(r["$entity-add"]);
       const type   = (r["type"] ? String(r["type"]) : "quad") as EntityMeta["type"];
       const pooled = r["pooled"] !== undefined && this.toBoolean(r["pooled"]);
 
@@ -500,7 +499,7 @@ export class EntityNode extends Node {
       if (r["dirZ"]         !== undefined) meta.dirZ        = Number(r["dirZ"]);
 
       for (const key of keys) {
-        if (!KNOWN_KEYS.has(key)) meta.custom[key] = r[key];
+        if (!KNOWN_KEYS.has(key) && ownedKey(key) === null) meta.custom[key] = r[key];
       }
 
       // Sync packed collision arrays now that group/mask/type/meshId are final
@@ -529,7 +528,7 @@ export class EntityNode extends Node {
     return resolveObj(def, context, r => {
       const store = getStore(context);
       if (!store) return null;
-      const id     = String(r["entity-remove"]);
+      const id     = String(r["$entity-remove"]);
       const pooled = r["pooled"] !== undefined && this.toBoolean(r["pooled"]);
       if (pooled) store.poolRelease(id);
       else store.remove(id);
@@ -545,7 +544,7 @@ export class EntityNode extends Node {
     if (!store) return null;
 
     return resolveObj(def, context, r => {
-      const slot = store.slot(String(r["entity-move"]));
+      const slot = store.slot(String(r["$entity-move"]));
       if (slot === -1) return null;
 
       const d = store.data, b = slot * STRIDE;
@@ -575,7 +574,7 @@ export class EntityNode extends Node {
     if (!store) return null;
 
     return resolveObj(def, context, r => {
-      const id   = String(r["entity-update"]);
+      const id   = String(r["$entity-update"]);
       const slot = store.slot(id);
       if (slot === -1) return null;
 
@@ -583,7 +582,7 @@ export class EntityNode extends Node {
       const meta = store.meta[slot]!;
 
       for (const key of Object.keys(r)) {
-        if (key === "entity-update" || GLOBAL_KEYS.has(key)) continue;
+        if (ownedKey(key) !== null) continue;
         const v = r[key];
           switch (key) {
             case "translation": {
@@ -739,7 +738,7 @@ export class EntityNode extends Node {
   // ── entity-list ──────────────────────────────────────────────────────
 
   ["entity-list"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["entity-list"], context, val => {
+    return resolve(def["$entity-list"], context, val => {
       const store = getStore(context);
       if (!store) return [];
       const groupFilter = val === true ? null : String(val);
@@ -762,7 +761,7 @@ export class EntityNode extends Node {
     return resolveObj(def, context, r => {
       const store = getStore(context);
       if (!store) return null;
-      const group = String(r["entity-nearest"]);
+      const group = String(r["$entity-nearest"]);
       const px    = Number(r["x"]);
       const py    = Number(r["y"]);
       const d = store.data;
@@ -787,7 +786,7 @@ export class EntityNode extends Node {
   // ── entity-get ───────────────────────────────────────────────────────
 
   ["entity-get"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["entity-get"], context, opId => {
+    return resolve(def["$entity-get"], context, opId => {
       const store = getStore(context);
       if (!store) return null;
       const id   = String(opId);

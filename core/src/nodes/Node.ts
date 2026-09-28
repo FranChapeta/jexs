@@ -2,7 +2,7 @@
  * Base class for all value resolver nodes.
  *
  * Nodes interpret JSON expressions at runtime, transforming data structures
- * like { "var": "$user.name" } or { "concat": ["Hello", " ", "World"] }
+ * like { "$var": "user.name" } or { "$concat": ["Hello", " ", "World"] }
  * into actual values.
  */
 
@@ -42,8 +42,8 @@ export type NodeValue = unknown;
 /**
  * Links a derived (child) scope back to the context it was spread from, so a
  * write can travel upward past the copy that made it (see `setContextValue`'s
- * `bubble`). Symbol-keyed AND non-enumerable, on purpose:
- *  - templates can't read it as a `$var`, and request data / `as` (string keys
+ * `$bubble`). Symbol-keyed AND non-enumerable, on purpose:
+ *  - templates can't read it as a `$var`, and request data / `$as` (string keys
  *    only) can't forge it;
  *  - JSON and structuredClone drop symbols, so the chain never serializes to a
  *    worker or a log;
@@ -51,15 +51,15 @@ export type NodeValue = unknown;
  *    only gains a parent link when a site explicitly derives one via
  *    `childContext`. This is deliberate: it means a plain spread — e.g. the
  *    server's per-request context spread from the shared startup context — never
- *    inherits a stale link and can never leak a `bubble` write into an
+ *    inherits a stale link and can never leak a `$bubble` write into an
  *    unrelated scope. Untouched child-context sites are simply bubble
  *    boundaries, never mis-routes.
  */
 export const PARENT = Symbol("jexs.parent");
 
 /**
- * Derive a child scope from `parent`, linked back via PARENT so `setVars` / `as`
- * with `bubble` can write through to it. `extra` is merged on top (loop
+ * Derive a child scope from `parent`, linked back via PARENT so `$setVars` / `$as`
+ * with `$bubble` can write through to it. `extra` is merged on top (loop
  * bindings, fileDir, params) and may carry symbol keys (e.g. the fileDir marker).
  * The link is non-enumerable, so it never shows up in a later spread/serialize.
  */
@@ -144,7 +144,7 @@ export abstract class Node {
    * Helper: Set nested value in context using dot notation for "as" support.
    * e.g. setContextValue(ctx, "request.body.value", hash) sets ctx.request.body.value
    *
-   * With `bubble`, the same write is also applied to every enclosing scope up
+   * With `$bubble`, the same write is also applied to every enclosing scope up
    * the PARENT chain, so the value survives after the current file/loop/branch
    * (each a copied context) returns — this is how state moves upward.
    */
@@ -175,7 +175,7 @@ export abstract class Node {
 
   /**
    * Helper: Convert value to boolean. Also exposed as a static, so the resolver
-   * machinery (the global `bubble` modifier) coerces a resolved flag by exactly
+   * machinery (the global `$bubble` modifier) coerces a resolved flag by exactly
    * the rules every node's condition inputs get.
    */
   protected toBoolean(value: unknown): boolean {

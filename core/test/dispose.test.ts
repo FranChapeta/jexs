@@ -30,7 +30,7 @@ test("creating a resolver leaves an existing one running", () => {
 
   assert.equal(node.disposed, 0, "an unrelated resolver must not dispose this node");
   assert.equal(first.destroyed, false);
-  assert.equal(first({ disposable: true }, {}), null, "and it still dispatches");
+  assert.equal(first({ $disposable: true }, {}), null, "and it still dispatches");
 });
 
 test("a node claiming many keys is disposed once, not per key", () => {

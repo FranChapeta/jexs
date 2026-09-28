@@ -2,17 +2,17 @@
  * TimerNode — fixed-rate loops and scheduled recurring tasks.
  *
  * Tick: compensating setTimeout loop for drift-free high-frequency timing.
- * - { "tick": "start", "id": "game", "rate": 60, "do": [...] }
- * - { "tick": "stop", "id": "game" }
- * - { "tick": "pause", "id": "game" }
- * - { "tick": "resume", "id": "game" }
+ * - { "$tick": "start", "id": "game", "rate": 60, "do": [...] }
+ * - { "$tick": "stop", "id": "game" }
+ * - { "$tick": "pause", "id": "game" }
+ * - { "$tick": "resume", "id": "game" }
  * Context: tick.count, tick.dt, tick.elapsed
  *
  * Cron: setInterval for human-readable scheduled tasks.
- * - { "cron": "start", "id": "cleanup", "every": "5m", "do": [...] }
- * - { "cron": "stop", "id": "cleanup" }
- * - { "cron": "pause", "id": "cleanup" }
- * - { "cron": "resume", "id": "cleanup" }
+ * - { "$cron": "start", "id": "cleanup", "every": "5m", "do": [...] }
+ * - { "$cron": "stop", "id": "cleanup" }
+ * - { "$cron": "pause", "id": "cleanup" }
+ * - { "$cron": "resume", "id": "cleanup" }
  * Context: cron.runCount, cron.lastRun, cron.elapsed
  * Interval formats: "500ms", "30s", "5m", "1h", "1d"
  */
@@ -36,7 +36,7 @@ interface TimerState {
   intervalMs: number;
   steps: unknown[];
   context: Context;
-  /** The originating step, so a deferred failure can honor its `catch`. */
+  /** The originating step, so a deferred failure can honor its `$catch`. */
   def: Record<string, unknown>;
   detach: boolean;
   timerId: ReturnType<typeof setTimeout> | null;
@@ -64,7 +64,7 @@ export class TimerNode extends Node {
       output: "null",
       markdownDescription: "Drift-compensating fixed-rate loop. Steps receive `tick.count`, `tick.dt`, `tick.elapsed` in context.",
       examples: [
-        "{ \"tick\": \"start\", \"id\": \"game\", \"rate\": 60, \"detach\": true, \"do\": [{ \"var\": \"tick.dt\" }] }",
+        "{ \"$tick\": \"start\", \"id\": \"game\", \"rate\": 60, \"detach\": true, \"do\": [{ \"$var\": \"tick.dt\" }] }",
       ],
       siblings: {
         id: {
@@ -106,7 +106,7 @@ export class TimerNode extends Node {
       output: "null",
       markdownDescription: "Interval-based scheduled task. Steps receive `cron.runCount`, `cron.lastRun`, `cron.elapsed` in context.\r\nInterval formats: `\"500ms\"`, `\"30s\"`, `\"5m\"`, `\"1h\"`, `\"1d\"`.",
       examples: [
-        "{ \"cron\": \"start\", \"id\": \"poll\", \"every\": \"30s\", \"do\": [{ \"fetch\": \"/api/status\" }] }",
+        "{ \"$cron\": \"start\", \"id\": \"poll\", \"every\": \"30s\", \"do\": [{ \"$fetch\": \"/api/status\" }] }",
       ],
       siblings: {
         id: {
@@ -139,11 +139,11 @@ export class TimerNode extends Node {
   readonly crons = new Map<string, TimerState>();
 
   tick(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.tick, context, op => dispatch(this, String(op), def, context, "tick"));
+    return resolve(def.$tick, context, op => dispatch(this, String(op), def, context, "tick"));
   }
 
   cron(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.cron, context, op => dispatch(this, String(op), def, context, "cron"));
+    return resolve(def.$cron, context, op => dispatch(this, String(op), def, context, "cron"));
   }
 
   /** Timers outlive their resolver unless stopped, so tear them down with it. */

@@ -1,13 +1,20 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createResolver, coreNodes } from "@jexs/core";
+import { createResolver, coreNodes, Node } from "@jexs/core";
 import path from "node:path";
 import { safeRelative } from "@jexs/server";
 import { SHELL_CSP, pageForWindowName, registerWrap, resetWindows, shellTemplate, wrapPage } from "../src/nodes/Window.js";
 import { deniedKey } from "../src/bridge.js";
 
+/** The shell mounts its page through FileNode, which lives in @jexs/server; this
+ *  stands in for the file read so the shell resolves with core alone. */
+class StubFileNode extends Node {
+  get handlerKeys() { return ["file"]; }
+  resolve() { return ""; }
+}
+
 test("the shell carries a CSP", () => {
-  const resolver = createResolver(coreNodes());
+  const resolver = createResolver([...coreNodes(), new StubFileNode()]);
   const html = String(resolver(shellTemplate(), {
     title: "T", page: "index.json", _clientScript: "/client.js",
   }));
@@ -59,8 +66,8 @@ const isOp = (key: string) => ["query", "file", "getValue", "window-close"].incl
 
 test("siblings need no listing, only ops do", () => {
   const allow = new Set(["query"]);
-  assert.equal(deniedKey({ query: "select", table: "saves" }, allow, isOp), undefined);
-  assert.equal(deniedKey({ file: "x", write: "y" }, allow, isOp), "file");
+  assert.equal(deniedKey({ $query: "select", table: "saves" }, allow, isOp), undefined);
+  assert.equal(deniedKey({ $file: "x", write: "y" }, allow, isOp), "file");
 });
 
 test("global step keys are never treated as ops to allow", () => {
@@ -68,7 +75,7 @@ test("global step keys are never treated as ops to allow", () => {
   // `() => true` claims every key is an op, so only the GLOBAL_KEYS skip can
   // save this call.
   assert.equal(
-    deniedKey({ query: "select", as: "rows", catch: [], then: [], bubble: true, return: 1 }, allow, () => true),
+    deniedKey({ $query: "select", $as: "rows", $catch: [], $then: [], $bubble: true, $return: 1 }, allow, () => true),
     undefined,
   );
 });
@@ -77,16 +84,16 @@ test("global step keys are never treated as ops to allow", () => {
 // handler. Checking only the call's own keys would have let both of these run.
 test("a denied op nested in a sibling value is caught", () => {
   const allow = new Set(["query"]);
-  assert.equal(deniedKey({ query: "x", table: { file: "/etc/passwd" } }, allow, isOp), "file");
-  assert.equal(deniedKey({ query: "x", catch: [{ file: "/etc/passwd" }] }, allow, isOp), "file");
+  assert.equal(deniedKey({ $query: "x", table: { $file: "/etc/passwd" } }, allow, isOp), "file");
+  assert.equal(deniedKey({ $query: "x", $catch: [{ $file: "/etc/passwd" }] }, allow, isOp), "file");
 });
 
 // A structured clone preserves reference identity, so one object can be shared
 // across many slots. Re-walking it at each reference is exponential: this payload
 // is ~70 objects and takes seconds undeduplicated, against ~0ms with the WeakSet.
 test("a shared subtree is walked once, not once per reference", () => {
-  let node: Record<string, unknown> = { query: "leaf" };
-  for (let i = 0; i < 24; i++) node = { query: "x", a: node, b: node };
+  let node: Record<string, unknown> = { $query: "leaf" };
+  for (let i = 0; i < 24; i++) node = { $query: "x", a: node, b: node };
   const started = Date.now();
   assert.equal(deniedKey(node, new Set(["query"]), isOp), undefined);
   assert.ok(Date.now() - started < 2000, "the walk did not deduplicate shared references");
@@ -95,7 +102,7 @@ test("a shared subtree is walked once, not once per reference", () => {
 // The degenerate case of the same thing: without dedup this recurses until the
 // stack gives out rather than returning a verdict.
 test("a cyclic payload returns instead of overflowing the stack", () => {
-  const call: Record<string, unknown> = { query: "select" };
+  const call: Record<string, unknown> = { $query: "select" };
   call.table = call;
   assert.equal(deniedKey(call, new Set(["query"]), isOp), undefined);
 });
@@ -159,7 +166,7 @@ test("an unknown or absent wrap token renders nothing", () => {
 });
 
 // The other branch. It does not serve src/*.json: the name goes into the shell as
-// `{ file: $page }`, FileNode reads it in MAIN, and the renderer gets HTML back.
+// `{ $file: $page }`, FileNode reads it in MAIN, and the renderer gets HTML back.
 // The guard is on which template may be NAMED, not on which file is sent —
 // FileNode resolves with path.resolve, which honors `../`, and a page may
 // navigate to any app:// URL it likes.

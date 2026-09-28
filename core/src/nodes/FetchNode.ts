@@ -85,7 +85,7 @@ function excerpt(text: string): string {
  * The body of a failing response, read from its own Content-Type rather than the
  * URL extension or a `type` override: an error page comes from the server's error
  * handler, not from the endpoint whose shape the URL advertises. Text either way,
- * parsed when it says JSON, so `$response` stays something a template can read
+ * parsed when it says JSON, so `response` stays something a template can read
  * and a worker can clone.
  */
 function errorBody(response: Response, text: string): unknown {
@@ -103,10 +103,10 @@ export class FetchNode extends Node {
     fetch: {
       type: "string",
       output: "any",
-      markdownDescription: "Makes an HTTP request to the URL in `fetch`. Defaults to GET; pass `method` and `body` for writes, and `headers` for auth or content negotiation.\n\nResponse decoding takes the first of these that applies:\n1. The `type` sibling, when set.\n2. URL extension: `.json`/`.gltf` → JSON, text-like extensions → string,\n   known binary extensions (`.glb`, `.bin`, `.png`, etc.) → ArrayBuffer.\n3. Response Content-Type: `application/json` (or a `+json` suffix) → JSON, `text/*` → string,\n   everything else → ArrayBuffer.\n\nA non-2xx status throws an HTTP error carrying that status. An enclosing `catch` gets the usual `$error` (`{ status, message }`) plus `$response`, the failing response in the same shape `full` returns, so `{ \"var\": \"$response.body.message\" }` reads the server's error body. Pass `throw: false` for a step that never interrupts the sequence (no failure throws, a timeout included), and `full` to get the headers and status alongside the body.",
+      markdownDescription: "Makes an HTTP request to the URL in `fetch`. Defaults to GET; pass `method` and `body` for writes, and `headers` for auth or content negotiation.\n\nResponse decoding takes the first of these that applies:\n1. The `type` sibling, when set.\n2. URL extension: `.json`/`.gltf` → JSON, text-like extensions → string,\n   known binary extensions (`.glb`, `.bin`, `.png`, etc.) → ArrayBuffer.\n3. Response Content-Type: `application/json` (or a `+json` suffix) → JSON, `text/*` → string,\n   everything else → ArrayBuffer.\n\nA non-2xx status throws an HTTP error carrying that status. An enclosing `$catch` gets the usual `$error` (`{ status, message }`) plus `response`, the failing response in the same shape `full` returns, so `{ \"$var\": \"response.body.message\" }` reads the server's error body. Pass `throw: false` for a step that never interrupts the sequence (no failure throws, a timeout included), and `full` to get the headers and status alongside the body.",
       outputDescription: "The decoded response body: a parsed value for JSON, a string for text, an ArrayBuffer (or a Blob with `type: \"blob\"`) for binary. A `204`/`205` response and any HEAD request resolve to `null`.",
       examples: [
-        "{ \"fetch\": \"/api/users\", \"method\": \"POST\", \"body\": { \"name\": { \"var\": \"$name\" } } }\n{ \"fetch\": \"/api/me\", \"headers\": { \"Authorization\": { \"concat\": [\"Bearer \", { \"var\": \"$token\" }] } } }\n{ \"fetch\": \"/api/flaky\", \"timeout\": 5000, \"catch\": [{ \"concat\": [\"failed: \", { \"var\": \"$error.status\" }] }] }\n{ \"fetch\": \"/models/Duck.glb\", \"as\": \"buf\" }",
+        "{ \"$fetch\": \"/api/users\", \"method\": \"POST\", \"body\": { \"name\": { \"$var\": \"name\" } } }\n{ \"$fetch\": \"/api/me\", \"headers\": { \"Authorization\": { \"$concat\": [\"Bearer \", { \"$var\": \"token\" }] } } }\n{ \"$fetch\": \"/api/flaky\", \"timeout\": 5000, \"$catch\": [{ \"$concat\": [\"failed: \", { \"$var\": \"error.status\" }] }] }\n{ \"$fetch\": \"/models/Duck.glb\", \"$as\": \"buf\" }",
       ],
       siblings: {
         method: {
@@ -124,7 +124,7 @@ export class FetchNode extends Node {
           map: true,
           markdownDescription: "Request headers. Each value is resolved as an expression and matched case-insensitively, so an explicit `Content-Type` replaces the `application/json` default. Entries resolving to `null`/`undefined` are dropped.",
           examples: [
-            "{ \"headers\": { \"Authorization\": { \"concat\": [\"Bearer \", { \"var\": \"$token\" }] }, \"Accept\": \"application/json\" } }",
+            "{ \"headers\": { \"Authorization\": { \"$concat\": [\"Bearer \", { \"$var\": \"token\" }] }, \"Accept\": \"application/json\" } }",
           ],
         },
         type: {
@@ -139,7 +139,7 @@ export class FetchNode extends Node {
           type: "boolean",
           markdownDescription: "Set `false` and the step never interrupts the sequence: not for a non-2xx status, and not for a request that never completed (a timeout, a refused connection).\n\nPair with `full` when you need to distinguish whether nothing arrived or the body was empty.",
           examples: [
-            "{ \"fetch\": \"/api/login\", \"method\": \"POST\", \"throw\": false, \"full\": true, \"as\": \"res\" }",
+            "{ \"$fetch\": \"/api/login\", \"method\": \"POST\", \"throw\": false, \"full\": true, \"$as\": \"res\" }",
           ],
         },
         timeout: {
@@ -175,7 +175,7 @@ export class FetchNode extends Node {
           markdownDescription: "Resolves to the whole response instead of the bare body: for a response header such as an `ETag`, or to tell a `201` from a `200`. Shape only: a non-2xx still throws unless you also pass `throw: false`, which is what reading a `redirect: \"manual\"` 3xx takes.",
           outputDescription: "`{ status, ok, headers, body, url }`",
           examples: [
-            "{ \"fetch\": \"/api/thing\", \"full\": true, \"as\": \"res\" }",
+            "{ \"$fetch\": \"/api/thing\", \"full\": true, \"$as\": \"res\" }",
           ],
         },
       },
@@ -185,7 +185,7 @@ export class FetchNode extends Node {
   fetch(def: Record<string, unknown>, context: Context): NodeValue {
     const headerDef = this.isObject(def.headers) ? def.headers : {};
     const opts: Record<string, unknown> = {
-      url: def.fetch,
+      url: def.$fetch,
       method: def.method ?? "GET",
       body: def.body ?? null,
       type: def.type ?? null,

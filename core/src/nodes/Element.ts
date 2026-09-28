@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue } from "./Node.js";
-import { resolve, resolveAll, translate } from "../Resolver.js";
+import { resolve, resolveAll, translate, ownedKey } from "../Resolver.js";
 import { hasVariables, interpolate } from "./Variables.js";
 import { escapeHtml, escapeScriptJson, isObject } from "../helpers.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
@@ -22,9 +22,8 @@ const tag = (siblings: Record<string, A>) => ({ siblings });
 // HTML global attributes — valid on every element, so they live on the method
 // (not per-variant). `class`/`style` accept their special shapes.
 const GLOBAL: Record<string, A> = {
-  if:      { description: "Conditionally render this element; a falsy result renders an empty string `\"\"`." },
   content: { description: "Children of the element: a string or mixed array of strings and expressions." },
-  events:  { $ref: "#/$defs/_eventMap", description: "DOM event handlers, keyed by event name: `{ \"click\": { \"do\": [...] } }`." },
+  events:  { $ref: "#/$defs/_eventMap", description: "DOM event handlers, keyed by event name: `{ \"$tag\": \"button\", \"events\": { \"click\": { \"do\": [...] } } }`." },
   class:   { type: ["string", "array", "object"], description: "Class list: a string, array, or `{ className: bool }` map." },
   id:      str("Element id."),
   style:   { type: ["object", "string"], description: "Inline style: a camel/kebab-case object, or a string." },
@@ -40,7 +39,9 @@ const GLOBAL: Record<string, A> = {
   contenteditable: { type: ["boolean", "string"], description: "Whether the element is editable." },
 };
 
-const RESERVED_KEYS = new Set(["tag", "content", "if", "events"]);
+/** Siblings the element reads itself rather than rendering as attributes. The `$`
+ *  keys (the op, and the global step keys) belong to the resolver and never render. */
+const RESERVED_KEYS = new Set(["content", "events"]);
 const SELF_CLOSING = new Set([
   "area", "base", "br", "col", "embed", "hr", "img", "input",
   "link", "meta", "source", "track", "wbr",
@@ -58,12 +59,11 @@ export function resetElementIdCounter(): void {
  * Matches when definition has a "tag" key.
  * Attributes go directly on the object (not nested under "attrs"):
  *
- *   { "tag": "div", "class": "container", "content": [...] }
- *   { "tag": "input", "type": "text", "name": "email", "required": true }
- *   { "if": { "var": "$show" }, "tag": "span", "class": "badge", "content": ["New"] }
+ *   { "$tag": "div", "class": "container", "content": [...] }
+ *   { "$tag": "input", "type": "text", "name": "email", "required": true }
  *
- * Content can be a string, array, or nested expression.
- * The "if" key conditionally renders the element.
+ * Content can be a string, array, or nested expression. To render an element
+ * conditionally, wrap it: { "$if": { "$var": "show" }, "then": { "$tag": "span" } }.
  */
 export class ElementNode extends Node {
   // An `events` value is a MAP of event-name → handler, so each handler's shape
@@ -87,10 +87,12 @@ export class ElementNode extends Node {
             if: { type: "array" },
             then: { items: { $ref: "#/$defs/exprFlat" } },
             else: { $ref: "#/$defs/exprFlat" },
-            description: "Steps to run when the event fires (`$event`, `$target` in context). A single expression is also accepted.",
+            description: "Steps to run when the event fires (`event`, `target` in context). A single expression is also accepted.",
           },
           preventDefault: { $ref: "#/$defs/boolOrExpr", description: "Call `preventDefault()` on the event." },
           stopPropagation: { $ref: "#/$defs/boolOrExpr", description: "Call `stopPropagation()` on the event." },
+          // Raw defs get no global keys injected; a handler honors this one.
+          $catch: { $ref: "#/$defs/steps", description: "Steps run with `error` bound if `do` fails. Without this a failure is only logged." },
         },
       },
       // A bare array of steps or a single expression is also accepted.
@@ -111,10 +113,10 @@ export class ElementNode extends Node {
       // (the variants only ADD known-attribute hints, never restrict).
       variantBy: "value",
       exclusive: false,
-      markdownDescription: "Renders an HTML element. Attributes are flat keys on the object; `content` holds children.\r\n`class` accepts a string, array, or `{ className: bool }` map. `style` accepts a camel- or kebab-case object.\r\nFor `<style>`/`<script>` the `content` is emitted as literal text (no escaping/translation); a `<style>` object `content` is compiled to CSS, and a `<script>` with a JSON `type` (`application/json` or a `+json` media type such as `application/ld+json`) has its `content` resolved and serialized to safely-escaped JSON.\r\nAdd an `\"if\"` key to conditionally render. Wire DOM events via an `\"events\"` object.",
-      outputDescription: "An HTML **string**. When an `\"if\"` key is present and falsy, renders to an empty string `\"\"`. String content has `$identifier` tokens interpolated, so wrap literal `$` content in `{ \"raw\": \"…\" }`.",
+      markdownDescription: "Renders an HTML element. Attributes are flat keys on the object; `content` holds children.\r\n`class` accepts a string, array, or `{ className: bool }` map. `style` accepts a camel- or kebab-case object.\r\nFor `<style>`/`<script>` the `content` is emitted as literal text (no escaping/translation); a `<style>` object `content` is compiled to CSS, and a `<script>` with a JSON `type` (`application/json` or a `+json` media type such as `application/ld+json`) has its `content` resolved and serialized to safely-escaped JSON.\r\nWire DOM events via an `\"events\"` object. To render conditionally, wrap the element in `$if`/`then`.",
+      outputDescription: "An HTML **string**. String content has `$identifier` tokens interpolated, so wrap literal `$` content in `{ \"raw\": \"…\" }`.",
       examples: [
-        "{ \"tag\": \"button\", \"class\": \"btn\", \"events\": { \"click\": { \"do\": [...] } }, \"content\": [\"Submit\"] }",
+        "{ \"$tag\": \"button\", \"class\": \"btn\", \"events\": { \"click\": { \"do\": [...] } }, \"content\": [\"Submit\"] }",
       ],
       siblings: GLOBAL,
       variants: {
@@ -151,18 +153,12 @@ export class ElementNode extends Node {
   };
 
   tag(def: Record<string, unknown>, context: Context): NodeValue {
-    if ("if" in def) {
-      return resolve(def.if, context, condition => {
-        if (!this.toBoolean(condition)) return "";
-        return renderElement(def, context);
-      });
-    }
     return renderElement(def, context);
   }
 }
 
 function renderElement(def: Record<string, unknown>, context: Context): unknown {
-  return resolve(def.tag, context, tagRaw => {
+  return resolve(def.$tag, context, tagRaw => {
     const tag = String(tagRaw);
     const isSelfClosing = SELF_CLOSING.has(tag);
     const eventsAttr = buildEventsAttr(def);
@@ -227,6 +223,8 @@ interface EventHandler {
   do: unknown[];
   preventDefault?: boolean;
   stopPropagation?: boolean;
+  /** Steps run with `error` bound if `do` fails, as on any step. */
+  $catch?: unknown;
 }
 
 function buildEventsAttr(def: Record<string, unknown>): string {
@@ -242,6 +240,7 @@ function buildEventsAttr(def: Record<string, unknown>): string {
       };
       if (h.preventDefault) evt.preventDefault = true;
       if (h.stopPropagation) evt.stopPropagation = true;
+      if (h.$catch !== undefined) evt.$catch = h.$catch;
       eventsArr.push(evt);
     } else {
       eventsArr.push({ type, do: Array.isArray(handler) ? (handler as unknown[]) : [handler] });
@@ -290,7 +289,7 @@ function renderAttrs(
 ): string | Promise<string> {
   const entries = Object.entries(def).filter(([k]) => {
     if (allowContent && k === "content") return true;
-    return !RESERVED_KEYS.has(k);
+    return !RESERVED_KEYS.has(k) && ownedKey(k) === null;
   });
   if (entries.length === 0) return "";
 

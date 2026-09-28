@@ -54,133 +54,133 @@ export class MathNode extends Node {
       output: "number",
       markdownDescription: "Returns the square root of a number.",
       examples: [
-        "{ \"sqrt\": 16 }",
+        "{ \"$sqrt\": 16 }",
       ],
     },
     abs: {
       output: "number",
       markdownDescription: "Returns the absolute value of a number.",
       examples: [
-        "{ \"abs\": -5 }",
+        "{ \"$abs\": -5 }",
       ],
     },
     round: {
       output: "number",
       markdownDescription: "Rounds a number to the nearest integer.",
       examples: [
-        "{ \"round\": 3.6 }",
+        "{ \"$round\": 3.6 }",
       ],
     },
     floor: {
       output: "number",
       markdownDescription: "Rounds a number down to the nearest integer.",
       examples: [
-        "{ \"floor\": 3.9 }",
+        "{ \"$floor\": 3.9 }",
       ],
     },
     ceil: {
       output: "number",
       markdownDescription: "Rounds a number up to the nearest integer.",
       examples: [
-        "{ \"ceil\": 3.1 }",
+        "{ \"$ceil\": 3.1 }",
       ],
     },
     parseInt: {
       output: "number",
       markdownDescription: "Parses a string to an integer (base 10); returns `0` on failure.",
       examples: [
-        "{ \"parseInt\": \"42px\" }",
+        "{ \"$parseInt\": \"42px\" }",
       ],
     },
     parseFloat: {
       output: "number",
       markdownDescription: "Parses a string to a float; returns `0` on failure.",
       examples: [
-        "{ \"parseFloat\": \"3.14rem\" }",
+        "{ \"$parseFloat\": \"3.14rem\" }",
       ],
     },
     sin: {
       output: "number",
       markdownDescription: "Sine of an angle in degrees.",
       examples: [
-        "{ \"sin\": 90 }",
+        "{ \"$sin\": 90 }",
       ],
     },
     cos: {
       output: "number",
       markdownDescription: "Cosine of an angle in degrees.",
       examples: [
-        "{ \"cos\": 0 }",
+        "{ \"$cos\": 0 }",
       ],
     },
     tan: {
       output: "number",
       markdownDescription: "Tangent of an angle in degrees.",
       examples: [
-        "{ \"tan\": 45 }",
+        "{ \"$tan\": 45 }",
       ],
     },
     asin: {
       output: "number",
       markdownDescription: "Arcsine of a value, returned in degrees. Input outside `[-1, 1]` yields `NaN`.",
       examples: [
-        "{ \"asin\": 1 }",
+        "{ \"$asin\": 1 }",
       ],
     },
     acos: {
       output: "number",
       markdownDescription: "Arccosine of a value, returned in degrees. Input outside `[-1, 1]` yields `NaN`.",
       examples: [
-        "{ \"acos\": 0 }",
+        "{ \"$acos\": 0 }",
       ],
     },
     atan: {
       output: "number",
       markdownDescription: "Arctangent of a value, returned in degrees. For a two-argument form use `atan2`.",
       examples: [
-        "{ \"atan\": 1 }",
+        "{ \"$atan\": 1 }",
       ],
     },
     log: {
       output: "number",
       markdownDescription: "Natural logarithm (base `e`) of a number.",
       examples: [
-        "{ \"log\": 2.718281828 }",
+        "{ \"$log\": 2.718281828 }",
       ],
     },
     log2: {
       output: "number",
       markdownDescription: "Base-2 logarithm of a number.",
       examples: [
-        "{ \"log2\": 8 }",
+        "{ \"$log2\": 8 }",
       ],
     },
     log10: {
       output: "number",
       markdownDescription: "Base-10 logarithm of a number.",
       examples: [
-        "{ \"log10\": 1000 }",
+        "{ \"$log10\": 1000 }",
       ],
     },
     exp: {
       output: "number",
       markdownDescription: "Returns `e` raised to the given power.",
       examples: [
-        "{ \"exp\": 1 }",
+        "{ \"$exp\": 1 }",
       ],
     },
     sign: {
       output: "number",
       markdownDescription: "Sign of a number: `-1`, `0`, or `1`.",
       examples: [
-        "{ \"sign\": -42 }",
+        "{ \"$sign\": -42 }",
       ],
     },
     trunc: {
       output: "number",
       markdownDescription: "Removes the fractional part of a number, truncating toward zero.",
       examples: [
-        "{ \"trunc\": -3.9 }",
+        "{ \"$trunc\": -3.9 }",
       ],
     },
     hypot: {
@@ -191,7 +191,7 @@ export class MathNode extends Node {
       output: "number",
       markdownDescription: "Euclidean norm: the square root of the sum of squares of an array of numbers.",
       examples: [
-        "{ \"hypot\": [3, 4] }",
+        "{ \"$hypot\": [3, 4] }",
       ],
     },
     lerp: {
@@ -204,7 +204,7 @@ export class MathNode extends Node {
       output: "number",
       markdownDescription: "Linear interpolation between `a` and `b` by fraction `t`: `a + (b - a) * t`. Tuple form `[a, b, t]`. Extrapolates when `t` is outside `[0, 1]`.",
       examples: [
-        "{ \"lerp\": [0, 100, 0.5] }",
+        "{ \"$lerp\": [0, 100, 0.5] }",
       ],
     },
     mapRange: {
@@ -219,8 +219,8 @@ export class MathNode extends Node {
       output: "number",
       markdownDescription: "Linearly remaps a value from one range to another: `[value, inMin, inMax, outMin, outMax]`. Extrapolates by default; set `clampToRange: true` to bound the result to `[outMin, outMax]`. When `inMin === inMax` it returns `outMin`.",
       examples: [
-        "{ \"mapRange\": [5, 0, 10, 0, 100] }",
-        "{ \"mapRange\": [15, 0, 10, 0, 100], \"clampToRange\": true }",
+        "{ \"$mapRange\": [5, 0, 10, 0, 100] }",
+        "{ \"$mapRange\": [15, 0, 10, 0, 100], \"clampToRange\": true }",
       ],
       siblings: {
         clampToRange: {
@@ -237,7 +237,7 @@ export class MathNode extends Node {
       output: "number",
       markdownDescription: "Sums all numbers in an array.",
       examples: [
-        "{ \"sum\": [1, 2, 3] }",
+        "{ \"$sum\": [1, 2, 3] }",
       ],
     },
     avg: {
@@ -248,7 +248,7 @@ export class MathNode extends Node {
       output: "number",
       markdownDescription: "Returns the arithmetic mean of an array of numbers.",
       examples: [
-        "{ \"avg\": [1, 2, 3] }",
+        "{ \"$avg\": [1, 2, 3] }",
       ],
     },
     add: {
@@ -259,7 +259,7 @@ export class MathNode extends Node {
       output: "number",
       markdownDescription: "Sums two or more numbers.",
       examples: [
-        "{ \"add\": [{ \"var\": \"$price\" }, 10] }",
+        "{ \"$add\": [{ \"$var\": \"price\" }, 10] }",
       ],
     },
     subtract: {
@@ -270,7 +270,7 @@ export class MathNode extends Node {
       output: "number",
       markdownDescription: "Subtracts subsequent values from the first. Single-element negates.",
       examples: [
-        "{ \"subtract\": [10, 3] }",
+        "{ \"$subtract\": [10, 3] }",
       ],
     },
     multiply: {
@@ -281,7 +281,7 @@ export class MathNode extends Node {
       output: "number",
       markdownDescription: "Multiplies two or more numbers.",
       examples: [
-        "{ \"multiply\": [{ \"var\": \"$qty\" }, { \"var\": \"$price\" }] }",
+        "{ \"$multiply\": [{ \"$var\": \"qty\" }, { \"$var\": \"price\" }] }",
       ],
     },
     divide: {
@@ -293,7 +293,7 @@ export class MathNode extends Node {
       output: "number",
       markdownDescription: "Divides the first value by the second; returns `0` on division by zero.",
       examples: [
-        "{ \"divide\": [10, 4] }",
+        "{ \"$divide\": [10, 4] }",
       ],
     },
     mod: {
@@ -305,7 +305,7 @@ export class MathNode extends Node {
       output: "number",
       markdownDescription: "Remainder of `a % b`; returns `0` if `b` is zero.",
       examples: [
-        "{ \"mod\": [10, 3] }",
+        "{ \"$mod\": [10, 3] }",
       ],
     },
     power: {
@@ -317,7 +317,7 @@ export class MathNode extends Node {
       output: "number",
       markdownDescription: "Raises `base` to `exponent`.",
       examples: [
-        "{ \"power\": [2, 10] }",
+        "{ \"$power\": [2, 10] }",
       ],
     },
     min: {
@@ -328,7 +328,7 @@ export class MathNode extends Node {
       output: "number",
       markdownDescription: "Returns the smallest number in an array.",
       examples: [
-        "{ \"min\": [3, 1, 4, 1, 5] }",
+        "{ \"$min\": [3, 1, 4, 1, 5] }",
       ],
     },
     max: {
@@ -339,7 +339,7 @@ export class MathNode extends Node {
       output: "number",
       markdownDescription: "Returns the largest number in an array.",
       examples: [
-        "{ \"max\": [3, 1, 4, 1, 5] }",
+        "{ \"$max\": [3, 1, 4, 1, 5] }",
       ],
     },
     clamp: {
@@ -352,7 +352,7 @@ export class MathNode extends Node {
       output: "number",
       markdownDescription: "Clamps a value between min and max.",
       examples: [
-        "{ \"clamp\": [{ \"var\": \"$health\" }, 0, 100] }",
+        "{ \"$clamp\": [{ \"$var\": \"health\" }, 0, 100] }",
       ],
     },
     toFixed: {
@@ -367,7 +367,7 @@ export class MathNode extends Node {
       output: "string",
       markdownDescription: "Formats a number to a fixed number of decimal places (default 2). Returns a string.",
       examples: [
-        "{ \"toFixed\": [3.14159, 2] }",
+        "{ \"$toFixed\": [3.14159, 2] }",
       ],
     },
     numberFormat: {
@@ -375,7 +375,7 @@ export class MathNode extends Node {
       output: "string",
       markdownDescription: "Formats a number as a locale-aware decimal string via `Intl.NumberFormat` (grouping separators, fraction-digit control). Currency and percent formatting compose from this plus `concat`.",
       examples: [
-        "{ \"numberFormat\": 1234.5, \"maximumFractionDigits\": 1 }",
+        "{ \"$numberFormat\": 1234.5, \"maximumFractionDigits\": 1 }",
       ],
       siblings: {
         locale: {
@@ -397,7 +397,7 @@ export class MathNode extends Node {
       output: "string",
       markdownDescription: "Formats an integer as an English ordinal (`1` -> `\"1st\"`, `2` -> `\"2nd\"`, `3` -> `\"3rd\"`, `11` -> `\"11th\"`). Uses `Intl.PluralRules` for the plural category with an English suffix map; the suffixes are English-only regardless of `locale`.",
       examples: [
-        "{ \"ordinal\": 1 }",
+        "{ \"$ordinal\": 1 }",
       ],
       siblings: {
         locale: {
@@ -415,7 +415,7 @@ export class MathNode extends Node {
       output: "number",
       markdownDescription: "Returns the angle in degrees between the positive x-axis and the point `[y, x]`.",
       examples: [
-        "{ \"atan2\": [1, 1] }",
+        "{ \"$atan2\": [1, 1] }",
       ],
     },
     random: {
@@ -431,82 +431,82 @@ export class MathNode extends Node {
       markdownDescription: "Generates a random number, using the seeded RNG when `randomSeed` has been set, otherwise `Math.random`.",
       outputDescription: "No args → a float in `[0, 1)`. One arg `n` → an integer in `[0, n]`. Two args → an integer in `[min, max]` (both inclusive).",
       examples: [
-        "{ \"random\": [1, 6] }",
+        "{ \"$random\": [1, 6] }",
       ],
     },
     randomSeed: {
       output: "null",
       markdownDescription: "Seeds the RNG for reproducible sequences. Pass a number or string; `null` resets to unseeded.",
       examples: [
-        "{ \"randomSeed\": 42 }",
+        "{ \"$randomSeed\": 42 }",
       ],
     },
   };
 
   sqrt(d: Record<string, unknown>, c: Context) {
-    return resolve(d.sqrt, c, v => Math.sqrt(this.toNumber(v)));
+    return resolve(d.$sqrt, c, v => Math.sqrt(this.toNumber(v)));
   }
   abs(d: Record<string, unknown>, c: Context) {
-    return resolve(d.abs, c, v => Math.abs(this.toNumber(v)));
+    return resolve(d.$abs, c, v => Math.abs(this.toNumber(v)));
   }
   round(d: Record<string, unknown>, c: Context) {
-    return resolve(d.round, c, v => Math.round(this.toNumber(v)));
+    return resolve(d.$round, c, v => Math.round(this.toNumber(v)));
   }
   floor(d: Record<string, unknown>, c: Context) {
-    return resolve(d.floor, c, v => Math.floor(this.toNumber(v)));
+    return resolve(d.$floor, c, v => Math.floor(this.toNumber(v)));
   }
   ceil(d: Record<string, unknown>, c: Context) {
-    return resolve(d.ceil, c, v => Math.ceil(this.toNumber(v)));
+    return resolve(d.$ceil, c, v => Math.ceil(this.toNumber(v)));
   }
   parseInt(d: Record<string, unknown>, c: Context) {
-    return resolve(d.parseInt, c, v => globalThis.parseInt(this.toString(v), 10) || 0);
+    return resolve(d.$parseInt, c, v => globalThis.parseInt(this.toString(v), 10) || 0);
   }
   parseFloat(d: Record<string, unknown>, c: Context) {
-    return resolve(d.parseFloat, c, v => globalThis.parseFloat(this.toString(v)) || 0);
+    return resolve(d.$parseFloat, c, v => globalThis.parseFloat(this.toString(v)) || 0);
   }
   sin(d: Record<string, unknown>, c: Context) {
-    return resolve(d.sin, c, v => Math.sin(this.toNumber(v) * Math.PI / 180));
+    return resolve(d.$sin, c, v => Math.sin(this.toNumber(v) * Math.PI / 180));
   }
   cos(d: Record<string, unknown>, c: Context) {
-    return resolve(d.cos, c, v => Math.cos(this.toNumber(v) * Math.PI / 180));
+    return resolve(d.$cos, c, v => Math.cos(this.toNumber(v) * Math.PI / 180));
   }
   tan(d: Record<string, unknown>, c: Context) {
-    return resolve(d.tan, c, v => Math.tan(this.toNumber(v) * Math.PI / 180));
+    return resolve(d.$tan, c, v => Math.tan(this.toNumber(v) * Math.PI / 180));
   }
   asin(d: Record<string, unknown>, c: Context) {
-    return resolve(d.asin, c, v => Math.asin(this.toNumber(v)) * 180 / Math.PI);
+    return resolve(d.$asin, c, v => Math.asin(this.toNumber(v)) * 180 / Math.PI);
   }
   acos(d: Record<string, unknown>, c: Context) {
-    return resolve(d.acos, c, v => Math.acos(this.toNumber(v)) * 180 / Math.PI);
+    return resolve(d.$acos, c, v => Math.acos(this.toNumber(v)) * 180 / Math.PI);
   }
   atan(d: Record<string, unknown>, c: Context) {
-    return resolve(d.atan, c, v => Math.atan(this.toNumber(v)) * 180 / Math.PI);
+    return resolve(d.$atan, c, v => Math.atan(this.toNumber(v)) * 180 / Math.PI);
   }
   log(d: Record<string, unknown>, c: Context) {
-    return resolve(d.log, c, v => Math.log(this.toNumber(v)));
+    return resolve(d.$log, c, v => Math.log(this.toNumber(v)));
   }
   log2(d: Record<string, unknown>, c: Context) {
-    return resolve(d.log2, c, v => Math.log2(this.toNumber(v)));
+    return resolve(d.$log2, c, v => Math.log2(this.toNumber(v)));
   }
   log10(d: Record<string, unknown>, c: Context) {
-    return resolve(d.log10, c, v => Math.log10(this.toNumber(v)));
+    return resolve(d.$log10, c, v => Math.log10(this.toNumber(v)));
   }
   exp(d: Record<string, unknown>, c: Context) {
-    return resolve(d.exp, c, v => Math.exp(this.toNumber(v)));
+    return resolve(d.$exp, c, v => Math.exp(this.toNumber(v)));
   }
   sign(d: Record<string, unknown>, c: Context) {
-    return resolve(d.sign, c, v => Math.sign(this.toNumber(v)));
+    return resolve(d.$sign, c, v => Math.sign(this.toNumber(v)));
   }
   trunc(d: Record<string, unknown>, c: Context) {
-    return resolve(d.trunc, c, v => Math.trunc(this.toNumber(v)));
+    return resolve(d.$trunc, c, v => Math.trunc(this.toNumber(v)));
   }
 
   hypot(def: Record<string, unknown>, c: Context) {
-    return resolve(def.hypot, c, arr => Math.hypot(...this.toArray(arr).map(v => this.toNumber(v))));
+    return resolve(def.$hypot, c, arr => Math.hypot(...this.toArray(arr).map(v => this.toNumber(v))));
   }
 
   lerp(def: Record<string, unknown>, c: Context) {
-    return resolve(def.lerp, c, values => {
+    return resolve(def.$lerp, c, values => {
       const a = this.toArray(values);
       if (a.length < 3) return 0;
       const start = this.toNumber(a[0]);
@@ -516,7 +516,7 @@ export class MathNode extends Node {
   }
 
   mapRange(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.mapRange, def.clampToRange], c, ([values, clampRaw]) => {
+    return resolveAll([def.$mapRange, def.clampToRange], c, ([values, clampRaw]) => {
       const a = this.toArray(values);
       if (a.length < 5) return 0;
       const value = this.toNumber(a[0]);
@@ -534,11 +534,11 @@ export class MathNode extends Node {
   }
 
   sum(def: Record<string, unknown>, c: Context) {
-    return resolve(def.sum, c, arr => this.toArray(arr).reduce((s: number, v) => s + this.toNumber(v), 0));
+    return resolve(def.$sum, c, arr => this.toArray(arr).reduce((s: number, v) => s + this.toNumber(v), 0));
   }
 
   avg(def: Record<string, unknown>, c: Context) {
-    return resolve(def.avg, c, arr => {
+    return resolve(def.$avg, c, arr => {
       const items = this.toArray(arr);
       if (items.length === 0) return 0;
       return items.reduce((s: number, v) => s + this.toNumber(v), 0) / items.length;
@@ -546,13 +546,13 @@ export class MathNode extends Node {
   }
 
   add(def: Record<string, unknown>, c: Context) {
-    return resolve(def.add, c, values =>
+    return resolve(def.$add, c, values =>
       this.toArray(values).reduce((sum: number, v) => sum + this.toNumber(v), 0)
     );
   }
 
   subtract(def: Record<string, unknown>, c: Context) {
-    return resolve(def.subtract, c, values => {
+    return resolve(def.$subtract, c, values => {
       const arr = this.toArray(values);
       if (arr.length === 0) return 0;
       if (arr.length === 1) return -this.toNumber(arr[0]);
@@ -561,13 +561,13 @@ export class MathNode extends Node {
   }
 
   multiply(def: Record<string, unknown>, c: Context) {
-    return resolve(def.multiply, c, values =>
+    return resolve(def.$multiply, c, values =>
       this.toArray(values).reduce((p: number, v) => p * this.toNumber(v), 1)
     );
   }
 
   divide(def: Record<string, unknown>, c: Context) {
-    return resolve(def.divide, c, values => {
+    return resolve(def.$divide, c, values => {
       const arr = this.toArray(values);
       if (arr.length < 2) return 0;
       const divisor = this.toNumber(arr[1]);
@@ -576,7 +576,7 @@ export class MathNode extends Node {
   }
 
   mod(def: Record<string, unknown>, c: Context) {
-    return resolve(def.mod, c, values => {
+    return resolve(def.$mod, c, values => {
       const arr = this.toArray(values);
       if (arr.length < 2) return 0;
       const b = this.toNumber(arr[1]);
@@ -585,7 +585,7 @@ export class MathNode extends Node {
   }
 
   power(def: Record<string, unknown>, c: Context) {
-    return resolve(def.power, c, values => {
+    return resolve(def.$power, c, values => {
       const arr = this.toArray(values);
       if (arr.length < 2) return 0;
       return Math.pow(this.toNumber(arr[0]), this.toNumber(arr[1]));
@@ -593,21 +593,21 @@ export class MathNode extends Node {
   }
 
   min(def: Record<string, unknown>, c: Context) {
-    return resolve(def.min, c, values => {
+    return resolve(def.$min, c, values => {
       const nums = this.toArray(values).map(v => this.toNumber(v));
       return nums.length > 0 ? Math.min(...nums) : 0;
     });
   }
 
   max(def: Record<string, unknown>, c: Context) {
-    return resolve(def.max, c, values => {
+    return resolve(def.$max, c, values => {
       const nums = this.toArray(values).map(v => this.toNumber(v));
       return nums.length > 0 ? Math.max(...nums) : 0;
     });
   }
 
   clamp(def: Record<string, unknown>, c: Context) {
-    return resolve(def.clamp, c, values => {
+    return resolve(def.$clamp, c, values => {
       const arr = this.toArray(values);
       if (arr.length < 3) return 0;
       return Math.max(this.toNumber(arr[1]), Math.min(this.toNumber(arr[2]), this.toNumber(arr[0])));
@@ -615,7 +615,7 @@ export class MathNode extends Node {
   }
 
   toFixed(def: Record<string, unknown>, c: Context) {
-    return resolve(def.toFixed, c, values => {
+    return resolve(def.$toFixed, c, values => {
       const arr = this.toArray(values);
       const value = this.toNumber(arr[0]);
       const decimals = arr.length > 1 ? this.toNumber(arr[1]) : 2;
@@ -624,7 +624,7 @@ export class MathNode extends Node {
   }
 
   numberFormat(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.numberFormat, def.locale, def.minimumFractionDigits, def.maximumFractionDigits], c,
+    return resolveAll([def.$numberFormat, def.locale, def.minimumFractionDigits, def.maximumFractionDigits], c,
       ([value, locale, minF, maxF]) => {
         const opts: Intl.NumberFormatOptions = {};
         if (minF != null) opts.minimumFractionDigits = this.toNumber(minF);
@@ -634,7 +634,7 @@ export class MathNode extends Node {
   }
 
   ordinal(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.ordinal, def.locale], c, ([value, locale]) => {
+    return resolveAll([def.$ordinal, def.locale], c, ([value, locale]) => {
       const n = this.toNumber(value);
       const rules = new Intl.PluralRules(locale != null ? this.toString(locale) : undefined, { type: "ordinal" });
       return `${n}${ORDINAL_SUFFIX[rules.select(n)] ?? "th"}`;
@@ -642,7 +642,7 @@ export class MathNode extends Node {
   }
 
   atan2(def: Record<string, unknown>, c: Context) {
-    return resolve(def.atan2, c, values => {
+    return resolve(def.$atan2, c, values => {
       const arr = this.toArray(values);
       if (arr.length < 2) return 0;
       return Math.atan2(this.toNumber(arr[0]), this.toNumber(arr[1])) * 180 / Math.PI;
@@ -650,7 +650,7 @@ export class MathNode extends Node {
   }
 
   random(def: Record<string, unknown>, c: Context) {
-    return resolve(def.random, c, values => {
+    return resolve(def.$random, c, values => {
       const arr = this.toArray(values);
       if (arr.length === 0) return nextRandom(c);
       // One arg n → integer in [0, n]; two args → integer in [min, max].
@@ -661,7 +661,7 @@ export class MathNode extends Node {
   }
 
   randomSeed(def: Record<string, unknown>, c: Context) {
-    return resolve(def.randomSeed, c, val => {
+    return resolve(def.$randomSeed, c, val => {
       if (val == null) { this.seed = null; return null; }
       this.seed = typeof val === "number" ? val : hashString(String(val));
       return null;

@@ -6,8 +6,8 @@
 // `run` takes a file path OR an installed package name: a package is resolved via its
 // package.json `"jexs"` entry field, so a pure-JSON package (no bin, no JS) is launched with
 // `jexs run <package>`. The entry runs as steps relative to its own directory (a `/`-prefixed
-// path anchors at `root`, default cwd), with `env` seeded so templates can branch on `$env.*`.
-// Tokens after a `--` sentinel are parsed into `$args` (a key/value object), letting a JSON
+// path anchors at `root`, default cwd), with `env` seeded so templates can branch on `env.*`.
+// Tokens after a `--` sentinel are parsed into `args` (a key/value object), letting a JSON
 // entry act as its own CLI — e.g. `jexs run @jexs/create -- my-app --env both --physics`.
 // An HTTP app is just an entry whose `listen` step(s) bind ports — one `http.Server` per `listen`.
 // `--prod` sets process.env.prod; `--watch` restarts the app when files under the app dir change.
@@ -36,15 +36,15 @@ function usage(code: number): never {
 }
 
 // Parse an app's argument list (the tokens after the `--` sentinel) into a
-// key/value object, seeded as `$args` so a JSON entry can read its flags
-// order-independently (`$args.env`, `$args.css`, ...). Named flags are the point
+// key/value object, seeded as `args` so a JSON entry can read its flags
+// order-independently (`args.env`, `args.css`, ...). Named flags are the point
 // here — the values are interchangeable in position. Supported forms:
 //   --key value    -> { key: "value" }   (next token consumed unless it's a flag)
 //   --key=value    -> { key: "value" }
 //   --flag         -> { flag: true }     (no value follows)
 //   --no-flag      -> { flag: false }
 //   value          -> pushed onto `_` (bare positionals, e.g. a project name)
-// All values are strings; the entry coerces (e.g. `{ "eq": [{ "var": "$args.physics" }, "true"] }`).
+// All values are strings; the entry coerces (e.g. `{ "$eq": [{ "$var": "args.physics" }, "true"] }`).
 function parseArgs(argv: string[]): Record<string, unknown> {
   const out: Record<string, unknown> = { _: [] as string[] };
   for (let i = 0; i < argv.length; i++) {
@@ -72,7 +72,7 @@ async function run(args: string[]): Promise<void> {
   if (args.includes("--prod")) process.env.prod = "1";
 
   // Everything after the first `--` belongs to the JSON app, not the jexs CLI:
-  // it's parsed into `$args` and never treated as jexs positionals/flags (so an
+  // it's parsed into `args` and never treated as jexs positionals/flags (so an
   // app's `--env both` can't be mistaken for a `root` positional).
   const sep = args.indexOf("--");
   const cliArgs = sep === -1 ? args : args.slice(0, sep);
@@ -115,7 +115,7 @@ async function run(args: string[]): Promise<void> {
 
   // Build a core+server resolver and run the entry as steps, seeding the entry's own directory
   // (relative `{ file }` loads resolve against it; a `/`-prefixed path anchors at `root`) and
-  // `env` (so templates can branch on `$env.*`). An HTTP app is just an entry with `listen` step(s).
+  // `env` (so templates can branch on `env.*`). An HTTP app is just an entry with `listen` step(s).
   const abs = path.resolve(entry);
   // Discover every installed node package (core, server, third-party) for the
   // node runtime. Fall back to this package's own core+server set when discovery
@@ -125,7 +125,7 @@ async function run(args: string[]): Promise<void> {
   if (nodes.length === 0) nodes = [...coreNodes(), ...serverNodes({ root: root ?? "." })];
   const resolve = createResolver(nodes);
   const context: Context = { ...entryContext(path.dirname(abs)), env: process.env as Record<string, string>, args: parseArgs(appArgs) };
-  await Promise.resolve(resolve({ file: path.basename(abs) }, context));
+  await Promise.resolve(resolve({ $file: path.basename(abs) }, context));
 }
 
 // Resolve a `run` target to an entry file path: a local file/dir is used as-is; anything else is

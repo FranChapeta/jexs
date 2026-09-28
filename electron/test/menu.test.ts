@@ -18,7 +18,7 @@ const ctxIn = (extra: Record<string, unknown> = {}) => childContext(rootCtx, ext
 test("scalar fields resolve, including expressions", async () => {
   const ctx = ctxIn({ name: "Save As..." });
   const [item] = await buildMenuTemplate(
-    [{ label: { var: "$name" }, accelerator: "CmdOrCtrl+S", enabled: true }],
+    [{ label: { $var: "name" }, accelerator: "CmdOrCtrl+S", enabled: true }],
     ctx,
     noop,
   );
@@ -32,7 +32,7 @@ test("scalar fields resolve, including expressions", async () => {
 // the step into a plain object, destroying the handler instead of dispatching it.
 test("do steps reach the click handler raw, never resolved", async () => {
   const seen: unknown[][] = [];
-  const steps = [{ setText: ["#out", "Saved"] }];
+  const steps = [{ $setText: ["#out", "Saved"] }];
 
   const [item] = await buildMenuTemplate(
     [{ label: "Save", do: steps }],
@@ -99,7 +99,7 @@ test("a non-array menu yields an empty template", async () => {
 test("the tree can come from an expression, not just a literal array", async () => {
   const ctx = ctxIn({ myMenu: [{ label: "From var", do: [{ noop: 1 }] }] });
 
-  const template = await buildMenuTemplate({ var: "$myMenu" }, ctx, noop);
+  const template = await buildMenuTemplate({ $var: "myMenu" }, ctx, noop);
   assert.equal(template.length, 1);
   assert.equal(template[0].label, "From var");
   // Resolving the container must not have resolved through to the items.
@@ -109,7 +109,7 @@ test("the tree can come from an expression, not just a literal array", async () 
 test("a submenu can come from an expression too", async () => {
   const ctx = ctxIn({ sub: [{ label: "Nested" }] });
   const [item] = await buildMenuTemplate(
-    [{ label: "File", submenu: { var: "$sub" } }],
+    [{ label: "File", submenu: { $var: "sub" } }],
     ctx,
     noop,
   );
@@ -120,18 +120,18 @@ test("a submenu can come from an expression too", async () => {
 
 // A menu click fires long after the step that built the menu returned, so the
 // resolver is no longer wrapped around the call and a plain .catch would only
-// log. Routing through handleErr gives the item's own `catch` the same meaning
-// it would have inline, with $error bound.
-test("a menu item's catch receives the failure with $error bound", async () => {
+// log. Routing through handleErr gives the item's own `$catch` the same meaning
+// it would have inline, with `error` bound.
+test("a menu item's $catch receives the failure with error bound", async () => {
   const raw = {
     label: "Boom",
-    do: [{ error: 500, message: "nope" }],
-    catch: [{ concat: ["caught: ", { var: "$error.message" }] }],
+    do: [{ $error: 500, message: "nope" }],
+    $catch: [{ $concat: ["caught: ", { $var: "error.message" }] }],
   };
   const [item] = await buildMenuTemplate([raw], ctxIn(), noop);
   assert.equal(typeof item.click, "function");
 
-  // Drive the same path the node uses, to prove `catch` is reachable from a
+  // Drive the same path the node uses, to prove `$catch` is reachable from a
   // deferred callback rather than swallowed. `.then(() => runSteps(...))` and
   // not Promise.resolve(runSteps(...)): runSteps throws SYNCHRONOUSLY, so the
   // latter lets the throw escape before the promise exists and .catch never
@@ -144,7 +144,7 @@ test("a menu item's catch receives the failure with $error bound", async () => {
 });
 
 test("without a catch, a deferred failure still rejects rather than vanishing", async () => {
-  const raw = { label: "Boom", do: [{ error: 500, message: "unhandled" }] };
+  const raw = { label: "Boom", do: [{ $error: 500, message: "unhandled" }] };
   const ctx = childContext(ctxIn(), {});
 
   await assert.rejects(

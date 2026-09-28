@@ -1,46 +1,69 @@
 [
   {
-    "if": { "isType": [{ "var": "$node" }, "array"] },
+    "$if": { "$isType": [{ "$var": "node" }, "array"] },
     "then": {
-      "return": {
-        "flatten": {
-          "map": { "var": "$node" },
-          "do": { "exec": { "var": "$walkUnknown" }, "params": { "node": { "var": "$item" }, "path": { "concat": [{ "var": "$path" }, "[", { "var": "$index" }, "]"] } } }
+      "$return": {
+        "$flatten": {
+          "$map": { "$var": "node" },
+          "do": { "$exec": { "$var": "walkUnknown" }, "params": { "node": { "$var": "item" }, "path": { "$concat": [{ "$var": "path" }, "[", { "$var": "index" }, "]"] } } }
         }
       }
     }
   },
-  { "if": { "not": { "isType": [{ "var": "$node" }, "object"] } }, "then": { "return": [] } },
+  { "$if": { "$not": { "$isType": [{ "$var": "node" }, "object"] } }, "then": { "$return": [] } },
 
-  { "as": "keys", "keys": { "var": "$node" } },
-  { "as": "opKeys", "filter": [{ "var": "$keys" }, { "includes": [{ "var": "$opNames" }, { "var": "$item" }] }] },
-  { "as": "dispatcher", "first": { "var": "$opKeys" } },
-  { "as": "ownSiblings", "map": { "coalesce": [{ "var": { "concat": ["$siblingDocs.", { "var": "$dispatcher" }] } }, []] }, "item": "s", "do": { "var": "$s.name" } },
-  { "as": "known", "merge": [{ "var": "$opNames" }, { "var": "$globalNames" }, { "var": "$ownSiblings" }] },
+  { "$as": "keys", "$keys": { "$var": "node" } },
+  { "$as": "where", "$if": { "$empty": { "$var": "path" } }, "then": "(root)", "else": { "$var": "path" } },
+  { "$as": "resolverKeys", "$merge": [{ "$var": "opKeys" }, { "$var": "globalKeys" }] },
+
+  { "$as": "dispatcher", "$first": { "$filter": [{ "$var": "keys" }, { "$includes": [{ "$var": "opKeys" }, { "$var": "item" }] }] } },
+  { "$as": "op", "$if": { "$empty": { "$var": "dispatcher" } }, "then": "", "else": { "$substring": [{ "$var": "dispatcher" }, 1] } },
+  { "$as": "ownSiblings", "$map": { "$coalesce": [{ "$var": { "$concat": ["siblingDocs.", { "$var": "op" }] } }, []] }, "item": "s", "do": { "$var": "s.name" } },
 
   {
-    "as": "here",
-    "if": { "empty": { "var": "$dispatcher" } },
+    "$as": "unknownOps",
+    "$map": {
+      "$filter": [
+        { "$var": "keys" },
+        { "$and": [{ "$startsWith": [{ "$var": "item" }, "$"] }, { "$not": { "$includes": [{ "$var": "resolverKeys" }, { "$var": "item" }] } }] }
+      ]
+    },
+    "item": "k",
+    "do": [
+      { "$as": "near", "$exec": { "$var": "suggest" }, "params": { "needle": { "$var": "k" }, "haystack": { "$var": "resolverKeys" } } },
+      {
+        "$concat": [
+          { "$var": "where" }, ".", { "$var": "k" },
+          " is not an op",
+          { "$if": { "$notEmpty": { "$var": "near" } }, "then": { "$concat": [", did you mean: ", { "$join": [{ "$var": "near" }, ", "] }, "?"] }, "else": "" }
+        ]
+      }
+    ]
+  },
+
+  {
+    "$as": "here",
+    "$if": { "$empty": { "$var": "dispatcher" } },
     "then": [],
     "else": {
-      "map": {
-        "filter": [
-          { "var": "$keys" },
+      "$map": {
+        "$filter": [
+          { "$var": "keys" },
           {
-            "and": [
-              { "not": { "includes": [{ "var": "$known" }, { "var": "$item" }] } },
-              { "notEmpty": { "exec": { "var": "$suggest" }, "params": { "needle": { "var": "$item" }, "haystack": { "var": "$known" } } } }
+            "$and": [
+              { "$not": { "$startsWith": [{ "$var": "item" }, "$"] } },
+              { "$not": { "$includes": [{ "$var": "ownSiblings" }, { "$var": "item" }] } },
+              { "$notEmpty": { "$exec": { "$var": "suggest" }, "params": { "needle": { "$var": "item" }, "haystack": { "$var": "ownSiblings" } } } }
             ]
           }
         ]
       },
       "item": "k",
       "do": {
-        "concat": [
-          { "if": { "empty": { "var": "$path" } }, "then": "(root)", "else": { "var": "$path" } },
-          ".", { "var": "$k" },
-          " is not a key of \"", { "var": "$dispatcher" }, "\", did you mean: ",
-          { "join": [{ "exec": { "var": "$suggest" }, "params": { "needle": { "var": "$k" }, "haystack": { "var": "$known" } } }, ", "] },
+        "$concat": [
+          { "$var": "where" }, ".", { "$var": "k" },
+          " is not a key of \"", { "$var": "dispatcher" }, "\", did you mean: ",
+          { "$join": [{ "$exec": { "$var": "suggest" }, "params": { "needle": { "$var": "k" }, "haystack": { "$var": "ownSiblings" } } }, ", "] },
           "?"
         ]
       }
@@ -48,13 +71,13 @@
   },
 
   {
-    "as": "childHits",
-    "flatten": {
-      "map": { "entries": { "var": "$node" } },
+    "$as": "childHits",
+    "$flatten": {
+      "$map": { "$entries": { "$var": "node" } },
       "item": "e",
-      "do": { "exec": { "var": "$walkUnknown" }, "params": { "node": { "var": "$e.value" }, "path": { "concat": [{ "if": { "empty": { "var": "$path" } }, "then": "", "else": { "concat": [{ "var": "$path" }, "."] } }, { "var": "$e.key" }] } } }
+      "do": { "$exec": { "$var": "walkUnknown" }, "params": { "node": { "$var": "e.value" }, "path": { "$concat": [{ "$if": { "$empty": { "$var": "path" } }, "then": "", "else": { "$concat": [{ "$var": "path" }, "."] } }, { "$var": "e.key" }] } } }
     }
   },
 
-  { "return": { "merge": [{ "var": "$here" }, { "var": "$childHits" }] } }
+  { "$return": { "$merge": [{ "$var": "unknownOps" }, { "$var": "here" }, { "$var": "childHits" }] } }
 ]

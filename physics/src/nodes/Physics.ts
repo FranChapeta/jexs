@@ -646,7 +646,7 @@ export class PhysicsNode extends Node {
       output: "null",
       markdownDescription: "Initializes the physics simulation loop for the active entity store.\nMust be called after `entity-init`. Restarts any existing loop.",
       examples: [
-        "{ \"physics-init\": true, \"gravity\": [0, 980], \"damping\": 0.01 }",
+        "{ \"$physics-init\": true, \"gravity\": [0, 980], \"damping\": 0.01 }",
       ],
       siblings: {
         gravity: {
@@ -689,7 +689,7 @@ export class PhysicsNode extends Node {
       output: "null",
       markdownDescription: "Pauses the world's simulation loop, leaving every entity where it is. Resume with `physics-resume`.",
       examples: [
-        "{ \"physics-pause\": true }",
+        "{ \"$physics-pause\": true }",
       ],
     },
     "physics-resume": {
@@ -697,7 +697,7 @@ export class PhysicsNode extends Node {
       output: "null",
       markdownDescription: "Resumes a world paused by `physics-pause`. The elapsed-time accumulator is reset, so the pause does not replay as one huge step.",
       examples: [
-        "{ \"physics-resume\": true }",
+        "{ \"$physics-resume\": true }",
       ],
     },
     "physics-destroy": {
@@ -705,7 +705,7 @@ export class PhysicsNode extends Node {
       output: "null",
       markdownDescription: "Tears the world down: stops the loop, shuts down the physics worker when threaded, and drops the world. A no-op when no world exists.",
       examples: [
-        "{ \"physics-destroy\": true }",
+        "{ \"$physics-destroy\": true }",
       ],
     },
     "physics-apply": {
@@ -713,7 +713,7 @@ export class PhysicsNode extends Node {
       output: "null",
       markdownDescription: "Applies an impulse to one entity by id, changing its velocity immediately. A no-op when the entity is not in the world.",
       examples: [
-        "{ \"physics-apply\": \"player\", \"impulse\": [0, -400, 0] }",
+        "{ \"$physics-apply\": \"player\", \"impulse\": [0, -400, 0] }",
       ],
       siblings: {
         impulse: {
@@ -728,7 +728,7 @@ export class PhysicsNode extends Node {
       markdownDescription: "Casts a ray through the world and returns every entity it hits, nearest first. Works on both client and server.",
       outputDescription: "An array of hits ordered by distance, empty when nothing is hit or no world exists.",
       examples: [
-        "{ \"physics-raycast\": true, \"from\": { \"x\": 0, \"y\": 0 }, \"dir\": { \"x\": 1, \"y\": 0 }, \"mask\": [\"enemy\"] }",
+        "{ \"$physics-raycast\": true, \"from\": { \"x\": 0, \"y\": 0 }, \"dir\": { \"x\": 1, \"y\": 0 }, \"mask\": [\"enemy\"] }",
       ],
       siblings: {
         from: {
@@ -837,7 +837,7 @@ export class PhysicsNode extends Node {
     const store = stores?.[selector];
     if (!store) return null;
 
-    return resolveAll([def["physics-apply"], def.impulse ?? null], context, ([idRaw, impRaw]) => {
+    return resolveAll([def["$physics-apply"], def.impulse ?? null], context, ([idRaw, impRaw]) => {
       const slot = store.slot(String(idRaw));
       if (slot === -1) return null;
       if (impRaw) {
@@ -868,7 +868,7 @@ export class PhysicsNode extends Node {
   }
 
   // ── physics-raycast — cast a ray and return sorted hits (works on client & server) ──
-  // { "physics-raycast": true, "from": {"x":0,"y":0,"z":0}, "dir": {"x":1,"y":0,"z":0}, "mask": ["enemy"] }
+  // { "$physics-raycast": true, "from": {"x":0,"y":0,"z":0}, "dir": {"x":1,"y":0,"z":0}, "mask": ["enemy"] }
 
   ["physics-raycast"](def: Record<string, unknown>, context: Context): NodeValue {
     const selector = PhysicsNode.sel(context);
@@ -898,9 +898,9 @@ export class CollisionNode extends Node {
     "collision-on": {
       type: "boolean",
       output: "string",
-      markdownDescription: "Registers a collision handler that runs `do` steps when entities from two groups collide.\r\n`$collisionA`, `$collisionB`, `$collisionNx/Ny/Nz` are set in context during the steps.",
+      markdownDescription: "Registers a collision handler that runs `do` steps when entities from two groups collide.\r\n`collisionA`, `collisionB`, `collisionNx/Ny/Nz` are set in context during the steps.",
       examples: [
-        "{ \"collision-on\": true, \"groups\": [\"player\", \"enemy\"], \"do\": [{ \"var\": \"$collisionA\" }] }",
+        "{ \"$collision-on\": true, \"groups\": [\"player\", \"enemy\"], \"do\": [{ \"$var\": \"collisionA\" }] }",
       ],
       siblings: {
         groups: {
@@ -931,7 +931,7 @@ export class CollisionNode extends Node {
       output: "null",
       markdownDescription: "Removes a collision handler by the `id` that `collision-on` registered it under. Unknown ids are a no-op.",
       examples: [
-        "{ \"collision-off\": \"playerHitsEnemy\" }",
+        "{ \"$collision-off\": \"playerHitsEnemy\" }",
       ],
     },
   };
@@ -957,7 +957,7 @@ export class CollisionNode extends Node {
   ["collision-off"](def: Record<string, unknown>, context: Context): NodeValue {
     const w = worlds.get(PhysicsNode.sel(context));
     if (!w) return null;
-    return resolve(def["collision-off"], context, idRaw => {
+    return resolve(def["$collision-off"], context, idRaw => {
       const id = String(idRaw);
       w.handlers = w.handlers.filter(h => h.id !== id);
       return null;
@@ -980,7 +980,7 @@ export class JointNode extends Node {
       output: "string",
       markdownDescription: "Create a constraint between two entities.",
       examples: [
-        "{ \"joint-add\": \"rope\", \"type\": \"spring\", \"a\": \"anchor\", \"b\": \"ball\", \"restLength\": 100 }",
+        "{ \"$joint-add\": \"rope\", \"type\": \"spring\", \"a\": \"anchor\", \"b\": \"ball\", \"restLength\": 100 }",
       ],
       siblings: {
         type: {
@@ -1048,7 +1048,7 @@ export class JointNode extends Node {
     },
     "joint-remove": {
       output: "null",
-      markdownDescription: "Remove a constraint by ID. { \"joint-remove\": \"myJoint\" }",
+      markdownDescription: "Remove a constraint by ID. { \"$joint-remove\": \"myJoint\" }",
     },
   };
 
@@ -1059,7 +1059,7 @@ export class JointNode extends Node {
 
     return resolveAll(
       [
-        def["joint-add"],
+        def["$joint-add"],
         def.type ?? null,
         def.a,
         def.b,
@@ -1121,7 +1121,7 @@ export class JointNode extends Node {
   ["joint-remove"](def: Record<string, unknown>, context: Context): NodeValue {
     const w = worlds.get(PhysicsNode.sel(context));
     if (!w) return null;
-    return resolve(def["joint-remove"], context, idRaw => {
+    return resolve(def["$joint-remove"], context, idRaw => {
       const id = String(idRaw);
       w.constraints = w.constraints.filter(c => c.id !== id);
       return null;

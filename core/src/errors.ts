@@ -7,7 +7,7 @@ export interface ErrorResponse {
 }
 
 export interface ErrorBindings {
-  /** What `fetch` attaches: read it as `{ "var": "$response.body" }` inside `catch`. */
+  /** What `fetch` attaches: read it as `{ "$var": "response.body" }` inside `$catch`. */
   response?: ErrorResponse;
   [key: string]: unknown;
 }

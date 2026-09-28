@@ -106,16 +106,16 @@ export const dot3 = dot;
  * {x, y, z} for 3D. If either input has z, the result includes z.
  *
  * Supported operations:
- * - { "v-distance": [a, b] }          -> Euclidean distance
- * - { "v-lerp": [a, b, t] }           -> linear interpolation
- * - { "v-toward": [a, b, maxDist] }   -> move toward at constant speed
- * - { "v-normalize": point }           -> unit direction vector
- * - { "v-scale": [point, scalar] }     -> multiply vector by scalar
- * - { "v-add": [a, b] }               -> vector addition
- * - { "v-sub": [a, b] }               -> vector subtraction
- * - { "v-direction": [from, to] }      -> unit vector from a toward b
- * - { "v-cross": [a, b] }             -> cross product (always returns z)
- * - { "v-dot": [a, b] }               -> dot product (scalar)
+ * - { "$v-distance": [a, b] }          -> Euclidean distance
+ * - { "$v-lerp": [a, b, t] }           -> linear interpolation
+ * - { "$v-toward": [a, b, maxDist] }   -> move toward at constant speed
+ * - { "$v-normalize": point }           -> unit direction vector
+ * - { "$v-scale": [point, scalar] }     -> multiply vector by scalar
+ * - { "$v-add": [a, b] }               -> vector addition
+ * - { "$v-sub": [a, b] }               -> vector subtraction
+ * - { "$v-direction": [from, to] }      -> unit vector from a toward b
+ * - { "$v-cross": [a, b] }             -> cross product (always returns z)
+ * - { "$v-dot": [a, b] }               -> dot product (scalar)
  */
 export class VectorNode extends Node {
   static schema: JexsNodeSchema = {
@@ -128,7 +128,7 @@ export class VectorNode extends Node {
       output: "number",
       markdownDescription: "Returns the Euclidean distance between two vectors. Pass `[a, b]`.",
       examples: [
-        "{ \"v-distance\": [{ \"var\": \"$a\" }, { \"var\": \"$b\" }] }",
+        "{ \"$v-distance\": [{ \"$var\": \"a\" }, { \"$var\": \"b\" }] }",
       ],
     },
     "v-lerp": {
@@ -141,7 +141,7 @@ export class VectorNode extends Node {
       output: "object",
       markdownDescription: "Linearly interpolates between two vectors. Pass `[a, b, t]` where `t` is 0–1.",
       examples: [
-        "{ \"v-lerp\": [{ \"var\": \"$from\" }, { \"var\": \"$to\" }, 0.1] }",
+        "{ \"$v-lerp\": [{ \"$var\": \"from\" }, { \"$var\": \"to\" }, 0.1] }",
       ],
     },
     "v-toward": {
@@ -154,7 +154,7 @@ export class VectorNode extends Node {
       output: "object",
       markdownDescription: "Moves vector `a` toward `b` by at most `maxDist`. Returns `b` if already within range. Pass `[a, b, maxDist]`.",
       examples: [
-        "{ \"v-toward\": [{ \"var\": \"$pos\" }, { \"var\": \"$target\" }, 5] }",
+        "{ \"$v-toward\": [{ \"$var\": \"pos\" }, { \"$var\": \"target\" }, 5] }",
       ],
     },
     "v-normalize": {
@@ -218,7 +218,7 @@ export class VectorNode extends Node {
   };
 
   ["v-distance"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["v-distance"], context, args => {
+    return resolve(def["$v-distance"], context, args => {
       const a = this.toArray(args);
       if (a.length < 2) return 0;
       return distance(toVec(a[0]), toVec(a[1]));
@@ -226,7 +226,7 @@ export class VectorNode extends Node {
   }
 
   ["v-lerp"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["v-lerp"], context, args => {
+    return resolve(def["$v-lerp"], context, args => {
       const a = this.toArray(args);
       if (a.length < 3) return { x: 0, y: 0 };
       return lerp(toVec(a[0]), toVec(a[1]), this.toNumber(a[2])) as unknown as NodeValue;
@@ -234,7 +234,7 @@ export class VectorNode extends Node {
   }
 
   ["v-toward"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["v-toward"], context, args => {
+    return resolve(def["$v-toward"], context, args => {
       const a = this.toArray(args);
       if (a.length < 3) return { x: 0, y: 0 };
       return toward(toVec(a[0]), toVec(a[1]), this.toNumber(a[2])) as unknown as NodeValue;
@@ -242,11 +242,11 @@ export class VectorNode extends Node {
   }
 
   ["v-normalize"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["v-normalize"], context, v => normalize(toVec(v)) as unknown as NodeValue);
+    return resolve(def["$v-normalize"], context, v => normalize(toVec(v)) as unknown as NodeValue);
   }
 
   ["v-scale"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["v-scale"], context, args => {
+    return resolve(def["$v-scale"], context, args => {
       const a = this.toArray(args);
       if (a.length < 2) return { x: 0, y: 0 };
       const v = toVec(a[0]), s = this.toNumber(a[1]);
@@ -257,7 +257,7 @@ export class VectorNode extends Node {
   }
 
   ["v-add"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["v-add"], context, args => {
+    return resolve(def["$v-add"], context, args => {
       const a = this.toArray(args);
       if (a.length < 2) return { x: 0, y: 0 };
       const va = toVec(a[0]), vb = toVec(a[1]);
@@ -268,7 +268,7 @@ export class VectorNode extends Node {
   }
 
   ["v-sub"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["v-sub"], context, args => {
+    return resolve(def["$v-sub"], context, args => {
       const a = this.toArray(args);
       if (a.length < 2) return { x: 0, y: 0 };
       const va = toVec(a[0]), vb = toVec(a[1]);
@@ -279,7 +279,7 @@ export class VectorNode extends Node {
   }
 
   ["v-direction"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["v-direction"], context, args => {
+    return resolve(def["$v-direction"], context, args => {
       const a = this.toArray(args);
       if (a.length < 2) return { x: 0, y: 0 };
       return direction(toVec(a[0]), toVec(a[1])) as unknown as NodeValue;
@@ -287,7 +287,7 @@ export class VectorNode extends Node {
   }
 
   ["v-cross"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["v-cross"], context, args => {
+    return resolve(def["$v-cross"], context, args => {
       const a = this.toArray(args);
       if (a.length < 2) return { x: 0, y: 0, z: 0 };
       return cross(toVec3(a[0]), toVec3(a[1])) as unknown as NodeValue;
@@ -295,7 +295,7 @@ export class VectorNode extends Node {
   }
 
   ["v-dot"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["v-dot"], context, args => {
+    return resolve(def["$v-dot"], context, args => {
       const a = this.toArray(args);
       if (a.length < 2) return 0;
       return dot(toVec(a[0]), toVec(a[1]));

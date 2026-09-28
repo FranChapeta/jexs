@@ -47,7 +47,7 @@ export class WebSocketNode extends Node {
       output: "null",
       markdownDescription: "Completes the WebSocket upgrade for the current request and binds per-connection step arrays. Must be called from an upgrade pipeline (where `_upgrade` is in context, populated by the `listen` node's upgrade handling).",
       examples: [
-        "{ \"socket-accept\": true, \"on-message\": [{ \"socket-broadcast\": { \"var\": \"$message\" } }] }",
+        "{ \"$socket-accept\": true, \"on-message\": [{ \"$socket-broadcast\": { \"$var\": \"message\" } }] }",
       ],
       siblings: {
         "on-connect": {
@@ -56,7 +56,7 @@ export class WebSocketNode extends Node {
         },
         "on-message": {
           steps: true,
-          description: "Steps run on each incoming message. `$message` is the parsed JSON payload.",
+          description: "Steps run on each incoming message. `message` is the parsed JSON payload.",
         },
         "on-close": {
           steps: true,
@@ -68,7 +68,7 @@ export class WebSocketNode extends Node {
       output: "null",
       markdownDescription: "Sends a message on the current connection (`_ws` in context). Objects are JSON-encoded.",
       examples: [
-        "{ \"socket-send\": { \"type\": \"pong\" } }",
+        "{ \"$socket-send\": { \"type\": \"pong\" } }",
       ],
     },
     "socket-send-to": {
@@ -76,7 +76,7 @@ export class WebSocketNode extends Node {
       output: "null",
       markdownDescription: "Sends `data` to the peer identified by the connection ID. Objects are JSON-encoded.",
       examples: [
-        "{ \"socket-send-to\": { \"var\": \"$peerId\" }, \"data\": { \"hello\": true } }",
+        "{ \"$socket-send-to\": { \"$var\": \"peerId\" }, \"data\": { \"hello\": true } }",
       ],
       siblings: {
         data: { description: "Payload to send to the target peer." },
@@ -86,7 +86,7 @@ export class WebSocketNode extends Node {
       output: "null",
       markdownDescription: "Broadcasts the payload to all peers. With `room`, sends to room members; without `room`, sends to every connection on the same route path. The sender is excluded.",
       examples: [
-        "{ \"socket-broadcast\": { \"var\": \"$message\" }, \"room\": \"lobby\" }",
+        "{ \"$socket-broadcast\": { \"$var\": \"message\" }, \"room\": \"lobby\" }",
       ],
       siblings: {
         room: { type: "string", description: "Restrict broadcast to a named room." },
@@ -97,7 +97,7 @@ export class WebSocketNode extends Node {
       output: "null",
       markdownDescription: "Adds the current connection to the named room.",
       examples: [
-        "{ \"socket-join\": \"lobby\" }",
+        "{ \"$socket-join\": \"lobby\" }",
       ],
     },
     "socket-leave": {
@@ -116,8 +116,8 @@ export class WebSocketNode extends Node {
       markdownDescription: "Counts connections in a room (pass the room name) or on the current route path (pass `true`).",
       outputDescription: "The connection count as a number.",
       examples: [
-        "{ \"socket-count\": \"lobby\" }",
-        "{ \"socket-count\": true }",
+        "{ \"$socket-count\": \"lobby\" }",
+        "{ \"$socket-count\": true }",
       ],
     },
     "socket-list": {
@@ -126,7 +126,7 @@ export class WebSocketNode extends Node {
       markdownDescription: "Lists the connections in the named room.",
       outputDescription: "An array of `{ id, ...meta }` objects, one per connection in the room.",
       examples: [
-        "{ \"socket-list\": \"lobby\" }",
+        "{ \"$socket-list\": \"lobby\" }",
       ],
     },
   };
@@ -219,7 +219,7 @@ export class WebSocketNode extends Node {
   }
 
   ["socket-send"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["socket-send"], context, data => {
+    return resolve(def["$socket-send"], context, data => {
       const ws = currentSocket(context);
       if (!ws || ws.readyState !== WebSocket.OPEN) return null;
       ws.send(encodePayload(data));
@@ -228,7 +228,7 @@ export class WebSocketNode extends Node {
   }
 
   ["socket-send-to"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["socket-send-to"], def.data], context, ([idRaw, data]) => {
+    return resolveAll([def["$socket-send-to"], def.data], context, ([idRaw, data]) => {
       const target = ids.get(String(idRaw));
       if (!target || target.readyState !== WebSocket.OPEN) return null;
       target.send(encodePayload(data));
@@ -237,7 +237,7 @@ export class WebSocketNode extends Node {
   }
 
   ["socket-broadcast"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["socket-broadcast"], def.room ?? null], context, ([data, roomRaw]) => {
+    return resolveAll([def["$socket-broadcast"], def.room ?? null], context, ([data, roomRaw]) => {
       const payload = encodePayload(data);
       const sender = currentSocket(context);
 
@@ -256,7 +256,7 @@ export class WebSocketNode extends Node {
   }
 
   ["socket-join"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["socket-join"], context, roomRaw => {
+    return resolve(def["$socket-join"], context, roomRaw => {
       const ws = currentSocket(context);
       if (!ws) return null;
       const room = String(roomRaw);
@@ -268,7 +268,7 @@ export class WebSocketNode extends Node {
   }
 
   ["socket-leave"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["socket-leave"], context, roomRaw => {
+    return resolve(def["$socket-leave"], context, roomRaw => {
       const ws = currentSocket(context);
       if (!ws) return null;
       const room = String(roomRaw);
@@ -286,14 +286,14 @@ export class WebSocketNode extends Node {
   }
 
   ["socket-count"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["socket-count"], context, target => {
+    return resolve(def["$socket-count"], context, target => {
       if (target === true) return paths.get(currentPath(context))?.size ?? 0;
       return rooms.get(String(target))?.size ?? 0;
     });
   }
 
   ["socket-list"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["socket-list"], context, roomRaw => {
+    return resolve(def["$socket-list"], context, roomRaw => {
       const room = String(roomRaw);
       const roomClients = rooms.get(room);
       if (!roomClients) return [];

@@ -22,7 +22,7 @@ export class NotificationNode extends Node {
       output: "null",
       markdownDescription:
         "Show a native desktop notification. The value is the title.\nThis is the OS notification centre, not the Web Notification API — it needs no permission prompt and no service worker, unlike the browser `sw-notify` path.",
-      examples: ["{ \"notify\": \"Export finished\", \"body\": \"saves/game1.json\" }"],
+      examples: ["{ \"$notify\": \"Export finished\", \"body\": \"saves/game1.json\" }"],
       siblings: {
         body: { type: "string", description: "Message text below the title." },
         subtitle: { type: "string", description: "Secondary line (macOS only)." },
@@ -36,7 +36,7 @@ export class NotificationNode extends Node {
   // `do` stays raw; only the display fields resolve.
   notify(def: Record<string, unknown>, context: Context): NodeValue {
     const fields = {
-      notify: def.notify,
+      notify: def.$notify,
       body: def.body,
       subtitle: def.subtitle,
       silent: def.silent,

@@ -9,6 +9,7 @@ interface EventDef {
   do: unknown[];
   preventDefault?: boolean;
   stopPropagation?: boolean;
+  $catch?: unknown;
 }
 
 /** Merge event-specific keys into `context`, skipping null/undefined so concurrent

@@ -34,8 +34,8 @@ export class ColorNode extends Node {
       output: "array",
       markdownDescription: "Parses a color into an rgb array `[r, g, b, a]` (components 0..1). Accepts a hex string (`#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`) or an array interpreted per `format`.",
       examples: [
-        "{ \"toRgb\": \"#3366ff\" }",
-        "{ \"toRgb\": [210, 100, 50], \"format\": \"hsl\" }",
+        "{ \"$toRgb\": \"#3366ff\" }",
+        "{ \"$toRgb\": [210, 100, 50], \"format\": \"hsl\" }",
       ],
     },
     toHsl: {
@@ -46,7 +46,7 @@ export class ColorNode extends Node {
       output: "array",
       markdownDescription: "Converts a color to an hsl array `[h, s, l, a]` (h 0-360, s/l 0-100). Accepts a hex string or an array interpreted per `format`.",
       examples: [
-        "{ \"toHsl\": \"#3366ff\" }",
+        "{ \"$toHsl\": \"#3366ff\" }",
       ],
     },
     toHex: {
@@ -57,7 +57,7 @@ export class ColorNode extends Node {
       output: "string",
       markdownDescription: "Converts a color to a hex string. Emits `#rrggbb`, or `#rrggbbaa` when alpha is below 1.",
       examples: [
-        "{ \"toHex\": [0.2, 0.4, 1] }",
+        "{ \"$toHex\": [0.2, 0.4, 1] }",
       ],
     },
     lighten: {
@@ -69,7 +69,7 @@ export class ColorNode extends Node {
       output: "array",
       markdownDescription: "Raises a color's HSL lightness by `amount` (a 0..1 fraction of the full range; `0.1` adds 10 lightness points). Tuple form `[color, amount]`. Returns a color in the `format` space.",
       examples: [
-        "{ \"lighten\": [\"#3366ff\", 0.2] }",
+        "{ \"$lighten\": [\"#3366ff\", 0.2] }",
       ],
     },
     darken: {
@@ -81,7 +81,7 @@ export class ColorNode extends Node {
       output: "array",
       markdownDescription: "Lowers a color's HSL lightness by `amount` (a 0..1 fraction of the full range). Tuple form `[color, amount]`. Returns a color in the `format` space.",
       examples: [
-        "{ \"darken\": [\"#3366ff\", 0.2] }",
+        "{ \"$darken\": [\"#3366ff\", 0.2] }",
       ],
     },
     mix: {
@@ -94,7 +94,7 @@ export class ColorNode extends Node {
       output: "array",
       markdownDescription: "Blends two colors component-wise by fraction `t` (0 = all `a`, 1 = all `b`). Tuple form `[a, b, t]`. The blend runs in the `format` space and returns a color there. In `hsl` the hue is interpolated naively (it does not take the shortest arc around the wheel), so `rgb` is the safer default.",
       examples: [
-        "{ \"mix\": [\"#ff0000\", \"#0000ff\", 0.5] }",
+        "{ \"$mix\": [\"#ff0000\", \"#0000ff\", 0.5] }",
       ],
     },
     luminance: {
@@ -105,7 +105,7 @@ export class ColorNode extends Node {
       output: "number",
       markdownDescription: "WCAG relative luminance of a color, 0 (black) to 1 (white).",
       examples: [
-        "{ \"luminance\": \"#3366ff\" }",
+        "{ \"$luminance\": \"#3366ff\" }",
       ],
     },
     contrast: {
@@ -117,18 +117,18 @@ export class ColorNode extends Node {
       output: "number",
       markdownDescription: "WCAG contrast ratio between two colors: `(Llighter + 0.05) / (Ldarker + 0.05)`, from 1 (identical) to 21 (black on white). Tuple form `[a, b]`, where order does not matter.",
       examples: [
-        "{ \"contrast\": [\"#000000\", \"#ffffff\"] }",
+        "{ \"$contrast\": [\"#000000\", \"#ffffff\"] }",
       ],
     },
   };
 
   toRgb(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.toRgb, def.format], c, ([input, formatArg]) =>
+    return resolveAll([def.$toRgb, def.format], c, ([input, formatArg]) =>
       toRgba(input, fmt(formatArg)));
   }
 
   toHsl(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.toHsl, def.format], c, ([input, formatArg]) => {
+    return resolveAll([def.$toHsl, def.format], c, ([input, formatArg]) => {
       const [r, g, b, a] = toRgba(input, fmt(formatArg));
       const [h, s, l] = rgbToHsl(r, g, b);
       return [h, s, l, a];
@@ -136,20 +136,20 @@ export class ColorNode extends Node {
   }
 
   toHex(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.toHex, def.format], c, ([input, formatArg]) =>
+    return resolveAll([def.$toHex, def.format], c, ([input, formatArg]) =>
       toHexString(toRgba(input, fmt(formatArg))));
   }
 
   lighten(def: Record<string, unknown>, c: Context) {
-    return adjustLightness(def.lighten, def.format, c, 1);
+    return adjustLightness(def.$lighten, def.format, c, 1);
   }
 
   darken(def: Record<string, unknown>, c: Context) {
-    return adjustLightness(def.darken, def.format, c, -1);
+    return adjustLightness(def.$darken, def.format, c, -1);
   }
 
   mix(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.mix, def.format], c, ([args, formatArg]) => {
+    return resolveAll([def.$mix, def.format], c, ([args, formatArg]) => {
       const format = fmt(formatArg);
       const a = this.toArray(args);
       const ca = toSpace(a[0], format);
@@ -160,12 +160,12 @@ export class ColorNode extends Node {
   }
 
   luminance(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.luminance, def.format], c, ([input, formatArg]) =>
+    return resolveAll([def.$luminance, def.format], c, ([input, formatArg]) =>
       relLuminance(toRgba(input, fmt(formatArg))));
   }
 
   contrast(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.contrast, def.format], c, ([args, formatArg]) => {
+    return resolveAll([def.$contrast, def.format], c, ([args, formatArg]) => {
       const format = fmt(formatArg);
       const a = this.toArray(args);
       const la = relLuminance(toRgba(a[0], format));

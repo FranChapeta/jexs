@@ -20,12 +20,12 @@ const COOKIE_NAME = "sid";
  * SessionNode - Handles session operations with cache persistence.
  *
  * Operations:
- * - { "session": { "user_id": 123, "name": { "var": "$name" } } } -> set values
- * - { "session": "destroy" } -> destroy session
- * - { "session": "create" } -> create new session (returns session ID for cookie)
+ * - { "$session": { "user_id": 123, "name": { "$var": "name" } } } -> set values
+ * - { "$session": "destroy" } -> destroy session
+ * - { "$session": "create" } -> create new session (returns session ID for cookie)
  *
  * Reading session values is done via VariablesNode:
- * - { "var": "$session.user_id" }
+ * - { "$var": "session.user_id" }
  *
  * Session ID comes from context.request.cookies.sid
  * Sessions are stored in cache with prefix "session:"
@@ -41,16 +41,16 @@ export class SessionNode extends Node {
         "regenerate",
         "object",
       ],
-      markdownDescription: "Manages request sessions stored in cache. Pass an object to set session values. Read values with `{ \"var\": \"$session.key\" }`.\r\nSession ID is stored in a `sid` HTTP-only cookie with a 24-hour TTL.",
+      markdownDescription: "Manages request sessions stored in cache. Pass an object to set session values. Read values with `{ \"$var\": \"session.key\" }`.\r\nSession ID is stored in a `sid` HTTP-only cookie with a 24-hour TTL.",
       outputDescription: "`load` returns `null`; it populates `$session` for reading. `create`/`regenerate`/`destroy`/setting values return a small status object (`{ type: \"session\", action, sessionId?, cookie }`). The `sid` cookie is queued onto the response for you; you don't return it yourself.",
       examples: [
-        "{ \"session\": { \"user_id\": { \"var\": \"$user.id\" }, \"role\": { \"var\": \"$user.role\" } } }",
+        "{ \"$session\": { \"user_id\": { \"$var\": \"user.id\" }, \"role\": { \"$var\": \"user.role\" } } }",
       ],
     },
   };
 
   session(def: Record<string, unknown>, context: Context): NodeValue {
-    const sessionOp = def.session;
+    const sessionOp = def.$session;
 
     if (sessionOp === "load") return loadSession(context);
     if (sessionOp === "destroy") return destroySession(context);

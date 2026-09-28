@@ -71,8 +71,8 @@
     "inputSchema": {
       "type": "object",
       "properties": {
-        "expression": { "description": "A Jexs JSON expression to resolve, e.g. { \"concat\": [\"a\", \"b\"] }." },
-        "vars": { "type": "object", "description": "Optional. Context variables to seed, so the expression can read them via { \"var\": \"$name\" }." }
+        "expression": { "description": "A Jexs JSON expression to resolve, e.g. { \"$concat\": [\"a\", \"b\"] }." },
+        "vars": { "type": "object", "description": "Optional. Context variables to seed, so the expression can read them via { \"$var\": \"name\" }." }
       },
       "required": ["expression"]
     }

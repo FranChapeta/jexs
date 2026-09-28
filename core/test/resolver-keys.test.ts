@@ -134,7 +134,7 @@ test("registering a grown proxy installs the new keys and keeps first-wins", () 
   proxy.addKeys(["remoteop2", "var"]);
   resolver.registerNode(proxy);
   assert.equal(resolver.keys.has("remoteop2"), true);
-  assert.equal(resolver({ var: "$nothing" }, {}), undefined);
+  assert.equal(resolver({ $var: "nothing" }, {}), undefined);
   assert.equal(calls.length, 0);
 });
 
@@ -154,8 +154,8 @@ test("a proxied step blocks the next one and binds its value via as", async () =
   }));
 
   const out = await resolver.runSteps([
-    { remoteslow: "x", as: "got" },
-    { concat: ["got=", { var: "$got" }] },
+    { $remoteslow: "x", $as: "got" },
+    { $concat: ["got=", { $var: "got" }] },
   ], {});
 
   order.push("done");
@@ -176,8 +176,8 @@ test("a `then` sibling makes a proxied step fire-and-forget, as it would locally
   }));
 
   const out = await resolver.runSteps([
-    { remotebg: "x", then: [{ concat: ["ignored"] }] },
-    { concat: ["next"] },
+    { remotebg: "x", $then: [{ $concat: ["ignored"] }] },
+    { $concat: ["next"] },
   ], {});
 
   assert.equal(out, "next");
@@ -193,12 +193,12 @@ test("ProxyNode forwards resolved siblings and receives the context", () => {
   }));
 
   const ctx: Context = { who: "main", windowName: "editor" };
-  const out = resolver({ remotecall: "x", arg: { var: "$who" } }, ctx);
+  const out = resolver({ $remotecall: "x", arg: { $var: "who" } }, ctx);
   return Promise.resolve(out).then((value) => {
     assert.equal(value, "ok");
     assert.equal(seen.length, 1);
-    // Siblings arrive resolved, and `as`/`catch` are stripped by the proxy.
-    assert.deepEqual(seen[0].call, { remotecall: "x", arg: "main" });
+    // Siblings arrive resolved, and `as`/`$catch` are stripped by the proxy.
+    assert.deepEqual(seen[0].call, { $remotecall: "x", arg: "main" });
     assert.equal(seen[0].context.windowName, "editor");
   });
 });

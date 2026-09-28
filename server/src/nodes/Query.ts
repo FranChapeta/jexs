@@ -294,7 +294,7 @@ function op(
 /**
  * QueryNode — one `query` key whose value is the SQL operation; `table` is the
  * target and `options` carries the op-specific clauses, e.g.
- *   { "query": "select", "table": "users", "options": { "where": { "id": 1 }, "first": true } }
+ *   { "$query": "select", "table": "users", "options": { "where": { "id": 1 }, "first": true } }
  * The op is a value-mode discriminator (per-op output narrowing); `options` is a
  * nested object whose VALUES QueryNode resolves itself, so its keys never hit the
  * resolver's dispatch and need no `query-` prefix.
@@ -306,7 +306,7 @@ export class QueryNode extends Node {
       enum: ["select", "insert", "upsert", "update", "delete", "count", "create", "drop", "alter"],
       markdownDescription: "Runs a database query. The value is the SQL operation; `table` is the target and `options` holds the op-specific clauses.",
       examples: [
-        "{ \"query\": \"select\", \"table\": \"users\", \"options\": { \"where\": { \"id\": { \"var\": \"$id\" } }, \"first\": true } }",
+        "{ \"$query\": \"select\", \"table\": \"users\", \"options\": { \"where\": { \"id\": { \"$var\": \"id\" } }, \"first\": true } }",
       ],
       siblings: {
         table:      { type: "string",  description: "Target table." },
@@ -345,10 +345,10 @@ export class QueryNode extends Node {
 async function execQuery(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
   const options = isObject(def.options) ? def.options : {};
   const [queryRaw, tableRaw] = await Promise.all([
-    resolve(def.query ?? null, context),
+    resolve(def.$query ?? null, context),
     resolve(def.table ?? null, context),
   ]);
-  // Flatten { query, table, ...options } into the QueryDefinition shape the
+  // Flatten { $query, table, ...options } into the QueryDefinition shape the
   // execute* helpers already consume.
   const flat: Record<string, unknown> = {
     ...options,
@@ -470,7 +470,7 @@ async function resolveQueryDef(
 /**
  * Resolve an object that maps column names to values. Keys matching known
  * columns are preserved and only their values resolved. If no key matches
- * a column, the whole object is resolved as an expression (e.g. {"var":"$x"}).
+ * a column, the whole object is resolved as an expression (e.g. {"$var":"x"}).
  */
 async function resolveColumnValues(
   obj: unknown,

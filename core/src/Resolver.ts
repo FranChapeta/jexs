@@ -139,29 +139,27 @@ export function resolverFor(context: Context): Resolver {
 
 
 /**
- * Global step keys handled by the resolver machinery, not by nodes: `as`
- * (storeAs), `return` (runSteps), `catch` (handleErr), `bubble` (a modifier
- * read by storeAs alongside `as`), `then` (a fire-and-forget continuation,
+ * Global step keys handled by the resolver machinery, not by nodes: `$as`
+ * (storeAs), `$return` (runSteps), `$catch` (handleErr), `$bubble` (a modifier
+ * read by storeAs alongside `$as`), `$then` (a fire-and-forget continuation,
  * applied in `resolve`). They must never be eagerly resolved as node inputs.
  *
  * Exported because ProxyNode strips them before forwarding a call — the remote
  * side is only a value producer, and these are applied in the calling thread —
- * and because a host filtering IPC calls must not mistake `as` or `catch` for an
+ * and because a host filtering IPC calls must not mistake `$as` or `$catch` for an
  * op. `GLOBAL_KEY_DOCS` in schema-gen describes the same five for autocomplete;
  * a test asserts the two cannot drift apart.
  */
 export const GLOBAL_KEYS = new Set(["as", "return", "catch", "bubble", "then"]);
 
-// Node keys that OWN `then` as their own sibling, shadowing the global `then`
-// continuation. Grandfathered: LogicNode's `if/then/else` predates `then` as a
-// global key and is too idiomatic to change, so when one of these is present
-// `then` is that node's branch, not a continuation. `if` is the only runtime
-// consumer of a `then` sibling.
-const THEN_OWNERS = new Set(["if"]);
+/** A key the resolver owns is written with this prefix: `{ "$concat": [...] }`
+ *  dispatches on `concat`, and `$as`/`$then`/`$catch`/`$return`/`$bubble` are the
+ *  global step keys. Every other key is a sibling or data, never dispatched. */
+export const KEY_PREFIX = "$";
 
-function ownsThen(obj: Record<string, unknown>): boolean {
-  for (const k of THEN_OWNERS) if (k in obj) return true;
-  return false;
+/** The resolver-owned name in `key` (`"$concat"` → `"concat"`), or null for any other key. */
+export function ownedKey(key: string): string | null {
+  return key.charCodeAt(0) === 36 /* $ */ ? key.slice(1) : null;
 }
 
 /**
@@ -243,38 +241,37 @@ function isObject(v: unknown): v is Record<string, unknown> {
 }
 
 function storeAs(step: unknown, value: unknown, context: Context): unknown {
-  if (!isObject(step) || !("as" in step)) return undefined;
+  if (!isObject(step) || !("$as" in step)) return undefined;
   const s = step as Record<string, unknown>;
-  const name = String(s.as);
-  // `bubble` alongside `as` also writes the value up the parent-context chain,
+  const name = String(s.$as);
+  // `$bubble` alongside `$as` also writes the value up the parent-context chain,
   // so it survives the current file/loop/branch scope. It may be a literal or an
-  // expression, so resolve it first — a dynamic `{ "bubble": { "var": "$x" } }`
+  // expression, so resolve it first: a dynamic `{ "$bubble": { "$var": "x" } }`
   // is honored. Returns the resolve result so `runSteps` can await an async flag.
-  if (!("bubble" in s)) { Node.setContextValue(context, name, value); return undefined; }
-  return resolve(s.bubble, context, b =>
+  if (!("$bubble" in s)) { Node.setContextValue(context, name, value); return undefined; }
+  return resolve(s.$bubble, context, b =>
     Node.setContextValue(context, name, value, Node.toBooleanValue(b)),
   );
 }
 
 /**
- * Run a step's `catch` array (if present) with `$error` bound, else rethrow.
+ * Run a step's `$catch` array (if present) with `error` bound, else rethrow.
  * Exported so async nodes that handle their own rejection off the normal
  * `resolve` flow (e.g. the fire-and-forget `thread` node) reuse the same
- * `catch`/`$error` semantics.
+ * `$catch`/`error` semantics.
  */
 export function handleErr(err: unknown, value: unknown, context: Context): unknown {
-  if (isObject(value) && value.catch !== undefined) {
-    const catchSteps = Array.isArray(value.catch) ? value.catch : [value.catch];
-    // Bind under the bare key `error` (not `$error`): `var` strips a leading
-    // `$`, so `{ "var": "$error.message" }` looks up `error.message` in context.
+  if (isObject(value) && value.$catch !== undefined) {
+    const catchSteps = Array.isArray(value.$catch) ? value.$catch : [value.$catch];
+    // Bound as `error`, so `{ "$var": "error.message" }` reads the message.
     // HTTP errors carry a status; any other thrown/rejected error (e.g. a worker
     // task failure) binds just its message.
     const error = isHttpError(err)
       ? { status: err.status, message: err.message }
       : { message: err instanceof Error ? err.message : String(err) };
     // A node that knows more than its message offers it as further variables of
-    // its own (`fetch` hands over `$response`), so `$error` keeps the one shape
-    // everywhere. Bound first, so none of them can displace `$error` itself.
+    // its own (`fetch` hands over `response`), so `error` keeps the one shape
+    // everywhere. Bound first, so none of them can displace `error` itself.
     const bindings = isHttpError(err) ? err.bindings : undefined;
     const catchCtx = childContext(context, { ...bindings, error });
     return runSteps(catchSteps, catchCtx);
@@ -291,13 +288,12 @@ export function handleErr(err: unknown, value: unknown, context: Context): unkno
  * On the sync path `cont` is called immediately — no Promise created.
  * On the async path `cont` is chained via .then() on the Promise.
  *
- * A `"then"` array (except where a node owns `then` as its own sibling —
- * LogicNode's `if/then/else`) makes the step FIRE-AND-FORGET: the work is kicked
- * off, the sequence is handed `undefined` right away so it never blocks, and when
- * the work settles the `then` steps run with the result bound as `$result`.
+ * A `"$then"` array makes the step FIRE-AND-FORGET: the work is kicked off, the
+ * sequence is handed `undefined` right away so it never blocks, and when the work
+ * settles the `$then` steps run with the result bound as `result`.
  *
- * If the step def has a `"catch"` array and an HTTP error is thrown, the catch
- * steps are run with `$error: { status, message }` in context, alongside any
+ * If the step def has a `"$catch"` array and an HTTP error is thrown, the catch
+ * steps are run with `error` (`{ status, message }`) in context, alongside any
  * further variables the thrower offered (see `createHttpError`).
  */
 export function resolve(value: unknown, context: Context): unknown;
@@ -310,21 +306,21 @@ export function resolve(value: unknown, context: Context, cont?: (v: unknown) =>
   const obj = isObject(value) ? value : null;
 
   // Fire-and-forget: dispatch off the caller's stack (so even synchronous setup
-  // doesn't block), run `then` with `$result` when it settles, and route errors
-  // through `catch` (unhandled if none, like any background task). Hand the
+  // doesn't block), run `$then` with `result` when it settles, and route errors
+  // through `$catch` (unhandled if none, like any background task). Hand the
   // sequence `undefined` immediately via `cont` so later steps run right away.
-  if (obj !== null && obj.then !== undefined && !ownsThen(obj)) {
+  if (obj !== null && obj.$then !== undefined) {
     void Promise.resolve()
       .then(() => self.impl(value, context))
       .then(result => runSteps(
-        Array.isArray(obj.then) ? obj.then : [obj.then],
+        Array.isArray(obj.$then) ? obj.$then : [obj.$then],
         childContext(context, { result }),
       ))
       .catch(err => handleErr(err, obj, context));
     return cont ? cont(undefined) : undefined;
   }
 
-  const hasCatch = obj !== null && obj.catch !== undefined;
+  const hasCatch = obj !== null && obj.$catch !== undefined;
 
   let r: unknown;
   try {
@@ -350,11 +346,12 @@ export function resolveObj<T>(obj: Record<string, unknown>, context: Context, th
   const pending: Promise<unknown>[] = [];
   const pendingKeys: string[] = [];
   for (const key of Object.keys(obj)) {
-    // Never eagerly resolve the global step keys — they belong to the resolver's
-    // step machinery (`as`/`return` via runSteps, `catch` via handleErr). Resolving
-    // a `catch: [...]` array here would execute the error handler on success. Kept
+    // Never eagerly resolve the global step keys: they belong to the resolver's
+    // step machinery (`$as`/`$return` via runSteps, `$catch` via handleErr).
+    // Resolving a `$catch` array here would run the error handler on success. Kept
     // raw so the object shape is preserved for callers that pass `r` through.
-    if (GLOBAL_KEYS.has(key)) { result[key] = obj[key]; continue; }
+    const owned = ownedKey(key);
+    if (owned !== null && GLOBAL_KEYS.has(owned)) { result[key] = obj[key]; continue; }
     const r = impl(obj[key], context);
     if (r instanceof Promise) { pending.push(r); pendingKeys.push(key); }
     else result[key] = r;
@@ -391,9 +388,9 @@ export function resolveAll<T>(values: unknown[], context: Context, then: (args: 
 /**
  * Run an array of steps sequentially, sync-first. Returns the last step's value.
  * Handles the `"as"` global property on each step (stores result in context).
- * A step that resolves to `{ return: X }` stops the sequence and yields `X`.
+ * A step that resolves to `{ $return: X }` stops the sequence and yields `X`.
  * The wrapper does not propagate to enclosing sequences — to escape multiple
- * levels, nest the wrapper (e.g. `{ return: { return: X } }`).
+ * levels, nest the wrapper (e.g. `{ $return: { $return: X } }`).
  *
  * Every step must be an expression object. A literal step resolves to itself, so
  * it can only ever be a no-op or, as the last step, a value dressed up as a
@@ -414,11 +411,11 @@ export function runSteps(steps: unknown[], context: Context): unknown {
     const isLast = i >= steps.length;
     return resolve(step, context, v => {
       const after = (): unknown => {
-        if (isObject(v) && "return" in v) return v.return;
+        if (isObject(v) && "$return" in v) return v.$return;
         if (isLast) return v;
         return next();
       };
-      // storeAs is sync unless a `bubble` expression resolves async; in that case
+      // storeAs is sync unless a `$bubble` expression resolves async; in that case
       // wait for the write before the next step so it observes the bubbled value.
       const stored = storeAs(step, v, context);
       return stored instanceof Promise ? stored.then(after) : after();
@@ -436,7 +433,7 @@ export function resolveSteps(value: unknown, context: Context): unknown {
  * Run steps from a deferred callback — a timer tick, a socket message, a menu
  * click, an OS event — where `resolve` has long since returned and the resolver
  * is no longer wrapped around the call.
- * `def` is the step object whose `catch` should be honored. The returned promise
+ * `def` is the step object whose `$catch` should be honored. The returned promise
  * rejects when nothing handled the error, so callers can log with their own
  * context.
  */
@@ -484,7 +481,7 @@ export function createResolver(nodes: Node[], options?: ResolverOptions): Resolv
   // The resolver IS the callable. It closes over itself, which is safe because
   // the body only runs once the binding is initialized.
   // Delegates to the catch-aware `resolve` wrapper rather than straight to
-  // `impl`, so a top-level `catch` on the entry expression is honored too —
+  // `impl`, so a top-level `$catch` on the entry expression is honored too —
   // matching how `runSteps` (and every nested node) already resolves.
   const self = ((value: unknown, context: Context) =>
     self.resolve(value, context)) as ResolverImpl;
@@ -530,36 +527,37 @@ export function createResolver(nodes: Node[], options?: ResolverOptions): Resolv
       const obj = value as Record<string, unknown>;
       const objKeys = Object.keys(obj);
 
-      // Key-based dispatch — pure routing, no pre-resolution
+      // Dispatch on the step's one `$` op key. Nothing else is ever dispatched,
+      // so an object without one is plain data, whatever its keys are called.
+      let op: string | null = null;
       for (let i = 0; i < objKeys.length; i++) {
-        const node = keyMap.get(objKeys[i]);
-        if (node) return node.resolve(obj, context, objKeys[i]);
-      }
-
-      // Lazy load: if any key matches a lazy module, load it and retry dispatch.
-      // Skip the scan entirely when nothing is registered (the common case) so
-      // plain data objects don't pay N map misses on every resolution.
-      if (lazyMap.size !== 0) {
-        for (let i = 0; i < objKeys.length; i++) {
-          const loader = lazyMap.get(objKeys[i]);
-          if (loader) {
-            let pending = pendingLoads.get(loader);
-            if (!pending) {
-              pending = Promise.resolve(loader(self)).catch((err: unknown) => {
-                pendingLoads.delete(loader);
-                throw err;
-              });
-              pendingLoads.set(loader, pending);
-            }
-            return pending.then(() => {
-              for (const [key, fn] of lazyMap) { if (fn === loader) lazyMap.delete(key); }
-              for (let j = 0; j < objKeys.length; j++) {
-                const node = keyMap.get(objKeys[j]);
-                if (node) return node.resolve(obj, context, objKeys[j]);
-              }
-            });
-          }
+        const name = ownedKey(objKeys[i]);
+        if (name === null || GLOBAL_KEYS.has(name)) continue;
+        if (op !== null) {
+          throw new Error(`A step dispatches on one op, but this one names both "$${op}" and "${objKeys[i]}".`);
         }
+        op = name;
+      }
+      if (op !== null) {
+        const node = keyMap.get(op);
+        if (node) return node.resolve(obj, context, op);
+        const loader = lazyMap.get(op);
+        if (!loader) throw new Error(`Unknown op "$${op}".`);
+        let pending = pendingLoads.get(loader);
+        if (!pending) {
+          pending = Promise.resolve(loader(self)).catch((err: unknown) => {
+            pendingLoads.delete(loader);
+            throw err;
+          });
+          pendingLoads.set(loader, pending);
+        }
+        const name = op;
+        return pending.then(() => {
+          for (const [key, fn] of lazyMap) { if (fn === loader) lazyMap.delete(key); }
+          const loaded = keyMap.get(name);
+          if (!loaded) throw new Error(`Unknown op "$${name}": its module loaded without registering it.`);
+          return loaded.resolve(obj, context, name);
+        });
       }
 
       // Plain object: resolve values in parallel, copy-on-write

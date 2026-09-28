@@ -6,46 +6,46 @@ import { createResolver, coreNodes } from "../src/index.js";
 const resolve = createResolver(coreNodes());
 
 test("map: exposes the index as `index`, like filter/find/reduce", () => {
-  const out = resolve({ map: ["a", "b", "c"], do: { concat: [{ var: "index" }, ":", { var: "item" }] } }, {});
+  const out = resolve({ $map: ["a", "b", "c"], do: { $concat: [{ $var: "index" }, ":", { $var: "item" }] } }, {});
   assert.deepEqual(out, ["0:a", "1:b", "2:c"]);
 });
 
 test("map: renames the index via the `index` sibling", () => {
-  const out = resolve({ map: ["a", "b"], item: "x", index: "i", do: { concat: [{ var: "i" }, "=", { var: "x" }] } }, {});
+  const out = resolve({ $map: ["a", "b"], item: "x", index: "i", do: { $concat: [{ $var: "i" }, "=", { $var: "x" }] } }, {});
   assert.deepEqual(out, ["0=a", "1=b"]);
 });
 
 test("map: item/index names may be expressions, resolved before use", () => {
   const out = resolve(
-    { map: ["a", "b"], item: { var: "$itemVar" }, index: { var: "$indexVar" }, do: { concat: [{ var: "i" }, "=", { var: "n" }] } },
+    { $map: ["a", "b"], item: { $var: "itemVar" }, index: { $var: "indexVar" }, do: { $concat: [{ $var: "i" }, "=", { $var: "n" }] } },
     { itemVar: "n", indexVar: "i" },
   );
   assert.deepEqual(out, ["0=a", "1=b"]);
 });
 
 test("map: `loop` still carries the position, alongside the bare index", () => {
-  const out = resolve({ map: ["a", "b"], do: { concat: [{ var: "$loop.index" }, "/", { var: "$loop.length" }] } }, {});
+  const out = resolve({ $map: ["a", "b"], do: { $concat: [{ $var: "loop.index" }, "/", { $var: "loop.length" }] } }, {});
   assert.deepEqual(out, ["0/2", "1/2"]);
 });
 
 test("filter: renames the item via the `item` sibling", () => {
-  const out = resolve({ filter: [[1, 2, 3], { gt: [{ var: "n" }, 1] }], item: "n" }, {});
+  const out = resolve({ $filter: [[1, 2, 3], { $gt: [{ $var: "n" }, 1] }], item: "n" }, {});
   assert.deepEqual(out, [2, 3]);
 });
 
 test("filter: default item is still `item` (backward compatible)", () => {
-  const out = resolve({ filter: [[1, 2, 3], { gt: [{ var: "item" }, 1] }] }, {});
+  const out = resolve({ $filter: [[1, 2, 3], { $gt: [{ $var: "item" }, 1] }] }, {});
   assert.deepEqual(out, [2, 3]);
 });
 
 test("filter: renames the index via the `index` sibling", () => {
-  const out = resolve({ filter: [["a", "b", "c"], { gt: [{ var: "i" }, 0] }], index: "i" }, {});
+  const out = resolve({ $filter: [["a", "b", "c"], { $gt: [{ $var: "i" }, 0] }], index: "i" }, {});
   assert.deepEqual(out, ["b", "c"]);
 });
 
 test("filter: item/index names may be expressions, resolved before use", () => {
   const out = resolve(
-    { filter: [[1, 2, 3], { gt: [{ var: "n" }, 1] }], item: { var: "$itemVar" } },
+    { $filter: [[1, 2, 3], { $gt: [{ $var: "n" }, 1] }], item: { $var: "itemVar" } },
     { itemVar: "n" },
   );
   assert.deepEqual(out, [2, 3]);
@@ -53,7 +53,7 @@ test("filter: item/index names may be expressions, resolved before use", () => {
 
 test("find: renames the item via the `item` sibling", () => {
   const out = resolve(
-    { find: [[{ id: 1 }, { id: 2 }], { eq: [{ var: "x.id" }, 2] }], item: "x" },
+    { $find: [[{ id: 1 }, { id: 2 }], { $eq: [{ $var: "x.id" }, 2] }], item: "x" },
     {},
   );
   assert.deepEqual(out, { id: 2 });
@@ -61,7 +61,7 @@ test("find: renames the item via the `item` sibling", () => {
 
 test("reduce: renames the item while accumulator stays available", () => {
   const out = resolve(
-    { reduce: [[1, 2, 3], { add: [{ var: "accumulator" }, { var: "n" }] }, 0], item: "n" },
+    { $reduce: [[1, 2, 3], { $add: [{ $var: "accumulator" }, { $var: "n" }] }, 0], item: "n" },
     {},
   );
   assert.equal(out, 6);
@@ -70,8 +70,8 @@ test("reduce: renames the item while accumulator stays available", () => {
 test("return: short-circuits a step array", () => {
   const out = resolve.runSteps(
     [
-      { setVars: { x: 1 } },
-      { if: { eq: [{ var: "$x" }, 1] }, then: { return: "early" } },
+      { $setVars: { x: 1 } },
+      { $if: { $eq: [{ $var: "x" }, 1] }, then: { $return: "early" } },
       "last",
     ],
     {},
@@ -80,7 +80,7 @@ test("return: short-circuits a step array", () => {
 });
 
 test("return: absent, the last step's value wins", () => {
-  const out = resolve.runSteps([{ setVars: { x: 1 } }, { var: "$x" }], {});
+  const out = resolve.runSteps([{ $setVars: { x: 1 } }, { $var: "x" }], {});
   assert.equal(out, 1);
 });
 
@@ -88,5 +88,5 @@ test("a literal step is rejected, not silently run as a value", () => {
   // `["Hello"]` is a value dressed up as a sequence: every literal step resolves
   // to itself, so it can only ever be a no-op or the array's return value.
   assert.throws(() => resolve.runSteps(["Hello"], {}), /step must be an expression object/);
-  assert.throws(() => resolve.runSteps([{ setVars: { x: 1 } }, 42], {}), /step must be an expression object/);
+  assert.throws(() => resolve.runSteps([{ $setVars: { x: 1 } }, 42], {}), /step must be an expression object/);
 });

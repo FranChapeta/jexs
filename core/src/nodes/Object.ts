@@ -8,21 +8,21 @@ export class ObjectNode extends Node {
       output: "array",
       markdownDescription: "Returns the keys of an object, or string indices of an array.",
       examples: [
-        "{ \"keys\": { \"var\": \"$obj\" } }",
+        "{ \"$keys\": { \"$var\": \"obj\" } }",
       ],
     },
     values: {
       output: "array",
       markdownDescription: "Returns the values of an object as an array.",
       examples: [
-        "{ \"values\": { \"var\": \"$obj\" } }",
+        "{ \"$values\": { \"$var\": \"obj\" } }",
       ],
     },
     entries: {
       output: "array",
       markdownDescription: "Returns `[{ key, value }]` pairs from an object or array. Inverse of `fromEntries` (in the array node).",
       examples: [
-        "{ \"entries\": { \"var\": \"$obj\" } }",
+        "{ \"$entries\": { \"$var\": \"obj\" } }",
       ],
     },
     pick: {
@@ -30,7 +30,7 @@ export class ObjectNode extends Node {
       output: "object",
       markdownDescription: "Returns a new object containing only the listed top-level keys. Keys absent from the source are skipped.",
       examples: [
-        "{ \"pick\": [{ \"var\": \"$user\" }, [\"id\", \"name\"]] }",
+        "{ \"$pick\": [{ \"$var\": \"user\" }, [\"id\", \"name\"]] }",
       ],
     },
     omit: {
@@ -38,14 +38,14 @@ export class ObjectNode extends Node {
       output: "object",
       markdownDescription: "Returns a new object with the listed top-level keys removed.",
       examples: [
-        "{ \"omit\": [{ \"var\": \"$user\" }, [\"password\"]] }",
+        "{ \"$omit\": [{ \"$var\": \"user\" }, [\"password\"]] }",
       ],
     },
     mapValues: {
       output: "object",
       markdownDescription: "Transforms each value of an object, keeping its keys. Each iteration exposes the value as `item` (rename via the `item` sibling), the current `key`, and `loop`.\nWhen `do` is an array it is resolved as a literal (all elements), not as sequential steps.",
       examples: [
-        "{ \"mapValues\": { \"var\": \"$scores\" }, \"do\": { \"multiply\": [{ \"var\": \"item\" }, 2] } }",
+        "{ \"$mapValues\": { \"$var\": \"scores\" }, \"do\": { \"$multiply\": [{ \"$var\": \"item\" }, 2] } }",
       ],
       siblings: {
         item: {
@@ -63,13 +63,13 @@ export class ObjectNode extends Node {
       output: "object",
       markdownDescription: "Recursively merges multiple objects (later keys win). Nested plain objects merge; arrays and primitive values are replaced. For a shallow merge, or to concatenate arrays, use `merge`.",
       examples: [
-        "{ \"deepMerge\": [{ \"var\": \"$defaults\" }, { \"var\": \"$overrides\" }] }",
+        "{ \"$deepMerge\": [{ \"$var\": \"defaults\" }, { \"$var\": \"overrides\" }] }",
       ],
     },
   };
 
   keys(def: Record<string, unknown>, c: Context) {
-    return resolve(def.keys, c, value => {
+    return resolve(def.$keys, c, value => {
       if (this.isObject(value)) return Object.keys(value);
       if (Array.isArray(value)) return value.map((_, i) => String(i));
       return [];
@@ -77,7 +77,7 @@ export class ObjectNode extends Node {
   }
 
   values(def: Record<string, unknown>, c: Context) {
-    return resolve(def.values, c, value => {
+    return resolve(def.$values, c, value => {
       if (this.isObject(value)) return Object.values(value);
       if (Array.isArray(value)) return value;
       return [];
@@ -85,7 +85,7 @@ export class ObjectNode extends Node {
   }
 
   entries(def: Record<string, unknown>, c: Context) {
-    return resolve(def.entries, c, value => {
+    return resolve(def.$entries, c, value => {
       if (this.isObject(value)) return Object.entries(value).map(([key, val]) => ({ key, value: val }));
       if (Array.isArray(value)) return value.map((val, i) => ({ key: String(i), value: val }));
       return [];
@@ -93,7 +93,7 @@ export class ObjectNode extends Node {
   }
 
   pick(def: Record<string, unknown>, c: Context) {
-    return resolve(def.pick, c, args => {
+    return resolve(def.$pick, c, args => {
       const a = this.toArray(args);
       const obj = this.isObject(a[0]) ? a[0] : {};
       const result: Record<string, unknown> = {};
@@ -106,7 +106,7 @@ export class ObjectNode extends Node {
   }
 
   omit(def: Record<string, unknown>, c: Context) {
-    return resolve(def.omit, c, args => {
+    return resolve(def.$omit, c, args => {
       const a = this.toArray(args);
       const obj = this.isObject(a[0]) ? a[0] : {};
       const drop = new Set(this.toArray(a[1]).map(k => this.toString(k)));
@@ -120,7 +120,7 @@ export class ObjectNode extends Node {
     const itemName = typeof def.item === "string" ? def.item : "item";
     const template = def.do;
     if (template === undefined) throw new Error("mapValues needs a `do` template");
-    return resolve(def.mapValues, context, obj => {
+    return resolve(def.$mapValues, context, obj => {
       if (!this.isObject(obj)) return {};
       const record = obj; // const preserves the narrowed type into the closure below
       const keys = Object.keys(record);
@@ -143,7 +143,7 @@ export class ObjectNode extends Node {
   }
 
   deepMerge(def: Record<string, unknown>, c: Context) {
-    return resolve(def.deepMerge, c, args => {
+    return resolve(def.$deepMerge, c, args => {
       const result: Record<string, unknown> = {};
       for (const obj of this.toArray(args)) {
         if (isPlainObject(obj)) mergeInto(result, obj);

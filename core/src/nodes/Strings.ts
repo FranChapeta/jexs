@@ -17,70 +17,70 @@ export class StringNode extends Node {
       output: "string",
       markdownDescription: "Joins an array of values into a single string.",
       examples: [
-        "{ \"concat\": [\"Hello, \", { \"var\": \"$name\" }, \"!\"] }",
+        "{ \"$concat\": [\"Hello, \", { \"$var\": \"name\" }, \"!\"] }",
       ],
     },
     upper: {
       output: "string",
       markdownDescription: "Converts a string to uppercase.",
       examples: [
-        "{ \"upper\": { \"var\": \"$name\" } }",
+        "{ \"$upper\": { \"$var\": \"name\" } }",
       ],
     },
     lower: {
       output: "string",
       markdownDescription: "Converts a string to lowercase.",
       examples: [
-        "{ \"lower\": { \"var\": \"$name\" } }",
+        "{ \"$lower\": { \"$var\": \"name\" } }",
       ],
     },
     capitalize: {
       output: "string",
       markdownDescription: "Uppercases the first character, lowercases the rest.",
       examples: [
-        "{ \"capitalize\": \"hELLO\" }",
+        "{ \"$capitalize\": \"hELLO\" }",
       ],
     },
     trim: {
       output: "string",
       markdownDescription: "Removes leading and trailing whitespace.",
       examples: [
-        "{ \"trim\": \"  hello  \" }",
+        "{ \"$trim\": \"  hello  \" }",
       ],
     },
     trimStart: {
       output: "string",
       markdownDescription: "Removes leading whitespace.",
       examples: [
-        "{ \"trimStart\": \"  hello\" }",
+        "{ \"$trimStart\": \"  hello\" }",
       ],
     },
     trimEnd: {
       output: "string",
       markdownDescription: "Removes trailing whitespace.",
       examples: [
-        "{ \"trimEnd\": \"hello  \" }",
+        "{ \"$trimEnd\": \"hello  \" }",
       ],
     },
     length: {
       output: "number",
       markdownDescription: "Returns the character count of a string.",
       examples: [
-        "{ \"length\": { \"var\": \"$name\" } }",
+        "{ \"$length\": { \"$var\": \"name\" } }",
       ],
     },
     slug: {
       output: "string",
       markdownDescription: "Converts a string to a URL-safe lowercase slug, stripping accents and special characters.",
       examples: [
-        "{ \"slug\": \"Hello World!\" }",
+        "{ \"$slug\": \"Hello World!\" }",
       ],
     },
     toBase64: {
       output: "string",
       markdownDescription: "Encodes a string as base64. The text is read as UTF-8, so any character encodes, not just the Latin-1 range the platform's own `btoa` is limited to.\n\nPass `urlSafe: true` for the alphabet URLs and JWTs use (`-` and `_` in place of `+` and `/`, padding dropped).",
       examples: [
-        "{ \"toBase64\": { \"concat\": [{ \"var\": \"$user\" }, \":\", { \"var\": \"$key\" }] } }",
+        "{ \"$toBase64\": { \"$concat\": [{ \"$var\": \"user\" }, \":\", { \"$var\": \"key\" }] } }",
       ],
       siblings: {
         urlSafe: {
@@ -98,7 +98,7 @@ export class StringNode extends Node {
       markdownDescription: "Decodes base64 back to a string, reading the bytes as UTF-8. Accepts either alphabet and tolerates missing padding, so a value that arrived URL-safe needs no flag.",
       outputDescription: "The decoded text. Throws if the input is not valid base64.",
       examples: [
-        "{ \"fromBase64\": { \"var\": \"$token\" } }",
+        "{ \"$fromBase64\": { \"$var\": \"token\" } }",
       ],
     },
     parseJSON: {
@@ -108,7 +108,7 @@ export class StringNode extends Node {
       markdownDescription: "Parses a JSON string; returns `null` on invalid input.",
       outputDescription: "The parsed value, which can be any JSON type (object, array, number, string, boolean, or `null`). Returns `null` if the input isn't valid JSON, so it's indistinguishable from a literal `null`.",
       examples: [
-        "{ \"parseJSON\": { \"var\": \"$raw\" } }",
+        "{ \"$parseJSON\": { \"$var\": \"raw\" } }",
       ],
     },
     stringify: {
@@ -123,7 +123,7 @@ export class StringNode extends Node {
       output: "string",
       markdownDescription: "Serializes a value to a JSON string. Pass `[value, indent]` to pretty-print.",
       examples: [
-        "{ \"stringify\": [{ \"var\": \"$obj\" }, 2] }",
+        "{ \"$stringify\": [{ \"$var\": \"obj\" }, 2] }",
       ],
     },
     substring: {
@@ -139,7 +139,7 @@ export class StringNode extends Node {
       output: "string",
       markdownDescription: "Extracts a substring.",
       examples: [
-        "{ \"substring\": [\"hello world\", 6] }",
+        "{ \"$substring\": [\"hello world\", 6] }",
       ],
     },
     replace: {
@@ -152,8 +152,8 @@ export class StringNode extends Node {
       output: "string",
       markdownDescription: "Replaces occurrences in `[input, search, replacement]`. A `search` of the form `/pattern/flags` is treated as a regular expression (so `$1`/`$&` group refs work in the replacement); any other string is matched literally. Replaces all occurrences by default; set `all: false` for only the first (literal), or omit the `g` flag (regex).",
       examples: [
-        "{ \"replace\": [\"foo foo\", \"foo\", \"bar\"] }",
-        "{ \"replace\": [\"a1 b2\", \"/\\\\d/g\", \"#\"] }",
+        "{ \"$replace\": [\"foo foo\", \"foo\", \"bar\"] }",
+        "{ \"$replace\": [\"a1 b2\", \"/\\\\d/g\", \"#\"] }",
       ],
       siblings: {
         all: {
@@ -171,7 +171,7 @@ export class StringNode extends Node {
       output: "array",
       markdownDescription: "Splits a string into an array. A `/pattern/flags` separator splits on a regular expression.",
       examples: [
-        "{ \"split\": [\"a,b,c\", \",\"] }",
+        "{ \"$split\": [\"a,b,c\", \",\"] }",
       ],
     },
     join: {
@@ -186,7 +186,7 @@ export class StringNode extends Node {
       output: "string",
       markdownDescription: "Joins an array into a string with a separator (default `\",\"`).",
       examples: [
-        "{ \"join\": [[\"a\", \"b\", \"c\"], \" - \"] }",
+        "{ \"$join\": [[\"a\", \"b\", \"c\"], \" - \"] }",
       ],
     },
     padStart: {
@@ -202,7 +202,7 @@ export class StringNode extends Node {
       output: "string",
       markdownDescription: "Pads the start of a string to a target length.",
       examples: [
-        "{ \"padStart\": [\"5\", 3, \"0\"] }",
+        "{ \"$padStart\": [\"5\", 3, \"0\"] }",
       ],
     },
     padEnd: {
@@ -218,7 +218,7 @@ export class StringNode extends Node {
       output: "string",
       markdownDescription: "Pads the end of a string to a target length.",
       examples: [
-        "{ \"padEnd\": [\"hi\", 5, \".\"] }",
+        "{ \"$padEnd\": [\"hi\", 5, \".\"] }",
       ],
     },
     repeat: {
@@ -230,7 +230,7 @@ export class StringNode extends Node {
       output: "string",
       markdownDescription: "Repeats a string N times.",
       examples: [
-        "{ \"repeat\": [\"ab\", 3] }",
+        "{ \"$repeat\": [\"ab\", 3] }",
       ],
     },
     startsWith: {
@@ -242,7 +242,7 @@ export class StringNode extends Node {
       output: "boolean",
       markdownDescription: "Returns `true` if a string starts with the given prefix.",
       examples: [
-        "{ \"startsWith\": [\"hello world\", \"hello\"] }",
+        "{ \"$startsWith\": [\"hello world\", \"hello\"] }",
       ],
     },
     endsWith: {
@@ -254,7 +254,7 @@ export class StringNode extends Node {
       output: "boolean",
       markdownDescription: "Returns `true` if a string ends with the given suffix.",
       examples: [
-        "{ \"endsWith\": [\"hello world\", \"world\"] }",
+        "{ \"$endsWith\": [\"hello world\", \"world\"] }",
       ],
     },
     contains: {
@@ -266,7 +266,7 @@ export class StringNode extends Node {
       output: "boolean",
       markdownDescription: "Returns `true` if a string contains the given substring. A `/pattern/flags` needle tests a regular expression instead.",
       examples: [
-        "{ \"contains\": [\"hello world\", \"world\"] }",
+        "{ \"$contains\": [\"hello world\", \"world\"] }",
       ],
     },
     match: {
@@ -279,14 +279,14 @@ export class StringNode extends Node {
       outputDescription: "Array of matches, or `null` when nothing matches. With the `g` flag every match; otherwise the first match plus capture groups.",
       markdownDescription: "Matches a regular expression against a string. The pattern may be `/pattern/flags` or a bare pattern.",
       examples: [
-        "{ \"match\": [\"a1 b2\", \"/\\\\d/g\"] }",
+        "{ \"$match\": [\"a1 b2\", \"/\\\\d/g\"] }",
       ],
     },
     normalize: {
       output: "string",
       markdownDescription: "Unicode-normalizes a string (default `\"NFC\"`). Apply before comparing, sorting, or hashing text that may carry combining marks or compatibility forms so equivalent strings share one representation.",
       examples: [
-        "{ \"normalize\": { \"var\": \"$name\" } }",
+        "{ \"$normalize\": { \"$var\": \"name\" } }",
       ],
       siblings: {
         form: {
@@ -307,8 +307,8 @@ export class StringNode extends Node {
       markdownDescription: "Splits a string into Unicode-correct segments via `Intl.Segmenter`, unlike the code-unit `split`. `\"grapheme\"` (default) yields user-perceived characters, so emoji and combining marks stay whole, where `length` and index-based ops treat them as several UTF-16 units. `\"word\"` yields locale-aware word boundaries (works for scripts without spaces, e.g. Chinese/Japanese/Thai). `\"sentence\"` yields sentences.",
       outputDescription: "An array of segment strings. `\"word\"`/`\"sentence\"` granularity includes the whitespace and punctuation segments between words.",
       examples: [
-        "{ \"segment\": \"a\\ud83d\\udc4db\" }",
-        "{ \"segment\": { \"var\": \"$text\" }, \"granularity\": \"word\" }",
+        "{ \"$segment\": \"a\\ud83d\\udc4db\" }",
+        "{ \"$segment\": { \"$var\": \"text\" }, \"granularity\": \"word\" }",
       ],
       siblings: {
         granularity: {
@@ -330,44 +330,44 @@ export class StringNode extends Node {
   };
 
   concat(def: Record<string, unknown>, c: Context) {
-    return resolve(def.concat, c, parts =>
+    return resolve(def.$concat, c, parts =>
       this.toArray(parts).map(p => this.toString(p)).join("")
     );
   }
 
   upper(d: Record<string, unknown>, c: Context) {
-    return resolve(d.upper, c, v => this.toString(v).toUpperCase());
+    return resolve(d.$upper, c, v => this.toString(v).toUpperCase());
   }
 
   lower(d: Record<string, unknown>, c: Context) {
-    return resolve(d.lower, c, v => this.toString(v).toLowerCase());
+    return resolve(d.$lower, c, v => this.toString(v).toLowerCase());
   }
 
   capitalize(def: Record<string, unknown>, c: Context) {
-    return resolve(def.capitalize, c, v => {
+    return resolve(def.$capitalize, c, v => {
       const s = this.toString(v);
       return s.length === 0 ? s : s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
     });
   }
 
   trim(d: Record<string, unknown>, c: Context) {
-    return resolve(d.trim, c, v => this.toString(v).trim());
+    return resolve(d.$trim, c, v => this.toString(v).trim());
   }
 
   trimStart(d: Record<string, unknown>, c: Context) {
-    return resolve(d.trimStart, c, v => this.toString(v).trimStart());
+    return resolve(d.$trimStart, c, v => this.toString(v).trimStart());
   }
 
   trimEnd(d: Record<string, unknown>, c: Context) {
-    return resolve(d.trimEnd, c, v => this.toString(v).trimEnd());
+    return resolve(d.$trimEnd, c, v => this.toString(v).trimEnd());
   }
 
   length(d: Record<string, unknown>, c: Context) {
-    return resolve(d.length, c, v => this.toString(v).length);
+    return resolve(d.$length, c, v => this.toString(v).length);
   }
 
   toBase64(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.toBase64, def.urlSafe], c, ([value, urlSafe]) => {
+    return resolveAll([def.$toBase64, def.urlSafe], c, ([value, urlSafe]) => {
       // Through TextEncoder, not straight into `btoa`, which is Latin-1 only:
       // `btoa("héllo")` throws on its own.
       const bytes = new TextEncoder().encode(this.toString(value));
@@ -383,7 +383,7 @@ export class StringNode extends Node {
   }
 
   fromBase64(def: Record<string, unknown>, c: Context) {
-    return resolve(def.fromBase64, c, v => {
+    return resolve(def.$fromBase64, c, v => {
       // Either alphabet, padded or not: a URL-safe value usually arrives stripped,
       // and `atob` wants the standard characters and a length that is a multiple of 4.
       const standard = this.toString(v).trim().replace(/-/g, "+").replace(/_/g, "/");
@@ -395,7 +395,7 @@ export class StringNode extends Node {
   }
 
   slug(def: Record<string, unknown>, c: Context) {
-    return resolve(def.slug, c, v =>
+    return resolve(def.$slug, c, v =>
       this.toString(v)
         .toLowerCase()
         .normalize("NFD")
@@ -408,13 +408,13 @@ export class StringNode extends Node {
   }
 
   parseJSON(d: Record<string, unknown>, c: Context) {
-    return resolve(d.parseJSON, c, v => {
+    return resolve(d.$parseJSON, c, v => {
       try { return JSON.parse(this.toString(v)); } catch { return null; }
     });
   }
 
   stringify(def: Record<string, unknown>, c: Context) {
-    return resolve(def.stringify, c, args => {
+    return resolve(def.$stringify, c, args => {
       if (Array.isArray(args)) {
         const a = args as unknown[];
         const indent = a.length > 1 ? Number(a[1]) || 0 : 0;
@@ -425,7 +425,7 @@ export class StringNode extends Node {
   }
 
   substring(def: Record<string, unknown>, c: Context) {
-    return resolve(def.substring, c, args => {
+    return resolve(def.$substring, c, args => {
       const a = this.toArray(args);
       const str = this.toString(a[0]);
       const start = this.toNumber(a[1]);
@@ -435,13 +435,13 @@ export class StringNode extends Node {
   }
 
   replace(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.replace, def.all], c, ([args, all]) =>
+    return resolveAll([def.$replace, def.all], c, ([args, all]) =>
       doReplace(args, all as boolean | undefined),
     );
   }
 
   split(def: Record<string, unknown>, c: Context) {
-    return resolve(def.split, c, args => {
+    return resolve(def.$split, c, args => {
       const a = this.toArray(args);
       if (a.length < 2) return this.toString(a[0]).split("");
       // A `/pattern/flags` separator splits on a regular expression.
@@ -451,43 +451,43 @@ export class StringNode extends Node {
   }
 
   join(def: Record<string, unknown>, c: Context) {
-    return resolve(def.join, c, args => {
+    return resolve(def.$join, c, args => {
       const a = this.toArray(args);
       return this.toArray(a[0]).map(v => this.toString(v)).join(a.length > 1 ? this.toString(a[1]) : ",");
     });
   }
 
   padStart(def: Record<string, unknown>, c: Context) {
-    return resolve(def.padStart, c, args => doPad(args, "start"));
+    return resolve(def.$padStart, c, args => doPad(args, "start"));
   }
 
   padEnd(def: Record<string, unknown>, c: Context) {
-    return resolve(def.padEnd, c, args => doPad(args, "end"));
+    return resolve(def.$padEnd, c, args => doPad(args, "end"));
   }
 
   repeat(def: Record<string, unknown>, c: Context) {
-    return resolve(def.repeat, c, args => {
+    return resolve(def.$repeat, c, args => {
       const a = this.toArray(args);
       return this.toString(a[0]).repeat(Math.max(0, this.toNumber(a[1])));
     });
   }
 
   startsWith(def: Record<string, unknown>, c: Context) {
-    return resolve(def.startsWith, c, args => {
+    return resolve(def.$startsWith, c, args => {
       const a = this.toArray(args);
       return this.toString(a[0]).startsWith(this.toString(a[1]));
     });
   }
 
   endsWith(def: Record<string, unknown>, c: Context) {
-    return resolve(def.endsWith, c, args => {
+    return resolve(def.$endsWith, c, args => {
       const a = this.toArray(args);
       return this.toString(a[0]).endsWith(this.toString(a[1]));
     });
   }
 
   contains(def: Record<string, unknown>, c: Context) {
-    return resolve(def.contains, c, args => {
+    return resolve(def.$contains, c, args => {
       const a = this.toArray(args);
       // A `/pattern/flags` needle tests a regular expression; else substring.
       // `search` saves/restores lastIndex, so a cached g/y regex stays safe.
@@ -497,7 +497,7 @@ export class StringNode extends Node {
   }
 
   match(def: Record<string, unknown>, c: Context) {
-    return resolve(def.match, c, args => {
+    return resolve(def.$match, c, args => {
       const a = this.toArray(args);
       // `match` is always regex: a `/re/flags` literal carries flags; a bare
       // string is coerced to a RegExp by String.prototype.match.
@@ -507,14 +507,14 @@ export class StringNode extends Node {
   }
 
   normalize(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.normalize, def.form], c, ([v, form]) => {
+    return resolveAll([def.$normalize, def.form], c, ([v, form]) => {
       const f = NORMALIZE_FORMS.has(String(form)) ? String(form) as NormalizationForm : "NFC";
       return this.toString(v).normalize(f);
     });
   }
 
   segment(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.segment, def.granularity, def.locale], c, ([v, gran, locale]) => {
+    return resolveAll([def.$segment, def.granularity, def.locale], c, ([v, gran, locale]) => {
       const granularity = gran === "word" || gran === "sentence" ? gran : "grapheme";
       const seg = new Intl.Segmenter(locale != null ? this.toString(locale) : undefined, { granularity });
       const out: string[] = [];

@@ -12,7 +12,7 @@ export class TranslationNode extends Node {
       markdownDescription: "Configures automatic string translation for the current request.\nSets `context._translate` so the resolver auto-translates strings via a DB lookup table.",
       outputDescription: "Always `null`. It configures translation as a side-effect (via `context._translate`) for the rest of the request.",
       examples: [
-        "{ \"translate\": { \"var\": \"$session.lang\" }, \"table\": \"translations\" }",
+        "{ \"$translate\": { \"$var\": \"session.lang\" }, \"table\": \"translations\" }",
       ],
       siblings: {
         table: {
@@ -26,7 +26,7 @@ export class TranslationNode extends Node {
   translate(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveObj(def, context, r => {
       (context as Record<string, unknown>)._translate = {
-        to: r.translate ? String(r.translate) : undefined,
+        to: r.$translate ? String(r.$translate) : undefined,
         table: r.table ? String(r.table) : "translations",
       };
       return null;

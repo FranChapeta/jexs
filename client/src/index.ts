@@ -146,7 +146,7 @@ if (typeof window !== "undefined") {
 
     // Run work pushed from the host against the SAME pageContext DOM event
     // handlers use, so host-driven state is visible to the page and vice versa.
-    // `steps` gets a child scope for its params, which also gives `as` + `bubble`
+    // `steps` gets a child scope for its params, which also gives `$as` + `$bubble`
     // write-through to pageContext, matching FileNode's params semantics.
     if (host.onCall && host.reply) {
       const reply = host.reply.bind(host);

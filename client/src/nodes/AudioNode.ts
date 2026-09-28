@@ -69,7 +69,7 @@ async function audioBytes(name: string, content: unknown): Promise<ArrayBuffer> 
   if (typeof Blob !== "undefined" && content instanceof Blob) return content.arrayBuffer();
   throw new Error(
     `Audio "${name}" content must be bytes: an ArrayBuffer, a typed array or a Blob, ` +
-    `e.g. { "fetch": "/audio/${name}.wav", "as": "bytes" } then { "content": { "var": "$bytes" } }`,
+    `e.g. { "$fetch": "/audio/${name}.wav", "$as": "bytes" } then { "content": { "$var": "bytes" } }`,
   );
 }
 
@@ -121,10 +121,10 @@ export class AudioNode extends Node {
     "audio-load": {
       type: "string",
       output: "null",
-      markdownDescription: "Decodes an audio file and stores it under `name` for later playback with `audio-play`. The audio arrives one of two ways: a `url` to fetch, or `content` already in hand.\n\nA file that cannot be fetched or decoded throws, so `catch` sees it at the point of loading rather than leaving `audio-play` to warn about a missing buffer much later.",
+      markdownDescription: "Decodes an audio file and stores it under `name` for later playback with `audio-play`. The audio arrives one of two ways: a `url` to fetch, or `content` already in hand.\n\nA file that cannot be fetched or decoded throws, so `$catch` sees it at the point of loading rather than leaving `audio-play` to warn about a missing buffer much later.",
       examples: [
-        "{ \"audio-load\": \"shoot\", \"url\": \"/audio/shoot.wav\" }",
-        "[{ \"fetch\": \"/audio/theme.ogg\", \"headers\": { \"Authorization\": { \"var\": \"$auth\" } }, \"as\": \"bytes\" },\n { \"audio-load\": \"theme\", \"content\": { \"var\": \"$bytes\" } }]",
+        "{ \"$audio-load\": \"shoot\", \"url\": \"/audio/shoot.wav\" }",
+        "[{ \"$fetch\": \"/audio/theme.ogg\", \"headers\": { \"Authorization\": { \"$var\": \"auth\" } }, \"$as\": \"bytes\" },\n { \"$audio-load\": \"theme\", \"content\": { \"$var\": \"bytes\" } }]",
       ],
       variants: {
         url: {
@@ -141,7 +141,7 @@ export class AudioNode extends Node {
       output: "null",
       markdownDescription: "Forgets a name: stops whatever is playing under it, drops the decoded buffer, and drops any level set for it.\n\nNothing else frees them. A decoded buffer is the expensive thing a page holds, and both it and the level live until this runs or the resolver is destroyed, so a game loading per-level sounds wants this on the way out.",
       examples: [
-        "{ \"audio-unload\": \"shoot\" }",
+        "{ \"$audio-unload\": \"shoot\" }",
       ],
     },
     "audio-play": {
@@ -149,8 +149,8 @@ export class AudioNode extends Node {
       output: "null",
       markdownDescription: "Plays a previously loaded audio buffer. Set `volume` (0-1) and `loop: true` for looping.\n\nPlaying the same name again overlaps it, which is what a sound effect fired twice in quick succession should do. Pass `restart: true` for the one-at-a-time behavior, which is what music or a voice line wants.",
       examples: [
-        "{ \"audio-play\": \"shoot\", \"volume\": 0.5 }",
-        "{ \"audio-play\": \"music\", \"loop\": true, \"restart\": true }",
+        "{ \"$audio-play\": \"shoot\", \"volume\": 0.5 }",
+        "{ \"$audio-play\": \"music\", \"loop\": true, \"restart\": true }",
       ],
       siblings: {
         volume: {
@@ -172,7 +172,7 @@ export class AudioNode extends Node {
       output: "null",
       markdownDescription: "Stops every sound playing under a name.",
       examples: [
-        "{ \"audio-stop\": \"shoot\" }",
+        "{ \"$audio-stop\": \"shoot\" }",
       ],
     },
     "audio-volume": {
@@ -180,7 +180,7 @@ export class AudioNode extends Node {
       output: "null",
       markdownDescription: "Sets the level for a name: what is playing under it changes without restarting, and so does everything played under it afterwards. That makes it the thing to wire a settings slider to, and it works before anything has played.\n\nIt multiplies rather than replaces: the level, the `volume` on each `audio-play`, and `audio-master` all apply, so a deliberately quiet shot stays quiet relative to whatever level the player chose.",
       examples: [
-        "{ \"audio-volume\": \"shoot\", \"volume\": 0.3 }",
+        "{ \"$audio-volume\": \"shoot\", \"volume\": 0.3 }",
       ],
       siblings: {
         volume: {
@@ -194,7 +194,7 @@ export class AudioNode extends Node {
       output: "null",
       markdownDescription: "Sets the master gain for all audio output in this context (0–1).",
       examples: [
-        "{ \"audio-master\": 0.5 }",
+        "{ \"$audio-master\": 0.5 }",
       ],
     },
   };
@@ -202,7 +202,7 @@ export class AudioNode extends Node {
 
   ["audio-load"](def: Record<string, unknown>, context: Context): NodeValue {
     const { ctx } = audioGraph(this);
-    return resolveAll([def["audio-load"], def["url"] ?? null, def["content"] ?? null], context,
+    return resolveAll([def["$audio-load"], def["url"] ?? null, def["content"] ?? null], context,
       async ([nameRaw, urlRaw, contentRaw]) => {
         const name = String(nameRaw);
         if (urlRaw == null && contentRaw == null) {
@@ -231,7 +231,7 @@ export class AudioNode extends Node {
   ["audio-play"](def: Record<string, unknown>, context: Context): NodeValue {
     const { ctx } = audioGraph(this);
     return resolveAll(
-      [def["audio-play"], def["volume"] ?? 1, def["loop"] ?? false, def["restart"] ?? false],
+      [def["$audio-play"], def["volume"] ?? 1, def["loop"] ?? false, def["restart"] ?? false],
       context,
       ([nameRaw, volumeRaw, loopRaw, restartRaw]: unknown[]) => {
         const name = String(nameRaw);
@@ -274,14 +274,14 @@ export class AudioNode extends Node {
   }
 
   ["audio-stop"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["audio-stop"], context, name => {
+    return resolve(def["$audio-stop"], context, name => {
       stopSounds(this, this.toString(name));
       return null;
     });
   }
 
   ["audio-volume"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["audio-volume"], def["volume"]], context, ([name, vol]: unknown[]) => {
+    return resolveAll([def["$audio-volume"], def["volume"]], context, ([name, vol]: unknown[]) => {
       levelFor(this, this.toString(name)).gain.value = Number(vol);
       return null;
     });
@@ -289,14 +289,14 @@ export class AudioNode extends Node {
 
   ["audio-master"](def: Record<string, unknown>, context: Context): NodeValue {
     const { master } = audioGraph(this);
-    return resolve(def["audio-master"], context, volume => {
+    return resolve(def["$audio-master"], context, volume => {
       master.gain.value = Number(volume);
       return null;
     });
   }
 
   ["audio-unload"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["audio-unload"], context, nameRaw => {
+    return resolve(def["$audio-unload"], context, nameRaw => {
       // No `audioGraph(this)`: forgetting a name never needs a context, so
       // unloading before anything loaded does not build one.
       const name = this.toString(nameRaw);

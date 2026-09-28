@@ -33,21 +33,21 @@ npm install @jexs/physics @jexs/core
 
 ```json
 [
-  { "entity-init": "world", "width": 800, "height": 600 },
-  { "physics-init": true, "gravity": [0, 980], "start": false },
+  { "$entity-init": "world", "width": 800, "height": 600 },
+  { "$physics-init": true, "gravity": [0, 980], "start": false },
 
-  { "entity-add": "ball",  "type": "circle", "group": "ball",
+  { "$entity-add": "ball",  "type": "circle", "group": "ball",
     "translation": [400, 40, 0], "scale": [32, 32, 1],
     "physics": true, "mass": 1, "restitution": 0.8 },
-  { "entity-add": "floor", "group": "floor",
+  { "$entity-add": "floor", "group": "floor",
     "translation": [400, 580, 0], "scale": [800, 40, 1],
     "physics": true, "fixed": true },
 
-  { "collision-on": true, "groups": ["ball", "floor"], "do": [
-    { "entity-update": { "var": "$collisionA" }, "color": [1, 0.4, 0.2, 1] }
+  { "$collision-on": true, "groups": ["ball", "floor"], "do": [
+    { "$entity-update": { "$var": "collisionA" }, "color": [1, 0.4, 0.2, 1] }
   ] },
 
-  { "physics-step": true, "dt": 0.016 }
+  { "$physics-step": true, "dt": 0.016 }
 ]
 ```
 

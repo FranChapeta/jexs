@@ -236,17 +236,17 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean, useElectron: bo
   lines.push(`## Pitfalls (read before authoring or editing JSON)`);
   lines.push(``);
   lines.push(`- **\`foreach\` returns only the LAST iteration's value.** Use \`map\` when you need an array of every result (rendering lists, building option arrays, etc.).`);
-  lines.push(`- **\`if\` / \`switch\` branches that are arrays return only the LAST value** (they go through \`resolveSteps\`). When a branch needs to render multiple elements, wrap them in a single container, e.g. \`then: { tag: "div", content: [<h2>, <table>] }\`, not \`then: [<h2>, <table>]\`.`);
+  lines.push(`- **\`if\` / \`switch\` branches that are arrays return only the LAST value** (they go through \`resolveSteps\`). When a branch needs to render multiple elements, wrap them in a single container, e.g. \`then: { $tag: "div", content: [<h2>, <table>] }\`, not \`then: [<h2>, <table>]\`.`);
   if (useServer) {
-    lines.push(`- **\`{ "file": "x.json" }\` resolves the file's contents as a Jexs expression by default.** Pass \`"data": true\` for raw parsed JSON, required for data files, route trees, schema dumps, anything you do NOT want the resolver to evaluate. Without \`data\`, an array file is run as a step sequence and an object file is resolved as a single expression.`);
+    lines.push(`- **\`{ "$file": "x.json" }\` resolves the file's contents as a Jexs expression by default.** Pass \`"data": true\` for raw parsed JSON, required for data files, route trees, schema dumps, anything you do NOT want the resolver to evaluate. Without \`data\`, an array file is run as a step sequence and an object file is resolved as a single expression.`);
   }
-  lines.push(`- **Element content interpolates \`$identifier\` tokens.** Undefined vars become empty strings, so code samples like \`{ "var": "$result" }\` would display as \`{ "var": "" }\`. Wrap any literal-\`$\` content in \`{ "raw": "..." }\`:`);
+  lines.push(`- **Element content interpolates \`$identifier\` tokens.** Undefined vars become empty strings, so code samples like \`{ "$var": "result" }\` would display as \`{ "": "result" }\`. Wrap any literal-\`$\` content in \`{ "raw": "..." }\`:`);
   lines.push(`  \`\`\`json`);
-  lines.push(`  { "tag": "code", "content": { "raw": "{ \\"var\\": \\"$result\\" }" } }`);
+  lines.push(`  { "$tag": "code", "content": { "raw": "{ \\"$var\\": \\"result\\" }" } }`);
   lines.push(`  \`\`\``);
   lines.push(`- **DOM event bindings use the \`events\` object**, not inline \`onclick\`/\`oninput\` attributes. The steps inside \`do\` run through the client resolver when the event fires:`);
   lines.push(`  \`\`\`json`);
-  lines.push(`  { "tag": "button", "events": { "click": { "do": [...] } }, "content": "Run" }`);
+  lines.push(`  { "$tag": "button", "events": { "click": { "do": [...] } }, "content": "Run" }`);
   lines.push(`  \`\`\``);
   lines.push(``);
 
@@ -259,7 +259,7 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean, useElectron: bo
     lines.push(`- \`src/\`: renderer templates. The main process resolves one to HTML and serves it over \`app://\`; \`src/index.json\` is the page the first window opens.`);
     lines.push(`- \`src/main.json\`: OPTIONAL main-process startup, run before any window exists (menus, tray, extra windows). Without it the runner just opens a window on \`src/index.json\`.`);
     lines.push(`- \`dist/browser/\`: \`jexs bundle\` output, and the only directory \`app://\` serves. Rebuilt from scratch on every bundle.`);
-    lines.push(`- Main-process nodes (\`file\`, \`query\`, \`dialog\`, …) are forwarded from the renderer, so renderer JSON calls them directly. A relative \`{ "file": "x.json" }\` resolves against the calling page's own directory.`);
+    lines.push(`- Main-process nodes (\`file\`, \`query\`, \`dialog\`, …) are forwarded from the renderer, so renderer JSON calls them directly. A relative \`{ "$file": "x.json" }\` resolves against the calling page's own directory.`);
     lines.push(`- A \`/\`-prefixed path anchors at \`src/\`, from anywhere, including \`src/main.json\`, so main-process startup reaches a page with \`/index.json\`. Without the slash a path is relative to the file doing the loading.`);
     if (useTailwind) {
       lines.push(`- \`input.css\`: Tailwind entry. Add custom styles here (\`@layer base { ... }\`, \`@apply\`, etc.).`);
@@ -293,7 +293,7 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean, useElectron: bo
     if (useTailwind) {
       lines.push(`- \`npm run build\`: compiles Tailwind (minified). There is no JS build, the app is JSON run by \`jexs run\`.`);
     }
-    lines.push(`- \`npm start\`: \`jexs run src/index.json src --prod\`. Run from the project root so FileNode and the static server find \`src/\` and \`public/\`. The \`--prod\` flag sets \`process.env.prod = "1"\`, so JSON templates can branch on \`{ "var": "$env.prod" }\` (e.g. picking port 80 in prod vs 3000 in dev).`);
+    lines.push(`- \`npm start\`: \`jexs run src/index.json src --prod\`. Run from the project root so FileNode and the static server find \`src/\` and \`public/\`. The \`--prod\` flag sets \`process.env.prod = "1"\`, so JSON templates can branch on \`{ "$var": "env.prod" }\` (e.g. picking port 80 in prod vs 3000 in dev).`);
     lines.push(`- \`npm run format\`: Prettier sweep over JSON templates.`);
     lines.push(``);
   }
@@ -320,10 +320,10 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean, useElectron: bo
 //
 // The root UI as a JSON Element tree (body content). It stays raw JSON in src/;
 // a shell template `{ file }`-imports it and the whole document is resolved at
-// RUNTIME (in the electron main process, or the @jexs server), so `{var: ...}`,
-// `if`, and nested `{file: ...}` includes all resolve with live context/params.
+// RUNTIME (in the electron main process, or the @jexs server), so `{$var: ...}`,
+// `if`, and nested `{$file: ...}` includes all resolve with live context/params.
 // The client then hydrates it. Add interactivity with the `events` key; load
-// nested components with `{ "file": "components/card.json" }`.
+// nested components with `{ "$file": "components/card.json" }`.
 
 /**
  * The starter page. With tailwind on it carries a few utility classes, because
@@ -333,11 +333,11 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean, useElectron: bo
  */
 function pageTemplate(title: string, description: string, styled = false): unknown {
   return {
-    tag: "main",
+    $tag: "main",
     ...(styled ? { class: "p-8" } : {}),
     content: [
-      { tag: "h1", ...(styled ? { class: "text-3xl font-bold" } : {}), content: title },
-      { tag: "p", ...(styled ? { class: "mt-2 text-gray-600" } : {}), content: description },
+      { $tag: "h1", ...(styled ? { class: "text-3xl font-bold" } : {}), content: title },
+      { $tag: "p", ...(styled ? { class: "mt-2 text-gray-600" } : {}), content: description },
     ],
   };
 }
@@ -697,20 +697,20 @@ async function main(): Promise<void> {
       join(dir, "src", "index.json"),
       formatJson([
         {
-          listen: { "if": { var: "$env.prod" }, then: 80, else: 3000 },
+          $listen: { "$if": { $var: "env.prod" }, then: 80, else: 3000 },
           client: true,
           do: [
-            { var: "$request.query.name" },
-            { "if": { var: "$result" }, then: { concat: ["Hello, ", { var: "$result" }, "!"] }, else: "Hello, world!" },
+            { $var: "request.query.name" },
+            { "$if": { $var: "result" }, then: { $concat: ["Hello, ", { $var: "result" }, "!"] }, else: "Hello, world!" },
             // With tailwind the greeting becomes a page, because a bare string
             // response has no <head> to link the compiled stylesheet from and the
             // CSS would be built on every run and loaded by nothing.
             ...(useTailwind
               ? [{
-                  tag: "html",
+                  $tag: "html",
                   content: [
-                    { tag: "head", content: [{ tag: "meta", charset: "utf-8" }, { tag: "link", rel: "stylesheet", href: cssHref }] },
-                    { tag: "body", class: "p-8", content: [{ tag: "h1", class: "text-3xl font-bold", content: { var: "$result" } }] },
+                    { $tag: "head", content: [{ $tag: "meta", charset: "utf-8" }, { $tag: "link", rel: "stylesheet", href: cssHref }] },
+                    { $tag: "body", class: "p-8", content: [{ $tag: "h1", class: "text-3xl font-bold", content: { $var: "result" } }] },
                   ],
                 }]
               : []),

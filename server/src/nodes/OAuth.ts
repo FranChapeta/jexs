@@ -92,13 +92,13 @@ const OAUTH_REDIRECT_URI = { type: "string" as const, description: "OAuth redire
 /**
  * OAuthNode - Handles OAuth authentication flows in JSON.
  *
- * { "oauth": "configure", "provider": "google", "clientId": "...", "clientSecret": "..." }
- * { "oauth": "authUrl", "provider": "google", "redirectUri": "http://...", "state": "..." }
- * { "oauth": "exchange", "provider": "google", "code": "...", "redirectUri": "..." }
- * { "oauth": "refresh", "provider": "google", "refreshToken": "..." }
- * { "oauth": "userInfo", "provider": "google", "accessToken": "..." }
- * { "oauth": "state" }
- * { "oauth": "providers" }
+ * { "$oauth": "configure", "provider": "google", "clientId": "...", "clientSecret": "..." }
+ * { "$oauth": "authUrl", "provider": "google", "redirectUri": "http://...", "state": "..." }
+ * { "$oauth": "exchange", "provider": "google", "code": "...", "redirectUri": "..." }
+ * { "$oauth": "refresh", "provider": "google", "refreshToken": "..." }
+ * { "$oauth": "userInfo", "provider": "google", "accessToken": "..." }
+ * { "$oauth": "state" }
+ * { "$oauth": "providers" }
  */
 export class OAuthNode extends Node {
   static schema: JexsNodeSchema = {
@@ -115,7 +115,7 @@ export class OAuthNode extends Node {
       ],
       markdownDescription: "OAuth 2.0 flow helpers. The operation is the primary value.\nBuilt-in providers: `google`, `github`, `facebook`, `discord`, `twitter`, `microsoft`.",
       examples: [
-        "{ \"oauth\": \"authUrl\", \"provider\": \"google\", \"redirectUri\": { \"var\": \"$redirectUri\" } }",
+        "{ \"$oauth\": \"authUrl\", \"provider\": \"google\", \"redirectUri\": { \"$var\": \"redirectUri\" } }",
       ],
       variants: {
         configure: {
@@ -159,7 +159,7 @@ export class OAuthNode extends Node {
   };
 
   oauth(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.oauth, context, operation => {
+    return resolve(def.$oauth, context, operation => {
       switch (String(operation)) {
         case "configure":
           return doConfigure(def, context);

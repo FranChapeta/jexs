@@ -55,7 +55,7 @@ async function main(): Promise<void> {
 
   function mainContext(win?: BrowserWindow | null, dir?: string): Context {
     // A call a page forwards to main resolves against that page's own directory,
-    // so `{ file: "part.json" }` means the same thing whether it ran while the
+    // so `{ $file: "part.json" }` means the same thing whether it ran while the
     // template rendered (FileNode rebases per load) or after the client hydrated
     // it and called back. A window with no page, and the shell render itself,
     // fall back to the template root.
@@ -148,7 +148,7 @@ async function main(): Promise<void> {
   // not a page: nothing serves it, because `app://` only answers for a template
   // openWindow minted a token for.
   if (existsSync(path.join(templatesDir, MAIN_TEMPLATE))) {
-    await Promise.resolve(resolver({ file: MAIN_TEMPLATE }, mainContext()));
+    await Promise.resolve(resolver({ $file: MAIN_TEMPLATE }, mainContext()));
   } else {
     await openWindow({ title: app.getName() });
   }

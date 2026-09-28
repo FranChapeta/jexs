@@ -6,35 +6,31 @@ import type { JexsNodeSchema } from "../schema.js";
 export class VariablesNode extends Node {
   static schema: JexsNodeSchema = {
     var: {
-      markdownDescription: "Reads a value from the current context by dot-path. Prefix the path with `$`. The path itself may be an expression that resolves to a string (e.g. `{ \"concat\": [...] }`).",
+      markdownDescription: "Reads a value from the current context by dot-path. Prefix the path with `$`. The path itself may be an expression that resolves to a string (e.g. `{ \"$concat\": [...] }`).",
       outputDescription: "The value stored at the dot-path, whatever type it holds (string, number, boolean, array, object), or `undefined` if any segment of the path is missing.",
       examples: [
-        "{ \"var\": \"$user.name\" }",
+        "{ \"$var\": \"user.name\" }",
       ],
     },
     setVars: {
       map: true,
       output: "null",
-      markdownDescription: "Resolves each value in the map and writes the result back into the context (supports dot-paths, e.g. `\"request.body.id\"`).\nPass `\"raw\": true` to skip resolving values.\nPass `\"bubble\": true` to also write into every enclosing scope, so the values survive after the current file/loop/branch returns.",
-      outputDescription: "Always `null`. `setVars` is used for its side-effect of writing into the context, which later steps read via `{ \"var\": \"…\" }`.",
+      markdownDescription: "Resolves each value in the map and writes the result back into the context (supports dot-paths, e.g. `\"request.body.id\"`).\nPass `\"raw\": true` to skip resolving values.\nPass `\"$bubble\": true` to also write into every enclosing scope, so the values survive after the current file/loop/branch returns.",
+      outputDescription: "Always `null`. `setVars` is used for its side-effect of writing into the context, which later steps read via `{ \"$var\": \"…\" }`.",
       examples: [
-        "{ \"setVars\": { \"count\": 0, \"name\": { \"var\": \"$user.name\" } } }",
+        "{ \"$setVars\": { \"count\": 0, \"name\": { \"$var\": \"user.name\" } } }",
       ],
       siblings: {
         raw: {
           type: "boolean",
           description: "Skip resolving values and write them directly.",
         },
-        bubble: {
-          type: "boolean",
-          description: "Also write each value into every enclosing scope (parent contexts), so it survives after the current file/loop/branch returns.",
-        },
       },
     },
   };
 
   var(def: Record<string, unknown>, context: Context): NodeValue {
-    const varPath = def.var;
+    const varPath = def.$var;
     if (typeof varPath === "string") return resolveVariable(varPath, context);
     return resolve(varPath, context, resolved => {
       if (typeof resolved !== "string") return undefined;
@@ -43,12 +39,12 @@ export class VariablesNode extends Node {
   }
 
   setVars(def: Record<string, unknown>, context: Context): NodeValue {
-    const vars = def.setVars;
+    const vars = def.$setVars;
     if (!vars || typeof vars !== "object" || Array.isArray(vars)) return null;
     const raw = !!def.raw;
-    // `bubble` may be an expression (schema: boolOrExpr) — resolve it once, then
-    // coerce with the shared node truthiness rules before writing the entries.
-    return resolve(def.bubble, context, bubbleRaw => {
+    // `$bubble` (the global write modifier) may be an expression: resolve it once,
+    // then coerce with the shared node truthiness rules before writing the entries.
+    return resolve(def.$bubble, context, bubbleRaw => {
       const bubble = this.toBoolean(bubbleRaw);
       const entries = Object.entries(vars as Record<string, unknown>);
       let i = 0;
@@ -64,9 +60,8 @@ export class VariablesNode extends Node {
 }
 
 export function resolveVariable(path: string, context: Context): unknown {
-  const cleanPath = path.startsWith("$") ? path.slice(1) : path;
-  if (!cleanPath) return undefined;
-  return getNestedValue(context, cleanPath);
+  if (!path) return undefined;
+  return getNestedValue(context, path);
 }
 
 // `/g` const used only with String.replace (lastIndex-safe); never call .test/.exec.

@@ -1,53 +1,51 @@
 [
   {
-    "if": { "isType": [{ "var": "$node" }, "array"] },
+    "$if": { "$isType": [{ "$var": "node" }, "array"] },
     "then": {
-      "return": {
-        "flatten": {
-          "map": { "var": "$node" },
-          "do": { "exec": { "var": "$walkLint" }, "params": { "node": { "var": "$item" }, "path": { "concat": [{ "var": "$path" }, "[", { "var": "$index" }, "]"] } } }
+      "$return": {
+        "$flatten": {
+          "$map": { "$var": "node" },
+          "do": { "$exec": { "$var": "walkLint" }, "params": { "node": { "$var": "item" }, "path": { "$concat": [{ "$var": "path" }, "[", { "$var": "index" }, "]"] } } }
         }
       }
     }
   },
-  { "if": { "not": { "isType": [{ "var": "$node" }, "object"] } }, "then": { "return": [] } },
+  { "$if": { "$not": { "$isType": [{ "$var": "node" }, "object"] } }, "then": { "$return": [] } },
 
-  { "as": "keys", "keys": { "var": "$node" } },
-  { "as": "nonGlobal", "filter": [{ "var": "$keys" }, { "not": { "includes": [{ "var": "$globalNames" }, { "var": "$item" }] } }] },
-  { "as": "opKeys", "filter": [{ "var": "$nonGlobal" }, { "includes": [{ "var": "$opNames" }, { "var": "$item" }] }] },
+  { "$as": "keys", "$keys": { "$var": "node" } },
+  { "$as": "where", "$if": { "$empty": { "$var": "path" } }, "then": "(root)", "else": { "$var": "path" } },
+  { "$as": "stepOps", "$filter": [{ "$var": "keys" }, { "$includes": [{ "$var": "opKeys" }, { "$var": "item" }] }] },
 
-  { "as": "dispatcher", "first": { "var": "$opKeys" } },
-  { "as": "ownSiblings", "map": { "coalesce": [{ "var": { "concat": ["$siblingDocs.", { "var": "$dispatcher" }] } }, []] }, "item": "s", "do": { "var": "$s.name" } },
-  { "as": "handlerKeys", "filter": [{ "var": "$opKeys" }, { "not": { "includes": [{ "var": "$ownSiblings" }, { "var": "$item" }] } }] },
-
-  { "as": "where", "if": { "empty": { "var": "$path" } }, "then": "(root)", "else": { "var": "$path" } },
+  { "$as": "bare", "$first": { "$filter": [{ "$var": "keys" }, { "$includes": [{ "$var": "opNames" }, { "$var": "item" }] }] } },
+  { "$as": "bareSiblings", "$map": { "$coalesce": [{ "$var": { "$concat": ["siblingDocs.", { "$var": "bare" }] } }, []] }, "item": "s", "do": { "$var": "s.name" } },
+  {
+    "$as": "looksLikeStep",
+    "$or": [
+      { "$eq": [{ "$count": { "$var": "keys" } }, 1] },
+      { "$notEmpty": { "$filter": [{ "$var": "keys" }, { "$includes": [{ "$var": "bareSiblings" }, { "$var": "item" }] }] } }
+    ]
+  },
 
   {
-    "as": "warn",
-    "if": { "gt": [{ "count": { "var": "$handlerKeys" } }, 1] },
-    "then": { "concat": [{ "var": "$where" }, ": ambiguous, multiple handler keys (", { "join": [{ "var": "$handlerKeys" }, ", "] }, "); only the first one dispatches."] },
+    "$as": "warn",
+    "$if": { "$gt": [{ "$count": { "$var": "stepOps" } }, 1] },
+    "then": { "$concat": [{ "$var": "where" }, ": names more than one op (", { "$join": [{ "$var": "stepOps" }, ", "] }, "); a step dispatches on exactly one, so the resolver refuses it."] },
     "else": {
-      "if": {
-        "and": [
-          { "eq": [{ "count": { "var": "$handlerKeys" } }, 1] },
-          { "notEmpty": { "var": "$nonGlobal" } },
-          { "neq": [{ "first": { "var": "$nonGlobal" } }, { "first": { "var": "$handlerKeys" } }] }
-        ]
-      },
-      "then": { "concat": [{ "var": "$where" }, ": collision risk, first key \"", { "first": { "var": "$nonGlobal" } }, "\" isn't a handler but \"", { "first": { "var": "$handlerKeys" } }, "\" is, so this object dispatches as \"", { "first": { "var": "$handlerKeys" } }, "\". If it is data, load it with { \"data\": true } or rename the key."] },
+      "$if": { "$and": [{ "$empty": { "$var": "stepOps" } }, { "$notEmpty": { "$var": "bare" } }, { "$var": "looksLikeStep" }] },
+      "then": { "$concat": [{ "$var": "where" }, ": \"", { "$var": "bare" }, "\" is plain data here, not a step; an op is named with \"$\", so write \"$", { "$var": "bare" }, "\" to run it."] },
       "else": ""
     }
   },
 
   {
-    "as": "childWarns",
-    "flatten": {
-      "map": { "entries": { "var": "$node" } },
+    "$as": "childWarns",
+    "$flatten": {
+      "$map": { "$entries": { "$var": "node" } },
       "item": "e",
-      "do": { "exec": { "var": "$walkLint" }, "params": { "node": { "var": "$e.value" }, "path": { "concat": [{ "if": { "empty": { "var": "$path" } }, "then": "", "else": { "concat": [{ "var": "$path" }, "."] } }, { "var": "$e.key" }] } } }
+      "do": { "$exec": { "$var": "walkLint" }, "params": { "node": { "$var": "e.value" }, "path": { "$concat": [{ "$if": { "$empty": { "$var": "path" } }, "then": "", "else": { "$concat": [{ "$var": "path" }, "."] } }, { "$var": "e.key" }] } } }
     }
   },
 
-  { "as": "all", "if": { "notEmpty": { "var": "$warn" } }, "then": { "merge": [[{ "var": "$warn" }], { "var": "$childWarns" }] }, "else": { "var": "$childWarns" } },
-  { "var": "$all" }
+  { "$as": "all", "$if": { "$notEmpty": { "$var": "warn" } }, "then": { "$merge": [[{ "$var": "warn" }], { "$var": "childWarns" }] }, "else": { "$var": "childWarns" } },
+  { "$var": "all" }
 ]

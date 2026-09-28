@@ -42,13 +42,13 @@ const STANDALONE_CLASSES = [
 /**
  * TailwindNode - Process templates and compile Tailwind CSS.
  *
- * { "tailwind": "extract", "data": {...} }
- * { "tailwind": "add", "data": {...} }
- * { "tailwind": "add", "classes": ["bg-red-500"] }
- * { "tailwind": "compile" }
- * { "tailwind": "build" }
- * { "tailwind": "clear" }
- * { "tailwind": "classes" }
+ * { "$tailwind": "extract", "data": {...} }
+ * { "$tailwind": "add", "data": {...} }
+ * { "$tailwind": "add", "classes": ["bg-red-500"] }
+ * { "$tailwind": "compile" }
+ * { "$tailwind": "build" }
+ * { "$tailwind": "clear" }
+ * { "$tailwind": "classes" }
  */
 export class TailwindNode extends Node {
   static schema: JexsNodeSchema = {
@@ -64,7 +64,7 @@ export class TailwindNode extends Node {
       ],
       markdownDescription: "Extracts Tailwind class names from JSON templates and compiles CSS. The operation is the primary value.",
       examples: [
-        "{ \"tailwind\": \"build\", \"data\": { \"var\": \"$template\" } }",
+        "{ \"$tailwind\": \"build\", \"data\": { \"$var\": \"template\" } }",
       ],
       variants: {
         extract: {
@@ -111,7 +111,7 @@ export class TailwindNode extends Node {
   };
 
   tailwind(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.tailwind, context, operation => {
+    return resolve(def.$tailwind, context, operation => {
       switch (String(operation)) {
         case "extract":
           return doExtract(def, context);

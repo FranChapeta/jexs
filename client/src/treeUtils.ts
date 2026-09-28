@@ -2,6 +2,8 @@
  * Pure utility functions for TreeNode — no DOM, no resolver, no side effects.
  */
 
+import { GLOBAL_KEYS, KEY_PREFIX, ownedKey } from "@jexs/core";
+
 // ─── Path navigation ────────────────────────────────────────────────────────
 
 /** Navigate into a JSON structure by dot-separated path */
@@ -45,9 +47,9 @@ export function adjustPathAfterRemoval(targetPath: string, removedPath: string):
 
 /** Get the key that holds child nodes for a given object */
 export function getChildArrayKey(obj: Record<string, unknown>): string | null {
-  if ("tag" in obj) return "content";
-  if ("if" in obj) return "then";
-  if ("foreach" in obj) return "do";
+  if ("$tag" in obj) return "content";
+  if ("$if" in obj) return "then";
+  if ("$foreach" in obj) return "do";
   return null;
 }
 
@@ -57,11 +59,11 @@ export function getChildGroups(node: unknown): { key: string; items: unknown[] }
   const obj = node as Record<string, unknown>;
   const groups: { key: string; items: unknown[] }[] = [];
 
-  if ("tag" in obj && Array.isArray(obj.content)) {
+  if ("$tag" in obj && Array.isArray(obj.content)) {
     groups.push({ key: "content", items: obj.content });
   }
 
-  if ("if" in obj) {
+  if ("$if" in obj) {
     if (Array.isArray(obj.then)) {
       groups.push({ key: "then", items: obj.then });
     }
@@ -70,7 +72,7 @@ export function getChildGroups(node: unknown): { key: string; items: unknown[] }
     }
   }
 
-  if ("foreach" in obj) {
+  if ("$foreach" in obj) {
     if (Array.isArray(obj.do)) {
       groups.push({ key: "do", items: obj.do });
     }
@@ -90,46 +92,45 @@ export function describeNode(node: unknown): { type: string; summary: string; co
   if (Array.isArray(node)) return { type: "array", summary: `[${node.length}]`, color: "#94a3b8" };
 
   const obj = node as Record<string, unknown>;
+  // The op a step dispatches on is its one `$` key that is not a global step key.
+  let op: string | null = null;
+  for (const k of Object.keys(obj)) {
+    const owned = ownedKey(k);
+    if (owned !== null && !GLOBAL_KEYS.has(owned)) { op = owned; break; }
+  }
+  const value = op === null ? undefined : obj[KEY_PREFIX + op];
 
-  if ("tag" in obj) {
-    const tag = String(obj.tag);
+  if (op === "tag") {
     const parts: string[] = [];
     if (obj.id) parts.push("#" + obj.id);
     if (obj.class) parts.push("." + String(obj.class).split(" ").slice(0, 2).join("."));
-    return { type: tag, summary: parts.join(""), color: "#3b82f6" };
+    return { type: String(value), summary: parts.join(""), color: "#3b82f6" };
   }
 
-  if ("if" in obj) return { type: "if/then/else", summary: "", color: "#a855f7" };
-  if ("foreach" in obj) return { type: "foreach", summary: obj.as ? `$${obj.as}` : "", color: "#a855f7" };
-  if ("switch" in obj) return { type: "switch", summary: "", color: "#a855f7" };
+  if (op === "if") return { type: "if/then/else", summary: "", color: "#a855f7" };
+  if (op === "foreach") return { type: "foreach", summary: obj.$as ? `$${obj.$as}` : "", color: "#a855f7" };
+  if (op === "switch") return { type: "switch", summary: "", color: "#a855f7" };
 
-  if ("var" in obj) return { type: "var", summary: String(obj.var), color: "#f97316" };
-  if ("as" in obj) {
-    const mainKey = Object.keys(obj).find(k => k !== "as");
-    return { type: `$${obj.as}`, summary: mainKey ? `\u2190 ${mainKey}` : "", color: "#f97316" };
-  }
-
-  for (const k of ["concat", "upper", "lower", "substring", "replace", "trim"]) {
-    if (k in obj) return { type: k, summary: "", color: "#06b6d4" };
-  }
-  for (const k of ["add", "subtract", "multiply", "divide"]) {
-    if (k in obj) return { type: k, summary: "", color: "#eab308" };
-  }
-  for (const k of ["map", "filter", "find", "sort", "length", "first"]) {
-    if (k in obj) return { type: k, summary: "", color: "#ec4899" };
-  }
-  for (const k of ["show", "hide", "toggle", "addClass", "removeClass", "setText", "setHtml", "append", "getValue", "setValue"]) {
-    if (k in obj) return { type: k, summary: "", color: "#14b8a6" };
+  if (op === "var") return { type: "var", summary: String(value), color: "#f97316" };
+  if ("$as" in obj) {
+    return { type: `$${obj.$as}`, summary: op ? `\u2190 ${op}` : "", color: "#f97316" };
   }
 
-  if ("ws-connect" in obj) return { type: "ws-connect", summary: String(obj["ws-connect"]), color: "#8b5cf6" };
-  if ("ws-send" in obj) return { type: "ws-send", summary: "", color: "#8b5cf6" };
-  if ("ws-close" in obj) return { type: "ws-close", summary: "", color: "#8b5cf6" };
+  const groups: Array<[string[], string]> = [
+    [["concat", "upper", "lower", "substring", "replace", "trim"], "#06b6d4"],
+    [["add", "subtract", "multiply", "divide"], "#eab308"],
+    [["map", "filter", "find", "sort", "length", "first"], "#ec4899"],
+    [["show", "hide", "toggle", "addClass", "removeClass", "setText", "setHtml", "append", "getValue", "setValue"], "#14b8a6"],
+  ];
+  for (const [ops, color] of groups) {
+    if (op !== null && ops.includes(op)) return { type: op, summary: "", color };
+  }
 
-  if ("query" in obj) return { type: "query", summary: "", color: "#ef4444" };
-  if ("file" in obj) return { type: "file", summary: String(obj.file), color: "#ef4444" };
-  if ("cache" in obj) return { type: "cache", summary: String(obj.cache), color: "#ef4444" };
-  if ("session" in obj) return { type: "session", summary: "", color: "#ef4444" };
+  if (op === "ws-connect") return { type: op, summary: String(value), color: "#8b5cf6" };
+  if (op === "ws-send" || op === "ws-close") return { type: op, summary: "", color: "#8b5cf6" };
+
+  if (op === "file" || op === "cache") return { type: op, summary: String(value), color: "#ef4444" };
+  if (op === "query" || op === "session") return { type: op, summary: "", color: "#ef4444" };
 
   const keys = Object.keys(obj).slice(0, 3).join(", ");
   return { type: "object", summary: `{${keys}}`, color: "#94a3b8" };
@@ -146,10 +147,10 @@ export function getEditMode(node: unknown): string {
   if (typeof node === "string") return "string";
   if (!node || typeof node !== "object" || Array.isArray(node)) return "none";
   const obj = node as Record<string, unknown>;
-  if ("if" in obj) return "children";
-  if ("foreach" in obj) return "children";
-  if (!("tag" in obj)) return "none";
-  const tag = String(obj.tag).toLowerCase();
+  if ("$if" in obj) return "children";
+  if ("$foreach" in obj) return "children";
+  if (!("$tag" in obj)) return "none";
+  const tag = String(obj.$tag).toLowerCase();
   if (LAYOUT_TAGS.has(tag)) return "children";
   if (tag === "ul" || tag === "ol") return "list";
   if (TEXTAREA_TAGS.has(tag)) return "textarea";
@@ -171,11 +172,11 @@ export function getPotentialChildKeys(node: unknown): string[] {
   if (!node || typeof node !== "object" || Array.isArray(node)) return [];
   const obj = node as Record<string, unknown>;
   const keys: string[] = [];
-  if ("tag" in obj) {
+  if ("$tag" in obj) {
     const mode = getEditMode(node);
     if (mode !== "none") keys.push("content");
   }
-  if ("if" in obj) { keys.push("then"); keys.push("else"); }
-  if ("foreach" in obj) keys.push("do");
+  if ("$if" in obj) { keys.push("then"); keys.push("else"); }
+  if ("$foreach" in obj) keys.push("do");
   return keys;
 }

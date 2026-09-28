@@ -152,11 +152,11 @@ describe("protocol", () => {
     // Verified by hand: forcing a throw inside the `ping` case returns -32603.
     const entry = JSON.parse(readFileSync(path.join(repoRoot, "mcp", "src", "index.json"), "utf8"));
     const listen = entry[entry.length - 1];
-    assert.ok(listen["stdio-listen"], "the last step should be the stdio listener");
+    assert.ok(listen["$stdio-listen"], "the last step should be the stdio listener");
     assert.equal(listen["on-error"], undefined, "a step-level catch covers this; on-error would be a second mechanism for the same job");
     const dispatch = listen["on-message"][1];
-    assert.ok(dispatch.switch, "on-message[1] should be the method switch");
-    assert.ok(Array.isArray(dispatch.catch), "the method switch needs a catch, or a throw outside tools/call goes unanswered");
+    assert.ok(dispatch.$switch, "on-message[1] should be the method switch");
+    assert.ok(Array.isArray(dispatch.$catch), "the method switch needs a catch, or a throw outside tools/call goes unanswered");
   });
 });
 
@@ -182,7 +182,7 @@ describe("describe_op", () => {
   test("includes per-variant siblings with their own descriptions", async () => {
     // These live in `allOf` branches; the flat `properties` has only empty stubs.
     const { text } = await callTool("describe_op", { op: "schema" });
-    assert.match(text, /path \[only with schema: "register"\]/);
+    assert.match(text, /path \[only with \$schema: "register"\]/);
     assert.match(text, /Directory of JSON schema files to load/);
   });
 
@@ -262,14 +262,13 @@ describe("inspect_file", () => {
 
   test("lints real dispatch foot-guns without flagging legitimate siblings", async () => {
     const { text } = await callTool("inspect_file", { filePath: "mcp/test/fixtures/lint.json" });
-    // Two unrelated handler keys in one object, and a data-looking first key in
-    // front of one, are both real.
-    assert.match(text, /\[1\]: ambiguous.*concat, upper/);
-    assert.match(text, /\[2\]: collision risk.*"label".*"sha256"/);
-    // `cache` is a sibling of `fetch` AND a handler key of its own. Ten names
-    // collide that way, so counting handler keys without subtracting the
-    // dispatcher's own siblings flags ordinary steps.
-    assert.doesNotMatch(text, /fetch, cache|cache, fetch/);
+    // Two ops in one step, which the resolver refuses.
+    assert.match(text, /\[1\]: names more than one op \(\$concat, \$upper\)/);
+    // A step that lost its `$` is silently data.
+    assert.match(text, /\[2\]: "map" is plain data here/);
+    // `cache` is `fetch`'s sibling as well as an op name; beside `$fetch` it is
+    // just the sibling, so an ordinary step is not flagged.
+    assert.doesNotMatch(text, /\[0\]:/);
   });
 });
 
@@ -284,19 +283,19 @@ describe("validate_file", () => {
     const { text, isError } = await callTool("validate_file", { filePath: "mcp/test/fixtures/invalid.json" });
     assert.ok(isError);
     assert.match(text, /does not validate/);
-    assert.match(text, /0\.eq/, "should point at the offending step, not just the root");
+    assert.match(text, /0\.\$eq/, "should point at the offending step, not just the root");
   });
 });
 
 describe("resolve_expression", () => {
   test("evaluates an expression", async () => {
-    const { text } = await callTool("resolve_expression", { expression: { concat: ["a", "b"] } });
+    const { text } = await callTool("resolve_expression", { expression: { $concat: ["a", "b"] } });
     assert.equal(text, '"ab"');
   });
 
   test("seeds context from vars", async () => {
     const { text } = await callTool("resolve_expression", {
-      expression: { concat: ["hi ", { var: "$who" }] },
+      expression: { $concat: ["hi ", { $var: "who" }] },
       vars: { who: "there" },
     });
     assert.equal(text, '"hi there"');
@@ -304,7 +303,7 @@ describe("resolve_expression", () => {
 
   test("a throwing expression becomes an error result, not a dropped request", async () => {
     const { text, isError } = await callTool("resolve_expression", {
-      expression: { error: 400, message: "boom" },
+      expression: { $error: 400, message: "boom" },
     });
     assert.ok(isError);
     assert.match(text, /boom/);

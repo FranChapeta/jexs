@@ -84,7 +84,7 @@ test("attachments: text, Buffer and ArrayBuffer content all survive", () => {
 test("attachments: a path where content belongs says what to do instead", () => {
   assert.throws(
     () => attachments([{ filename: "report.pdf", path: "/reports/summary.pdf" }]),
-    /needs string or binary content.*"file".*"content"/s,
+    /needs string or binary content.*"\$file".*"content"/s,
   );
   assert.throws(() => attachments(["/reports/summary.pdf"]), /must be an object/);
 });
@@ -134,7 +134,7 @@ test("email: no transport is an error naming the way to open one, before resolvi
     // is never read off disk for a send that had nowhere to go.
     async () => {
       await resolve(
-        { email: "a@x.com", subject: "hi", from: "me@x.com", body: { error: 418, message: "body resolved" } },
+        { $email: "a@x.com", subject: "hi", from: "me@x.com", body: { $error: 418, message: "body resolved" } },
         {},
       );
     },
@@ -148,11 +148,11 @@ test("email: no transport is an error naming the way to open one, before resolvi
 
 test("email-connect: a url configures the transport and reports the host", async () => {
   assert.equal(
-    await resolve({ "email-connect": "smtps://user:pass@mail.example.com" }, {}),
+    await resolve({ "$email-connect": "smtps://user:pass@mail.example.com" }, {}),
     "mail.example.com",
   );
   assert.equal(
-    await resolve({ "email-connect": "mail.example.com", port: 2525, user: "u" }, {}),
+    await resolve({ "$email-connect": "mail.example.com", port: 2525, user: "u" }, {}),
     "mail.example.com",
   );
 });
@@ -200,35 +200,35 @@ test("smtpOptions: siblings layer over the url, either supplying either half", (
 
 test("email-connect: TLS material must be PEM content, not a path", async () => {
   await assert.rejects(
-    async () => { await resolve({ "email-connect": "smtp://mail.example.com", tls: { ca: "/certs/ca.pem" } }, {}); },
+    async () => { await resolve({ "$email-connect": "smtp://mail.example.com", tls: { ca: "/certs/ca.pem" } }, {}); },
     /must be PEM content, not a path/,
   );
 });
 
 test("email: a missing subject, recipient or sender is an error, not a silent no-op", async () => {
-  await resolve({ "email-connect": "smtp://127.0.0.1:1" }, {});
+  await resolve({ "$email-connect": "smtp://127.0.0.1:1" }, {});
   await assert.rejects(
-    async () => { await resolve({ email: "a@x.com", body: "hi", from: "me@x.com" }, {}); },
+    async () => { await resolve({ $email: "a@x.com", body: "hi", from: "me@x.com" }, {}); },
     /needs a subject/,
   );
   await assert.rejects(
-    async () => { await resolve({ email: { var: "$missing" }, subject: "hi", from: "me@x.com" }, {}); },
+    async () => { await resolve({ $email: { $var: "missing" }, subject: "hi", from: "me@x.com" }, {}); },
     /needs at least one recipient/,
   );
   // No `from` on the message and none on the transport: nothing to fall back to,
   // and inventing a noreply@ address would only fail SPF at the far end.
   await assert.rejects(
-    async () => { await resolve({ email: "a@x.com", subject: "hi" }, {}); },
+    async () => { await resolve({ $email: "a@x.com", subject: "hi" }, {}); },
     /needs a from address/,
   );
 });
 
 test("email: a missing subject is caught before the body is resolved", async () => {
-  await resolve({ "email-connect": "smtp://127.0.0.1:1" }, {});
+  await resolve({ "$email-connect": "smtp://127.0.0.1:1" }, {});
   await assert.rejects(
     // The body throws a 418 of its own if anything resolves it, so the message
     // that comes back says which check ran first.
-    async () => { await resolve({ email: "a@x.com", from: "me@x.com", body: { error: 418, message: "body resolved" } }, {}); },
+    async () => { await resolve({ $email: "a@x.com", from: "me@x.com", body: { $error: 418, message: "body resolved" } }, {}); },
     /needs a subject/,
   );
 });
@@ -236,13 +236,13 @@ test("email: a missing subject is caught before the body is resolved", async () 
 // Port 1 refuses immediately, so this exercises the real failure path without
 // reaching the network.
 test("email: a delivery failure throws a 502 catch can read", async () => {
-  await resolve({ "email-connect": "smtp://127.0.0.1", port: 1, timeout: 2000, from: "me@x.com" }, {});
+  await resolve({ "$email-connect": "smtp://127.0.0.1", port: 1, timeout: 2000, from: "me@x.com" }, {});
   const out = await resolve(
     {
-      email: ["a@x.com", "b@x.com"],
+      $email: ["a@x.com", "b@x.com"],
       subject: "Report",
       body: "hi",
-      catch: [{ concat: [{ var: "$error.status" }, " ", { var: "$smtp.code" }] }],
+      $catch: [{ $concat: [{ $var: "error.status" }, " ", { $var: "smtp.code" }] }],
     },
     {},
   );
@@ -254,9 +254,9 @@ test("email: a delivery failure throws a 502 catch can read", async () => {
 test("email: a send the server takes reports who it accepted", async () => {
   const server = await smtpServer(() => "250 OK\r\n");
   try {
-    await resolve({ "email-connect": "smtp://127.0.0.1", port: server.port, tls: false, from: "me@x.com" }, {});
+    await resolve({ "$email-connect": "smtp://127.0.0.1", port: server.port, tls: false, from: "me@x.com" }, {});
     const out = await resolve(
-      { email: ["a@x.com", "b@x.com"], subject: "Report", body: "hi" },
+      { $email: ["a@x.com", "b@x.com"], subject: "Report", body: "hi" },
       {},
     ) as Record<string, unknown>;
     assert.deepEqual(out.accepted, ["a@x.com", "b@x.com"]);
@@ -272,10 +272,10 @@ test("email: a send the server takes reports who it accepted", async () => {
 test("email: a reply threads with In-Reply-To and References", async () => {
   const server = await smtpServer(() => "250 OK\r\n");
   try {
-    await resolve({ "email-connect": "smtp://127.0.0.1", port: server.port, tls: false, from: "me@x.com" }, {});
+    await resolve({ "$email-connect": "smtp://127.0.0.1", port: server.port, tls: false, from: "me@x.com" }, {});
     await resolve(
       {
-        email: "reporter@x.com",
+        $email: "reporter@x.com",
         subject: "Re: Ticket 12",
         body: "on it",
         inReplyTo: "<first@x.com>",
@@ -296,17 +296,17 @@ test("email: a reply threads with In-Reply-To and References", async () => {
 test("email: priority writes the headers clients read, and a typo says so", async () => {
   const server = await smtpServer(() => "250 OK\r\n");
   try {
-    await resolve({ "email-connect": "smtp://127.0.0.1", port: server.port, tls: false, from: "me@x.com" }, {});
-    await resolve({ email: "a@x.com", subject: "Alarm", body: "hi", priority: "high" }, {});
+    await resolve({ "$email-connect": "smtp://127.0.0.1", port: server.port, tls: false, from: "me@x.com" }, {});
+    await resolve({ $email: "a@x.com", subject: "Alarm", body: "hi", priority: "high" }, {});
     assert.match(server.sent[0], /^X-Priority: 1 \(Highest\)$/m);
     assert.match(server.sent[0], /^Importance: High$/m);
 
     // "normal" is nodemailer's default and writes no header at all.
-    await resolve({ email: "a@x.com", subject: "Notice", body: "hi", priority: "normal" }, {});
+    await resolve({ $email: "a@x.com", subject: "Notice", body: "hi", priority: "normal" }, {});
     assert.doesNotMatch(server.sent[1], /^X-Priority:/m);
 
     await assert.rejects(
-      async () => { await resolve({ email: "a@x.com", subject: "s", body: "hi", priority: "urgent" }, {}); },
+      async () => { await resolve({ $email: "a@x.com", subject: "s", body: "hi", priority: "urgent" }, {}); },
       /Invalid email priority "urgent": expected high, normal, low/,
     );
   } finally {
@@ -317,14 +317,14 @@ test("email: priority writes the headers clients read, and a typo says so", asyn
 test("email: list writes the List-* set, brackets and all", async () => {
   const server = await smtpServer(() => "250 OK\r\n");
   try {
-    await resolve({ "email-connect": "smtp://127.0.0.1", port: server.port, tls: false, from: "me@x.com" }, {});
+    await resolve({ "$email-connect": "smtp://127.0.0.1", port: server.port, tls: false, from: "me@x.com" }, {});
     await resolve(
       {
-        email: "a@x.com",
+        $email: "a@x.com",
         subject: "News",
         body: "hi",
         list: {
-          unsubscribe: { concat: ["https://example.com/u/", { var: "$token" }] },
+          unsubscribe: { $concat: ["https://example.com/u/", { $var: "token" }] },
           help: { url: "mailto:help@example.com", comment: "Support" },
           id: "news.example.com",
         },
@@ -346,13 +346,13 @@ test("email: an invitation goes out as a calendar part, not an attachment", asyn
   const server = await smtpServer(() => "250 OK\r\n");
   const invite = "BEGIN:VCALENDAR\nVERSION:2.0\nMETHOD:REQUEST\nBEGIN:VEVENT\nUID:1\nEND:VEVENT\nEND:VCALENDAR";
   try {
-    await resolve({ "email-connect": "smtp://127.0.0.1", port: server.port, tls: false, from: "me@x.com" }, {});
+    await resolve({ "$email-connect": "smtp://127.0.0.1", port: server.port, tls: false, from: "me@x.com" }, {});
     await resolve(
       {
-        email: "a@x.com",
+        $email: "a@x.com",
         subject: "Kickoff",
         body: "See invite",
-        icalEvent: { method: "REQUEST", filename: "meeting.ics", content: { var: "$invite" } },
+        icalEvent: { method: "REQUEST", filename: "meeting.ics", content: { $var: "invite" } },
       },
       { invite },
     );
@@ -374,15 +374,15 @@ test("email: an invitation path is refused the way an attachment path is", () =>
 test("email: custom headers reach the message", async () => {
   const server = await smtpServer(() => "250 OK\r\n");
   try {
-    await resolve({ "email-connect": "smtp://127.0.0.1", port: server.port, tls: false, from: "me@x.com" }, {});
+    await resolve({ "$email-connect": "smtp://127.0.0.1", port: server.port, tls: false, from: "me@x.com" }, {});
     await resolve(
       {
-        email: "a@x.com",
+        $email: "a@x.com",
         subject: "News",
         body: "hi",
         headers: {
           "List-Unsubscribe": "<https://example.com/u/abc>",
-          "List-Unsubscribe-Post": { concat: ["List-Unsubscribe=", "One-Click"] },
+          "List-Unsubscribe-Post": { $concat: ["List-Unsubscribe=", "One-Click"] },
         },
       },
       {},
@@ -399,9 +399,9 @@ test("email: custom headers reach the message", async () => {
 test("email: a partial rejection resolves, and says who was dropped", async () => {
   const server = await smtpServer(n => (n === 1 ? "250 OK\r\n" : "550 no such user\r\n"));
   try {
-    await resolve({ "email-connect": "smtp://127.0.0.1", port: server.port, tls: false, from: "me@x.com" }, {});
+    await resolve({ "$email-connect": "smtp://127.0.0.1", port: server.port, tls: false, from: "me@x.com" }, {});
     const out = await resolve(
-      { email: ["good@x.com", "bad@x.com"], subject: "Report", body: "hi" },
+      { $email: ["good@x.com", "bad@x.com"], subject: "Report", body: "hi" },
       {},
     ) as Record<string, unknown>;
     assert.deepEqual(out.accepted, ["good@x.com"]);
@@ -416,13 +416,13 @@ test("email: a partial rejection resolves, and says who was dropped", async () =
 test("email: every recipient refused throws, naming them in $smtp", async () => {
   const server = await smtpServer(() => "550 no such user\r\n");
   try {
-    await resolve({ "email-connect": "smtp://127.0.0.1", port: server.port, tls: false, from: "me@x.com" }, {});
+    await resolve({ "$email-connect": "smtp://127.0.0.1", port: server.port, tls: false, from: "me@x.com" }, {});
     const out = await resolve(
       {
-        email: ["a@x.com", "b@x.com"],
+        $email: ["a@x.com", "b@x.com"],
         subject: "Report",
         body: "hi",
-        catch: [{ concat: [{ var: "$error.status" }, " ", { var: "$smtp.code" }, " ", { var: "$smtp.rejected" }] }],
+        $catch: [{ $concat: [{ $var: "error.status" }, " ", { $var: "smtp.code" }, " ", { $var: "smtp.rejected" }] }],
       },
       {},
     );
@@ -439,9 +439,9 @@ test("email: a long recipient list is summarised in the message, whole in $smtp"
   const server = await smtpServer(() => "550 no such user\r\n");
   const to = ["a@x.com", "b@x.com", "c@x.com", "d@x.com", "e@x.com"];
   try {
-    await resolve({ "email-connect": "smtp://127.0.0.1", port: server.port, tls: false, from: "me@x.com" }, {});
+    await resolve({ "$email-connect": "smtp://127.0.0.1", port: server.port, tls: false, from: "me@x.com" }, {});
     await assert.rejects(
-      async () => { await resolve({ email: to, subject: "Report", body: "hi" }, {}); },
+      async () => { await resolve({ $email: to, subject: "Report", body: "hi" }, {}); },
       (err: Error) => {
         assert.match(err.message, /^Email to a@x\.com, b@x\.com, c@x\.com and 2 more failed:/);
         assert.doesNotMatch(err.message, /d@x\.com|e@x\.com/);
@@ -450,7 +450,7 @@ test("email: a long recipient list is summarised in the message, whole in $smtp"
     );
     // The catch path still gets every one of them.
     const out = await resolve(
-      { email: to, subject: "Report", body: "hi", catch: [{ var: "$smtp.rejected" }] },
+      { $email: to, subject: "Report", body: "hi", $catch: [{ $var: "smtp.rejected" }] },
       {},
     );
     assert.deepEqual(out, to);
@@ -460,9 +460,9 @@ test("email: a long recipient list is summarised in the message, whole in $smtp"
 });
 
 test("email: the failure message names the recipients without inventing one", async () => {
-  await resolve({ "email-connect": "smtp://127.0.0.1", port: 1, timeout: 2000, from: "me@x.com" }, {});
+  await resolve({ "$email-connect": "smtp://127.0.0.1", port: 1, timeout: 2000, from: "me@x.com" }, {});
   await assert.rejects(
-    async () => { await resolve({ email: ["a@x.com", "b@x.com"], subject: "Report" }, {}); },
+    async () => { await resolve({ $email: ["a@x.com", "b@x.com"], subject: "Report" }, {}); },
     (err: Error & { status?: number }) => {
       assert.equal(err.status, 502);
       assert.match(err.message, /^Email to a@x\.com, b@x\.com failed:/);

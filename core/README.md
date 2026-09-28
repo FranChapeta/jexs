@@ -43,12 +43,12 @@ const resolve = createResolver(coreNodes());
 
 const ctx = { user: { name: "Ada" } };
 
-resolve({ concat: ["Hello, ", { var: "$user.name" }, "!"] }, ctx);
+resolve({ $concat: ["Hello, ", { $var: "user.name" }, "!"] }, ctx);
 // → "Hello, Ada!"
 
 resolve({
-  if: { var: "$user.name" },
-  then: { concat: ["Welcome back, ", { var: "$user.name" }] },
+  $if: { $var: "user.name" },
+  then: { $concat: ["Welcome back, ", { $var: "user.name" }] },
   else: "Sign in"
 }, ctx);
 // → "Welcome back, Ada"
@@ -61,12 +61,12 @@ import { Node, type Context, createResolver, coreNodes } from "@jexs/core";
 
 class UpperNode extends Node {
   upper(def: Record<string, unknown>, _ctx: Context) {
-    return String(def.upper).toUpperCase();
+    return String(def.$upper).toUpperCase();
   }
 }
 
 const resolve = createResolver([...coreNodes(), new UpperNode()]);
-resolve({ upper: "hello" }, {}); // → "HELLO"
+resolve({ $upper: "hello" }, {}); // → "HELLO"
 ```
 
 The method name `upper` becomes the dispatch key — any JSON object with an `upper` field will route to that handler.

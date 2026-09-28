@@ -23,6 +23,7 @@
  */
 
 import type { Node } from "./nodes/Node.js";
+import { KEY_PREFIX } from "./Resolver.js";
 import type {
   JexsMethodSchema, JexsNodeSchema, JexsPropertySchema, JexsType,
 } from "./schema.js";
@@ -314,9 +315,6 @@ export interface PackageSchema {
    *  are internal helpers; non-underscored names are added to the combined
    *  schema's top-level `anyOf` as root-matchable branches. */
   extraDefs?: Record<string, EmittedSchema>;
-  /** sibling name → host method keys that declare it. The merge step uses this to
-   *  gate dispatch for siblings that share a handler-key name (e.g. `session`). */
-  siblingHosts?: Record<string, string[]>;
   /** method key → owning Node class. `byNode` reversed, so naming an op's class
    *  is a lookup rather than a scan of every class's key list. */
   keyNode?: Record<string, string>;
@@ -448,7 +446,7 @@ function variantMode(spec: { variantBy?: JexsPropertySchema["variantBy"]; enum?:
 }
 
 function normalizeMethod(methodKey: string, method: JexsMethodSchema): Scope {
-  return scopeOf(methodKey, method, methodKey, [], null, false, methodKey);
+  return scopeOf(methodKey, method, KEY_PREFIX + methodKey, [], null, false, methodKey);
 }
 
 /** `subject` is the property this scope's own variants test, or null when the
@@ -581,7 +579,7 @@ function descendants(scope: Scope): Scope[] {
  * variant's stub must survive, with this variant's shape layered on top.
  */
 function emitMethod(methodKey: string, root: Scope, common: ReadonlySet<string>): EmittedMethodSchema {
-  const properties: Record<string, EmittedSchema> = { [methodKey]: expandProperty(root.schema) };
+  const properties: Record<string, EmittedSchema> = { [KEY_PREFIX + methodKey]: expandProperty(root.schema) };
   const required: string[] = [];
   const allOf: EmittedSchema[] = [];
 
@@ -731,15 +729,6 @@ function disjoint(a: WhenTest[], b: WhenTest[]): boolean {
   return a.some(x => "value" in x && b.some(y => "value" in y && y.key === x.key && y.value !== x.value));
 }
 
-/** Every sibling name a method can carry: each scope's siblings, and each trigger,
- *  which is a sibling too. Used to map sibling names to the ops that host them. */
-function siblingNames(root: Scope): string[] {
-  return [root, ...descendants(root)].flatMap(s => [
-    ...(s.trigger ? [s.name] : []),
-    ...Object.keys(s.schema.siblings ?? {}),
-  ]);
-}
-
 /** The value-selected operations among `scopes`, or undefined when they are
  *  selected by presence (and so documented as the siblings they are). A scope
  *  that declares no output shows `inherited`, when given. */
@@ -813,7 +802,7 @@ function siblingDocsOf(
     }
     for (const v of childrenOf(scope)) {
       // A trigger is the sibling that selects its operation, so the operation is
-      // documented here, on it, once: `{ "file": "x.json", "write": … }`. It
+      // documented here, on it, once: `{ "$file": "x.json", "write": … }`. It
       // applies wherever its own test (the last) is evaluated.
       if (v.trigger) {
         const values = valueDocs(v.variants.scopes);
@@ -885,13 +874,6 @@ export function buildPackageSchema(
   const extraDefs: Record<string, EmittedSchema> = {};
   /** Per-Node $defs ref to a shared siblings block (built from `commonSiblings`). */
   const nodeSiblingsRef: Record<string, string> = {};
-  /** sibling name → the method keys (host ops) that declare it. Lets the merge
-   *  step gate dispatch so a sibling sharing a handler-key name (e.g. `session`)
-   *  is validated as that op's sibling, not as its own op. */
-  const siblingHosts: Record<string, Set<string>> = {};
-  const addSiblingHost = (sibling: string, host: string) => {
-    (siblingHosts[sibling] ??= new Set()).add(host);
-  };
   /** method key → its siblings with prose, for documentation consumers. */
   const siblingDocs: Record<string, SiblingDoc[]> = {};
 
@@ -918,10 +900,6 @@ export function buildPackageSchema(
       }
       extraDefs[siblingsDefName] = { properties: expandedProps };
       nodeSiblingsRef[nodeClass] = `#/$defs/${siblingsDefName}`;
-      // commonSiblings apply to every method on the node, so all are hosts.
-      for (const sib of Object.keys(nodeCommonSiblings)) {
-        for (const mk of methodKeys) addSiblingHost(sib, mk);
-      }
     }
 
     for (const [methodKey, method] of Object.entries(schema)) {
@@ -943,7 +921,6 @@ export function buildPackageSchema(
       (byNode[nodeClass] ??= []).push(methodKey);
       const docs = siblingDocsOf(methodKey, root, nodeCommonSiblings);
       if (docs.length > 0) siblingDocs[methodKey] = docs;
-      for (const sib of siblingNames(root)) addSiblingHost(sib, methodKey);
     }
 
     // Per-Node $defs contributions (e.g. RouterNode's _routeNode tree shape).
@@ -968,11 +945,6 @@ export function buildPackageSchema(
   };
   if (packageName) out.packageName = packageName;
   if (Object.keys(extraDefs).length > 0) out.extraDefs = extraDefs;
-  if (Object.keys(siblingHosts).length > 0) {
-    out.siblingHosts = Object.fromEntries(
-      Object.entries(siblingHosts).map(([sib, hosts]) => [sib, [...hosts]]),
-    );
-  }
   if (Object.keys(keyNode).length > 0) out.keyNode = keyNode;
   if (Object.keys(siblingDocs).length > 0) out.siblingDocs = siblingDocs;
   return out;
@@ -1008,7 +980,7 @@ function formatValue(v: ValueDoc, indent = ""): string {
  * with their descriptions, and the first example as a fenced code block.
  */
 function buildRichMarkdown(methodKey: string, m: EmittedMethodSchema, docs: SiblingDoc[] | undefined): string {
-  const primary = m.properties[methodKey] as MaybeMeta | undefined;
+  const primary = m.properties[KEY_PREFIX + methodKey] as MaybeMeta | undefined;
   let md = pickDesc(primary);
 
   // Operations selected by the primary key's value. Those selected by a sibling's
@@ -1059,37 +1031,36 @@ function buildRichMarkdown(methodKey: string, m: EmittedMethodSchema, docs: Sibl
 export const GLOBAL_KEY_DOCS: Record<string, { markdownDescription: string; examples?: string[] }> = {
   as: {
     markdownDescription:
-      "Store this step's result in a named context variable, read later via `{ \"var\": \"name\" }`. Works on any step.",
-    examples: ["{ \"var\": \"$user.name\", \"as\": \"name\" }"],
+      "Store this step's result in a named context variable, read later via `{ \"$var\": \"name\" }`. Works on any step.",
+    examples: ["{ \"$var\": \"user.name\", \"$as\": \"name\" }"],
   },
   return: {
     markdownDescription:
-      "In a step array, a step that resolves to `{ \"return\": X }` stops the array early and yields `X`. Escapes only the current array, so nest the wrapper to exit outer arrays.",
+      "In a step array, a step that resolves to `{ \"$return\": X }` stops the array early and yields `X`. Escapes only the current array, so nest the wrapper to exit outer arrays.",
     examples: [
-      "{ \"if\": { \"empty\": { \"var\": \"$name\" } }, \"then\": { \"return\": \"Hello, world!\" } }",
+      "{ \"$if\": { \"$empty\": { \"$var\": \"name\" } }, \"then\": { \"$return\": \"Hello, world!\" } }",
     ],
   },
   catch: {
     markdownDescription:
-      "Step array to run if this expression throws. Catches ANY error, not just HTTP ones. The `$error` context variable carries `{ message }`, plus `status` when the thrower was an HTTP error (and whatever further variables it offered, e.g. `fetch`'s `$response`).",
-    examples: ["{ \"query-select\": \"users\", \"catch\": [{ \"var\": \"$error.message\" }] }"],
+      "Step array to run if this expression throws. Catches ANY error, not just HTTP ones. The `error` context variable carries `{ message }`, plus `status` when the thrower was an HTTP error (and whatever further variables it offered, e.g. `fetch`'s `response`).",
+    examples: ["{ \"query-select\": \"users\", \"$catch\": [{ \"$var\": \"error.message\" }] }"],
   },
   then: {
     markdownDescription:
-      "Run these steps as a FIRE-AND-FORGET continuation (like a Promise `.then`): the step returns immediately (later steps do NOT block on it), and once this expression settles, the steps run with the result bound as `$result`. A rejection runs `catch`. The step itself yields `null` (the result is delivered to `$result`, not returned), so a sibling `as` here would bind `null`; read the value via `$result` inside `then`. Works on ANY node; use it to kick off async I/O (`query`, `file`, a host `dialog`, `thread`) without stalling the sequence. (Under `if`, `then` is the branch, not a continuation.)",
-    examples: ["{ \"query-select\": \"saves\", \"then\": [{ \"set-html\": [\"#list\", { \"var\": \"$result\" }] }] }"],
+      "Run these steps as a FIRE-AND-FORGET continuation (like a Promise `.then`): the step returns immediately (later steps do NOT block on it), and once this expression settles, the steps run with the result bound as `result`. A rejection runs `$catch`. The step itself yields `null` (the result is delivered to `result`, not returned), so a sibling `$as` here would bind `null`; read the value via `result` inside `$then`. Works on ANY node; use it to kick off async I/O (`query`, `file`, a host `dialog`, `thread`) without stalling the sequence. (Under `$if`, `then` is the branch, not a continuation.)",
+    examples: ["{ \"query-select\": \"saves\", \"$then\": [{ \"set-html\": [\"#list\", { \"$var\": \"result\" }] }] }"],
   },
   bubble: {
     markdownDescription:
-      "Modifier for a write, only valid alongside `as` or `setVars`. Also writes the result up into every enclosing scope, so it survives after the current file / loop / branch returns. Without it, writes are scoped to the copied context and lost on return.",
-    examples: ["{ \"var\": \"$total\", \"as\": \"total\", \"bubble\": true }"],
+      "Modifier for a write, only valid alongside `$as` or `$setVars`. Also writes the result up into every enclosing scope, so it survives after the current file / loop / branch returns. Without it, writes are scoped to the copied context and lost on return.",
+    examples: ["{ \"$var\": \"total\", \"$as\": \"total\", \"$bubble\": true }"],
   },
 };
 
-/** Universal keys (`as`, `return`, `catch`, `then`) declared once at the top of
- *  exprFlat. `then` is also a sibling of `if` (LogicNode's branch); the emission
- *  loop gates it via `siblingHosts` so it validates as the branch under `if` and
- *  as a continuation everywhere else. */
+/** The global step keys, declared once at the top of exprFlat as `$as`,
+ *  `$return`, `$catch`, `$then` and `$bubble`. `if`'s `then` branch is a plain
+ *  sibling, so it never meets the global `$then`. */
 // `examples` rides along with the prose: a standard JSON Schema annotation, so
 // Ajv ignores it and the editor renders it on hover. It also makes exprFlat the
 // complete published record of the global keys, which is what the MCP server
@@ -1130,7 +1101,6 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
   const byNode: Record<string, EmittedNodeSchema> = {};
   const extraDefs: Record<string, EmittedSchema> = {};
   const collisions: string[] = [];
-  const siblingHosts: Record<string, Set<string>> = {};
   const siblingDocs: Record<string, SiblingDoc[]> = {};
 
   for (const pkg of packages) {
@@ -1143,9 +1113,6 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
     }
     for (const [k, v] of Object.entries(pkg.siblingDocs ?? {})) {
       if (!(k in siblingDocs)) siblingDocs[k] = v;
-    }
-    for (const [sib, hosts] of Object.entries(pkg.siblingHosts ?? {})) {
-      for (const h of hosts) (siblingHosts[sib] ??= new Set()).add(h);
     }
     for (const [n, v] of Object.entries(pkg.byNode)) {
       if (n in byNode) {
@@ -1175,12 +1142,12 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
   //     resolve here.
   const vp: Record<string, EmittedSchema> = {};
   for (const [methodKey, m] of Object.entries(byKey)) {
-    const primaryEntry = m.properties[methodKey];
+    const primaryEntry = m.properties[KEY_PREFIX + methodKey];
     if (!primaryEntry) continue;
     const md = buildRichMarkdown(methodKey, m, siblingDocs[methodKey]);
     if (md) primaryEntry.markdownDescription = md;
     vp[methodKey] = primaryEntry;
-    m.properties[methodKey] = { $ref: `#/vp/${methodKey}` };
+    m.properties[KEY_PREFIX + methodKey] = { $ref: `#/vp/${methodKey}` };
   }
 
   // Structural shape dedup runs as a whole-schema pass at the end (dedupeShapes),
@@ -1188,74 +1155,28 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
   // shapes, byKey gating fragments, repeated enum shapes, …), keeping per-node
   // metadata inline next to the `$ref`.
 
-  const methodSchemaRefs: Record<string, EmittedSchema> = {};
-  const primaryValueRefs: Record<string, EmittedSchema> = {};
-  for (const methodKey of Object.keys(byKey)) {
-    methodSchemaRefs[methodKey] = { $ref: `#/byKey/${methodKey}` };
-    primaryValueRefs[methodKey] = { $ref: `#/vp/${methodKey}` };
-  }
-
+  // Every key the resolver owns is `$`-prefixed and no sibling is, so an op key,
+  // a global key and a sibling can never share a name: each op is listed once,
+  // its value checked through `vp` and the step through its `byKey` entry.
   const exprFlatProperties: Record<string, EmittedSchema> = {};
   const exprFlatDependentSchemas: Record<string, EmittedSchema> = {};
   for (const methodKey of Object.keys(byKey)) {
-    // A key that's ALSO a sibling of other ops (e.g. `session`) must not be
-    // validated as its own op when used as that sibling. Mirror the runtime
-    // (first handler key dispatches): if a host op is present, treat this key as
-    // its sibling (the host's byKey validates the value); only dispatch it as its
-    // own op when no host is present. Keep it in `properties` (as a description
-    // stub — no value constraint) so editor completion still offers the key.
-    const hosts = [...(siblingHosts[methodKey] ?? [])].filter(h => h !== methodKey && h in byKey);
-    if (hosts.length > 0) {
-      const md = vp[methodKey]?.markdownDescription;
-      exprFlatProperties[methodKey] = md ? { markdownDescription: md } : {};
-      exprFlatDependentSchemas[methodKey] = {
-        if: { anyOf: hosts.map(h => ({ required: [h] })) },
-        then: true,
-        else: methodSchemaRefs[methodKey],
-      };
-    } else {
-      exprFlatProperties[methodKey] = primaryValueRefs[methodKey];
-      exprFlatDependentSchemas[methodKey] = methodSchemaRefs[methodKey];
-    }
+    exprFlatProperties[KEY_PREFIX + methodKey] = { $ref: `#/vp/${methodKey}` };
+    exprFlatDependentSchemas[KEY_PREFIX + methodKey] = { $ref: `#/byKey/${methodKey}` };
   }
   for (const [name, info] of Object.entries(UNIVERSAL)) {
-    // A universal key that a node ALSO declares as its own sibling (e.g. `then`,
-    // which LogicNode's `if` owns as a branch) must defer to that host op's
-    // validation when the host is present, and only apply the universal schema
-    // when used standalone — the same gating as a handler-key-named sibling
-    // (above). Otherwise `{ "if": ..., "then": "yes" }` would fail the universal
-    // (steps-array) constraint.
-    const hosts = [...(siblingHosts[name] ?? [])].filter(h => h in byKey);
-    if (hosts.length > 0) {
-      // The property carries only the docs (always shown); the VALUE constraint is
-      // gated: when a host op is present it's that op's sibling (host validates it,
-      // e.g. `if`'s scalar/array branch), otherwise it's the universal value (steps
-      // for `then`). `dependentSchemas` constrains the whole object, so the else
-      // wraps the constraint back onto this property, not the object.
-      exprFlatProperties[name] = { markdownDescription: info.markdownDescription, ...(info.examples ? { examples: info.examples } : {}) };
-      exprFlatDependentSchemas[name] = {
-        if: { anyOf: hosts.map(h => ({ required: [h] })) },
-        then: true,
-        else: { properties: { [name]: { ...info.ref } } },
-      };
-    } else {
-      exprFlatProperties[name] = {
-        ...info.ref,
-        markdownDescription: info.markdownDescription,
-        ...(info.examples ? { examples: info.examples } : {}),
-      };
-    }
+    exprFlatProperties[KEY_PREFIX + name] = {
+      ...info.ref,
+      markdownDescription: info.markdownDescription,
+      ...(info.examples ? { examples: info.examples } : {}),
+    };
   }
 
-  // `bubble` is a modifier on a write, meaningless on its own. Gate it so the
-  // schema only accepts it when the step also carries `as` or is a `setVars` —
-  // i.e. `{ ..., "as": "x", "bubble": true }` or `{ "setVars": {...}, "bubble":
-  // true }` validate, but a bare `{ "concat": [...], "bubble": true }` does not.
-  // A `dependentSchemas` co-occurrence check keeps the flat authoring shape (a
-  // literal nested key can't live inside `setVars`, which is a value map) and is
-  // non-recursive, so it doesn't feed the anti-cascade blow-up.
-  exprFlatDependentSchemas.bubble = {
-    anyOf: [{ required: ["as"] }, { required: ["setVars"] }],
+  // `$bubble` is a modifier on a write, meaningless on its own: accepted only
+  // alongside `$as` or on a `$setVars`. A `dependentSchemas` co-occurrence check
+  // is non-recursive, so it doesn't feed the anti-cascade blow-up.
+  exprFlatDependentSchemas[KEY_PREFIX + "bubble"] = {
+    anyOf: [{ required: [KEY_PREFIX + "as"] }, { required: [KEY_PREFIX + "setVars"] }],
   };
 
   // Default schema for keys not enumerated in `properties` — i.e. siblings of
@@ -1290,11 +1211,18 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
     m.additionalProperties = { ...additionalPropertiesRef };
   }
 
+  // A `$` key must be one the resolver knows: an op or a global. Anything else
+  // (`$concta`) is a typo the runtime would refuse, so the editor flags it too.
+  // Other keys are siblings or data and stay free.
   const exprFlat: EmittedSchema = {
     type: "object",
     properties: exprFlatProperties,
     additionalProperties: true,
     dependentSchemas: exprFlatDependentSchemas,
+    propertyNames: {
+      if: { pattern: "^\\" + KEY_PREFIX },
+      then: { enum: Object.keys(exprFlatProperties) },
+    },
   };
 
   // Per-output-type filtered exprFlat variants. Slots declared `type: T` route
@@ -1342,18 +1270,15 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
         else clauses.push(!unless ? rule.cond : empty ? unless : { allOf: [rule.cond, unless] });
       });
       if (always) continue;                          // inherit from base, nothing to emit
-      if (clauses.length === 0) rejected[methodKey] = false;
-      else gated[methodKey] = clauses.length === 1 ? clauses[0] : { anyOf: clauses };
+      if (clauses.length === 0) rejected[KEY_PREFIX + methodKey] = false;
+      else gated[KEY_PREFIX + methodKey] = clauses.length === 1 ? clauses[0] : { anyOf: clauses };
     }
+    // A fire-and-forget `$then` makes the whole expression resolve to null, so it
+    // cannot stand in a slot that wants a real value. `exprFlat_null` is left
+    // permissive, since null is exactly what a null slot wants.
+    if (target !== "null") rejected[KEY_PREFIX + "then"] = false;
     const override: EmittedSchema = { properties: rejected };
     const deps: Record<string, EmittedSchema> = { ...gated };
-    // A fire-and-forget `then` (present WITHOUT `if` — the branch form) makes the
-    // whole expression resolve to null, so it can't stand in a non-null-typed
-    // slot. Require `if` alongside `then` in these buckets: `{ node, then }`
-    // (fire-and-forget) is rejected where a real value is expected, while
-    // `{ if, then }` (the branch) still passes. `exprFlat_null` is left permissive
-    // (null output is exactly what a null slot wants).
-    if (target !== "null") deps.then = { required: ["if"] };
     if (Object.keys(deps).length > 0) override.dependentSchemas = deps;
     filteredVariants[`exprFlat_${target}`] = {
       allOf: [{ $ref: "#/$defs/exprFlat" }, override],

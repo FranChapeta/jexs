@@ -16,7 +16,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 // The directory of the file currently being resolved. Tracked under a private
 // symbol on the context — NOT a readable `$var`: templates can't read it via
-// `var`, and request data / `as` (string keys only) can't inject it, so it can't
+// `var`, and request data / `$as` (string keys only) can't inject it, so it can't
 // be used to redirect file resolution. Object spread copies it, so child scopes
 // (map/foreach/if) inherit it; JSON and structuredClone drop it, so it never
 // leaks to logs or the `thread` worker.
@@ -78,7 +78,7 @@ export class FileNode extends Node {
       markdownDescription: "Loads a JSON file and resolves it as a Jexs expression. Paths resolve like a filesystem: relative to the file doing the loading (`\"nav.json\"`, `\"../shared/x.json\"`), while a leading `/` anchors at the resolver root (`\"/data/site.json\"`).\nArrays are executed as step sequences; objects are resolved as a single expression.\nPass `\"data\": true` to skip resolution and get the raw parsed JSON (use for data files, route trees, and anywhere you want the resolver to leave the file alone).\nPass `\"raw\": true` for the raw string content with no JSON parse.\nPass `\"params\"` to merge scoped variables into the file's resolution context, or `\"write\"` to write data to the file.",
       outputDescription: "Default: the file resolved as a Jexs expression (a JSON array runs as steps → its last value; a JSON object resolves to its value). With `data: true`, the raw parsed JSON; with `raw: true`, the file as a string; non-JSON text files return their string and binaries a Buffer. `null` if the file can't be read or parsed.",
       examples: [
-        "{ \"file\": \"pages/home.json\", \"params\": { \"title\": \"Home\" } }",
+        "{ \"$file\": \"pages/home.json\", \"params\": { \"title\": \"Home\" } }",
       ],
       siblings: {
         raw: {
@@ -133,8 +133,8 @@ export class FileNode extends Node {
       markdownDescription: "Lists directory contents. The path resolves relative to the file doing the loading; a leading `/` anchors at the resolver root. Lists files by default; pass `\"subdirectories\": true` to list the folders instead.",
       outputDescription: "An array of `{ name, path, size, modified }` entries: files by default, or subdirectories when `subdirectories` is set (filtered by `extension` when given); `[]` if the directory can't be read.",
       examples: [
-        "{ \"directory\": \"data/posts\", \"extension\": \"json\", \"recursive\": true }",
-        "{ \"directory\": \"node_modules/@jexs\", \"subdirectories\": true }",
+        "{ \"$directory\": \"data/posts\", \"extension\": \"json\", \"recursive\": true }",
+        "{ \"$directory\": \"node_modules/@jexs\", \"subdirectories\": true }",
       ],
       siblings: {
         recursive: {
@@ -163,7 +163,7 @@ export class FileNode extends Node {
       markdownDescription: "Reports disk usage for a path. Pass a path string or `true` to use the current working directory.",
       outputDescription: "`{ total, free, used }` in bytes, or `null` on error.",
       examples: [
-        "{ \"disk\": true }",
+        "{ \"$disk\": true }",
       ],
     },
   };
@@ -191,7 +191,7 @@ export class FileNode extends Node {
     if ("create" in def) return createDir(def, context, this.rootAbs);
 
     return resolveAll(
-      [def.directory, def.recursive ?? null, def.extension ?? null, def.subdirectories ?? null],
+      [def.$directory, def.recursive ?? null, def.extension ?? null, def.subdirectories ?? null],
       context,
       async ([dirPathValue, recursiveRaw, extensionValue, subdirsRaw]) => {
         const recursive = toBoolean(recursiveRaw);
@@ -224,7 +224,7 @@ export class FileNode extends Node {
   }
 
   disk(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.disk, context, diskPath => {
+    return resolve(def.$disk, context, diskPath => {
       const target = diskPath && diskPath !== true ? String(diskPath) : process.cwd();
 
       // Async statfs keeps the event loop free during the syscall; the resolve
@@ -272,7 +272,7 @@ function loadFile(
   context: Context,
   rootAbs: string,
 ): unknown {
-  return resolveAll([def.file, def.raw ?? null, def.data ?? null], context, async ([filePathValue, rawRaw, dataRaw]) => {
+  return resolveAll([def.$file, def.raw ?? null, def.data ?? null], context, async ([filePathValue, rawRaw, dataRaw]) => {
     const raw = toBoolean(rawRaw);
     const data = toBoolean(dataRaw);
     const filePath = resolvePath(filePathValue, rootAbs, getFileDir(context));
@@ -311,8 +311,8 @@ function loadFile(
     // Run the loaded file's steps against a context that records ITS directory,
     // so nested relative `{ file }` / `{ directory }` loads resolve against this
     // file (not the caller's). Params, if any, merge on top. The context is
-    // linked back to the caller (via `childContext`) so `setVars` / `as` with
-    // `bubble` inside the file can write state upward past the file boundary.
+    // linked back to the caller (via `childContext`) so `$setVars` / `$as` with
+    // `$bubble` inside the file can write state upward past the file boundary.
     const fileDir = path.dirname(filePath);
     let fileContext: Context = childContext(context, { [FILE_DIR]: fileDir });
     if ("params" in def && isObject(def.params)) {
@@ -345,7 +345,7 @@ function writeFile(
   context: Context,
   rootAbs: string,
 ): unknown {
-  return resolveAll([def.file, def.write], context, async ([filePathValue, data]) => {
+  return resolveAll([def.$file, def.write], context, async ([filePathValue, data]) => {
     const filePath = resolvePath(filePathValue, rootAbs, getFileDir(context));
 
     try {
@@ -372,7 +372,7 @@ function statFile(
   rootAbs: string,
   mode: "exists" | "stat",
 ): unknown {
-  return resolve(def.file, context, async filePathValue => {
+  return resolve(def.$file, context, async filePathValue => {
     const filePath = resolvePath(filePathValue, rootAbs, getFileDir(context));
 
     let info: Awaited<ReturnType<typeof fs.stat>>;
@@ -398,7 +398,7 @@ function deleteFile(
   context: Context,
   rootAbs: string,
 ): unknown {
-  return resolve(def.file, context, async filePathValue => {
+  return resolve(def.$file, context, async filePathValue => {
     const filePath = resolvePath(filePathValue, rootAbs, getFileDir(context));
 
     try {
@@ -421,7 +421,7 @@ function transferFile(
   rootAbs: string,
   mode: "copyTo" | "moveTo",
 ): unknown {
-  return resolveAll([def.file, def[mode]], context, async ([fromValue, toValue]) => {
+  return resolveAll([def.$file, def[mode]], context, async ([fromValue, toValue]) => {
     const fileDir = getFileDir(context);
     const from = resolvePath(fromValue, rootAbs, fileDir);
     // The destination resolves by the same rules as the source, so a relative
@@ -457,7 +457,7 @@ function createDir(
   context: Context,
   rootAbs: string,
 ): unknown {
-  return resolve(def.directory, context, async dirPathValue => {
+  return resolve(def.$directory, context, async dirPathValue => {
     const dirPath = resolvePath(dirPathValue, rootAbs, getFileDir(context));
 
     try {

@@ -44,7 +44,7 @@ Node calls cross processes automatically. The preload exposes the main process's
 - DOM ops (`setText`, `getValue`, `click`, …), `var`, `storage`, `tree-*` stay in the renderer
 - `file`, `query`, `dialog-*`, `window-*`, `app-*` forward to main
 
-So a page template can call `{ "query": "select", "table": "saves" }` directly. There is no `ipc` node and nothing to wire up.
+So a page template can call `{ "$query": "select", "table": "saves" }` directly. There is no `ipc` node and nothing to wire up.
 
 ## Security model
 
@@ -57,12 +57,12 @@ The renderer reaches main through a single IPC channel, and by default it may as
 Where a window shows content you do not fully control, constrain that window when you open it:
 
 ```json
-{ "window-open": "preview.json", "name": "preview", "allow": ["query"] }
+{ "$window-open": "preview.json", "name": "preview", "allow": ["query"] }
 ```
 
 Any other op that window's page asks for is refused by name. It is per window on purpose: an editor needs `file` writes, a preview needs almost nothing, and the two should not share a limit.
 
-List ops, not siblings. `table` in `{ "query": "select", "table": "saves" }` is data belonging to `query`, so `allow: ["query"]` is the whole list — siblings are declared by whichever package owns the op, and expecting an author to enumerate them would be both tedious and wrong. The check walks nested values as well, because a sibling's value is itself resolved: `{ "query": "x", "table": { "file": "/etc/passwd" } }` would otherwise reach `file` with only `query` and `table` at the top level.
+List ops, not siblings. `table` in `{ "$query": "select", "table": "saves" }` is data belonging to `query`, so `allow: ["query"]` is the whole list — siblings are declared by whichever package owns the op, and expecting an author to enumerate them would be both tedious and wrong. The check walks nested values as well, because a sibling's value is itself resolved: `{ "$query": "x", "table": { "$file": "/etc/passwd" } }` would otherwise reach `file` with only `query` and `table` at the top level.
 
 Your own menu, tray and shortcut handlers are unaffected, because they run in main and never cross this channel — which is precisely what makes the list worth having rather than something that must permit everything.
 
@@ -90,11 +90,11 @@ The list governs the IPC channel, so `app://` gets its own controls rather than 
 
 ### Addressing windows
 
-Every window is registered under a name — the `name` sibling if given, otherwise the template's basename (`settings.json` becomes `settings`, deduped `settings-2`). `window-open` resolves to that name, so `as` can capture it.
+Every window is registered under a name — the `name` sibling if given, otherwise the template's basename (`settings.json` becomes `settings`, deduped `settings-2`). `window-open` resolves to that name, so `$as` can capture it.
 
-Opening is `window-open` rather than `window` so that `window` is free to be the target sibling. If the open op owned the bare key, `{ "window": "main", "window-title": "Saved" }` would dispatch on whichever key came first in the object and spawn a window instead of retitling one.
+Every window op targets a window through its `window` sibling, as in `{ "$window-title": "Saved", "window": "main" }`; opening one is `window-open`.
 
-The **first window opened becomes the default target**, and ops resolve in the order: explicit name, then the calling renderer's own window, then the default. So a page can say `{ "window-close": true }` and mean itself, while `app/main.json` can say `{ "window-title": "Saved", "window": "editor" }` and mean a specific one.
+The **first window opened becomes the default target**, and ops resolve in the order: explicit name, then the calling renderer's own window, then the default. So a page can say `{ "$window-close": true }` and mean itself, while `app/main.json` can say `{ "$window-title": "Saved", "window": "editor" }` and mean a specific one.
 
 Note what is deliberately absent: focus. `getFocusedWindow()` returns null whenever the app is in the background, so a tray or global-shortcut handler firing while another app has focus would resolve to nothing. An insertion-ordered default is deterministic. When the default window closes, the next remaining window is promoted rather than the default being left empty.
 
@@ -104,18 +104,18 @@ A main-process handler — a menu item, a tray click, a shortcut, an `app-on` ev
 
 ```json
 { "label": "Save", "do": [
-    { "getValue": "#editor", "as": "text" },
-    { "file": { "var": "$path" }, "write": { "var": "$text" } } ] }
+    { "$getValue": "#editor", "$as": "text" },
+    { "$file": { "$var": "path" }, "write": { "$var": "text" } } ] }
 ```
 
-`getValue` crosses to the window, `file` stays in main, and `as` binds in main because the resolver applies global step keys in the calling thread.
+`getValue` crosses to the window, `file` stays in main, and `$as` binds in main because the resolver applies global step keys in the calling thread.
 
-`window-run` is the exception, and the difference matters: its steps are sent **unresolved** and run against the page's context, not main's. So a `{ "var": "$x" }` inside `window-run` looks up `x` in the page, not in the handler. Pass main-side values through `params`:
+`window-run` is the exception, and the difference matters: its steps are sent **unresolved** and run against the page's context, not main's. So a `{ "$var": "x" }` inside `window-run` looks up `x` in the page, not in the handler. Pass main-side values through `params`:
 
 ```json
-{ "window-run": [{ "setText": ["#status", { "var": "$msg" }] }],
+{ "$window-run": [{ "$setText": ["#status", { "$var": "msg" }] }],
   "window": "editor",
-  "params": { "msg": { "var": "$status" } } }
+  "params": { "msg": { "$var": "status" } } }
 ```
 
 Each window is a separate JavaScript realm, so nothing is shared between them — separate page context, separate everything. State that must be global belongs in main.
@@ -141,5 +141,5 @@ asarUnpack: "**/*.node"
 ## Gotchas
 
 - **Rebuild the bundle after upgrading `@jexs/client`.** `dist/browser/client.js` is a build artifact; an upgraded dependency with a stale bundle still ships the old bridge. Re-run `jexs bundle`.
-- **There is nowhere to put static assets yet.** The asset branch resolves only against `dist/browser`, which is build output, and `jexs bundle` copies nothing into it. So `{ "tag": "img", "src": "/logo.png" }` in a template 404s. Inline it as a data URI or read it with `{ "file": ... }` until there is a `public/` equivalent.
+- **There is nowhere to put static assets yet.** The asset branch resolves only against `dist/browser`, which is build output, and `jexs bundle` copies nothing into it. So `{ "$tag": "img", "src": "/logo.png" }` in a template 404s. Inline it as a data URI or read it with `{ "$file": ... }` until there is a `public/` equivalent.
 - **Never import `electron` at the top level of a node file.** Schema generation imports `dist/nodes/*.js` under plain Node, where the electron runtime does not exist. Use `await import("electron")` inside the handler, as every node here does.

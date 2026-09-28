@@ -16,7 +16,7 @@ function body(html: string): string {
 test("script: application/ld+json object content is serialized", () => {
   const out = resolve(
     {
-      tag: "script",
+      $tag: "script",
       type: "application/ld+json",
       content: { "@context": "https://schema.org", "@type": "WebSite", name: "Jexs" },
     },
@@ -30,7 +30,7 @@ test("script: application/ld+json object content is serialized", () => {
 
 test("script: application/json object content is serialized", () => {
   const out = resolve(
-    { tag: "script", type: "application/json", content: { a: 1, b: [2, 3] } },
+    { $tag: "script", type: "application/json", content: { a: 1, b: [2, 3] } },
     {},
   ) as string;
   assert.equal(body(out), '{"a":1,"b":[2,3]}');
@@ -39,9 +39,9 @@ test("script: application/json object content is serialized", () => {
 test("script: nested expressions inside JSON content are resolved", () => {
   const out = resolve(
     {
-      tag: "script",
+      $tag: "script",
       type: "application/ld+json",
-      content: { name: { var: "$title" }, url: { concat: [{ var: "$base" }, "/x"] } },
+      content: { name: { $var: "title" }, url: { $concat: [{ $var: "base" }, "/x"] } },
     },
     { title: "Jexs", base: "https://ex.com" },
   ) as string;
@@ -51,7 +51,7 @@ test("script: nested expressions inside JSON content are resolved", () => {
 test("script: a value that would close the tag cannot break out", () => {
   const payload = "a</script><script>alert(1)</script>";
   const out = resolve(
-    { tag: "script", type: "application/ld+json", content: { n: payload } },
+    { $tag: "script", type: "application/ld+json", content: { n: payload } },
     {},
   ) as string;
   assert.ok(!body(out).includes("</script>"), "payload must not contain a raw </script>");
@@ -61,7 +61,7 @@ test("script: a value that would close the tag cannot break out", () => {
 
 test("script: <, >, & in values are escaped losslessly", () => {
   const out = resolve(
-    { tag: "script", type: "application/ld+json", content: { d: "a < b > c & d" } },
+    { $tag: "script", type: "application/ld+json", content: { d: "a < b > c & d" } },
     {},
   ) as string;
   const b = body(out);
@@ -73,7 +73,7 @@ test("script: <, >, & in values are escaped losslessly", () => {
 test("script: U+2028/U+2029 line separators are escaped", () => {
   const s = "a" + String.fromCharCode(0x2028) + "b" + String.fromCharCode(0x2029) + "c";
   const out = resolve(
-    { tag: "script", type: "application/ld+json", content: { s } },
+    { $tag: "script", type: "application/ld+json", content: { s } },
     {},
   ) as string;
   const b = body(out);
@@ -84,7 +84,7 @@ test("script: U+2028/U+2029 line separators are escaped", () => {
 
 test("script: literal JSON string content is still escaped for the script context", () => {
   const out = resolve(
-    { tag: "script", type: "application/json", content: '{"x":"</script>"}' },
+    { $tag: "script", type: "application/json", content: '{"x":"</script>"}' },
     {},
   ) as string;
   const b = body(out);
@@ -94,22 +94,22 @@ test("script: literal JSON string content is still escaped for the script contex
 
 test("script: a non-JSON script is emitted verbatim (no escaping)", () => {
   const js = "if (a < b && c > d) run();";
-  const out = resolve({ tag: "script", content: js }, {}) as string;
+  const out = resolve({ $tag: "script", content: js }, {}) as string;
   assert.equal(out, `<script>${js}</script>`);
 });
 
 test("script: type=module is not treated as a JSON block", () => {
   const js = "export const x = 1 < 2;";
-  const out = resolve({ tag: "script", type: "module", content: js }, {}) as string;
+  const out = resolve({ $tag: "script", type: "module", content: js }, {}) as string;
   assert.equal(out, `<script type="module">${js}</script>`);
 });
 
 test("script: a computed (expression) type is resolved before deciding", () => {
   const out = resolve(
     {
-      tag: "script",
-      type: { var: "$scriptType" },
-      content: { "@type": { var: "$kind" } },
+      $tag: "script",
+      type: { $var: "scriptType" },
+      content: { "@type": { $var: "kind" } },
     },
     { scriptType: "application/ld+json", kind: "WebSite" },
   ) as string;

@@ -39,7 +39,7 @@ after(async () => {
 // at the template directory.
 const runMain = async (main: unknown): Promise<unknown> => {
   await fs.writeFile(path.join(templates, MAIN_TEMPLATE), JSON.stringify(main));
-  return resolve({ file: MAIN_TEMPLATE }, entryContext(templates));
+  return resolve({ $file: MAIN_TEMPLATE }, entryContext(templates));
 };
 
 test("the main template loads from the template directory", async () => {
@@ -47,13 +47,13 @@ test("the main template loads from the template directory", async () => {
 });
 
 test("a slash path inside the main template reaches the templates", async () => {
-  assert.equal(await runMain({ file: "/page.json" }), "from templates");
+  assert.equal(await runMain({ $file: "/page.json" }), "from templates");
 });
 
 // The counterpart, so the rule is not "every path goes to the root": without a
 // leading slash a path still means "next to the file doing the loading".
 test("a relative path inside the main template stays beside it", async () => {
-  assert.equal(await runMain({ file: "pages/nested.json" }), "from pages");
+  assert.equal(await runMain({ $file: "pages/nested.json" }), "from pages");
 });
 
 // The same rule a page gets, which is the point of the root being the template
@@ -61,10 +61,10 @@ test("a relative path inside the main template stays beside it", async () => {
 test("a slash path inside a nested page reaches the templates too", async () => {
   await fs.writeFile(
     path.join(templates, "pages", "deep.json"),
-    JSON.stringify({ file: "/page.json" }),
+    JSON.stringify({ $file: "/page.json" }),
   );
   assert.equal(
-    await resolve({ file: "deep.json" }, entryContext(path.join(templates, "pages"))),
+    await resolve({ $file: "deep.json" }, entryContext(path.join(templates, "pages"))),
     "from templates",
   );
 });
@@ -75,10 +75,10 @@ test("a relative path in a nested page resolves beside that page", async () => {
   await fs.writeFile(path.join(templates, "pages", "sibling.json"), JSON.stringify("from pages"));
   await fs.writeFile(
     path.join(templates, "pages", "loader.json"),
-    JSON.stringify({ file: "sibling.json" }),
+    JSON.stringify({ $file: "sibling.json" }),
   );
   assert.equal(
-    await resolve({ file: "loader.json" }, entryContext(path.join(templates, "pages"))),
+    await resolve({ $file: "loader.json" }, entryContext(path.join(templates, "pages"))),
     "from pages",
   );
 });

@@ -8,7 +8,7 @@ const DEFAULT_TIMEOUT_MS = 15000;
 const DEFAULT_ICE_SERVERS: readonly RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
 
 /** A handler registered by `listen`, kept with the step that registered it so a
- *  `catch` on that step still applies when it fires long after it returned. */
+ *  `$catch` on that step still applies when it fires long after it returned. */
 interface Handler {
   body: unknown;
   context: Context;
@@ -51,15 +51,15 @@ export class WebRTCNode extends Node {
       enum: RTC_OPS,
       markdownDescription: "The two WebRTC operations that name no peer. Everything peer-scoped has its own key: `rtc-connect`, `rtc-signal`, `rtc-send`, `rtc-broadcast`, `rtc-close`, `rtc-status`.\nThe node never touches a socket: it hands each signalling payload to your `on-signal` steps to deliver however you like (a WebSocket, `fetch`, `window-run`, even a copy-paste box), and you hand replies back with `rtc-signal`.",
       examples: [
-        "{ \"rtc\": \"listen\", \"on-signal\": { \"ws-send\": { \"var\": \"$rtcSignal\" } } }",
-        "{ \"rtc\": \"close-all\" }",
+        "{ \"$rtc\": \"listen\", \"on-signal\": { \"$ws-send\": { \"$var\": \"rtcSignal\" } } }",
+        "{ \"$rtc\": \"close-all\" }",
       ],
       variants: {
         listen: {
           output: "null",
           markdownDescription: "Registers the signalling sink and the peer handlers, and configures ICE. Run by **both** sides: the answering peer never calls `rtc-connect`, so this is its only chance to supply them.\nCreates nothing by itself. A second `listen` replaces the first.",
           examples: [
-            "{ \"rtc\": \"listen\", \"on-signal\": { \"ws-send\": { \"type\": \"peer-signal\", \"to\": { \"var\": \"$rtcPeerId\" }, \"sig\": { \"var\": \"$rtcSignal\" } } } }",
+            "{ \"$rtc\": \"listen\", \"on-signal\": { \"$ws-send\": { \"type\": \"peer-signal\", \"to\": { \"$var\": \"rtcPeerId\" }, \"sig\": { \"$var\": \"rtcSignal\" } } } }",
           ],
           siblings: {
             iceServers: {
@@ -87,23 +87,23 @@ export class WebRTCNode extends Node {
             "on-signal": {
               steps: true,
               required: true,
-              markdownDescription: "Steps that deliver one signalling payload, with `$rtcSignal` (the payload, opaque) and `$rtcPeerId` (who it is for) in scope. Required: without it an offer has nowhere to go.",
+              markdownDescription: "Steps that deliver one signalling payload, with `rtcSignal` (the payload, opaque) and `rtcPeerId` (who it is for) in scope. Required: without it an offer has nowhere to go.",
             },
             "on-peer": {
               steps: true,
-              markdownDescription: "Steps run when a peer offers us a connection, **before** anything is answered, with `$rtcPeerId` in scope. Resolve to a falsy value to refuse: nothing is signalled back and the peer is dropped. This is the only point at which refusing is still possible.",
+              markdownDescription: "Steps run when a peer offers us a connection, **before** anything is answered, with `rtcPeerId` in scope. Resolve to a falsy value to refuse: nothing is signalled back and the peer is dropped. This is the only point at which refusing is still possible.",
             },
             "on-open": {
               steps: true,
-              markdownDescription: "Steps run when a peer's channels are open and `send` is safe, with `$rtcPeerId` and `$rtcInbound` in scope. Fires for peers arriving from either direction, which makes it the answering side's only way to learn this.",
+              markdownDescription: "Steps run when a peer's channels are open and `send` is safe, with `rtcPeerId` and `rtcInbound` in scope. Fires for peers arriving from either direction, which makes it the answering side's only way to learn this.",
             },
             "on-message": {
               steps: true,
-              markdownDescription: "Steps run on each incoming message, with `$rtcMessage`, `$rtcPeerId` and `$rtcChannel` (`\"data\"` or `\"fast\"`) in scope.",
+              markdownDescription: "Steps run on each incoming message, with `rtcMessage`, `rtcPeerId` and `rtcChannel` (`\"data\"` or `\"fast\"`) in scope.",
             },
             "on-close": {
               steps: true,
-              markdownDescription: "Steps run when a peer that had opened goes away, with `$rtcPeerId` in scope. A refused offer or a dial that timed out never opened, and is reported by that step instead.",
+              markdownDescription: "Steps run when a peer that had opened goes away, with `rtcPeerId` in scope. A refused offer or a dial that timed out never opened, and is reported by that step instead.",
             },
           },
         },
@@ -117,10 +117,10 @@ export class WebRTCNode extends Node {
     "rtc-connect": {
       type: "string",
       output: "string",
-      outputDescription: "The peer id, once **both** channels are open, so a `send` on either is safe immediately. Most templates put their \"peer is usable\" logic in `on-open` instead, since that covers peers arriving from either direction; what `rtc-connect` adds is carrying a failed dial to `catch`.",
-      markdownDescription: "Dials the given peer: creates the connection and both data channels, emits an offer through `on-signal`, and waits for the channels to open. Rejects on `timeout`, on a failed connection, and if the peer closes while waiting.\nUse `then` for the non-blocking version.",
+      outputDescription: "The peer id, once **both** channels are open, so a `send` on either is safe immediately. Most templates put their \"peer is usable\" logic in `on-open` instead, since that covers peers arriving from either direction; what `rtc-connect` adds is carrying a failed dial to `$catch`.",
+      markdownDescription: "Dials the given peer: creates the connection and both data channels, emits an offer through `on-signal`, and waits for the channels to open. Rejects on `timeout`, on a failed connection, and if the peer closes while waiting.\nUse `$then` for the non-blocking version.",
       examples: [
-        "{ \"rtc-connect\": { \"var\": \"$peerId\" } }",
+        "{ \"$rtc-connect\": { \"$var\": \"peerId\" } }",
       ],
       siblings: {
         timeout: {
@@ -135,7 +135,7 @@ export class WebRTCNode extends Node {
       output: "null",
       markdownDescription: "Feeds one received signalling payload back in. **The value is the peer it came FROM**, not one to send to: this is the counterpart to `on-signal`, and the only way anything reaches the node from another peer.\nThat peer is read only from here and never from inside `data`, so a relay that stamps it from the connection stays the authority on identity. `data` is the payload verbatim: a session description (`{ type, sdp }`) or an ICE candidate (`{ candidate, sdpMid, sdpMLineIndex }`).",
       examples: [
-        "{ \"rtc-signal\": { \"var\": \"$wsMessage.from\" }, \"data\": { \"var\": \"$wsMessage.sig\" } }",
+        "{ \"$rtc-signal\": { \"$var\": \"wsMessage.from\" }, \"data\": { \"$var\": \"wsMessage.sig\" } }",
       ],
       siblings: {
         data: { required: true, description: "The signalling payload, exactly as it was emitted." },
@@ -147,7 +147,7 @@ export class WebRTCNode extends Node {
       output: "null",
       markdownDescription: "Sends `data` to the given peer over the chosen channel. Throws when there is no such channel or it is not open.",
       examples: [
-        "{ \"rtc-send\": { \"var\": \"$peer\" }, \"data\": { \"var\": \"$state\" }, \"channel\": \"fast\" }",
+        "{ \"$rtc-send\": { \"$var\": \"peer\" }, \"data\": { \"$var\": \"state\" }, \"channel\": \"fast\" }",
       ],
       siblings: {
         data: { required: true, description: "Data to send. Non-string values are JSON-encoded." },
@@ -159,7 +159,7 @@ export class WebRTCNode extends Node {
       output: "null",
       markdownDescription: "Sends the value to every connected peer. The one operation with no peer to name, so the data takes the value slot.\nUnlike `rtc-send`, a peer that is not ready is skipped rather than refused: a broadcast addresses whoever is currently there.",
       examples: [
-        "{ \"rtc-broadcast\": { \"var\": \"$state\" }, \"channel\": \"fast\" }",
+        "{ \"$rtc-broadcast\": { \"$var\": \"state\" }, \"channel\": \"fast\" }",
       ],
       siblings: { channel: RTC_CHANNEL },
     },
@@ -167,7 +167,7 @@ export class WebRTCNode extends Node {
     "rtc-close": {
       type: "string",
       output: "null",
-      markdownDescription: "Closes one peer connection. Use `{ \"rtc\": \"close-all\" }` for every peer at once.",
+      markdownDescription: "Closes one peer connection. Use `{ \"$rtc\": \"close-all\" }` for every peer at once.",
     },
 
     "rtc-status": {
@@ -176,7 +176,7 @@ export class WebRTCNode extends Node {
       outputDescription: "`\"open\"`, `\"connecting\"`, `\"closed\"`, or `\"none\"` when there is no such peer.",
       markdownDescription: "Reports the state of one peer, for showing whether it is reachable.",
       examples: [
-        "{ \"rtc-status\": { \"var\": \"$peer\" } }",
+        "{ \"$rtc-status\": { \"$var\": \"peer\" } }",
       ],
     },
   };
@@ -200,7 +200,7 @@ export class WebRTCNode extends Node {
   /** Peers that actually reached open, so `on-close` fires only for those. */
   readonly opened = new Set<string>();
 
-  /** Peers that dialed us, for `$rtcInbound`. */
+  /** Peers that dialed us, for `rtcInbound`. */
   readonly inbound = new Set<string>();
 
   /** Registered by `listen`, replaced wholesale by the next one. */
@@ -220,7 +220,7 @@ export class WebRTCNode extends Node {
   // is a dispatch key: only the ops and `dispose` can be methods.
 
   rtc(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.rtc, context, raw => {
+    return resolve(def.$rtc, context, raw => {
       switch (this.getOption(raw, RTC_OPS, "rtc operation")) {
         case "listen":
           return resolveAll([def.iceServers, def.timeout, def.trickle], context, ([ice, ms, trickle]) =>
@@ -235,19 +235,19 @@ export class WebRTCNode extends Node {
 
         default:
           // `getOption` has already refused anything unlisted, so this is the
-          // absent case: `{ "rtc": null }` names no operation at all.
+          // absent case: `{ "$rtc": null }` names no operation at all.
           throw new Error(`rtc needs an operation: expected ${RTC_OPS.join(", ")}`);
       }
     });
   }
 
   ["rtc-connect"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["rtc-connect"], def.timeout], context, ([id, ms]) =>
+    return resolveAll([def["$rtc-connect"], def.timeout], context, ([id, ms]) =>
       doConnect(this, this.toString(id), ms == null ? this.timeout : this.toNumber(ms)));
   }
 
   ["rtc-signal"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["rtc-signal"], def.data], context, ([from, data]) => {
+    return resolveAll([def["$rtc-signal"], def.data], context, ([from, data]) => {
       // The peer is the primary value, not a field of the payload, and that
       // placement is the security rule made visible: the node cannot see who
       // sent anything, so whatever the transport vouched for is the only
@@ -262,24 +262,24 @@ export class WebRTCNode extends Node {
   // `channel` is checked with getOption rather than compared: an unlisted name
   // used to fall through to the reliable channel, which is not what the step said.
   ["rtc-send"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["rtc-send"], def.data, def.channel], context, ([id, data, ch]) =>
+    return resolveAll([def["$rtc-send"], def.data, def.channel], context, ([id, data, ch]) =>
       doSend(this, this.toString(id), data, this.getOption(ch, RTC_CHANNELS, "rtc channel") ?? "data"));
   }
 
   ["rtc-broadcast"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["rtc-broadcast"], def.channel], context, ([data, ch]) =>
+    return resolveAll([def["$rtc-broadcast"], def.channel], context, ([data, ch]) =>
       doBroadcast(this, data, this.getOption(ch, RTC_CHANNELS, "rtc channel") ?? "data"));
   }
 
   ["rtc-close"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["rtc-close"], context, id => {
+    return resolve(def["$rtc-close"], context, id => {
       closePeer(this, this.toString(id));
       return null;
     });
   }
 
   ["rtc-status"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["rtc-status"], context, id => statusOf(this, this.toString(id)));
+    return resolve(def["$rtc-status"], context, id => statusOf(this, this.toString(id)));
   }
 
   /** Closes every peer connection. Called by `resolver.destroy()`. */
@@ -359,7 +359,7 @@ function runHandler(node: WebRTCNode, key: HandlerKey, extra: Record<string, unk
   if (!handler) return null;
   const steps = Array.isArray(handler.body) ? handler.body : [handler.body];
   // Detached: these fire long after the `listen` step returned, so its own
-  // `catch` is the last handler left and anything past it reaches the console.
+  // `$catch` is the last handler left and anything past it reaches the console.
   return runStepsDetached(steps, childContext(handler.context, extra), handler.def);
 }
 
@@ -368,7 +368,7 @@ function fireHandler(node: WebRTCNode, key: HandlerKey, extra: Record<string, un
   if (running) running.catch((e: unknown) => console.error(`[WebRTC] ${key} error:`, e));
 }
 
-/** Hand one payload to the template to deliver. `$rtcPeerId` addresses it, so an
+/** Hand one payload to the template to deliver. `rtcPeerId` addresses it, so an
  *  envelope can be routed without the payload being opened. */
 function emitSignal(node: WebRTCNode, peerId: string, payload: unknown): void {
   fireHandler(node, "on-signal", { rtcSignal: payload, rtcPeerId: peerId });

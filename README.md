@@ -2,7 +2,7 @@
 
 **JSON Expression System**
 
-A Jexs app is JSON. Each object key dispatches to a typed Node class: `{ "if": ..., "then": ..., "else": ... }`, `{ "tag": "div", "content": [...] }`, `{ "query": "select", "table": "users", "options": {...} }`. Nodes can be sync or async; the resolver walks the tree, dispatches on keys, and threads a per-request context.
+A Jexs app is JSON. A step names the operation it runs with one `$`-prefixed key, dispatched to a typed Node class: `{ "$if": ..., "then": ..., "else": ... }`, `{ "$tag": "div", "content": [...] }`, `{ "$query": "select", "table": "users", "options": {...} }`. Nodes can be sync or async; the resolver walks the tree, dispatches on `$` keys, and threads a per-request context.
 
 ## Quick start
 
@@ -20,31 +20,31 @@ The generator scaffolds a project, wires up a JSON schema for IDE autocomplete (
 
 ```json
 [
-  { "setVars": { "name": { "var": "$request.query.name" } } },
+  { "$setVars": { "name": { "$var": "request.query.name" } } },
   {
-    "if": { "var": "$name" },
-    "then": { "concat": ["Hello, ", { "var": "$name" }, "!"] },
+    "$if": { "$var": "name" },
+    "then": { "$concat": ["Hello, ", { "$var": "name" }, "!"] },
     "else": "Hello, world!"
   }
 ]
 ```
 
-Top-level arrays are step lists run sequentially. Each step can store its result back into context via `"as": "varName"`.
+Top-level arrays are step lists run sequentially. Each step can store its result back into context via `"$as": "varName"`.
 
 **A server** — HTTP listener, routing, file-loaded pages:
 
 ```json
 [
-  { "listen": 3000, "client": true, "do": [
-    { "session": "load" },
-    { "routes": {
-      "methods": { "GET": { "file": "pages/home.json" } },
+  { "$listen": 3000, "client": true, "do": [
+    { "$session": "load" },
+    { "$routes": {
+      "methods": { "GET": { "$file": "pages/home.json" } },
       "children": {
         "users": { "children": {
           "*": {
             "paramName": "id",
             "paramRegex": "\\d+",
-            "methods": { "GET": { "file": "pages/user.json" } }
+            "methods": { "GET": { "$file": "pages/user.json" } }
           }
         } }
       }
@@ -53,20 +53,20 @@ Top-level arrays are step lists run sequentially. Each step can store its result
 ]
 ```
 
-Routes are a tree: `methods` handles the current path, `children` nests segments, and `*` captures a single param under `paramName` (here available to the page as `$id`), optionally constrained by `paramRegex`.
+Routes are a tree: `methods` handles the current path, `children` nests segments, and `*` captures a single param under `paramName` (here available to the page as `id`), optionally constrained by `paramRegex`.
 
 Setting `"client": true` makes the server serve the `@jexs/client` browser bundle and auto-inject the script tag into rendered `<head>` elements.
 
 **An HTML page** — declarative element tree with reactive children:
 
 ```json
-{ "tag": "html", "content": [
-  { "tag": "head", "content": [{ "tag": "title", "content": ["Users"] }] },
-  { "tag": "body", "content": [
-    { "tag": "h1", "content": ["Members"] },
-    { "tag": "ul", "content": [
-      { "map": { "query": "select", "table": "users", "options": { "limit": 50 } }, "item": "user", "do":
-        { "tag": "li", "content": [{ "var": "$user.name" }] }
+{ "$tag": "html", "content": [
+  { "$tag": "head", "content": [{ "$tag": "title", "content": ["Users"] }] },
+  { "$tag": "body", "content": [
+    { "$tag": "h1", "content": ["Members"] },
+    { "$tag": "ul", "content": [
+      { "$map": { "$query": "select", "table": "users", "options": { "limit": 50 } }, "item": "user", "do":
+        { "$tag": "li", "content": [{ "$var": "user.name" }] }
       }
     ] }
   ] }
@@ -77,8 +77,8 @@ Setting `"client": true` makes the server serve the `@jexs/client` browser bundl
 
 ```json
 [{ "type": "click", "do": [
-  { "fetch": "/api/like", "method": "POST", "as": "result" },
-  { "toggleClass": [{ "var": "$target" }, "liked"] }
+  { "$fetch": "/api/like", "method": "POST", "$as": "result" },
+  { "$toggleClass": [{ "$var": "target" }, "liked"] }
 ] }]
 ```
 
@@ -86,20 +86,19 @@ Setting `"client": true` makes the server serve the `@jexs/client` browser bundl
 
 A few rules govern how every expression is resolved. Worth internalizing — they explain most "why didn't that work" moments.
 
-**Dispatch: first matching key wins.** For each object, the resolver scans its keys and dispatches to the first one that is a registered handler (`if`, `map`, `concat`, …); the other keys are that node's options ("siblings"). An object with **no** handler key is treated as **data** — the resolver recurses and resolves each value, returning the object.
+**Dispatch: the `$` key is the op.** A step names its operation with exactly one `$`-prefixed key (`$if`, `$map`, `$concat`, …); its other keys are that node's options ("siblings"), and never dispatch whatever they are called. A `$` key that is not a known op is an error, and so are two ops in one object.
 
-**Data vs. operators can collide.** Because dispatch is key-based, a *data* object whose key happens to match a handler name (`slug`, `index`, `file`, `count`, …) gets dispatched as that operation instead of returned as data. Two ways to keep data literal:
+**No `$` key, no dispatch.** An object without one is **data**: the resolver resolves each value and returns the object, so a row with a `count` or `file` column is never mistaken for an op. Files are the exception, since a whole file is resolved as a template: load data files with `"data": true` — `{ "$file": "data/posts.json", "data": true }` returns the parsed JSON untouched.
 
-- Load it from a file with `"data": true` — `{ "file": "data/posts.json", "data": true }` returns the parsed JSON untouched, never resolving its keys. This is the normal way to bring data into a template.
-- Avoid handler names for object keys you build at runtime.
+**Arrays are step lists; the last value wins.** A top-level array (and an `if`/`switch` branch that is an array) runs its elements in order and yields the **last** one's value. The global step keys, usable on any step, are `$`-prefixed too:
 
-**Arrays are step lists; the last value wins.** A top-level array (and an `if`/`switch` branch that is an array) runs its elements in order and yields the **last** one's value. Two global keys, usable as a sibling on any step:
+- `$as` — store a step's result in a named context variable: `{ "$var": "user.name", "$as": "name" }`, read later via `{ "$var": "name" }`.
+- `$return` — short-circuit: a step resolving to `{ "$return": X }` ends the current array early and yields `X`. It escapes only that array; nest the wrapper to exit an outer one.
+- `$catch` — a step array run if the expression throws, with `error` (`{ status, message }`) in context. A node that knows more about the failure binds it as a further variable: a failing `fetch` adds `response` (`{ status, ok, headers, body, url }`).
+- `$then` — run the step without waiting for it, then run these steps with its value as `result`.
+- `$bubble` — alongside `$as` or on a `$setVars`, also write into every enclosing scope.
 
-- `as` — store a step's result in a named context variable: `{ "var": "$user.name", "as": "name" }`, read later via `{ "var": "$name" }`.
-- `return` — short-circuit: a step resolving to `{ "return": X }` ends the current array early and yields `X`. It escapes only that array; nest the wrapper to exit an outer one.
-- `catch` — a step array run if the expression throws an HTTP error, with `$error` (`{ status, message }`) in context. A node that knows more about the failure binds it as a further variable: a failing `fetch` adds `$response` (`{ status, ok, headers, body, url }`).
-
-**Iterating.** `map` transforms each element of an array via `do`; `filter`/`find`/`reduce` take a tuple `[<array>, <expr>, …]`. Each exposes the current element as `item` (and `index`, plus `accumulator` for `reduce`); rename it with the `item` sibling — `{ "filter": [{ "var": "$users" }, { "eq": [{ "var": "u.role" }, "admin"] }], "item": "u" }`. Read it with `{ "var": "item" }`; a leading `$` is optional.
+**Iterating.** `map` transforms each element of an array via `do`; `filter`/`find`/`reduce` take a tuple `[<array>, <expr>, …]`. Each exposes the current element as `item` (and `index`, plus `accumulator` for `reduce`); rename it with the `item` sibling — `{ "$filter": [{ "$var": "users" }, { "$eq": [{ "$var": "u.role" }, "admin"] }], "item": "u" }`. Read it with `{ "$var": "item" }`. Inside a string, `$item` interpolates it: `"Hello $user.name"`.
 
 ## Packages
 

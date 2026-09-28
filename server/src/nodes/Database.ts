@@ -52,17 +52,17 @@ function describe(config: DatabaseConfig): ConnectionInfo {
  * DatabaseNode - Handles database connections and queries in JSON.
  *
  * Connect:
- * { "database": "connect", "name": "main", "type": "sqlite", "filename": "data.db" }
+ * { "$database": "connect", "name": "main", "type": "sqlite", "filename": "data.db" }
  *
  * Close:
- * { "database": "close", "name": "main" }
+ * { "$database": "close", "name": "main" }
  *
  * Raw query:
- * { "database": "raw", "sql": "SELECT * FROM users WHERE id = ?", "bindings": [1] }
+ * { "$database": "raw", "sql": "SELECT * FROM users WHERE id = ?", "bindings": [1] }
  *
  * Table operations:
- * { "database": "tableExists", "table": "users" }
- * { "database": "dropTable", "table": "users" }
+ * { "$database": "tableExists", "table": "users" }
+ * { "$database": "dropTable", "table": "users" }
  */
 /**
  * The DatabaseNode of the resolver a context is running in.
@@ -89,7 +89,7 @@ export class DatabaseNode extends Node {
   /**
    * Close this resolver's connections on teardown. `knex.destroy()` is async and
    * `dispose` is not, so the closes are started and not awaited; use the
-   * `{ "database": "close" }` op when a caller needs to know it finished.
+   * `{ "$database": "close" }` op when a caller needs to know it finished.
    */
   dispose(): void {
     for (const conn of this.connections.values()) {
@@ -112,15 +112,15 @@ export class DatabaseNode extends Node {
       ],
       markdownDescription: "Manages database connections. Supports SQLite (`better-sqlite3`), MySQL (`mysql2`), and PostgreSQL (`pg`) via Knex. The operation is the primary value; each carries its own properties.",
       examples: [
-        "{ \"database\": \"connect\", \"name\": \"main\", \"type\": \"sqlite\", \"filename\": \"app/data.db\" }",
+        "{ \"$database\": \"connect\", \"name\": \"main\", \"type\": \"sqlite\", \"filename\": \"app/data.db\" }",
       ],
       variants: {
         connect: {
           output: "object",
           markdownDescription: "Opens (and registers) a connection, from a `url` connection string or from discrete `host`/`port`/`user` properties. Returns a status object.",
           examples: [
-            "{ \"database\": \"connect\", \"name\": \"main\", \"url\": { \"var\": \"$env.DATABASE_URL\" } }",
-            "{ \"database\": \"connect\", \"type\": \"pg\", \"host\": \"db.example.com\", \"db\": \"app\", \"ssl\": { \"ca\": \"certs/root.pem\" } }",
+            "{ \"$database\": \"connect\", \"name\": \"main\", \"url\": { \"$var\": \"env.DATABASE_URL\" } }",
+            "{ \"$database\": \"connect\", \"type\": \"pg\", \"host\": \"db.example.com\", \"db\": \"app\", \"ssl\": { \"ca\": \"certs/root.pem\" } }",
           ],
           // Only the properties common to every way of connecting. Each of the
           // three ways to name an endpoint is a variant below, so the properties
@@ -131,9 +131,9 @@ export class DatabaseNode extends Node {
             ssl: {
               type: ["boolean", "string", "object"],
               enum: TLS_STRINGS,
-              markdownDescription: "TLS for the connection (MySQL / PostgreSQL), also spelled `tls`. `true` encrypts AND verifies against the system trust store — the strictest setting, which fails on the private CAs most managed databases use. `false` forces plaintext, and is the only way to say that: every object turns TLS on. An object takes `ca`, `cert`, `key`, `passphrase`, `servername`, `rejectUnauthorized`, `minVersion` and `ciphers`. The string forms (`\"true\"`, `\"1\"`, `\"require\"`, `\"false\"`, `\"0\"`, `\"disable\"`) are for a value arriving from `$env` as text.\n\nCertificates are PEM **content**, not paths: load the file first with `{ \"file\": \"/certs/ca.pem\", \"raw\": true, \"as\": \"ca\" }` and pass `{ \"var\": \"$ca\" }`, so one node owns file reading and one set of path rules applies. (A url's `sslrootcert=` stays a path — that is what the standard defines it as.)\n\nSays HOW to connect rather than where, so it applies to `url` and `host` alike, merging key-wise over whatever the url's `sslmode` implied.",
+              markdownDescription: "TLS for the connection (MySQL / PostgreSQL), also spelled `tls`. `true` encrypts AND verifies against the system trust store — the strictest setting, which fails on the private CAs most managed databases use. `false` forces plaintext, and is the only way to say that: every object turns TLS on. An object takes `ca`, `cert`, `key`, `passphrase`, `servername`, `rejectUnauthorized`, `minVersion` and `ciphers`. The string forms (`\"true\"`, `\"1\"`, `\"require\"`, `\"false\"`, `\"0\"`, `\"disable\"`) are for a value arriving from `env` as text.\n\nCertificates are PEM **content**, not paths: load the file first with `{ \"$file\": \"/certs/ca.pem\", \"raw\": true, \"$as\": \"ca\" }` and pass `{ \"$var\": \"ca\" }`, so one node owns file reading and one set of path rules applies. (A url's `sslrootcert=` stays a path — that is what the standard defines it as.)\n\nSays HOW to connect rather than where, so it applies to `url` and `host` alike, merging key-wise over whatever the url's `sslmode` implied.",
               examples: [
-                "{ \"ca\": { \"var\": \"$ca\" } }",
+                "{ \"ca\": { \"$var\": \"ca\" } }",
                 "{ \"rejectUnauthorized\": false }",
               ],
             },
@@ -218,7 +218,7 @@ export class DatabaseNode extends Node {
   };
 
   database(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.database, context, operation => {
+    return resolve(def.$database, context, operation => {
       switch (String(operation)) {
         case "connect":
           return doConnect(this, def, context);
@@ -394,7 +394,7 @@ function requireConnection(self: DatabaseNode, nameRaw?: unknown): DatabaseConne
   if (conn) return conn;
   throw new Error(
     `Database "${name}" is not connected. Open it with ` +
-    `{ "database": "connect", "url": "postgres://user:pass@host/app" } ` +
+    `{ "$database": "connect", "url": "postgres://user:pass@host/app" } ` +
     `and install its driver:\n${driverOptions()}`,
   );
 }

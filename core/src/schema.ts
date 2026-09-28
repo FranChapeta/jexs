@@ -115,7 +115,7 @@ export interface JexsPropertySchema {
    * The value the handler uses when this property is absent. Emitted as the JSON
    * Schema `default` (editors offer it), and it selects: the value-mode variant
    * for this value also applies when the property is omitted, so
-   * `{ "fetch": "/x" }` is treated as `method: "GET"`. Must be one of the `enum`
+   * `{ "$fetch": "/x" }` is treated as `method: "GET"`. Must be one of the `enum`
    * values when there is an `enum`.
    */
   default?: unknown;
@@ -123,7 +123,7 @@ export interface JexsPropertySchema {
    * Value-mode variants are EXCLUSIVE by default: a sibling declared only inside
    * this property's variants is refused when the property holds a literal value
    * (or is absent and its `default` is a value) whose variant does not declare
-   * it, so `{ "fetch": "/x", "body": ... }` is an error because `GET` sends no
+   * it, so `{ "$fetch": "/x", "body": ... }` is an error because `GET` sends no
    * body. A value from an expression refuses nothing, since it could be any of
    * them. Siblings declared outside these variants are never refused. Set
    * `false` for a property whose values only ADD known siblings on top of
@@ -150,12 +150,12 @@ export interface JexsPropertySchema {
  *   3. otherwise this scope's own `output`, or, when it has none, the enclosing
  *      scope's rules continue.
  *
- * So `{ "fetch": ..., "full": true, "type": "text" }` resolves through the `full`
+ * So `{ "$fetch": ..., "full": true, "type": "text" }` resolves through the `full`
  * variant (an object) even though `type: "text"` alone narrows to a string, and a
  * variant that omits `output` inherits both the enclosing output and the
  * enclosing siblings' refinements.
  *
- * Universal keys (`as`, `catch`) are NOT listed here — they're injected once at
+ * Universal keys (`$as`, `$catch`) are NOT listed here — they're injected once at
  * the combined schema's top level.
  */
 export interface JexsMethodSchema extends JexsPropertySchema {

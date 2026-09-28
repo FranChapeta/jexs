@@ -8,21 +8,21 @@ export class PushNode extends Node {
       output: "object",
       markdownDescription: "Requests notification permission and subscribes to Web Push using the given VAPID public key.\nReturns the `PushSubscription` JSON, which you send to your server to enable push delivery.\nRequires a registered service worker with `PushManager` support.",
       examples: [
-        "{ \"push-subscribe\": { \"var\": \"$vapidPublicKey\" } }",
+        "{ \"$push-subscribe\": { \"$var\": \"vapidPublicKey\" } }",
       ],
     },
     "push-unsubscribe": {
       output: "boolean",
       markdownDescription: "Unsubscribes from Web Push. Pass the stored `PushSubscription` JSON object to verify the endpoint.\nReturns `true` on success, `false` if no matching subscription was found.",
       examples: [
-        "{ \"push-unsubscribe\": { \"var\": \"$session.pushSubscription\" } }",
+        "{ \"$push-unsubscribe\": { \"$var\": \"session.pushSubscription\" } }",
       ],
     },
   };
 
   ["push-subscribe"](def: Record<string, unknown>, context: Context): NodeValue {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) return null;
-    return resolve(def["push-subscribe"], context, async vapidKeyRaw => {
+    return resolve(def["$push-subscribe"], context, async vapidKeyRaw => {
       const permission = await Notification.requestPermission();
       if (permission !== "granted") return null;
       const vapidKey = String(vapidKeyRaw ?? "");
@@ -38,7 +38,7 @@ export class PushNode extends Node {
 
   ["push-unsubscribe"](def: Record<string, unknown>, context: Context): NodeValue {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) return false;
-    return resolve(def["push-unsubscribe"], context, async stored => {
+    return resolve(def["$push-unsubscribe"], context, async stored => {
       const registration = await navigator.serviceWorker.ready;
       const existing = await registration.pushManager.getSubscription();
       if (!existing) return false;

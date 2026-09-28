@@ -77,7 +77,7 @@ function run(conn: Conn, key: string, extra: Record<string, unknown>): void {
   // one thing does not have to be written as an array to be seen.
   const steps = Array.isArray(body) ? body : [body];
   // A child scope per event, not a write onto the captured context: the handler
-  // outlives the step, so binding into the parent would leak `$wsMessage` into
+  // outlives the step, so binding into the parent would leak `wsMessage` into
   // everything else sharing that context and leave the last one behind for good.
   runStepsDetached(steps, childContext(conn.context, extra), conn.def)
     .catch(e => console.error(`[WS] ${key} error:`, e));
@@ -101,10 +101,10 @@ export class WsNode extends Node {
     "ws-connect": {
       type: "string",
       output: "null",
-      markdownDescription: "Opens a WebSocket connection and resolves once it is open, so a server that never answers reaches an enclosing `catch` rather than failing silently. Pass `then` instead if the sequence should carry on without waiting.\n\nRelative URLs are prefixed with `ws://` or `wss://` to match the page. Pass `on-open`, `on-message` and `on-close` step arrays. After a successful open the connection reconnects on its own with exponential backoff; `retry` controls that.\n\nName the connection to hold more than one at a time. The unnamed connection is the default, and is the one `ws-send`, `ws-close` and `ws-status` act on when they name none.",
+      markdownDescription: "Opens a WebSocket connection and resolves once it is open, so a server that never answers reaches an enclosing `$catch` rather than failing silently. Pass `$then` instead if the sequence should carry on without waiting.\n\nRelative URLs are prefixed with `ws://` or `wss://` to match the page. Pass `on-open`, `on-message` and `on-close` step arrays. After a successful open the connection reconnects on its own with exponential backoff; `retry` controls that.\n\nName the connection to hold more than one at a time. The unnamed connection is the default, and is the one `ws-send`, `ws-close` and `ws-status` act on when they name none.",
       examples: [
-        "{ \"ws-connect\": \"/ws\", \"on-message\": [{ \"var\": \"$wsMessage\" }] }",
-        "{ \"ws-connect\": \"/feed\", \"name\": \"feed\", \"retry\": 3, \"catch\": [{ \"var\": \"$error.message\" }] }",
+        "{ \"$ws-connect\": \"/ws\", \"on-message\": [{ \"$var\": \"wsMessage\" }] }",
+        "{ \"$ws-connect\": \"/feed\", \"name\": \"feed\", \"retry\": 3, \"$catch\": [{ \"$var\": \"error.message\" }] }",
       ],
       siblings: {
         name: {
@@ -117,11 +117,11 @@ export class WsNode extends Node {
         },
         "on-message": {
           steps: true,
-          markdownDescription: "Steps to run on each incoming message, with `$wsMessage` in scope: parsed as JSON when it parses, otherwise the raw value. The node reads nothing out of a message itself, so any protocol on top of the socket, an id handed out on connect included, is yours to read here.",
+          markdownDescription: "Steps to run on each incoming message, with `wsMessage` in scope: parsed as JSON when it parses, otherwise the raw value. The node reads nothing out of a message itself, so any protocol on top of the socket, an id handed out on connect included, is yours to read here.",
         },
         "on-close": {
           steps: true,
-          markdownDescription: "Steps to run when the connection closes, with `$wsCode`, `$wsReason` and `$wsClean` in scope. A dropped connection lands here too, before the reconnect.",
+          markdownDescription: "Steps to run when the connection closes, with `wsCode`, `wsReason` and `wsClean` in scope. A dropped connection lands here too, before the reconnect.",
         },
         retry: {
           type: ["boolean", "number"],
@@ -142,8 +142,8 @@ export class WsNode extends Node {
       markdownDescription: "Sends data over a connection. Strings go as they are, binary values (`ArrayBuffer`, a typed array, a `Blob`) go as frames, and anything else is JSON-serialized.\n\nA message written while the socket is still opening is queued and flushed on open, since that is an ordinary startup race. Sending with no connection, or after it closed, throws.",
       output: "null",
       examples: [
-        "{ \"ws-send\": { \"type\": \"ping\" } }",
-        "{ \"ws-send\": { \"var\": \"$frame\" }, \"name\": \"feed\" }",
+        "{ \"$ws-send\": { \"type\": \"ping\" } }",
+        "{ \"$ws-send\": { \"$var\": \"frame\" }, \"name\": \"feed\" }",
       ],
       siblings: {
         name: {
@@ -156,8 +156,8 @@ export class WsNode extends Node {
       output: "null",
       markdownDescription: "Closes a connection and stops it reconnecting. Pass `code` and `reason` to tell the server why; the defaults are a normal closure.",
       examples: [
-        "{ \"ws-close\": true }",
-        "{ \"ws-close\": true, \"name\": \"feed\", \"code\": 4001, \"reason\": \"signed out\" }",
+        "{ \"$ws-close\": true }",
+        "{ \"$ws-close\": true, \"name\": \"feed\", \"code\": 4001, \"reason\": \"signed out\" }",
       ],
       siblings: {
         name: {
@@ -179,8 +179,8 @@ export class WsNode extends Node {
       markdownDescription: "Reports the state of a connection, for showing whether the page is live.",
       outputDescription: "`\"open\"`, `\"connecting\"`, `\"closing\"`, `\"closed\"`, or `\"none\"` when nothing by that name was ever opened.",
       examples: [
-        "{ \"ws-status\": true }",
-        "{ \"ws-status\": true, \"name\": \"feed\" }",
+        "{ \"$ws-status\": true }",
+        "{ \"$ws-status\": true, \"name\": \"feed\" }",
       ],
       siblings: {
         name: {
@@ -195,7 +195,7 @@ export class WsNode extends Node {
     // Named values rather than the whole `def`: the `on-*` siblings are step
     // arrays, and resolving those would run the handlers here at connect time.
     return resolveAll(
-      [def["ws-connect"], def.name, def.retry, def.protocols, def.binaryType],
+      [def["$ws-connect"], def.name, def.retry, def.protocols, def.binaryType],
       context,
       ([urlRaw, nameRaw, retry, protocolsRaw, binaryTypeRaw]) => {
         const name = this.toString(nameRaw) || DEFAULT;
@@ -229,7 +229,7 @@ export class WsNode extends Node {
   }
 
   ["ws-send"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["ws-send"], def.name], context, ([data, nameRaw]) => {
+    return resolveAll([def["$ws-send"], def.name], context, ([data, nameRaw]) => {
       const name = this.toString(nameRaw) || DEFAULT;
       const conn = this.connections.get(name);
       const frame = typeof data === "string" ? data
@@ -290,7 +290,7 @@ export class WsNode extends Node {
 
 /**
  * Open the socket, resolving when it opens and rejecting if it closes first.
- * Awaiting the handshake is what lets a failed connect reach `catch`: a step
+ * Awaiting the handshake is what lets a failed connect reach `$catch`: a step
  * that returned before the socket settled would be long gone by then.
  */
 function openSocket(conn: Conn, protocols?: string | string[], binaryType?: BinaryType): Promise<null> {

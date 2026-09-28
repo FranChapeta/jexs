@@ -15,10 +15,10 @@ import type { JexsNodeSchema } from "@jexs/core";
  * (see ../validate.ts), after coercion + computed-column enrichment.
  *
  * Register from directory:
- * { "schema": "register", "path": "db/tables" }
+ * { "$schema": "register", "path": "db/tables" }
  *
  * Register inline:
- * { "schema": "register", "table": { "x-db": { "table": "migrations" }, "properties": { ... } } }
+ * { "$schema": "register", "table": { "x-db": { "table": "migrations" }, "properties": { ... } } }
  */
 export class SchemaNode extends Node {
   static schema: JexsNodeSchema = {
@@ -33,7 +33,7 @@ export class SchemaNode extends Node {
       ],
       markdownDescription: "Registers table schemas for use by QueryNode. The operation is the primary value.",
       examples: [
-        "{ \"schema\": \"register\", \"path\": \"db/tables\" }",
+        "{ \"$schema\": \"register\", \"path\": \"db/tables\" }",
       ],
       variants: {
         register: {
@@ -111,7 +111,7 @@ export class SchemaNode extends Node {
   }
 
   schema(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.schema, context, op => {
+    return resolve(def.$schema, context, op => {
       if (op === "get") {
         return SchemaNode.get(this.toString(def.table)) ?? null;
       }
@@ -329,7 +329,7 @@ export class SchemaNode extends Node {
 }
 
 /**
- * `{ "schema": "validate", "data": ..., "document"|"table": ... }`.
+ * `{ "$schema": "validate", "data": ..., "document"|"table": ... }`.
  *
  * `data` is resolved (it is normally a `var` holding an already-parsed value),
  * `document` is resolved too so it can be handed over by `var`, which is also

@@ -121,9 +121,9 @@ export class GlNode extends Node {
       "gl-init": {
       type: "string",
       output: "null",
-      markdownDescription: "Initializes a WebGL canvas (WebGL2 with WebGL1 fallback). Pass the canvas CSS selector as `gl-init`.\nUse `width`/`height` to set logical size, `clear` for background color, `depth: true` for 3D depth test.\nPass `on-frame` steps to run every animation frame — receives `$dt` (delta seconds) and `$time` in context.",
+      markdownDescription: "Initializes a WebGL canvas (WebGL2 with WebGL1 fallback). Pass the canvas CSS selector as `gl-init`.\nUse `width`/`height` to set logical size, `clear` for background color, `depth: true` for 3D depth test.\nPass `on-frame` steps to run every animation frame, with `dt` (delta seconds) and `time` in context.",
       examples: [
-        "{ \"gl-init\": \"#canvas\", \"width\": 800, \"height\": 600, \"clear\": [0, 0, 0, 1], \"on-frame\": [] }",
+        "{ \"$gl-init\": \"#canvas\", \"width\": 800, \"height\": 600, \"clear\": [0, 0, 0, 1], \"on-frame\": [] }",
       ],
       siblings: {
         width: {
@@ -147,7 +147,7 @@ export class GlNode extends Node {
         },
         "on-frame": {
           type: "array",
-          description: "Steps to run each animation frame (`$dt`, `$time` available).",
+          description: "Steps to run each animation frame (`dt`, `time` available).",
         },
       },
     },
@@ -160,7 +160,7 @@ export class GlNode extends Node {
       output: "string",
       markdownDescription: "Hit-tests a point against all visible entities (front-to-back). Returns the topmost entity id or `null`.\nSupports 2D (AABB/circle) and 3D (ray-AABB) automatically based on the current render mode.",
       examples: [
-        "{ \"gl-hit\": true, \"x\": { \"var\": \"$event.clientX\" }, \"y\": { \"var\": \"$event.clientY\" } }",
+        "{ \"$gl-hit\": true, \"x\": { \"$var\": \"event.clientX\" }, \"y\": { \"$var\": \"event.clientY\" } }",
       ],
       siblings: {
         x: {
@@ -178,7 +178,7 @@ export class GlNode extends Node {
       output: "null",
       markdownDescription: "Controls the camera. In 2D: `x`, `y`, `zoom`, `rotation`, `follow` (entity id).\nShake: `shake` (intensity), `shakeDuration`, `shakeDecay`. Trauma: `trauma` (0–1 accumulated).\nIn 3D: `z`, `fov`, `near`, `far`, `lookAt` ([x,y,z]), `up` ([x,y,z]).",
       examples: [
-        "{ \"gl-camera\": true, \"follow\": \"player\", \"zoom\": 1.5 }",
+        "{ \"$gl-camera\": true, \"follow\": \"player\", \"zoom\": 1.5 }",
       ],
       siblings: {
         x: {
@@ -208,7 +208,7 @@ export class GlNode extends Node {
       output: "null",
       markdownDescription: "Loads an image from `src` and registers it as a named texture. Assign to entities via `texture: \"name\"`.",
       examples: [
-        "{ \"gl-texture\": \"ship\", \"src\": \"/assets/ship.png\" }",
+        "{ \"$gl-texture\": \"ship\", \"src\": \"/assets/ship.png\" }",
       ],
       siblings: {
         src: {
@@ -230,7 +230,7 @@ export class GlNode extends Node {
       output: "null",
       markdownDescription: "Uploads an imported mesh's geometry to the GPU and stores the handle on\n`MeshEntry.gpu` (interleaved layout: pos3 + normal3 + uv2 = 32 bytes/vert).\nIdempotent — re-uploading the same id is a no-op.\n\nAuto-registers in the physics EntityStore if not yet present (so callers\ncan skip the separate `register-mesh` step). If a baseColor texture URI is\npresent on the material, a texture load is also kicked off.",
       examples: [
-        "{ \"foreach\": { \"var\": \"scene.meshes\" }, \"item\": \"m\", \"do\": {\n    \"gl-register-mesh\": { \"var\": \"m.id\" },\n    \"bounds\":    { \"var\": \"m.bounds\" },\n    \"positions\": { \"var\": \"m.positions\" },\n    \"normals\":   { \"var\": \"m.normals\" },\n    \"uvs\":       { \"var\": \"m.uvs\" },\n    \"indices\":   { \"var\": \"m.indices\" },\n    \"material\":  { \"var\": \"m.material\" }\n} }",
+        "{ \"$foreach\": { \"$var\": \"scene.meshes\" }, \"item\": \"m\", \"do\": {\n    \"$gl-register-mesh\": { \"$var\": \"m.id\" },\n    \"bounds\":    { \"$var\": \"m.bounds\" },\n    \"positions\": { \"$var\": \"m.positions\" },\n    \"normals\":   { \"$var\": \"m.normals\" },\n    \"uvs\":       { \"$var\": \"m.uvs\" },\n    \"indices\":   { \"$var\": \"m.indices\" },\n    \"material\":  { \"$var\": \"m.material\" }\n} }",
       ],
       siblings: {
         bounds: {
@@ -258,7 +258,7 @@ export class GlNode extends Node {
       output: "number",
       markdownDescription: "Loads a spritesheet and pre-computes UV rects for each frame. Pass `cols` and `rows` to define the grid.\nReturns the total frame count. Use frame indices with `gl-animate` or `gl-frame`.",
       examples: [
-        "{ \"gl-atlas\": \"tiles\", \"src\": \"/assets/tiles.png\", \"cols\": 8, \"rows\": 4 }",
+        "{ \"$gl-atlas\": \"tiles\", \"src\": \"/assets/tiles.png\", \"cols\": 8, \"rows\": 4 }",
       ],
       siblings: {
         src: {
@@ -280,7 +280,7 @@ export class GlNode extends Node {
       output: "null",
       markdownDescription: "Starts a frame animation on an entity from an atlas. Pass `atlas`, `frames` (array of frame indices),\n`fps`, and `loop`. Set `stop: true` to cancel the current animation.",
       examples: [
-        "{ \"gl-animate\": \"player\", \"atlas\": \"sprites\", \"frames\": [0, 1, 2, 3], \"fps\": 12, \"loop\": true }",
+        "{ \"$gl-animate\": \"player\", \"atlas\": \"sprites\", \"frames\": [0, 1, 2, 3], \"fps\": 12, \"loop\": true }",
       ],
       siblings: {
         atlas: {
@@ -313,7 +313,7 @@ export class GlNode extends Node {
       output: "null",
       markdownDescription: "Sets a static atlas frame on an entity (no animation). Pass entity id, `atlas`, and `frame` index.",
       examples: [
-        "{ \"gl-frame\": \"player\", \"atlas\": \"sprites\", \"frame\": 5 }",
+        "{ \"$gl-frame\": \"player\", \"atlas\": \"sprites\", \"frame\": 5 }",
       ],
       siblings: {
         atlas: {
@@ -331,7 +331,7 @@ export class GlNode extends Node {
       output: "number",
       markdownDescription: "Builds an efficient GPU tilemap VBO from a 2D array of atlas frame indices.\nPass `atlas`, `data` (rows of frame indices), `tileWidth`, `tileHeight`, and optional `z`.\nReturns the rendered tile count.",
       examples: [
-        "{ \"gl-tilemap\": \"level1\", \"atlas\": \"tiles\", \"data\": [[1,0,2],[3,1,0]], \"tileWidth\": 32, \"tileHeight\": 32 }",
+        "{ \"$gl-tilemap\": \"level1\", \"atlas\": \"tiles\", \"data\": [[1,0,2],[3,1,0]], \"tileWidth\": 32, \"tileHeight\": 32 }",
       ],
       siblings: {
         atlas: {
@@ -363,7 +363,7 @@ export class GlNode extends Node {
       output: "null",
       markdownDescription: "Changes one tile of a tilemap built by `gl-tilemap` and rebuilds its VBO. Out-of-range coordinates and unknown tilemap names are a no-op.",
       examples: [
-        "{ \"gl-tilemap-set\": \"level1\", \"x\": 3, \"y\": 2, \"tile\": 5 }",
+        "{ \"$gl-tilemap-set\": \"level1\", \"x\": 3, \"y\": 2, \"tile\": 5 }",
       ],
       siblings: {
         x: {
@@ -388,7 +388,7 @@ export class GlNode extends Node {
       output: "null",
       markdownDescription: "Attaches a motion trail to an entity. The trail follows the entity's position each frame.\nPass entity id, `length` (max trail points), `width`, and `color`.",
       examples: [
-        "{ \"gl-trail\": \"player\", \"length\": 20, \"width\": 3, \"color\": [1, 0.5, 0, 0.8] }",
+        "{ \"$gl-trail\": \"player\", \"length\": 20, \"width\": 3, \"color\": [1, 0.5, 0, 0.8] }",
       ],
       siblings: {
         length: {
@@ -417,7 +417,7 @@ export class GlNode extends Node {
       output: "array",
       markdownDescription: "Casts a ray from `from` in direction `dir` and returns all hit entities sorted by distance.\nPass `mask` (array of group names) to restrict which entities are tested.",
       examples: [
-        "{ \"gl-raycast\": true, \"from\": { \"x\": 0, \"y\": 0, \"z\": 0 }, \"dir\": { \"x\": 1, \"y\": 0, \"z\": 0 }, \"mask\": [\"enemies\"] }",
+        "{ \"$gl-raycast\": true, \"from\": { \"x\": 0, \"y\": 0, \"z\": 0 }, \"dir\": { \"x\": 1, \"y\": 0, \"z\": 0 }, \"mask\": [\"enemies\"] }",
       ],
       siblings: {
         from: {
@@ -440,7 +440,7 @@ export class GlNode extends Node {
       output: "null",
       markdownDescription: "Renders text onto a canvas texture and assigns it to an entity. Creates the entity if it doesn't exist.\nPass entity id, `text`, `font` (CSS font string), `fill` (color), and position `x`, `y`, `z`.",
       examples: [
-        "{ \"gl-text\": \"score-label\", \"text\": { \"var\": \"$score\" }, \"font\": \"24px Arial\", \"fill\": \"#fff\", \"x\": 10, \"y\": 10 }",
+        "{ \"$gl-text\": \"score-label\", \"text\": { \"$var\": \"score\" }, \"font\": \"24px Arial\", \"fill\": \"#fff\", \"x\": 10, \"y\": 10 }",
       ],
       siblings: {
         text: {
@@ -474,7 +474,7 @@ export class GlNode extends Node {
       output: "string",
       markdownDescription: "Registers an MSDF font from a pre-loaded atlas texture + parsed BMFont metrics, so `gl-text` with a matching `font` renders crisp at any scale (recolorable, one shared atlas).\nLoad the atlas PNG with `gl-texture` and the metrics JSON with a file/fetch node, then pass the texture name as `atlas` and the parsed JSON as `metrics`.",
       examples: [
-        "{ \"gl-font\": \"hud\", \"atlas\": \"hud-atlas\", \"metrics\": { \"file\": \"/fonts/hud.json\" } }",
+        "{ \"$gl-font\": \"hud\", \"atlas\": \"hud-atlas\", \"metrics\": { \"$file\": \"/fonts/hud.json\" } }",
       ],
       siblings: {
         atlas: {
@@ -491,7 +491,7 @@ export class GlNode extends Node {
       output: "null",
       markdownDescription: "Compiles and registers a custom GLSL shader program. Pass `name`, `vert` (vertex source), and `frag` (fragment source).\nAssign to entities with `shader: \"name\"`. Standard uniforms (`u_transform`, `u_texture`, `u_time`, etc.) are auto-bound.",
       examples: [
-        "{ \"gl-shader\": \"glow\", \"vert\": \"...\", \"frag\": \"...\" }",
+        "{ \"$gl-shader\": \"glow\", \"vert\": \"...\", \"frag\": \"...\" }",
       ],
       siblings: {
         vert: {
@@ -509,7 +509,7 @@ export class GlNode extends Node {
       output: "null",
       markdownDescription: "Applies a full-screen Gaussian blur post-process effect. Pass the blur radius in pixels; `0` disables it.",
       examples: [
-        "{ \"gl-blur\": 4 }",
+        "{ \"$gl-blur\": 4 }",
       ],
     },
     "gl-transition": {
@@ -517,7 +517,7 @@ export class GlNode extends Node {
       output: "null",
       markdownDescription: "Plays a fade transition overlay. Pass `duration` in seconds (default 0.5).",
       examples: [
-        "{ \"gl-transition\": true, \"duration\": 0.8 }",
+        "{ \"$gl-transition\": true, \"duration\": 0.8 }",
       ],
       siblings: {
         duration: {
@@ -529,11 +529,11 @@ export class GlNode extends Node {
     "gl-tween": {
       type: "string",
       output: "null",
-      markdownDescription: "Animates numeric entity properties over time. Pass entity id, target values (`x`, `y`, `w`, `h`, `angle`, `opacity`, `color`, etc.),\n`duration` (seconds), and `easing` (e.g. `\"easeOutQuad\"`, `\"linear\"`).\nThe step finishes when the tween does, so a step list waits for it; add `then` to carry on without waiting and run steps once it finishes. It also finishes early when a newer tween takes over all of its properties, or the scene is destroyed.",
+      markdownDescription: "Animates numeric entity properties over time. Pass entity id, target values (`x`, `y`, `w`, `h`, `angle`, `opacity`, `color`, etc.),\n`duration` (seconds), and `easing` (e.g. `\"easeOutQuad\"`, `\"linear\"`).\nThe step finishes when the tween does, so a step list waits for it; add `$then` to carry on without waiting and run steps once it finishes. It also finishes early when a newer tween takes over all of its properties, or the scene is destroyed.",
       outputDescription: "`null`, once the tween finishes.",
       examples: [
-        "{ \"gl-tween\": \"player\", \"x\": 400, \"y\": 300, \"duration\": 0.5, \"easing\": \"easeInOutCubic\" }",
-        "{ \"gl-tween\": \"door\", \"y\": 0, \"then\": [{ \"entity-remove\": \"door\" }] }",
+        "{ \"$gl-tween\": \"player\", \"x\": 400, \"y\": 300, \"duration\": 0.5, \"easing\": \"easeInOutCubic\" }",
+        "{ \"$gl-tween\": \"door\", \"y\": 0, \"$then\": [{ \"$entity-remove\": \"door\" }] }",
       ],
       siblings: {
         duration: {
@@ -559,14 +559,14 @@ export class GlNode extends Node {
       output: "null",
       markdownDescription: "Enables screen-space ambient occlusion (SSAO) for 3D scenes. Pass `radius`, `bias`, and `intensity`.\nSet `gl-ssao: false` to disable.",
       examples: [
-        "{ \"gl-ssao\": true, \"radius\": 0.5, \"bias\": 0.025, \"intensity\": 1.5 }",
+        "{ \"$gl-ssao\": true, \"radius\": 0.5, \"bias\": 0.025, \"intensity\": 1.5 }",
       ],
     },
     "gl-particle": {
       output: "null",
       markdownDescription: "GPU-accelerated particle system. Pass `true` for a one-shot burst, or use operations:\n- `\"create\"` — register a named emitter (`id`, `max`, `life`, `speed`, `continuous`, `rate`)\n- `\"emit\"` — burst from a named emitter (`id`, `x`, `y`, `z`, `count`)\n- `\"destroy\"` — remove a named emitter\nAll modes support `color`, `colorEnd`, `size`, `sizeEnd`, `life`, `speed`.",
       examples: [
-        "{ \"gl-particle\": true, \"x\": 100, \"y\": 200, \"count\": 30, \"speed\": 5, \"life\": 1, \"color\": [1,0.5,0,1] }",
+        "{ \"$gl-particle\": true, \"x\": 100, \"y\": 200, \"count\": 30, \"speed\": 5, \"life\": 1, \"color\": [1,0.5,0,1] }",
       ],
     },
   };
@@ -582,7 +582,7 @@ export class GlNode extends Node {
     for (const [k, v] of Object.entries(def)) { if (k !== "on-frame") resolvable[k] = v; }
 
     return resolveObj(resolvable, context, r => {
-      const selector = String(r["gl-init"]);
+      const selector = String(r["$gl-init"]);
 
       const prev = GlNode.instances.get(selector);
       if (prev) GlNode.destroyInstance(prev, selector);
@@ -1024,7 +1024,7 @@ export class GlNode extends Node {
   ["gl-texture"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-    return resolveAll([def["gl-texture"], def["src"], def["linear"] ?? null, def["hdr"] ?? null], context, ([nameV, srcV, linearV, hdrV]) => {
+    return resolveAll([def["$gl-texture"], def["src"], def["linear"] ?? null, def["hdr"] ?? null], context, ([nameV, srcV, linearV, hdrV]) => {
       const name = String(nameV);
       const src = String(srcV);
       const linear = linearV === true;
@@ -1087,7 +1087,7 @@ export class GlNode extends Node {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
     return resolveObj(def, context, r => {
-      const name = String(r["gl-font"]);
+      const name = String(r["$gl-font"]);
       const atlasName = String(r["atlas"]);     // a registered gl-texture name
       const metricsRaw = r["metrics"];          // parsed BMFont JSON (from a file/fetch node) or a JSON string
 
@@ -1116,7 +1116,7 @@ export class GlNode extends Node {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
     return resolveObj(def, context, r => {
-      const idRaw = r["gl-register-mesh"];
+      const idRaw = r["$gl-register-mesh"];
       if (idRaw == null) return null;
       const id = String(idRaw);
 
@@ -1213,13 +1213,13 @@ export class GlNode extends Node {
   }
 
   // ── gl-atlas ───────────────────────────────────────────────────────────
-  // Pre-compute UV rects for a spritesheet: { "gl-atlas": "name", "src": "sheet.png", "cols": 8, "rows": 4 }
+  // Pre-compute UV rects for a spritesheet: { "$gl-atlas": "name", "src": "sheet.png", "cols": 8, "rows": 4 }
 
   ["gl-atlas"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
     return resolveObj(def, context, r => {
-      const name = String(r["gl-atlas"]);
+      const name = String(r["$gl-atlas"]);
       const src = String(r["src"]);
       const cols = Number(r["cols"]) || 1;
       const rows = Number(r["rows"]) || 1;
@@ -1256,7 +1256,7 @@ export class GlNode extends Node {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
     return resolveObj(def, context, r => {
-      const id = String(r["gl-animate"]);
+      const id = String(r["$gl-animate"]);
       const slot = inst.store.slot(id);
       if (slot === -1) return null;
       const meta = inst.store.meta[slot]!;
@@ -1288,13 +1288,13 @@ export class GlNode extends Node {
   }
 
   // ── gl-frame — set entity UV from atlas frame index ─────────────────────
-  // { "gl-frame": "entityId", "atlas": "name", "frame": 5 }
+  // { "$gl-frame": "entityId", "atlas": "name", "frame": 5 }
 
   ["gl-frame"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
     return resolveObj(def, context, r => {
-      const id = String(r["gl-frame"]);
+      const id = String(r["$gl-frame"]);
       const slot = inst.store.slot(id);
       if (slot === -1) return null;
       const atlasName = String(r["atlas"]);
@@ -1317,13 +1317,13 @@ export class GlNode extends Node {
   }
 
   // ── gl-tilemap — efficient grid rendering using atlas ──────────────────
-  // { "gl-tilemap": "level1", "atlas": "tiles", "data": [[1,0,2],[3,1,0]], "tileWidth": 32, "tileHeight": 32 }
+  // { "$gl-tilemap": "level1", "atlas": "tiles", "data": [[1,0,2],[3,1,0]], "tileWidth": 32, "tileHeight": 32 }
 
   ["gl-tilemap"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
     return resolveObj(def, context, r => {
-      const name = String(r["gl-tilemap"]);
+      const name = String(r["$gl-tilemap"]);
       const atlasName = String(r["atlas"]);
       const atlas = inst.atlases.get(atlasName);
       if (!atlas) { console.error("[GL] Atlas not found for tilemap:", atlasName); return null; }
@@ -1345,12 +1345,12 @@ export class GlNode extends Node {
     });
   }
 
-  // { "gl-tilemap-set": "level1", "x": 3, "y": 2, "tile": 5 }
+  // { "$gl-tilemap-set": "level1", "x": 3, "y": 2, "tile": 5 }
   ["gl-tilemap-set"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
     return resolveObj(def, context, r => {
-      const name = String(r["gl-tilemap-set"]);
+      const name = String(r["$gl-tilemap-set"]);
       const tm = inst.tilemaps.get(name);
       if (!tm) return null;
       const tx = Number(r["x"]) | 0;
@@ -1421,13 +1421,13 @@ export class GlNode extends Node {
   }
 
   // ── gl-trail — attach a trail to an entity ─────────────────────────────
-  // { "gl-trail": "player", "length": 20, "width": 2, "color": [1,0,0,1] }
+  // { "$gl-trail": "player", "length": 20, "width": 2, "color": [1,0,0,1] }
 
   ["gl-trail"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
     return resolveObj(def, context, r => {
-      const entityId = String(r["gl-trail"]);
+      const entityId = String(r["$gl-trail"]);
       const length = r["length"] !== undefined ? Number(r["length"]) : 20;
       const width = r["width"] !== undefined ? Number(r["width"]) : 2;
       const rawColor = (r["color"] ?? [1, 1, 1, 1]) as number[];
@@ -1437,15 +1437,15 @@ export class GlNode extends Node {
     });
   }
 
-  // { "gl-trail-remove": "player" }
+  // { "$gl-trail-remove": "player" }
   ["gl-trail-remove"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-    return resolve(def["gl-trail-remove"], context, v => { inst.trails.delete(String(v)); return null; });
+    return resolve(def["$gl-trail-remove"], context, v => { inst.trails.delete(String(v)); return null; });
   }
 
   // ── gl-raycast — cast a ray and return sorted hits ─────────────────────
-  // { "gl-raycast": true, "from": {"x":0,"y":0,"z":0}, "dir": {"x":1,"y":0,"z":0}, "mask": ["enemy"] }
+  // { "$gl-raycast": true, "from": {"x":0,"y":0,"z":0}, "dir": {"x":1,"y":0,"z":0}, "mask": ["enemy"] }
 
   ["gl-raycast"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
@@ -1466,7 +1466,7 @@ export class GlNode extends Node {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
     return resolveObj(def, context, r => {
-      const id = String(r["gl-text"]);
+      const id = String(r["$gl-text"]);
       const text = String(r["text"]);
       const font = r["font"] ? String(r["font"]) : "16px sans-serif";
       const fill = r["fill"] ? String(r["fill"]) : "#ffffff";
@@ -1520,7 +1520,7 @@ export class GlNode extends Node {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
     return resolveObj(def, context, r => {
-      const name = String(r["gl-shader"]);
+      const name = String(r["$gl-shader"]);
       const vert = r["vert"] ? String(r["vert"]) : VERT_SRC;
       const frag = r["frag"] ? String(r["frag"]) : FRAG_SRC;
       const program = GlNode.createProgram(inst.gl, vert, frag, inst.isWebGL2);
@@ -1553,7 +1553,7 @@ export class GlNode extends Node {
   ["gl-blur"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-    return resolve(def["gl-blur"], context, v => {
+    return resolve(def["$gl-blur"], context, v => {
       const radius = Number(v);
       inst.blur = radius > 0 ? { radius } : null;
       inst.dirty = true;
@@ -1582,7 +1582,7 @@ export class GlNode extends Node {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
     return resolveObj(def, context, r => {
-      const id = String(r["gl-tween"]);
+      const id = String(r["$gl-tween"]);
       const slot = inst.store.slot(id);
       if (slot === -1) return null;
       const duration = r["duration"] !== undefined ? Number(r["duration"]) : 0.3;
@@ -1611,8 +1611,8 @@ export class GlNode extends Node {
       }
       if (fields.length === 0) return null;
       cancelConflictingTweens(inst.tweens, slot, fields);
-      // Settles when the tween does, which is what the resolver's global `then`
-      // waits on; without `then`, a step list waits here.
+      // Settles when the tween does, which is what the resolver's global `$then`
+      // waits on; without `$then`, a step list waits here.
       return new Promise<null>(done => {
         inst.tweens.push({ slot, fields, starts, ends, duration, elapsed: 0, easing, done: () => done(null) });
         inst.dirty = true;
@@ -1622,12 +1622,12 @@ export class GlNode extends Node {
   }
 
   // ── gl-ssao (screen-space ambient occlusion) ────────────────────────────
-  // Usage: { "gl-ssao": true, "radius": 0.5, "bias": 0.025, "intensity": 1.5 }
-  //        { "gl-ssao": false } to disable
+  // Usage: { "$gl-ssao": true, "radius": 0.5, "bias": 0.025, "intensity": 1.5 }
+  //        { "$gl-ssao": false } to disable
   ["gl-ssao"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-    return resolve(def["gl-ssao"], context, enabled => {
+    return resolve(def["$gl-ssao"], context, enabled => {
       if (!enabled || enabled === "false") { inst.ssao = null; return null; }
       return resolveObj(def, context, r => {
         inst.ssao = {
@@ -1644,20 +1644,20 @@ export class GlNode extends Node {
   }
 
   // ── gl-particle (GPU-accelerated stateless particle emitter) ─────────────
-  // Simple burst: { "gl-particle": true, "x": 10, "y": 5, "z": 0, "count": 20,
+  // Simple burst: { "$gl-particle": true, "x": 10, "y": 5, "z": 0, "count": 20,
   //                 "speed": 5, "life": 1, "size": 0.3, "sizeEnd": 0,
   //                 "color": [1,0.5,0,1], "colorEnd": [1,0,0,0] }
-  // Create named emitter: { "gl-particle": "create", "id": "fire", "max": 5000,
+  // Create named emitter: { "$gl-particle": "create", "id": "fire", "max": 5000,
   //                         "life": 1.5, "speed": 3, "continuous": true, "rate": 500 }
-  // Emit burst: { "gl-particle": "emit", "id": "fire", "x": 0, "y": 0, "z": 0, "count": 100 }
-  // Destroy: { "gl-particle": "destroy", "id": "fire" }
+  // Emit burst: { "$gl-particle": "emit", "id": "fire", "x": 0, "y": 0, "z": 0, "count": 100 }
+  // Destroy: { "$gl-particle": "destroy", "id": "fire" }
   ["gl-particle"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
     if (!inst.gpuParticleProg) initGpuParticleProgram(inst, GlNode.createProgram);
     return resolveObj(def, context, r => {
       const gl = inst.gl;
-      const actionStr = String(r["gl-particle"]);
+      const actionStr = String(r["$gl-particle"]);
 
       if (actionStr === "destroy") {
         const id = String(r["id"] ?? "default");

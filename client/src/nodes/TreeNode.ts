@@ -23,7 +23,7 @@ export interface TreeDelta {
  * Per-tree runtime handles that can't live in serializable context — the DOM
  * target, the collapsed set, drag listeners, the row template, and the hook
  * steps. The tree DATA itself lives in the resolver context at `path`, so it is
- * readable with `{ "var": "$<path>" }` and written by the `tree-*` ops.
+ * readable with `{ "$var": "<path>" }` and written by the `tree-*` ops.
  *
  * The store is keyed by the context object (scoped per-Client, GC'd with the
  * context — no static registry to leak) then by the normalized context path.
@@ -85,18 +85,18 @@ function getData(rt: TreeRuntime): unknown[] {
  * row element.
  *
  * Every op addresses its tree by the same context path it was initialized with:
- * - { "tree-init": "$editor", "target": "#el", "data": [], "row": {...}, "on-change": [], "on-select": [] }
- * - { "tree-render": "$editor", "path": "0.content" }         re-render (partial if path given)
- * - { "tree-insert": "$editor", "value": {...} }              into the selected node / root
- * - { "tree-remove": "$editor" }                              the selected node
- * - { "tree-update": "$editor", "key": "k", "value": "v" }    a key on the selected node
- * - { "tree-move": "$editor", "direction": "up"|"down" }      reorder the selected node
- * - { "tree-move": "$editor", "to": "2.content", "index": 0 } relocate to any list path
- * - { "tree-select": "$editor", "path": "0.content.1" }
- * - { "tree-toggle": "$editor", "path": "0" }
- * - { "tree-apply": "$editor", "delta": {...} }               replay a TreeDelta
+ * - { "$tree-init": "$editor", "target": "#el", "data": [], "row": {...}, "on-change": [], "on-select": [] }
+ * - { "$tree-render": "$editor", "path": "0.content" }         re-render (partial if path given)
+ * - { "$tree-insert": "$editor", "value": {...} }             into the selected node / root
+ * - { "$tree-remove": "$editor" }                              the selected node
+ * - { "$tree-update": "$editor", "key": "k", "value": "v" }    a key on the selected node
+ * - { "$tree-move": "$editor", "direction": "up"|"down" }     reorder the selected node
+ * - { "$tree-move": "$editor", "to": "2.content", "index": 0 } relocate to any list path
+ * - { "$tree-select": "$editor", "path": "0.content.1" }
+ * - { "$tree-toggle": "$editor", "path": "0" }
+ * - { "$tree-apply": "$editor", "delta": {...} }              replay a TreeDelta
  *
- * The data is plain context state: read it with `{ "var": "$editor" }`, replace it with
+ * The data is plain context state: read it with `{ "$var": "editor" }`, replace it with
  * `setVars` + `tree-render`, and edit it with the array mutators (`push`/`remove`/`move`/…)
  * + `tree-render`. The ops above cover only the interactive, selection-aware editing that
  * needs the runtime (selection, collapse, DOM) — everything else is plain context work.
@@ -106,9 +106,9 @@ export class TreeNode extends Node {
     "tree-init": {
       type: "string",
       output: "null",
-      markdownDescription: "Initializes a JSON tree editor. The primary key value is a context dot-path (`$editor`) where the tree data is stored, so you read it back with `{ \"var\": \"$editor\" }`. Also pass `target` (CSS selector), `data` (array; if omitted, adopts any array already at the path), and `row` (JSON template).\nThe `row` template is resolved per node with context vars: `path`, `type`, `summary`, `depth`, `selected`, `expanded`.\nHook `on-change` steps receive `$delta` and `$editorData`; `on-select` receives `$selectedPath` and `$selectedNode`.",
+      markdownDescription: "Initializes a JSON tree editor. The primary key value is a context dot-path (`$editor`) where the tree data is stored, so you read it back with `{ \"$var\": \"editor\" }`. Also pass `target` (CSS selector), `data` (array; if omitted, adopts any array already at the path), and `row` (JSON template).\nThe `row` template is resolved per node with context vars: `path`, `type`, `summary`, `depth`, `selected`, `expanded`.\nHook `on-change` steps receive `delta` and `editorData`; `on-select` receives `selectedPath` and `selectedNode`.",
       examples: [
-        "{ \"tree-init\": \"$editor\", \"target\": \"#editor\", \"data\": [], \"row\": { \"tag\": \"div\", \"content\": [{ \"var\": \"path\" }] }, \"on-change\": [] }",
+        "{ \"$tree-init\": \"$editor\", \"target\": \"#editor\", \"data\": [], \"row\": { \"$tag\": \"div\", \"content\": [{ \"$var\": \"path\" }] }, \"on-change\": [] }",
       ],
       siblings: {
         target: {
@@ -123,11 +123,11 @@ export class TreeNode extends Node {
         },
         "on-change": {
           steps: true,
-          description: "Steps run on each mutation with `$delta` and `$editorData`.",
+          description: "Steps run on each mutation with `delta` and `editorData`.",
         },
         "on-select": {
           steps: true,
-          description: "Steps run on selection change with `$selectedPath` and `$selectedNode`.",
+          description: "Steps run on selection change with `selectedPath` and `selectedNode`.",
         },
       },
     },
@@ -136,7 +136,7 @@ export class TreeNode extends Node {
       output: "null",
       markdownDescription: "Re-renders the tree at the given context path from its current data. Pass `path` for a **partial** render: a child-list path (e.g. `\"0.content\"`, where you `push`ed/`remove`d) re-renders just that list's items; a node path (e.g. `\"0.content.1\"`, whose data you changed) replaces that node and its subtree. Omit `path` for a full render. Call after editing the data with `setVars` or the array mutators (`push`/`remove`/`insert`/`move`/…), since there is no automatic reactivity.",
       examples: [
-        "{ \"tree-render\": \"$editor\", \"path\": \"0.content\" }",
+        "{ \"$tree-render\": \"$editor\", \"path\": \"0.content\" }",
       ],
       siblings: {
         path: {
@@ -149,7 +149,7 @@ export class TreeNode extends Node {
       type: "string",
       markdownDescription: "Inserts a node into the tree at the given context path. If `path` is omitted, inserts as a\nchild of the selected node (if it is a container) or appends to the root array.",
       examples: [
-        "{ \"tree-insert\": \"$editor\", \"value\": { \"tag\": \"p\", \"content\": [\"\"] } }",
+        "{ \"$tree-insert\": \"$editor\", \"value\": { \"$tag\": \"p\", \"content\": [\"\"] } }",
       ],
       siblings: {
         value: {
@@ -165,14 +165,14 @@ export class TreeNode extends Node {
       type: "string",
       markdownDescription: "Removes the currently selected node from the tree at the given context path. Returns the removed node's `TreeDelta`.",
       examples: [
-        "{ \"tree-remove\": \"$editor\" }",
+        "{ \"$tree-remove\": \"$editor\" }",
       ],
     },
     "tree-update": {
       type: "string",
       markdownDescription: "Updates a single key on the currently selected node.\nSetting `value` to `null`, `undefined`, or `\"\"` deletes the key.",
       examples: [
-        "{ \"tree-update\": \"$editor\", \"key\": \"class\", \"value\": { \"var\": \"$class\" } }",
+        "{ \"$tree-update\": \"$editor\", \"key\": \"class\", \"value\": { \"$var\": \"class\" } }",
       ],
       siblings: {
         key: {
@@ -188,8 +188,8 @@ export class TreeNode extends Node {
       type: "string",
       markdownDescription: "Moves a node: either **reorder** the selected node among its siblings (`direction`) or **relocate** it to any list (`to`).",
       examples: [
-        "{ \"tree-move\": \"$editor\", \"direction\": \"up\" }",
-        "{ \"tree-move\": \"$editor\", \"to\": \"2.content\", \"index\": 0 }",
+        "{ \"$tree-move\": \"$editor\", \"direction\": \"up\" }",
+        "{ \"$tree-move\": \"$editor\", \"to\": \"2.content\", \"index\": 0 }",
       ],
       variants: {
         direction: {
@@ -218,9 +218,9 @@ export class TreeNode extends Node {
     },
     "tree-select": {
       type: "string",
-      markdownDescription: "Selects a node by path, firing `on-select` steps with `$selectedPath` and `$selectedNode`.\nPass `path: null` to deselect. Returns the selected node data.",
+      markdownDescription: "Selects a node by path, firing `on-select` steps with `selectedPath` and `selectedNode`.\nPass `path: null` to deselect. Returns the selected node data.",
       examples: [
-        "{ \"tree-select\": \"$editor\", \"path\": \"0.content.1\" }",
+        "{ \"$tree-select\": \"$editor\", \"path\": \"0.content.1\" }",
       ],
       siblings: {
         path: {
@@ -234,7 +234,7 @@ export class TreeNode extends Node {
       output: "boolean",
       markdownDescription: "Toggles the collapsed/expanded state of a node at the given `path`. Returns `true` if now expanded.",
       examples: [
-        "{ \"tree-toggle\": \"$editor\", \"path\": \"0\" }",
+        "{ \"$tree-toggle\": \"$editor\", \"path\": \"0\" }",
       ],
       siblings: {
         path: {
@@ -248,7 +248,7 @@ export class TreeNode extends Node {
       output: "null",
       markdownDescription: "Applies a `TreeDelta` mutation (`insert` / `remove` / `set` / `move`) to the tree.\nUseful for replaying remote changes in collaborative editing scenarios.",
       examples: [
-        "{ \"tree-apply\": \"$editor\", \"delta\": { \"var\": \"$delta\" } }",
+        "{ \"$tree-apply\": \"$editor\", \"delta\": { \"$var\": \"delta\" } }",
       ],
       siblings: {
         delta: {
@@ -266,7 +266,7 @@ export class TreeNode extends Node {
     // Extract row before resolution to prevent ElementNode from rendering it to HTML.
     const rawRow = def.row;
 
-    return resolveAll([def["tree-init"], def.target, def.data ?? null], context, async ([pathRaw, target, data]) => {
+    return resolveAll([def["$tree-init"], def.target, def.data ?? null], context, async ([pathRaw, target, data]) => {
       const targetEl = document.querySelector(String(target)) as HTMLElement;
       if (!targetEl) return null;
 
@@ -274,7 +274,7 @@ export class TreeNode extends Node {
 
       // Resolve the data array: use `data` if given, else adopt what's already at
       // the context path, else start empty. Then write it into the context so it
-      // is readable via `{ "var": "$<path>" }` and mutated in place by later ops.
+      // is readable via `{ "$var": "<path>" }` and mutated in place by later ops.
       let dataArr: unknown[] = [];
       if (data != null) {
         if (typeof data === "string") {
@@ -309,7 +309,7 @@ export class TreeNode extends Node {
   }
 
   ["tree-render"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["tree-render"], def.path ?? null], context, async ([pathRaw, path]) => {
+    return resolveAll([def["$tree-render"], def.path ?? null], context, async ([pathRaw, path]) => {
       const rt = getRuntime(context, normalizePath(String(pathRaw)));
       if (!rt) return null;
       const p = path != null ? String(path) : "";
@@ -331,7 +331,7 @@ export class TreeNode extends Node {
     const rawValue = def.value;
     const isVarRef = this.isObject(rawValue) && "var" in rawValue;
 
-    return resolveAll([def["tree-insert"], def.path ?? null], context, ([pathRaw, path]) => {
+    return resolveAll([def["$tree-insert"], def.path ?? null], context, ([pathRaw, path]) => {
       const rt = getRuntime(context, normalizePath(String(pathRaw)));
       if (!rt) return null;
 
@@ -377,7 +377,7 @@ export class TreeNode extends Node {
   }
 
   ["tree-remove"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["tree-remove"], context, async pathRaw => {
+    return resolve(def["$tree-remove"], context, async pathRaw => {
       const rt = getRuntime(context, normalizePath(String(pathRaw)));
       if (!rt || !rt.selectedPath) return null;
 
@@ -403,7 +403,7 @@ export class TreeNode extends Node {
   }
 
   ["tree-update"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["tree-update"], def.key, def.value ?? null], context, async ([pathRaw, key, value]) => {
+    return resolveAll([def["$tree-update"], def.key, def.value ?? null], context, async ([pathRaw, key, value]) => {
       const rt = getRuntime(context, normalizePath(String(pathRaw)));
       if (!rt || !rt.selectedPath) return null;
 
@@ -428,7 +428,7 @@ export class TreeNode extends Node {
 
   ["tree-move"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll(
-      [def["tree-move"], def.direction ?? null, def.to ?? null, def.index ?? null, def.from ?? null],
+      [def["$tree-move"], def.direction ?? null, def.to ?? null, def.index ?? null, def.from ?? null],
       context,
       async ([pathRaw, direction, to, index, from]) => {
         const rt = getRuntime(context, normalizePath(String(pathRaw)));
@@ -475,7 +475,7 @@ export class TreeNode extends Node {
   }
 
   ["tree-select"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["tree-select"], def.path ?? null], context, async ([pathRaw, path]) => {
+    return resolveAll([def["$tree-select"], def.path ?? null], context, async ([pathRaw, path]) => {
       const rt = getRuntime(context, normalizePath(String(pathRaw)));
       if (!rt) return null;
 
@@ -498,7 +498,7 @@ export class TreeNode extends Node {
   }
 
   ["tree-toggle"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["tree-toggle"], def.path], context, async ([pathRaw, path]) => {
+    return resolveAll([def["$tree-toggle"], def.path], context, async ([pathRaw, path]) => {
       const rt = getRuntime(context, normalizePath(String(pathRaw)));
       if (!rt) return null;
 
@@ -515,7 +515,7 @@ export class TreeNode extends Node {
   }
 
   ["tree-apply"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["tree-apply"], def.delta], context, async ([pathRaw, delta]) => {
+    return resolveAll([def["$tree-apply"], def.delta], context, async ([pathRaw, delta]) => {
       const rt = getRuntime(context, normalizePath(String(pathRaw)));
       if (!rt) return null;
 

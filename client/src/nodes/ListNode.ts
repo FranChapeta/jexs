@@ -7,11 +7,11 @@ import { hydrate } from "../events.js";
  * ListNode — Client-side list management.
  *
  * Operations:
- * - { "list-add": "#listId", "template": "#templateId" }
- * - { "list-remove": elementOrSelector }  — removes closest [data-list-item]
- * - { "list-move-up": elementOrSelector } — swaps with previous sibling
- * - { "list-move-down": elementOrSelector } — swaps with next sibling
- * - { "list-serialize": { "list": "#listId", "to": "#hiddenId", "fields": ["value", "label"] } }
+ * - { "$list-add": "#listId", "template": "#templateId" }
+ * - { "$list-remove": elementOrSelector }  — removes closest [data-list-item]
+ * - { "$list-move-up": elementOrSelector } — swaps with previous sibling
+ * - { "$list-move-down": elementOrSelector } — swaps with next sibling
+ * - { "$list-serialize": { "list": "#listId", "to": "#hiddenId", "fields": ["value", "label"] } }
  */
 export class ListNode extends Node {
   static schema: JexsNodeSchema = {
@@ -20,7 +20,7 @@ export class ListNode extends Node {
       output: "object",
       markdownDescription: "Clones a `<template>` element and appends the clone to a list container.\nHydrates event handlers on the new element. Returns the cloned element.",
       examples: [
-        "{ \"list-add\": \"#items\", \"template\": \"#item-template\" }",
+        "{ \"$list-add\": \"#items\", \"template\": \"#item-template\" }",
       ],
       siblings: {
         template: {
@@ -49,7 +49,7 @@ export class ListNode extends Node {
       output: "null",
       markdownDescription: "Pre-populates a list from JSON stored in a hidden input. Reads `list` (selector), `template`,\n`from` (hidden input selector), and `fields` (array of `data-field` names to fill per row).",
       examples: [
-        "{ \"list-init\": \"#items\", \"template\": \"#item-tpl\", \"from\": \"#hidden-input\", \"fields\": [\"value\", \"label\"] }",
+        "{ \"$list-init\": \"#items\", \"template\": \"#item-tpl\", \"from\": \"#hidden-input\", \"fields\": [\"value\", \"label\"] }",
       ],
       siblings: {
         template: {
@@ -74,7 +74,7 @@ export class ListNode extends Node {
       output: "null",
       markdownDescription: "Enables drag-and-drop reordering on a list container. Items must have `[data-list-item]`;\nadd `[data-drag-handle]` on the drag handle element within each item.",
       examples: [
-        "{ \"list-sortable\": \"#items\" }",
+        "{ \"$list-sortable\": \"#items\" }",
       ],
     },
     "list-serialize": {
@@ -82,7 +82,7 @@ export class ListNode extends Node {
       output: "null",
       markdownDescription: "Serializes all `[data-list-item]` rows into a JSON array and writes it to a hidden input.\nPass `list-serialize` (selector), `to` (hidden input selector), and `fields` (data-field names to collect).",
       examples: [
-        "{ \"list-serialize\": \"#items\", \"to\": \"#hidden-input\", \"fields\": [\"value\", \"label\"] }",
+        "{ \"$list-serialize\": \"#items\", \"to\": \"#hidden-input\", \"fields\": [\"value\", \"label\"] }",
       ],
       siblings: {
         to: {
@@ -102,7 +102,7 @@ export class ListNode extends Node {
 
   ["list-add"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveObj(def, context, r => {
-      const list = document.querySelector(String(r["list-add"]));
+      const list = document.querySelector(String(r["$list-add"]));
       const tmpl = document.querySelector(String(r.template)) as HTMLTemplateElement;
       if (list && tmpl && tmpl.content) {
         const clone = tmpl.content.cloneNode(true) as DocumentFragment;
@@ -115,7 +115,7 @@ export class ListNode extends Node {
     });
   }
   ["list-remove"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["list-remove"], context, ref => {
+    return resolve(def["$list-remove"], context, ref => {
       const el = getElement(ref);
       if (el) {
         const item = el.closest("[data-list-item]");
@@ -126,7 +126,7 @@ export class ListNode extends Node {
     });
   }
   ["list-move-up"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["list-move-up"], context, ref => {
+    return resolve(def["$list-move-up"], context, ref => {
       const el = getElement(ref);
       if (el) {
         const item = el.closest("[data-list-item]") as HTMLElement;
@@ -139,7 +139,7 @@ export class ListNode extends Node {
     });
   }
   ["list-move-down"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["list-move-down"], context, ref => {
+    return resolve(def["$list-move-down"], context, ref => {
       const el = getElement(ref);
       if (el) {
         const item = el.closest("[data-list-item]") as HTMLElement;
@@ -153,7 +153,7 @@ export class ListNode extends Node {
   }
   ["list-init"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveObj(def, context, r => {
-      const listSel = String(r["list-init"]);
+      const listSel = String(r["$list-init"]);
       const tmplSel = String(r.template);
       const fromSel = String(r.from);
       const fields = (r.fields as string[]) || [];
@@ -200,7 +200,7 @@ export class ListNode extends Node {
     });
   }
   ["list-sortable"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["list-sortable"], context, listSelRaw => {
+    return resolve(def["$list-sortable"], context, listSelRaw => {
       const list = document.querySelector(String(listSelRaw)) as HTMLElement;
       if (!list) return null;
 
@@ -252,7 +252,7 @@ export class ListNode extends Node {
   }
   ["list-serialize"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveObj(def, context, r => {
-      const listSel = String(r["list-serialize"]);
+      const listSel = String(r["$list-serialize"]);
       const hiddenSel = String(r.to);
       const fields = (r.fields as string[]) || [];
 

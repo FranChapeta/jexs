@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import Ajv2020 from "ajv/dist/2020.js";
 import { buildPackageSchema, mergePackageSchemas, coreNodes } from "@jexs/core";
+import { clientNodes } from "@jexs/client";
+import { serverNodes } from "@jexs/server";
 import {
   AppNode, DialogNode, MenuNode, NotificationNode, ShellNode, ShortcutNode, TrayNode, WindowNode,
 } from "../src/index.js";
@@ -14,8 +16,13 @@ const electronNodeClasses = [
   WindowNode, DialogNode, AppNode, MenuNode, TrayNode, ShortcutNode, ShellNode, NotificationNode,
 ];
 
+// An Electron app is all of these: the main process runs the server nodes (`file`,
+// `query`) and `window-run` runs its steps in the renderer, where the DOM ops
+// live, so the examples name ops from both.
 const combined = mergePackageSchemas([
   buildPackageSchema(coreNodes(), "@jexs/core"),
+  buildPackageSchema(clientNodes(), "@jexs/client"),
+  buildPackageSchema(serverNodes(), "@jexs/server"),
   buildPackageSchema(electronNodeClasses.map((C) => new C()), "@jexs/electron"),
 ]);
 
@@ -63,28 +70,28 @@ test("every declared example validates against the combined schema", () => {
 });
 
 test("window-open accepts its declared siblings and expressions in them", () => {
-  assert.equal(validAt("$defs/exprFlat", { "window-open": "settings.json" }), true);
+  assert.equal(validAt("$defs/exprFlat", { "$window-open": "settings.json" }), true);
   assert.equal(
-    validAt("$defs/exprFlat", { "window-open": "settings.json", width: 480, height: 320, title: "S" }),
+    validAt("$defs/exprFlat", { "$window-open": "settings.json", width: 480, height: 320, title: "S" }),
     true,
   );
   // Siblings are resolved now, so an expression in one must validate.
   assert.equal(
-    validAt("$defs/exprFlat", { "window-open": "settings.json", width: { var: "$w" } }),
+    validAt("$defs/exprFlat", { "$window-open": "settings.json", width: { $var: "w" } }),
     true,
   );
   assert.equal(
-    validAt("$defs/exprFlat", { "window-open": "settings.json", name: "cfg", frame: false, titleBarStyle: "hidden" }),
+    validAt("$defs/exprFlat", { "$window-open": "settings.json", name: "cfg", frame: false, titleBarStyle: "hidden" }),
     true,
   );
   assert.equal(
-    validAt("$defs/exprFlat", { "window-open": "settings.json", titleBarStyle: "nonsense" }),
+    validAt("$defs/exprFlat", { "$window-open": "settings.json", titleBarStyle: "nonsense" }),
     false,
   );
 });
 
 // Opening is `window-open`, so `window` is free to be a target sibling. If the
-// open op still owned the bare `window` key, {"window": ..., "window-title": ...}
+// open op still owned the bare `window` key, {"window": ..., "$window-title": ...}
 // would dispatch on whichever key came first in the object.
 test("window is a sibling, not a handler key", () => {
   const byKey = (combined as unknown as { byKey: Record<string, unknown> }).byKey;
@@ -95,7 +102,7 @@ test("window is a sibling, not a handler key", () => {
 // time. The resolver dispatches on the first key it recognizes in an object, so a
 // sibling that is also a handler key silently hijacks the step whenever an author
 // happens to write it first. `menu` as a sibling on `tray` did exactly that:
-// { "menu": [...], "tray": "icon.png" } set the application menu and never made
+// { "$menu": [...], "tray": "icon.png" } set the application menu and never made
 // the tray. Siblings must not shadow any dispatch key, in this package or core.
 test("no sibling anywhere shadows a handler key", () => {
   const byKey = (combined as unknown as { byKey: Record<string, unknown> }).byKey;
@@ -123,44 +130,44 @@ test("no-arg window ops accept a name or true", () => {
 });
 
 test("valued window ops target through the window sibling", () => {
-  assert.equal(validAt("$defs/exprFlat", { "window-title": "Untitled" }), true);
+  assert.equal(validAt("$defs/exprFlat", { "$window-title": "Untitled" }), true);
   assert.equal(
-    validAt("$defs/exprFlat", { "window-title": "Untitled", window: "settings" }),
+    validAt("$defs/exprFlat", { "$window-title": "Untitled", window: "settings" }),
     true,
   );
   assert.equal(
-    validAt("$defs/exprFlat", { "window-bounds": { width: 900, height: 600 }, window: "main" }),
+    validAt("$defs/exprFlat", { "$window-bounds": { width: 900, height: 600 }, window: "main" }),
     true,
   );
 });
 
 test("dialog-open constrains properties to the known enum", () => {
   assert.equal(
-    validAt("$defs/exprFlat", { "dialog-open": "Open", properties: ["openFile"] }),
+    validAt("$defs/exprFlat", { "$dialog-open": "Open", properties: ["openFile"] }),
     true,
   );
   assert.equal(
-    validAt("$defs/exprFlat", { "dialog-open": "Open", properties: ["notAProperty"] }),
+    validAt("$defs/exprFlat", { "$dialog-open": "Open", properties: ["notAProperty"] }),
     false,
   );
 });
 
 test("dialog-message constrains type to the known enum", () => {
-  assert.equal(validAt("$defs/exprFlat", { "dialog-message": "Hi", type: "question" }), true);
-  assert.equal(validAt("$defs/exprFlat", { "dialog-message": "Hi", type: "banana" }), false);
+  assert.equal(validAt("$defs/exprFlat", { "$dialog-message": "Hi", type: "question" }), true);
+  assert.equal(validAt("$defs/exprFlat", { "$dialog-message": "Hi", type: "banana" }), false);
 });
 
 // The _menuItem $ref is recursive and shared: MenuNode contributes it and
 // TrayNode only references it. A duplicate contribution is a silently skipped
 // collision, so a broken ref shows up as items failing to validate, not an error.
 test("menu items validate through arbitrary nesting", () => {
-  assert.equal(validAt("$defs/exprFlat", { menu: [{ label: "File" }] }), true);
+  assert.equal(validAt("$defs/exprFlat", { $menu: [{ label: "File" }] }), true);
   assert.equal(
     validAt("$defs/exprFlat", {
-      menu: [{
+      $menu: [{
         label: "File",
         submenu: [
-          { label: "Open", accelerator: "CmdOrCtrl+O", do: [{ "dialog-open": "Pick" }] },
+          { label: "Open", accelerator: "CmdOrCtrl+O", do: [{ "$dialog-open": "Pick" }] },
           { type: "separator" },
           { label: "Recent", submenu: [{ label: "Deep", submenu: [{ role: "quit" }] }] },
         ],
@@ -171,33 +178,33 @@ test("menu items validate through arbitrary nesting", () => {
 });
 
 test("menu items reject a mistyped field, which is the point of the strict shape", () => {
-  assert.equal(validAt("$defs/exprFlat", { menu: [{ lable: "File" }] }), false);
-  assert.equal(validAt("$defs/exprFlat", { menu: [{ label: "X", role: "notARole" }] }), false);
-  assert.equal(validAt("$defs/exprFlat", { menu: [{ label: "X", type: "notAType" }] }), false);
+  assert.equal(validAt("$defs/exprFlat", { $menu: [{ lable: "File" }] }), false);
+  assert.equal(validAt("$defs/exprFlat", { $menu: [{ label: "X", role: "notARole" }] }), false);
+  assert.equal(validAt("$defs/exprFlat", { $menu: [{ label: "X", type: "notAType" }] }), false);
 });
 
 test("tray reuses the same item shape as menu", () => {
   assert.equal(
     validAt("$defs/exprFlat", {
-      tray: "assets/icon.png",
+      $tray: "assets/icon.png",
       tooltip: "App",
       items: [{ label: "Quit", role: "quit" }],
     }),
     true,
   );
   assert.equal(
-    validAt("$defs/exprFlat", { tray: "assets/icon.png", items: [{ lable: "Quit" }] }),
+    validAt("$defs/exprFlat", { $tray: "assets/icon.png", items: [{ lable: "Quit" }] }),
     false,
   );
 });
 
 test("shortcut takes an accelerator with do steps", () => {
   assert.equal(
-    validAt("$defs/exprFlat", { shortcut: "CommandOrControl+K", do: [{ "window-focus": "main" }] }),
+    validAt("$defs/exprFlat", { $shortcut: "CommandOrControl+K", do: [{ "$window-focus": "main" }] }),
     true,
   );
-  assert.equal(validAt("$defs/exprFlat", { "shortcut-remove": true }), true);
-  assert.equal(validAt("$defs/exprFlat", { "shortcut-remove": "CommandOrControl+K" }), true);
+  assert.equal(validAt("$defs/exprFlat", { "$shortcut-remove": true }), true);
+  assert.equal(validAt("$defs/exprFlat", { "$shortcut-remove": "CommandOrControl+K" }), true);
 });
 
 test("no electron key collides with a core key", () => {

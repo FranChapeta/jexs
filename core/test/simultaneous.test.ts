@@ -27,9 +27,9 @@ test("each resolver dispatches only its own keys", () => {
   const a = createResolver([...coreNodes(), markerNode("A")]);
   const b = createResolver(coreNodes());
 
-  assert.equal(a({ op: 1 }, {}), "A");
-  // b has no `op` handler, so the object is walked as plain data, not dispatched.
-  assert.deepEqual(b({ op: 1 }, {}), { op: 1 });
+  assert.equal(a({ $op: 1 }, {}), "A");
+  // b has no `op` handler, so `$op` names an op it does not know.
+  assert.throws(() => b({ $op: 1 }, {}), /Unknown op "\$op"/);
   assert.equal(a.keys.has("op"), true);
   assert.equal(b.keys.has("op"), false);
 });
@@ -40,8 +40,8 @@ test("nested dispatch stays with the resolver the flow started in", async () => 
   const a = createResolver([...coreNodes(), markerNode("A")]);
   const b = createResolver([...coreNodes(), markerNode("B")]);
 
-  assert.equal(await a({ concat: ["x:", { op: 1 }] }, {}), "x:A");
-  assert.equal(await b({ concat: ["x:", { op: 1 }] }, {}), "x:B");
+  assert.equal(await a({ $concat: ["x:", { $op: 1 }] }, {}), "x:A");
+  assert.equal(await b({ $concat: ["x:", { $op: 1 }] }, {}), "x:B");
 });
 
 test("a child scope inherits its resolver, and a worker-style clone does not", () => {
@@ -49,16 +49,16 @@ test("a child scope inherits its resolver, and a worker-style clone does not", (
   const a = createResolver([...coreNodes(), markerNode("A")], { context: ctx });
 
   // Spread and childContext both carry the resolver: the key is an enumerable symbol.
-  assert.equal(resolve({ op: 1 }, { ...ctx }), "A");
+  assert.equal(resolve({ $op: 1 }, { ...ctx }), "A");
   // structuredClone drops symbols, which is what keeps a context crossing to a
   // worker from dragging a main-thread resolver with it.
-  assert.throws(() => resolve({ op: 1 }, structuredClone(ctx) as Context), /No resolver/);
+  assert.throws(() => resolve({ $op: 1 }, structuredClone(ctx) as Context), /No resolver/);
 });
 
 test("a context that never crossed a resolver is a named error, not a silent no-op", () => {
   createResolver(coreNodes());
-  assert.throws(() => resolve({ concat: ["a"] }, {}), /No resolver for this context/);
-  assert.throws(() => runSteps([{ concat: ["a"] }], {}), /No resolver for this context/);
+  assert.throws(() => resolve({ $concat: ["a"] }, {}), /No resolver for this context/);
+  assert.throws(() => runSteps([{ $concat: ["a"] }], {}), /No resolver for this context/);
 });
 
 test("handing one live context to a second resolver is refused", () => {
@@ -66,9 +66,9 @@ test("handing one live context to a second resolver is refused", () => {
   const a = createResolver(coreNodes(), { context: ctx });
   const b = createResolver(coreNodes());
 
-  assert.throws(() => b.resolve({ concat: ["x"] }, ctx), /already running in another resolver/);
+  assert.throws(() => b.resolve({ $concat: ["x"] }, ctx), /already running in another resolver/);
   // Re-entering the SAME resolver is fine, so repeated entry calls work.
-  assert.doesNotThrow(() => a.resolve({ concat: ["x"] }, ctx));
+  assert.doesNotThrow(() => a.resolve({ $concat: ["x"] }, ctx));
 });
 
 // `then` defers the work to a microtask and runs its continuation later. The old
@@ -79,8 +79,8 @@ test("a fire-and-forget continuation stays with its own resolver", async () => {
   const a = createResolver([...coreNodes(), markerNode("A")], { context: ctx });
 
   const out = await a.runSteps([
-    { sleep: 10, then: [{ setVars: { landed: { op: 1 } }, bubble: true }] },
-    { concat: ["next"] },
+    { $sleep: 10, $then: [{ $setVars: { landed: { $op: 1 } }, $bubble: true }] },
+    { $concat: ["next"] },
   ], ctx);
   assert.equal(out, "next");
 
@@ -99,7 +99,7 @@ test("destroying one resolver leaves the other dispatching", () => {
 
   assert.equal(a.destroyed, true);
   assert.equal(b.destroyed, false);
-  assert.equal(b({ op: 1 }, {}), "B");
+  assert.equal(b({ $op: 1 }, {}), "B");
   assert.equal(b.keys.has("op"), true);
 });
 
@@ -115,12 +115,12 @@ test("lazy keys and their loaders are per resolver", async () => {
   a.registerLazy(["op"], make("A"));
   b.registerLazy(["op"], make("B"));
 
-  assert.equal(await a({ op: 1 }, {}), "A");
+  assert.equal(await a({ $op: 1 }, {}), "A");
   assert.deepEqual(loaded, ["A"], "only the resolver that was used loaded its module");
   assert.equal(a.nodeFor("op") !== undefined, true);
   assert.equal(b.nodeFor("op"), undefined, "the other resolver still has it only as lazy");
 
-  assert.equal(await b({ op: 1 }, {}), "B");
+  assert.equal(await b({ $op: 1 }, {}), "B");
 });
 
 // TimerNode keys its registries by a template-supplied id, so two resolvers
@@ -132,7 +132,7 @@ test("timers belong to their own resolver and survive another's teardown", async
   const a = createResolver(coreNodes(), { context: ctxA });
   const b = createResolver(coreNodes(), { context: ctxB });
 
-  const start = { tick: "start", id: "shared", rate: 60, do: [{ setVars: { hits: { add: [{ var: "$hits" }, 1] } }, bubble: true }] };
+  const start = { $tick: "start", id: "shared", rate: 60, do: [{ $setVars: { hits: { $add: [{ $var: "hits" }, 1] } }, $bubble: true }] };
   a.resolve(start, ctxA);
   b.resolve(start, ctxB);
 
@@ -156,15 +156,15 @@ test("a random seed set in one resolver does not reach the other", () => {
   const a = createResolver(coreNodes());
   const b = createResolver(coreNodes());
 
-  a({ randomSeed: 42 }, {});
-  const first = a({ random: 1000000 }, {});
+  a({ $randomSeed: 42 }, {});
+  const first = a({ $random: 1000000 }, {});
 
   // Re-seed A, then draw from B before drawing from A again. B's draw is the
   // discriminator: on a shared stream it advances the seed and A's next value
   // moves. Asserting only that A alone is reproducible would pass either way.
-  a({ randomSeed: 42 }, {});
-  b({ random: 1000000 }, {});
-  const again = a({ random: 1000000 }, {});
+  a({ $randomSeed: 42 }, {});
+  b({ $random: 1000000 }, {});
+  const again = a({ $random: 1000000 }, {});
 
   assert.equal(again, first, "B's draw must not advance A's seeded stream");
 });

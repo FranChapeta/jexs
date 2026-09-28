@@ -29,8 +29,8 @@ const DEFAULT_IDLE_MS = 10_000;
  * crosses, and the worker's context); `ArrayBuffer`s inside it transfer
  * zero-copy. The node returns the worker's result as a Promise, so it can be
  * awaited, collected (e.g. under `map`/`foreach parallel`), or made
- * fire-and-forget with the universal `then` continuation (which runs on the
- * calling — main — thread with `$result` bound).
+ * fire-and-forget with the universal `$then` continuation (which runs on the
+ * calling — main — thread with `result` bound).
  *
  * `makeWorker` is the env seam (browser `Worker` / Node `worker_threads`); null
  * means no worker is available and the steps run inline on the main thread, so
@@ -40,14 +40,14 @@ export class WorkerNode extends Node {
   static schema: JexsNodeSchema = {
     thread: {
       output: "any",
-      markdownDescription: "Runs the `do` steps on another thread (off the main thread), keeping the main thread responsive. The value names the thread: the SAME name shares one warm worker (work time-shares that one CPU), DIFFERENT names run on parallel threads. `params` is the only data that crosses and becomes the worker's context (`$x`); `ArrayBuffer`s in `params` transfer zero-copy (and detach on the sender). The node resolves to the worker's result, so collect N at once with `{ map, parallel: true, do: { thread } }`, or add the universal `then` to make the call FIRE-AND-FORGET (returns immediately; `then` runs on the main thread with `$result`). Note: a worker has no DOM/`window`/`localStorage`/WebGL, so it is for compute, `fetch`, and crypto. `thread` is a MAIN-thread node: don't nest it inside another `thread`'s `do` (it isn't available there). For parallelism use sibling threads from the main thread, e.g. `{ map, parallel: true, do: { thread } }`.",
-      outputDescription: "The worker's result (a Promise the resolver awaits). Errors run the `catch` array with `$error` bound, like any node.",
+      markdownDescription: "Runs the `do` steps on another thread (off the main thread), keeping the main thread responsive. The value names the thread: the SAME name shares one warm worker (work time-shares that one CPU), DIFFERENT names run on parallel threads. `params` is the only data that crosses and becomes the worker's context (`x`); `ArrayBuffer`s in `params` transfer zero-copy (and detach on the sender). The node resolves to the worker's result, so collect N at once with `{ $map, parallel: true, do: { $thread } }`, or add the universal `$then` to make the call FIRE-AND-FORGET (returns immediately; `$then` runs on the main thread with `result`). Note: a worker has no DOM/`window`/`localStorage`/WebGL, so it is for compute, `fetch`, and crypto. `thread` is a MAIN-thread node: don't nest it inside another `thread`'s `do` (it isn't available there). For parallelism use sibling threads from the main thread, e.g. `{ $map, parallel: true, do: { $thread } }`.",
+      outputDescription: "The worker's result (a Promise the resolver awaits). Errors run the `$catch` array with `error` bound, like any node.",
       examples: [
-        "{ \"thread\": \"hash\", \"params\": { \"bytes\": { \"var\": \"$bytes\" } }, \"do\": [ { \"hash\": { \"var\": \"$bytes\" } } ] }",
+        "{ \"$thread\": \"hash\", \"params\": { \"bytes\": { \"$var\": \"bytes\" } }, \"do\": [ { \"$hash\": { \"$var\": \"bytes\" } } ] }",
       ],
       siblings: {
         params: {
-          description: "Object passed to the thread: the ONLY data that crosses, and the worker's context (its keys become `$key`). `ArrayBuffer` values transfer zero-copy (detaching the source). Must be structured-cloneable (no DOM nodes, functions, class instances).",
+          description: "Object passed to the thread: the ONLY data that crosses, and the worker's context (its keys become `key`). `ArrayBuffer` values transfer zero-copy (detaching the source). Must be structured-cloneable (no DOM nodes, functions, class instances).",
         },
         do: {
           description: "Steps to run on the thread, resolved against `params` as context.",
@@ -68,12 +68,12 @@ export class WorkerNode extends Node {
   }
 
   thread(def: Record<string, unknown>, context: Context): NodeValue {
-    const threadVal = def.thread;
+    const threadVal = def.$thread;
     const name = typeof threadVal === "string" ? threadVal : "default";
     const steps = Array.isArray(threadVal) ? threadVal : def.do;
     const idleMs = def.idle != null ? Number(def.idle) : DEFAULT_IDLE_MS;
 
-    // Resolve `params` on the main thread so `{var:$x}` etc. become concrete
+    // Resolve `params` on the main thread so `{$var:$x}` etc. become concrete
     // before they cross. The resolved object is the payload AND the worker's
     // context. Bare shorthand (no params) → empty context.
     return resolve(def.params ?? {}, context, (paramsRaw) => {
@@ -82,7 +82,7 @@ export class WorkerNode extends Node {
       // Fallback: no worker available → run inline on the main thread so the same
       // JSON works everywhere. Otherwise return the worker's Promise — the caller
       // may await it, collect it, or make it fire-and-forget via the universal
-      // `then` (which the resolver applies to this result).
+      // `$then` (which the resolver applies to this result).
       if (!this.makeWorker) return resolveSteps(steps, params as Context);
       return dispatchThread(this.makeWorker, name, steps, params, idleMs);
     });

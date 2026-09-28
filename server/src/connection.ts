@@ -23,7 +23,7 @@ export function redactUrl(raw: string): string {
 // ── TLS material ───────────────────────────────────────────────────────────────
 
 // The boolean spellings the `ssl`/`tls` FIELD accepts as text, for a value that
-// reaches it from `$env` as a string. Kept to the few that are actually written
+// reaches it from `env` as a string. Kept to the few that are actually written
 // — the schema lists exactly these as an enum, so what the editor offers and
 // what the runtime takes are the same set (the runtime also folds case).
 export const TLS_STRINGS = ["true", "false", "1", "0", "require", "disable"] as const;
@@ -34,15 +34,15 @@ const SECURE_VERSIONS = new Set(["TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"]);
 /**
  * Certificate material for the `ssl` / `tls` FIELD: PEM text, never a path.
  * Templates load the PEM the one way Jexs loads anything:
- *   [ { "file": "/certs/ca.pem", "raw": true, "as": "ca" },
- *     { "database": "connect", "url": "...", "ssl": { "ca": { "var": "$ca" } } } ]
+ *   [ { "$file": "/certs/ca.pem", "raw": true, "$as": "ca" },
+ *     { "$database": "connect", "url": "...", "ssl": { "ca": { "$var": "ca" } } } ]
  */
 function pemContent(value: unknown, field: string): string {
   const s = String(value).trim();
   if (s.includes("-----BEGIN")) return s;
   throw new Error(
     `TLS ${field} must be PEM content, not a path — load it first, e.g. ` +
-    `{ "file": "/path/to/${field}.pem", "raw": true, "as": "${field}" } then { "${field}": { "var": "$${field}" } }`,
+    `{ "$file": "/path/to/${field}.pem", "raw": true, "$as": "${field}" } then { "${field}": { "$var": "${field}" } }`,
   );
 }
 
@@ -83,12 +83,12 @@ function secureVersion(value: unknown): SecureVersion {
  * - `false` — plaintext. NOT expressible as an object (any object turns TLS on),
  *   so it is the only way to override a `sslmode` the url already set.
  * - a boolean-ish string (`"require"`, `"disable"`, `"1"`, `"off"`, ...) — the
- *   same two answers, for a value arriving from `$env` as text.
+ *   same two answers, for a value arriving from `env` as text.
  * - an object — `ca`/`cert`/`key` as PEM content, the rest passed through.
  *
  * A bare PEM string is deliberately NOT accepted. It would make `{ "ssl": {
- * "var": "$x" } }` mean two different things depending on the runtime type of
- * `$x` — options if it held an object, a CA if it held a string — so material
+ * "$var": "x" } }` mean two different things depending on the runtime type of
+ * `x` — options if it held an object, a CA if it held a string — so material
  * always goes under a named key.
  *
  * `undefined` means "not specified", which is distinct from `false`: it leaves
@@ -106,7 +106,7 @@ export function parseTls(value: unknown): boolean | TlsConfig | undefined {
     if (TLS_OFF.has(lower)) return false;
     const hint = s.includes("-----BEGIN")
       ? "certificate material goes under a key, e.g. { \"ca\": ... }"
-      : "load a certificate with { \"file\": \"/certs/ca.pem\", \"raw\": true, \"as\": \"ca\" } and pass { \"ca\": { \"var\": \"$ca\" } }";
+      : "load a certificate with { \"$file\": \"/certs/ca.pem\", \"raw\": true, \"$as\": \"ca\" } and pass { \"ca\": { \"$var\": \"ca\" } }";
     throw new Error(
       `"${s.slice(0, 40)}" is not a TLS setting — use an object, or one of ${TLS_STRINGS.join(", ")}; ${hint}`,
     );

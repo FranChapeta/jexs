@@ -14,11 +14,11 @@ import { defaultSwConfig } from "../sw.js";
  * ServerNode - Starts HTTP listeners from JSON.
  *
  * Usage:
- * { "listen": 3000, "do": [ ...per-request steps... ] }
- * { "listen": 3000, "client": true, "do": [...] }
- * { "listen": 3000, "client": "/assets/jexs", "do": [...] }
+ * { "$listen": 3000, "do": [ ...per-request steps... ] }
+ * { "$listen": 3000, "client": true, "do": [...] }
+ * { "$listen": 3000, "client": "/assets/jexs", "do": [...] }
  *
- * Bind additional ports by adding more `{ "listen": ..., "do": [...] }` steps: each is an
+ * Bind additional ports by adding more `{ "$listen": ..., "do": [...] }` steps: each is an
  * independent listener (its own `http.Server`) with its own `do`, `client`, `sw`, and
  * `maxBodySize`. Live listeners are kept on the node, so they belong to the resolver
  * that opened them, one physical `http.Server` per port.
@@ -242,14 +242,14 @@ async function handleRequest(
     };
 
     // Execute per-request steps sequentially. Two stop signals:
-    //   - a step that resolves to `{ return: X }` yields X and halts
+    //   - a step that resolves to `{ $return: X }` yields X and halts
     //   - a step that resolves to a response object halts
     let result: unknown = null;
     for (const step of listener.steps) {
       result = await resolve(step, context);
       await storeStepAs(step, result, context);
       if (isReturn(result)) {
-        result = (result as Record<string, unknown>).return ?? null;
+        result = (result as Record<string, unknown>).$return ?? null;
         break;
       }
       if (isResponse(result)) break;
@@ -319,16 +319,16 @@ async function handleRequest(
 /**
  * Honor the universal `"as"` key on a per-request step, mirroring core `runSteps`. The request
  * loop drives steps itself (to watch for response/return stop-signals) rather than going through
- * `runSteps`, so without this `{ "file": "routes.json", "as": "page" }` in a `listen.do` would
+ * `runSteps`, so without this `{ "$file": "routes.json", "$as": "page" }` in a `listen.do` would
  * resolve but never store `page`. Writes into the shared request context so later steps can read
- * `{ "var": "$page" }`.
+ * `{ "$var": "page" }`.
  */
 async function storeStepAs(step: unknown, value: unknown, context: Context): Promise<void> {
-  if (step && typeof step === "object" && !Array.isArray(step) && "as" in step) {
+  if (step && typeof step === "object" && !Array.isArray(step) && "$as" in step) {
     const s = step as Record<string, unknown>;
-    // `bubble` may be an expression — resolve it (mirrors core `storeAs`).
-    const bubble = "bubble" in s ? Node.toBooleanValue(await resolve(s.bubble, context)) : false;
-    Node.setContextValue(context, String(s.as), value, bubble);
+    // `$bubble` may be an expression: resolve it (mirrors core `storeAs`).
+    const bubble = "$bubble" in s ? Node.toBooleanValue(await resolve(s.$bubble, context)) : false;
+    Node.setContextValue(context, String(s.$as), value, bubble);
   }
 }
 
@@ -339,7 +339,7 @@ function isResponse(value: unknown): boolean {
 
 function isReturn(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  return "return" in (value as Record<string, unknown>);
+  return "$return" in (value as Record<string, unknown>);
 }
 
 /** Whether the response body is HTML (explicit or inferred from string content). */
@@ -748,9 +748,9 @@ export class ServerNode extends Node {
     listen: {
       type: "number",
       output: "null",
-      markdownDescription: "Starts an HTTP listener on the given port. Pass per-request steps in `\"do\"`.\nSet `\"client\": true` (or a path string) to auto-serve the `@jexs/client` browser bundle\nand inject the script tag into rendered `<head>` elements.\nSet `\"sw\"` to an object to enable service worker registration.\n\n**Multiple ports.** Bind more ports by adding more `{ \"listen\": ..., \"do\": [...] }` steps. Each is an independent listener with its own `do` pipeline, `client`, `sw`, and `maxBodySize`.\n\n**Per-request `do` execution.** The steps run in order against a fresh per-request context. The universal `\"as\"` key is honored (stored into the context for later steps), as is `setVars`. Two stop-signals halt the loop early: a step that resolves to `{ \"return\": X }` (yields `X`) or to a **response object** (a value with a `response` key).\n\n**Response object.** The final value becomes the HTTP response. A bare string is sent as `text/html`; any other bare value is sent as JSON. For full control return an object:\n- `response`: the body (string, or any JSON value for `responseType: \"json\"`). For `responseType: \"redirect\"` it is the `Location` URL.\n- `responseStatus`: HTTP status code (default `200`).\n- `responseType`: `\"html\"` | `\"json\"` | `\"text\"` | `\"redirect\"` | a literal MIME string (e.g. `\"image/png\"`). When omitted it is inferred: string → `html`, otherwise `json`.\n- `responseHeaders` / `responseHeader`: extra response headers (singular overrides plural on collision).",
+      markdownDescription: "Starts an HTTP listener on the given port. Pass per-request steps in `\"do\"`.\nSet `\"client\": true` (or a path string) to auto-serve the `@jexs/client` browser bundle\nand inject the script tag into rendered `<head>` elements.\nSet `\"sw\"` to an object to enable service worker registration.\n\n**Multiple ports.** Bind more ports by adding more `{ \"$listen\": ..., \"do\": [...] }` steps. Each is an independent listener with its own `do` pipeline, `client`, `sw`, and `maxBodySize`.\n\n**Per-request `do` execution.** The steps run in order against a fresh per-request context. The universal `\"as\"` key is honored (stored into the context for later steps), as is `setVars`. Two stop-signals halt the loop early: a step that resolves to `{ \"$return\": X }` (yields `X`) or to a **response object** (a value with a `response` key).\n\n**Response object.** The final value becomes the HTTP response. A bare string is sent as `text/html`; any other bare value is sent as JSON. For full control return an object:\n- `response`: the body (string, or any JSON value for `responseType: \"json\"`). For `responseType: \"redirect\"` it is the `Location` URL.\n- `responseStatus`: HTTP status code (default `200`).\n- `responseType`: `\"html\"` | `\"json\"` | `\"text\"` | `\"redirect\"` | a literal MIME string (e.g. `\"image/png\"`). When omitted it is inferred: string → `html`, otherwise `json`.\n- `responseHeaders` / `responseHeader`: extra response headers (singular overrides plural on collision).",
       examples: [
-        "{ \"listen\": 3000, \"client\": true, \"do\": [{ \"session\": \"load\" }, { \"routes\": { \"var\": \"$routes\" } }] }",
+        "{ \"$listen\": 3000, \"client\": true, \"do\": [{ \"$session\": \"load\" }, { \"$routes\": { \"$var\": \"routes\" } }] }",
         "{ \"response\": \"{\\\"ok\\\":true}\", \"responseType\": \"json\", \"responseStatus\": 201 }",
       ],
       siblings: {
@@ -781,7 +781,7 @@ export class ServerNode extends Node {
       return null;
     }
 
-    return resolveAll([def.listen, def.maxBodySize ?? null], context, async ([portRaw, maxBodyRaw]) => {
+    return resolveAll([def.$listen, def.maxBodySize ?? null], context, async ([portRaw, maxBodyRaw]) => {
       const port = Number(portRaw) || 3000;
 
       const listener: Listener = {
@@ -834,7 +834,7 @@ export class ServerNode extends Node {
 
       // Bind, and let the step fail rather than killing the process: a port clash
       // is this listener's failure, not the program's. Another resolver here may
-      // be serving happily, and the author can react with a `catch` like any
+      // be serving happily, and the author can react with a `$catch` like any
       // other step error.
       try {
         await new Promise<void>((res, rej) => {

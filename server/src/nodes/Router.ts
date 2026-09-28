@@ -10,8 +10,10 @@ import { validate } from "../validate.js";
  * parsed body. URL path params are matched and constrained structurally via
  * `paramName` / `paramRegex` at each route node, not by a handler schema.
  */
+/** A route leaf: a `$file` step (the router's `queryParams`/`body` ride along
+ *  as its own fields), or a `run` step list. */
 interface RouteHandler {
-  file?: unknown;
+  $file?: unknown;
   run?: unknown[];
   queryParams?: Record<string, unknown>;
   body?: Record<string, unknown>;
@@ -43,10 +45,10 @@ function isObject(value: unknown): value is Record<string, unknown> {
 /**
  * True when `value` is shaped like a route tree (has structural route-tree keys
  * at the top level). Used to bypass `resolve()` for literal trees — otherwise
- * the resolver would walk into them and eagerly evaluate `{ "file": "..." }`
+ * the resolver would walk into them and eagerly evaluate `{ "$file": "..." }`
  * leaves into rendered HTML before the matcher ever sees them.
  *
- * Expression values (e.g. `{ "var": "$routes" }`, `{ "file": "...", "data": true }`)
+ * Expression values (e.g. `{ "$var": "routes" }`, `{ "$file": "...", "data": true }`)
  * don't have these markers and still flow through `resolve()` below.
  */
 function isRouteTreeShape(value: unknown): value is RouteNode {
@@ -71,7 +73,7 @@ function getCachedRegex(pattern: string): RegExp {
  * Matches when definition has "routes" key:
  * {
  *   "routes": {
- *     "login": { "methods": { "GET": { "file": "..." } } },
+ *     "login": { "methods": { "GET": { "$file": "..." } } },
  *     "*": { "paramName": "id", "methods": { ... } }
  *   }
  * }
@@ -84,9 +86,9 @@ export class RouterNode extends Node {
     routes: {
       $ref: "#/$defs/_routesSlot",
       markdownDescription: "Matches the incoming request path and method against a route tree, then executes the handler.\nSupports exact segments, `*` (single param with optional `paramName`/`paramRegex`),\n`**` (catch-all), conditional `\"if\"` guards per node, and `queryParams`/`body` validation.\n\nA handler is a `file` to render or a `run` of steps, never both, or an expression resolving to one of those. A `WS` handler completes a WebSocket upgrade by calling `socket-accept` as a `run` step.",
-      outputDescription: "The matched handler's result. A `file`/`run` step that renders to a string is wrapped as `{ response: <html> }`; a handler that returns an object passes it through unchanged, as either a response envelope (`{ response, responseStatus, responseType, responseHeaders }`) or a bare JSON value. Throws a 404 HTTP error when no route matches, so use a catch-all route (`**`) or wrap calls in `catch` to handle not-found.",
+      outputDescription: "The matched handler's result. A `$file` step or `run` that renders to a string is wrapped as `{ response: <html> }`; a handler that returns an object passes it through unchanged, as either a response envelope (`{ response, responseStatus, responseType, responseHeaders }`) or a bare JSON value. Throws a 404 HTTP error when no route matches, so use a catch-all route (`**`) or wrap calls in `$catch` to handle not-found.",
       examples: [
-        "{ \"routes\": { \"children\": { \"users\": { \"methods\": { \"GET\": { \"file\": \"pages/users.json\" } } } } } }",
+        "{ \"$routes\": { \"children\": { \"users\": { \"methods\": { \"GET\": { \"$file\": \"pages/users.json\" } } } } } }",
       ],
     },
   };
@@ -124,8 +126,8 @@ export class RouterNode extends Node {
     _routeHandler: {
       type: "object",
       properties: {
-        // FileNode resolves this value, so it takes an expression too.
-        file:    { $ref: "#/$defs/strOrExpr" },
+        // The leaf is a FileNode step, resolved as one, so its path takes an expression too.
+        $file:   { $ref: "#/$defs/strOrExpr" },
         run:     { $ref: "#/$defs/steps" },
         // `queryParams`/`body` values are themselves JSON Schemas — describe them with
         // the 2020-12 meta-schema so editors give full JSON-Schema autocomplete
@@ -135,8 +137,8 @@ export class RouterNode extends Node {
       },
       // One node to an object: a handler is a template, a step list or a bare
       // expression, never two. A step list already covers both, file last:
-      //   { "run": [ { …, "as": "user" }, { "file": "pages/user.json" } ] }
-      not: { required: ["file", "run"] },
+      //   { "run": [ { …, "$as": "user" }, { "$file": "pages/user.json" } ] }
+      not: { required: ["$file", "run"] },
     },
     _jsonSchema: { $ref: "https://json-schema.org/draft/2020-12/schema" },
   };
@@ -163,20 +165,20 @@ export class RouterNode extends Node {
       // included, and takes the same path as an inline object.
       return resolve(handler, context, value => {
         if (!isHandlerShape(value)) {
-          throw createHttpError(500, `${method} ${path}: a route handler must be, or resolve to, a "file" or "run" object`);
+          throw createHttpError(500, `${method} ${path}: a route handler must be, or resolve to, a "$file" step or a "run" object`);
         }
         return executeHandler(value, context);
       }) as NodeValue;
     };
 
     // Fast path: the value is already a literal route tree. Skip resolve() —
-    // otherwise it would walk in and turn { "file": "..." } handler leaves
+    // otherwise it would walk in and turn { "$file": "..." } handler leaves
     // into rendered HTML before the matcher ever runs.
-    if (isRouteTreeShape(def.routes)) {
-      return dispatch(def.routes);
+    if (isRouteTreeShape(def.$routes)) {
+      return dispatch(def.$routes);
     }
-    // Expression path: e.g. { "var": "$routes" } or { "file": "routes.json", "data": true }.
-    return resolve(def.routes, context, dispatch);
+    // Expression path: e.g. { "$var": "routes" } or { "$file": "routes.json", "data": true }.
+    return resolve(def.$routes, context, dispatch);
   }
 }
 
@@ -395,7 +397,7 @@ function validateAgainstSchema(
  * them and the resolve below never reaches this function twice.
  */
 function isHandlerShape(value: unknown): value is RouteHandler {
-  return isObject(value) && (Array.isArray(value.run) || !!value.file);
+  return isObject(value) && (Array.isArray(value.run) || !!value.$file);
 }
 
 /**

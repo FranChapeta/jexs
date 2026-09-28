@@ -1,4 +1,4 @@
-import { createHttpError, GLOBAL_KEYS, ProxyNode } from "@jexs/core";
+import { createHttpError, GLOBAL_KEYS, ProxyNode, ownedKey } from "@jexs/core";
 import type { Context, Resolver } from "@jexs/core";
 
 /**
@@ -18,7 +18,7 @@ import type { Context, Resolver } from "@jexs/core";
 // Call transport (main -> renderer)
 //
 // `webContents.send` is fire-and-forget, but a proxied DOM op has to return a
-// value — `{ "getValue": "#editor", "as": "text" }` is useless otherwise. Each
+// value — `{ "$getValue": "#editor", "$as": "text" }` is useless otherwise. Each
 // message carries a correlation id and the renderer answers on `jexs:result`.
 // Errors travel back the same way, so a failing DOM op surfaces in main where
 // the developer is looking rather than in a renderer console nobody has open.
@@ -134,16 +134,16 @@ export interface BridgeHooks {
  *
  * Only OPS are checked -- keys the resolver would actually dispatch on. A
  * sibling is data belonging to its op, so `allow: ["query"]` covers
- * `{ "query": "select", "table": "saves" }` with nothing further to list.
+ * `{ "$query": "select", "table": "saves" }` with nothing further to list.
  * Requiring siblings too would be tedious and impossible to get right, since
  * they are declared by whichever package owns the op, not by the author.
  *
  * The walk is recursive because an op can sit at any depth: a sibling's VALUE is
- * itself resolved, so `{ "query": "x", "table": { "file": "/etc/passwd" } }`
+ * itself resolved, so `{ "$query": "x", "table": { "$file": "/etc/passwd" } }`
  * reaches FileNode during sibling resolution. Checking only the top level would
  * miss exactly the case the check exists for.
  *
- * Global step keys are skipped -- `as` and `catch` belong to the resolver rather
+ * Global step keys are skipped -- `$as` and `$catch` belong to the resolver rather
  * than to any node, and a node may own `then` as a sibling of its own.
  */
 export function deniedKey(
@@ -172,7 +172,8 @@ export function deniedKey(
     }
 
     for (const [key, child] of Object.entries(value)) {
-      if (!GLOBAL_KEYS.has(key) && isOp(key) && !allow.has(key)) return key;
+      const op = ownedKey(key);
+      if (op !== null && !GLOBAL_KEYS.has(op) && isOp(op) && !allow.has(op)) return op;
       const denied = walk(child);
       if (denied) return denied;
     }
@@ -229,7 +230,7 @@ export async function installBridge(hooks: BridgeHooks): Promise<void> {
   ipcMain.on("jexs:keys", (event) => { event.returnValue = localKeys(); });
 
   // The sender's window becomes the implicit target, so a page can say
-  // { "window-close": true } and mean its own window.
+  // { "$window-close": true } and mean its own window.
   ipcMain.handle("jexs:invoke", (event, call: unknown) => {
     const sender = BrowserWindow.fromWebContents(event.sender);
     const allow = hooks.allowedFor?.(sender) ?? null;

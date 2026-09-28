@@ -138,101 +138,101 @@ function validAt(ref: string, expr: unknown): boolean {
 
 // `foreach.item` is a string slot → routes nested expressions to exprFlat_string;
 // `foreach.parallel` is a boolean slot → exprFlat_boolean.
-const inItem = (e: unknown) => ({ foreach: [1], item: e, do: "y" });
-const inParallel = (e: unknown) => ({ foreach: [1], do: "y", parallel: e });
+const inItem = (e: unknown) => ({ $foreach: [1], item: e, do: "y" });
+const inParallel = (e: unknown) => ({ $foreach: [1], do: "y", parallel: e });
 
 test("sibling-mode: op resolves and validates as a plain expression", () => {
-  assert.equal(validAt("$defs/exprFlat", { fakesib: "x", toBool: "y" }), true);
-  assert.equal(validAt("$defs/exprFlat", { fakesib: "x", toArr2: "y" }), true);
+  assert.equal(validAt("$defs/exprFlat", { $fakesib: "x", toBool: "y" }), true);
+  assert.equal(validAt("$defs/exprFlat", { $fakesib: "x", toArr2: "y" }), true);
 });
 
 test("sibling-mode: boolean slot accepts the boolean variant but rejects the array one", () => {
-  assert.equal(validAt("$defs/exprFlat", inParallel({ fakesib: "x", toBool: "y" })), true);
-  assert.equal(validAt("$defs/exprFlat", inParallel({ fakesib: "x", toArr2: "y" })), false);
+  assert.equal(validAt("$defs/exprFlat", inParallel({ $fakesib: "x", toBool: "y" })), true);
+  assert.equal(validAt("$defs/exprFlat", inParallel({ $fakesib: "x", toArr2: "y" })), false);
 });
 
 test("string ops carry regex via /re/: replace (string-output) accepted, match (array) rejected in a string slot", () => {
-  assert.equal(validAt("$defs/exprFlat", inItem({ replace: ["a1", "/\\d/g", "#"] })), true);
-  assert.equal(validAt("$defs/exprFlat", inItem({ match: ["a1", "/\\d/g"] })), false);
+  assert.equal(validAt("$defs/exprFlat", inItem({ $replace: ["a1", "/\\d/g", "#"] })), true);
+  assert.equal(validAt("$defs/exprFlat", inItem({ $match: ["a1", "/\\d/g"] })), false);
 });
 
 test("value-mode: string slot accepts the string variant value, rejects the array one", () => {
-  assert.equal(validAt("$defs/exprFlat", inItem({ fakeval: "toStr" })), true);
-  assert.equal(validAt("$defs/exprFlat", inItem({ fakeval: "toArr" })), false);
+  assert.equal(validAt("$defs/exprFlat", inItem({ $fakeval: "toStr" })), true);
+  assert.equal(validAt("$defs/exprFlat", inItem({ $fakeval: "toArr" })), false);
 });
 
 test("fallback output: method `output` applies when no variant matches (FileNode `file` pattern)", () => {
   // No trigger sibling -> fallback `any` -> accepted in any typed slot.
-  assert.equal(validAt("$defs/exprFlat", inItem({ fakedef: "x" })), true);
-  assert.equal(validAt("$defs/exprFlat", inParallel({ fakedef: "x" })), true);
+  assert.equal(validAt("$defs/exprFlat", inItem({ $fakedef: "x" })), true);
+  assert.equal(validAt("$defs/exprFlat", inParallel({ $fakedef: "x" })), true);
   // `flag` present -> boolean variant -> accepted in a boolean slot, rejected in a string slot.
-  assert.equal(validAt("$defs/exprFlat", inParallel({ fakedef: "x", flag: "y" })), true);
-  assert.equal(validAt("$defs/exprFlat", inItem({ fakedef: "x", flag: "y" })), false);
+  assert.equal(validAt("$defs/exprFlat", inParallel({ $fakedef: "x", flag: "y" })), true);
+  assert.equal(validAt("$defs/exprFlat", inItem({ $fakedef: "x", flag: "y" })), false);
 });
 
 test("sibling value: a variant's siblings are typed and required under that value, refused under the others", () => {
-  assert.equal(validAt("$defs/exprFlat", { fakesv: "x", kind: "gated", size: 3 }), true);
-  assert.equal(validAt("$defs/exprFlat", { fakesv: "x", kind: "gated", size: "big" }), false);
-  assert.equal(validAt("$defs/exprFlat", { fakesv: "x", kind: "gated" }), false);
+  assert.equal(validAt("$defs/exprFlat", { $fakesv: "x", kind: "gated", size: 3 }), true);
+  assert.equal(validAt("$defs/exprFlat", { $fakesv: "x", kind: "gated", size: "big" }), false);
+  assert.equal(validAt("$defs/exprFlat", { $fakesv: "x", kind: "gated" }), false);
   // Exclusive: `size` belongs to `gated`, so another literal value refuses it, and an
   // expression-valued `kind` (which could be `gated`) does not.
-  assert.equal(validAt("$defs/exprFlat", { fakesv: "x", kind: "plain", size: 3 }), false);
-  assert.equal(validAt("$defs/exprFlat", { fakesv: "x", kind: { var: "$k" }, size: 3 }), true);
-  assert.equal(validAt("$defs/exprFlat", { fakesv: "x", kind: "nope" }), false);
+  assert.equal(validAt("$defs/exprFlat", { $fakesv: "x", kind: "plain", size: 3 }), false);
+  assert.equal(validAt("$defs/exprFlat", { $fakesv: "x", kind: { $var: "k" }, size: 3 }), true);
+  assert.equal(validAt("$defs/exprFlat", { $fakesv: "x", kind: "nope" }), false);
 });
 
 test("sibling value: a variant narrows the output, and an expression-valued sibling falls back", () => {
-  assert.equal(validAt("$defs/exprFlat", inParallel({ fakesv: "x", kind: "flag" })), true);
-  assert.equal(validAt("$defs/exprFlat", inItem({ fakesv: "x", kind: "flag" })), false);
-  assert.equal(validAt("$defs/exprFlat", inItem({ fakesv: "x" })), true);
-  assert.equal(validAt("$defs/exprFlat", inParallel({ fakesv: "x" })), false);
-  assert.equal(validAt("$defs/exprFlat", inItem({ fakesv: "x", kind: { var: "$k" } })), true);
+  assert.equal(validAt("$defs/exprFlat", inParallel({ $fakesv: "x", kind: "flag" })), true);
+  assert.equal(validAt("$defs/exprFlat", inItem({ $fakesv: "x", kind: "flag" })), false);
+  assert.equal(validAt("$defs/exprFlat", inItem({ $fakesv: "x" })), true);
+  assert.equal(validAt("$defs/exprFlat", inParallel({ $fakesv: "x" })), false);
+  assert.equal(validAt("$defs/exprFlat", inItem({ $fakesv: "x", kind: { $var: "k" } })), true);
 });
 
 test("sibling value: a boolean enum key selects the boolean value", () => {
-  assert.equal(validAt("$defs/exprFlat", inItem({ fakesv: "x", on: true })), false);
-  assert.equal(validAt("$defs/exprFlat", inItem({ fakesv: "x", on: false })), true);
+  assert.equal(validAt("$defs/exprFlat", inItem({ $fakesv: "x", on: true })), false);
+  assert.equal(validAt("$defs/exprFlat", inItem({ $fakesv: "x", on: false })), true);
 });
 
 test("covered enum: an expression-valued op still resolves to one of its ops' outputs", () => {
   // `fakeval`'s ops are string and array, so an op from an expression fits a
   // string slot but not a boolean one.
-  assert.equal(validAt("$defs/exprFlat", inItem({ fakeval: { var: "$op" } })), true);
-  assert.equal(validAt("$defs/exprFlat", inParallel({ fakeval: { var: "$op" } })), false);
+  assert.equal(validAt("$defs/exprFlat", inItem({ $fakeval: { $var: "op" } })), true);
+  assert.equal(validAt("$defs/exprFlat", inParallel({ $fakeval: { $var: "op" } })), false);
   // The same through a sibling: `choose` is number or boolean, whatever the expression.
-  assert.equal(validAt("$defs/exprFlat", inParallel({ fakesv: "x", choose: { var: "$p" } })), true);
-  assert.equal(validAt("$defs/exprFlat", inItem({ fakesv: "x", choose: { var: "$p" } })), false);
-  assert.equal(validAt("$defs/exprFlat", inItem({ fakesv: "x", choose: "b" })), false);
-  assert.equal(validAt("$defs/exprFlat", inParallel({ fakesv: "x", choose: "b" })), true);
+  assert.equal(validAt("$defs/exprFlat", inParallel({ $fakesv: "x", choose: { $var: "p" } })), true);
+  assert.equal(validAt("$defs/exprFlat", inItem({ $fakesv: "x", choose: { $var: "p" } })), false);
+  assert.equal(validAt("$defs/exprFlat", inItem({ $fakesv: "x", choose: "b" })), false);
+  assert.equal(validAt("$defs/exprFlat", inParallel({ $fakesv: "x", choose: "b" })), true);
 });
 
 test("output precedence: method variant, then siblings in declaration order, then inheritance", () => {
   // `wrap` (null) beats the `kind: "flag"` refinement (boolean).
-  assert.equal(validAt("$defs/exprFlat", inParallel({ fakesv: "x", wrap: true, kind: "flag" })), false);
+  assert.equal(validAt("$defs/exprFlat", inParallel({ $fakesv: "x", wrap: true, kind: "flag" })), false);
   // `kind` is declared before `on`, so it wins over `on: true` (array).
-  assert.equal(validAt("$defs/exprFlat", inParallel({ fakesv: "x", kind: "flag", on: true })), true);
+  assert.equal(validAt("$defs/exprFlat", inParallel({ $fakesv: "x", kind: "flag", on: true })), true);
   // `plainop` declares no output, so the sibling refinement still applies under it.
-  assert.equal(validAt("$defs/exprFlat", inParallel({ fakesv: "x", plainop: "y", kind: "flag" })), true);
-  assert.equal(validAt("$defs/exprFlat", inItem({ fakesv: "x", plainop: "y", kind: "flag" })), false);
+  assert.equal(validAt("$defs/exprFlat", inParallel({ $fakesv: "x", plainop: "y", kind: "flag" })), true);
+  assert.equal(validAt("$defs/exprFlat", inItem({ $fakesv: "x", plainop: "y", kind: "flag" })), false);
   // A presence variant under a sibling value, with no output, inherits the boolean.
-  assert.equal(validAt("$defs/exprFlat", inParallel({ fakesv: "x", kind: "flag", deep: "y" })), true);
+  assert.equal(validAt("$defs/exprFlat", inParallel({ $fakesv: "x", kind: "flag", deep: "y" })), true);
 });
 
 test("default: an omitted property selects its default value's variant", () => {
   // Omitted `verb` is `get`: `payload` belongs to `post` only.
-  assert.equal(validAt("$defs/exprFlat", { fakedv: "x", payload: 1 }), false);
-  assert.equal(validAt("$defs/exprFlat", { fakedv: "x", verb: "get", payload: 1 }), false);
-  assert.equal(validAt("$defs/exprFlat", { fakedv: "x", verb: "post", payload: 1 }), true);
-  assert.equal(validAt("$defs/exprFlat", { fakedv: "x", verb: "post", payload: "no" }), false);
-  assert.equal(validAt("$defs/exprFlat", { fakedv: "x", verb: { var: "$v" }, payload: 1 }), true);
+  assert.equal(validAt("$defs/exprFlat", { $fakedv: "x", payload: 1 }), false);
+  assert.equal(validAt("$defs/exprFlat", { $fakedv: "x", verb: "get", payload: 1 }), false);
+  assert.equal(validAt("$defs/exprFlat", { $fakedv: "x", verb: "post", payload: 1 }), true);
+  assert.equal(validAt("$defs/exprFlat", { $fakedv: "x", verb: "post", payload: "no" }), false);
+  assert.equal(validAt("$defs/exprFlat", { $fakedv: "x", verb: { $var: "v" }, payload: 1 }), true);
   // `head` resolves to null; omitted `verb` is not `head`, so the string output stands.
-  assert.equal(validAt("$defs/exprFlat", inItem({ fakedv: "x", verb: "head" })), false);
-  assert.equal(validAt("$defs/exprFlat", inItem({ fakedv: "x" })), true);
+  assert.equal(validAt("$defs/exprFlat", inItem({ $fakedv: "x", verb: "head" })), false);
+  assert.equal(validAt("$defs/exprFlat", inItem({ $fakedv: "x" })), true);
 });
 
 test("exclusive: false keeps a property's variant siblings open", () => {
-  assert.equal(validAt("$defs/exprFlat", { fakedv: "x", hint: "b", extra: 1 }), true);
-  assert.equal(validAt("$defs/exprFlat", { fakedv: "x", hint: "a", extra: "no" }), false);
+  assert.equal(validAt("$defs/exprFlat", { $fakedv: "x", hint: "b", extra: 1 }), true);
+  assert.equal(validAt("$defs/exprFlat", { $fakedv: "x", hint: "a", extra: "no" }), false);
 });
 
 test("a default outside the enum is rejected", () => {
@@ -243,15 +243,15 @@ test("a default outside the enum is rejected", () => {
 });
 
 test("presence variants nest under a sibling value", () => {
-  assert.equal(validAt("$defs/exprFlat", { fakesv: "x", kind: "flag", deep: "y", depth: 2 }), true);
-  assert.equal(validAt("$defs/exprFlat", { fakesv: "x", kind: "flag", deep: "y", depth: "no" }), false);
-  assert.equal(validAt("$defs/exprFlat", { fakesv: "x", kind: "plain", deep: "y", depth: 2 }), false);
+  assert.equal(validAt("$defs/exprFlat", { $fakesv: "x", kind: "flag", deep: "y", depth: 2 }), true);
+  assert.equal(validAt("$defs/exprFlat", { $fakesv: "x", kind: "flag", deep: "y", depth: "no" }), false);
+  assert.equal(validAt("$defs/exprFlat", { $fakesv: "x", kind: "plain", deep: "y", depth: 2 }), false);
 });
 
 test("a sibling's presence-selected variants apply only alongside that sibling", () => {
-  assert.equal(validAt("$defs/exprFlat", { fakesv: "x", mode: "m", verbose: true, level: 2 }), true);
-  assert.equal(validAt("$defs/exprFlat", { fakesv: "x", mode: "m", verbose: true, level: "hi" }), false);
-  assert.equal(validAt("$defs/exprFlat", { fakesv: "x", verbose: true, level: "hi" }), true);
+  assert.equal(validAt("$defs/exprFlat", { $fakesv: "x", mode: "m", verbose: true, level: 2 }), true);
+  assert.equal(validAt("$defs/exprFlat", { $fakesv: "x", mode: "m", verbose: true, level: "hi" }), false);
+  assert.equal(validAt("$defs/exprFlat", { $fakesv: "x", verbose: true, level: "hi" }), true);
   const docs = buildPackageSchema([new FakeSibValueNode()]).siblingDocs?.fakesv ?? [];
   assert.deepEqual(docs.find(d => d.name === "verbose")?.when, [{ key: "mode" }]);
   assert.deepEqual(docs.find(d => d.name === "level")?.when, [{ key: "mode" }, { key: "verbose" }]);
@@ -296,22 +296,22 @@ test("variants the build cannot select are rejected", () => {
 });
 
 test("flat-output methods are unaffected (string slot still rejects boolean output)", () => {
-  assert.equal(validAt("$defs/exprFlat", inItem({ eq: [1, 1] })), false);
-  assert.equal(validAt("$defs/exprFlat", inItem({ var: "$dynamic" })), true);
+  assert.equal(validAt("$defs/exprFlat", inItem({ $eq: [1, 1] })), false);
+  assert.equal(validAt("$defs/exprFlat", inItem({ $var: "dynamic" })), true);
 });
 
 // The runtime (`buildEventsAttr`) wraps a non-array `do` into a one-step array,
 // so a handler's `do` accepts either a step array OR a single expression.
-const withDo = (d: unknown) => ({ tag: "button", events: { click: { do: d } } });
+const withDo = (d: unknown) => ({ $tag: "button", events: { click: { do: d } } });
 
 test("event handler `do` accepts a step array", () => {
-  assert.equal(validAt("$defs/_eventHandler", { do: [{ var: "$x" }] }), true);
-  assert.equal(validAt("$defs/exprFlat", withDo([{ var: "$x" }])), true);
+  assert.equal(validAt("$defs/_eventHandler", { do: [{ $var: "x" }] }), true);
+  assert.equal(validAt("$defs/exprFlat", withDo([{ $var: "x" }])), true);
 });
 
 test("event handler `do` accepts a single expression", () => {
-  assert.equal(validAt("$defs/_eventHandler", { do: { var: "$x" } }), true);
-  assert.equal(validAt("$defs/exprFlat", withDo({ var: "$x" })), true);
+  assert.equal(validAt("$defs/_eventHandler", { do: { $var: "x" } }), true);
+  assert.equal(validAt("$defs/exprFlat", withDo({ $var: "x" })), true);
 });
 
 test("event handler `do` rejects a bare primitive (a no-op step)", () => {
@@ -320,27 +320,27 @@ test("event handler `do` rejects a bare primitive (a no-op step)", () => {
 });
 
 test("then: fire-and-forget (no `if`) is rejected in a typed value slot but valid as a step/expression", () => {
-  const fireAndForget = { concat: ["a"], then: [{ var: "$result" }] };
+  const fireAndForget = { $concat: ["a"], $then: [{ $var: "result" }] };
   // Nested in a string-typed slot: a `then` node resolves to null -> rejected.
   assert.equal(validAt("$defs/exprFlat", inItem(fireAndForget)), false);
   // As a plain step/expression position (untyped): allowed.
   assert.equal(validAt("$defs/exprFlat", fireAndForget), true);
   // `if/then/else` (the branch form, not fire-and-forget) is still allowed nested.
-  assert.equal(validAt("$defs/exprFlat", inItem({ if: true, then: "yes", else: "no" })), true);
+  assert.equal(validAt("$defs/exprFlat", inItem({ $if: true, then: "yes", else: "no" })), true);
 });
 
 test("then: a standalone continuation must be a step array", () => {
-  assert.equal(validAt("$defs/exprFlat", { concat: ["a"], then: [{ var: "$result" }] }), true);
-  assert.equal(validAt("$defs/exprFlat", { concat: ["a"], then: "nope" }), false);
+  assert.equal(validAt("$defs/exprFlat", { $concat: ["a"], $then: [{ $var: "result" }] }), true);
+  assert.equal(validAt("$defs/exprFlat", { $concat: ["a"], $then: "nope" }), false);
 });
 
-test("`bubble` is only valid alongside `as` or `setVars`", () => {
+test("`$bubble` is only valid alongside `as` or `setVars`", () => {
   // valid: modifies a write
-  assert.equal(validAt("$defs/exprFlat", { var: "$x", as: "x", bubble: true }), true);
-  assert.equal(validAt("$defs/exprFlat", { setVars: { x: 1 }, bubble: true }), true);
+  assert.equal(validAt("$defs/exprFlat", { $var: "x", $as: "x", $bubble: true }), true);
+  assert.equal(validAt("$defs/exprFlat", { $setVars: { x: 1 }, $bubble: true }), true);
   // invalid: nothing to bubble
-  assert.equal(validAt("$defs/exprFlat", { concat: ["a"], bubble: true }), false);
-  assert.equal(validAt("$defs/exprFlat", { bubble: true }), false);
+  assert.equal(validAt("$defs/exprFlat", { $concat: ["a"], $bubble: true }), false);
+  assert.equal(validAt("$defs/exprFlat", { $bubble: true }), false);
 });
 
 test("mergePackageSchemas leaves the package schemas it is given intact", () => {
@@ -355,7 +355,7 @@ test("mergePackageSchemas leaves the package schemas it is given intact", () => 
   // not contain. A second consumer of the same array (`jexs schema` writes
   // .jexs/schema.json from it) saw the gutted version.
   assert.deepEqual(pkg, before);
-  const primary = pkg.byKey.concat?.properties?.concat;
+  const primary = pkg.byKey.concat?.properties?.$concat;
   assert.ok(primary && !("$ref" in primary && Object.keys(primary).length === 1),
     "primary property should still carry its own schema, not a bare $ref");
 });

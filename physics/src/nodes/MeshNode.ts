@@ -2,11 +2,11 @@
  * MeshNode — GLB / GLTF import.
  *
  * Handlers:
- * - { "parseGLB": <ArrayBuffer | Uint8Array | Buffer>, "name"?: string }
+ * - { "$parseGLB": <ArrayBuffer | Uint8Array | Buffer>, "name"?: string }
  *     Parses a binary GLB file. Returns a `Scene` descriptor.
- * - { "parseGLTF": { "json": <object>, "buffers": <array | object> }, "name"?: string }
+ * - { "$parseGLTF": { "json": <object>, "buffers": <array | object> }, "name"?: string }
  *     Parses pre-loaded glTF JSON + sibling buffers. Returns a `Scene` descriptor.
- * - { "register-mesh": <MeshData> }
+ * - { "$register-mesh": <MeshData> }
  *     Inserts a MeshData into the active EntityStore's `meshes` map (env-aware:
  *     GL package patches an upload step in via subclassing/composition; here we
  *     just hold the CPU geometry + bounds).
@@ -639,7 +639,7 @@ export class MeshNode extends Node {
       output: "object",
       markdownDescription: "Parses a binary GLB buffer. Returns a `Scene` descriptor with deduped meshes\r\nand a flat node list. Pass `name` for stable, human-readable mesh ids.",
       examples: [
-        "{ \"parseGLB\": { \"var\": \"buf\" }, \"name\": \"duck\", \"as\": \"scene\" }",
+        "{ \"$parseGLB\": { \"$var\": \"buf\" }, \"name\": \"duck\", \"$as\": \"scene\" }",
       ],
       siblings: {
         name: {
@@ -653,7 +653,7 @@ export class MeshNode extends Node {
       output: "object",
       markdownDescription: "Parses pre-loaded glTF JSON + sibling buffers. Pass `buffers` as an array\r\n(matching `gltf.buffers[i]` order) or an object keyed by URI.",
       examples: [
-        "{ \"parseGLTF\": { \"json\": { \"var\": \"json\" }, \"buffers\": [{ \"var\": \"bin\" }] }, \"name\": \"duck\", \"as\": \"scene\" }",
+        "{ \"$parseGLTF\": { \"json\": { \"$var\": \"json\" }, \"buffers\": [{ \"$var\": \"bin\" }] }, \"name\": \"duck\", \"$as\": \"scene\" }",
       ],
       siblings: {
         name: {
@@ -667,7 +667,7 @@ export class MeshNode extends Node {
       output: "null",
       markdownDescription: "Registers a parsed mesh in the active EntityStore's `meshes` map. Idempotent:\nre-registering the same id is a no-op. GL extends this via `gl-register-mesh`,\nwhich additionally uploads the geometry to the GPU.",
       examples: [
-        "{ \"foreach\": { \"var\": \"scene.meshes\" }, \"item\": \"m\", \"do\": {\n    \"register-mesh\": { \"var\": \"m.id\" },\n    \"bounds\":    { \"var\": \"m.bounds\" },\n    \"positions\": { \"var\": \"m.positions\" },\n    \"normals\":   { \"var\": \"m.normals\" },\n    \"uvs\":       { \"var\": \"m.uvs\" },\n    \"indices\":   { \"var\": \"m.indices\" },\n    \"material\":  { \"var\": \"m.material\" }\n} }",
+        "{ \"$foreach\": { \"$var\": \"scene.meshes\" }, \"item\": \"m\", \"do\": {\n    \"$register-mesh\": { \"$var\": \"m.id\" },\n    \"bounds\":    { \"$var\": \"m.bounds\" },\n    \"positions\": { \"$var\": \"m.positions\" },\n    \"normals\":   { \"$var\": \"m.normals\" },\n    \"uvs\":       { \"$var\": \"m.uvs\" },\n    \"indices\":   { \"$var\": \"m.indices\" },\n    \"material\":  { \"$var\": \"m.material\" }\n} }",
       ],
       siblings: {
         bounds: {
@@ -693,7 +693,7 @@ export class MeshNode extends Node {
   };
 
   parseGLB(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def.parseGLB, def.name], context, async ([bufRaw, nameRaw]) => {
+    return resolveAll([def.$parseGLB, def.name], context, async ([bufRaw, nameRaw]) => {
       const bytes = toUint8(bufRaw);
       const { json, bin } = readGlb(bytes);
       const name = (nameRaw as string | undefined) ?? randomName();
@@ -704,7 +704,7 @@ export class MeshNode extends Node {
 
   parseGLTF(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveObj(def, context, async r => {
-      const arg = r["parseGLTF"] as Record<string, unknown> | undefined;
+      const arg = r["$parseGLTF"] as Record<string, unknown> | undefined;
       if (!arg) return null;
       const json = arg.json as Record<string, unknown>;
       if (!json) throw new Error("MeshNode parseGLTF: missing `json`");
@@ -720,7 +720,7 @@ export class MeshNode extends Node {
     return resolveObj(def, context, r => {
       const store = getStore(context);
       if (!store) return null;
-      const idRaw = r["register-mesh"];
+      const idRaw = r["$register-mesh"];
       if (idRaw == null) return null;
       const id = String(idRaw);
       if (store.meshes.has(id)) return id;

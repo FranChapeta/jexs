@@ -20,7 +20,7 @@ export class ShortcutNode extends Node {
         "Register a **system-wide** keyboard shortcut, which fires even when the app is not focused.\nFor shortcuts that should only work inside your own window, use a `keydown` handler in the page's `events` map instead — those do not steal the key from every other application.\nSteps run in the main process. Since a global shortcut usually fires while another app has focus, DOM ops inside them target the default window rather than the focused one.",
       outputDescription: "`true` if the OS accepted the registration. `false` means another application already owns that combination.",
       examples: [
-        "{ \"shortcut\": \"CommandOrControl+Shift+K\", \"do\": [{ \"window-focus\": \"main\" }] }",
+        "{ \"$shortcut\": \"CommandOrControl+Shift+K\", \"do\": [{ \"$window-focus\": \"main\" }] }",
       ],
       siblings: {
         do: { steps: true, description: "Steps run in the main process when the shortcut fires." },
@@ -30,13 +30,13 @@ export class ShortcutNode extends Node {
       type: ["string", "boolean"],
       output: "null",
       markdownDescription: "Unregister one accelerator, or every one when given `true`.",
-      examples: ["{ \"shortcut-remove\": \"CommandOrControl+Shift+K\" }", "{ \"shortcut-remove\": true }"],
+      examples: ["{ \"$shortcut-remove\": \"CommandOrControl+Shift+K\" }", "{ \"$shortcut-remove\": true }"],
     },
   };
 
   // `do` stays raw; only the accelerator resolves.
   shortcut(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.shortcut, context, async (value) => {
+    return resolve(def.$shortcut, context, async (value) => {
       const accelerator = typeof value === "string" ? value : "";
       if (!accelerator || !Array.isArray(def.do)) return false;
       const steps = def.do;
@@ -64,7 +64,7 @@ export class ShortcutNode extends Node {
   }
 
   ["shortcut-remove"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["shortcut-remove"], context, async (value) => {
+    return resolve(def["$shortcut-remove"], context, async (value) => {
       const { globalShortcut } = await import("electron");
       if (typeof value === "string" && value !== "") {
         globalShortcut.unregister(value);

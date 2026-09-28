@@ -44,23 +44,23 @@ npm install @jexs/server @jexs/core
 
 ```json
 [
-  { "database": "connect", "filename": "data.db" },
+  { "$database": "connect", "filename": "data.db" },
 
-  { "listen": 3000, "client": true, "do": [
-    { "session": "load" },
+  { "$listen": 3000, "client": true, "do": [
+    { "$session": "load" },
 
-    { "routes": {
-      "methods": { "GET": { "file": "pages/home.json" } },
+    { "$routes": {
+      "methods": { "GET": { "$file": "pages/home.json" } },
       "children": {
         "api": { "children": {
           "users": { "methods": {
             "GET": { "run": [
-              { "query": "select", "table": "users", "options": { "orderBy": { "id": "desc" }, "limit": 50 } }
+              { "$query": "select", "table": "users", "options": { "orderBy": { "id": "desc" }, "limit": 50 } }
             ] },
             "POST": {
               "body": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" } } },
               "run": [
-                { "query": "insert", "table": "users", "options": { "data": { "var": "$request.body" } } }
+                { "$query": "insert", "table": "users", "options": { "data": { "$var": "request.body" } } }
               ]
             }
           } }
@@ -70,7 +70,7 @@ npm install @jexs/server @jexs/core
           "*": {
             "paramName": "id",
             "paramRegex": "\\d+",
-            "methods": { "GET": { "file": "pages/user.json" } }
+            "methods": { "GET": { "$file": "pages/user.json" } }
           }
         } }
       }
@@ -79,7 +79,7 @@ npm install @jexs/server @jexs/core
 ]
 ```
 
-Routes are a tree, not flat path strings: `methods` handles the current path (keyed by HTTP verb), `children` nests path segments, `*` captures a single segment under `paramName` (constrained by an optional `paramRegex`), and `**` captures the remainder. A captured param is exposed to the handler as a top-level context var (`$id` above), the query string as `$request.query`, and the parsed body as `$request.body`. A handler is a `file` to render or a `run` of steps, not both, or an expression that resolves to one of those, and anything else is an error rather than a response. It may also declare `queryParams` and/or `body` JSON Schemas, validated against `$request.query` / `$request.body` and returning a 400 on failure.
+Routes are a tree, not flat path strings: `methods` handles the current path (keyed by HTTP verb), `children` nests path segments, `*` captures a single segment under `paramName` (constrained by an optional `paramRegex`), and `**` captures the remainder. A captured param is exposed to the handler as a top-level context var (`$id` above), the query string as `request.query`, and the parsed body as `request.body`. A handler is a `file` to render or a `run` of steps, not both, or an expression that resolves to one of those, and anything else is an error rather than a response. It may also declare `queryParams` and/or `body` JSON Schemas, validated against `request.query` / `request.body` and returning a 400 on failure.
 
 Run with the `jexs` CLI — it resolves the entry as steps, and each `listen` step in it binds a port (add more `listen` steps to serve more ports):
 
@@ -95,7 +95,7 @@ import { serverNodes } from "@jexs/server";
 
 const resolve = createResolver([...coreNodes(), ...serverNodes({ root: "app" })]);
 // resolves /index.json (anchored at the app/ root); its `listen` step(s) create the listeners
-await resolve({ file: "/index.json" }, { env: process.env });
+await resolve({ $file: "/index.json" }, { env: process.env });
 ```
 
 Or scaffold the whole thing with [`npm create @jexs my-app`](https://github.com/FranChapeta/jexs/tree/master/create).

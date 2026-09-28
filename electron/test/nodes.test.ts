@@ -3,11 +3,18 @@ import assert from "node:assert/strict";
 import { readdirSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { createResolver, coreNodes } from "@jexs/core";
+import { createResolver, coreNodes, Node } from "@jexs/core";
 // The option builders are internal, so they are imported from their modules
 // rather than widening the barrel (see CLAUDE.md: index.ts is public API only).
 import { browserWindowOptions, pageName, shellTemplate } from "../src/nodes/Window.js";
 import { messageBoxOptions, openDialogOptions } from "../src/nodes/Dialog.js";
+
+/** The shell mounts its page through FileNode, which lives in @jexs/server; this
+ *  stands in for the file read so the shell resolves with core alone. */
+class StubFileNode extends Node {
+  get handlerKeys() { return ["file"]; }
+  resolve() { return ""; }
+}
 
 const nodesDir = path.join(import.meta.dirname, "..", "src", "nodes");
 
@@ -62,18 +69,18 @@ test("browserWindowOptions: defaults, overrides, and a locked-down webPreference
 });
 
 // Siblings used to reach the handler unresolved, so an expression like
-// { "width": { "var": "$w" } } arrived as an object. The builders now receive
+// { "width": { "$var": "w" } } arrived as an object. The builders now receive
 // already-resolved values; anything still non-scalar is ignored rather than
 // coerced into a bogus dimension or title.
 test("browserWindowOptions ignores non-scalar leftovers instead of coercing them", () => {
-  const o = browserWindowOptions({ width: { var: "$w" }, title: { var: "$t" } });
+  const o = browserWindowOptions({ width: { $var: "w" }, title: { $var: "t" } });
   assert.equal(o.width, 1280);
   assert.equal(o.title, undefined);
 });
 
 test("openDialogOptions maps the primary value to title and filters junk", () => {
   const o = openDialogOptions({
-    "dialog-open": "Open save",
+    "$dialog-open": "Open save",
     defaultPath: "/tmp",
     properties: ["openFile", 7, "multiSelections"],
     filters: [
@@ -94,7 +101,7 @@ test("openDialogOptions omits everything absent", () => {
 
 test("messageBoxOptions maps the primary value to message and validates type", () => {
   const o = messageBoxOptions({
-    "dialog-message": "Quit game?",
+    "$dialog-message": "Quit game?",
     buttons: ["Cancel", "Quit"],
     title: "Confirm",
     detail: "Unsaved progress will be lost.",
@@ -113,13 +120,12 @@ test("messageBoxOptions maps the primary value to message and validates type", (
 // The window shell is a JSON Element tree rather than an HTML file, so it can be
 // resolved with a core-only resolver — a real SSR test with no Electron at all.
 test("shellTemplate resolves to a document with the page mounted and script injected", () => {
-  const resolve = createResolver(coreNodes());
+  const resolve = createResolver([...coreNodes(), new StubFileNode()]);
   const html = String(
     resolve(shellTemplate(), {
       title: "My App",
       page: "index.json",
       _clientScript: "/client.js",
-      // No FILE_DIR, so `{ file: ... }` yields null rather than reading disk.
     }),
   );
 
@@ -136,7 +142,7 @@ test("shellTemplate resolves to a document with the page mounted and script inje
 // The page is mounted into the body by the main process, so a stylesheet can
 // only reach the head by being handed to the shell.
 test("shellTemplate links the stylesheets it is given, in order", () => {
-  const resolve = createResolver(coreNodes());
+  const resolve = createResolver([...coreNodes(), new StubFileNode()]);
   const html = String(
     resolve(shellTemplate(["/styles.css", "/theme.css"]), { title: "My App", page: "index.json" }),
   );

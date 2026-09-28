@@ -38,7 +38,7 @@ export function resetMenus(): void {
  * Turn a JSON item tree into an Electron menu template.
  *
  * `do` and `submenu` are pulled out BEFORE resolving and never passed through
- * the resolver: resolving `do` in main would turn `{"setText": ...}` into a
+ * the resolver: resolving `do` in main would turn `{"$setText": ...}` into a
  * plain object, since main has no DOM handler for it, and the steps would be
  * silently destroyed rather than dispatched. Only the scalar fields resolve, so
  * a label or an enabled flag can still be an expression.
@@ -47,15 +47,15 @@ export async function buildMenuTemplate(
   items: unknown,
   context: Context,
   onClick: (
-    /** The raw JSON item, so a per-item `catch` can be honored. */
+    /** The raw JSON item, so a per-item `$catch` can be honored. */
     raw: Record<string, unknown>,
     steps: unknown[],
     item: Electron.MenuItem,
     win?: Electron.BaseWindow,
   ) => void,
 ): Promise<Electron.MenuItemConstructorOptions[]> {
-  // The tree itself may come from an expression — `{"var": "$menu"}`, or a
-  // `{"file": "menu.json", "data": true}` — so resolve the CONTAINER before
+  // The tree itself may come from an expression — `{"$var": "menu"}`, or a
+  // `{"$file": "menu.json", "data": true}` — so resolve the CONTAINER before
   // walking it. Only the container: resolving the items would destroy their
   // `do` steps, which is the whole reason this function exists. Note the file
   // case needs `data: true`, or FileNode resolves the tree as an expression and
@@ -123,10 +123,10 @@ export class MenuNode extends Node {
         checked: { type: "boolean", markdownDescription: "Tick state for a `checkbox` or `radio` item." },
         enabled: { type: "boolean", markdownDescription: "Set `false` to grey the item out." },
         visible: { type: "boolean", markdownDescription: "Set `false` to hide the item." },
-        id: { type: "string", markdownDescription: "Identifier, readable in the handler as `$menuId`." },
+        id: { type: "string", markdownDescription: "Identifier, readable in the handler as `menuId`." },
         submenu: { type: "array", items: { $ref: "#/$defs/_menuItem" }, markdownDescription: "Nested items." },
         do: { $ref: "#/$defs/steps", markdownDescription: "Steps run in the main process when the item is clicked." },
-        catch: { $ref: "#/$defs/steps", markdownDescription: "Steps run with `$error` bound if `do` fails. Without this a failure is only logged." },
+        $catch: { $ref: "#/$defs/steps", markdownDescription: "Steps run with `error` bound if `do` fails. Without this a failure is only logged." },
       },
       additionalProperties: false,
     },
@@ -138,10 +138,10 @@ export class MenuNode extends Node {
       items: { $ref: "#/$defs/_menuItem" },
       output: "null",
       markdownDescription:
-        "Set the native menu from a JSON item tree. Calling it again replaces the current menu, which is how you grey out an item or toggle a checkbox — there is no separate update op.\nWithout `window` this is the application menu. With it, the menu attaches to that window alone (on macOS, where the menu bar belongs to the app, the focused window's menu becomes the application menu).\n`do` steps run in the **main** process with `$menuLabel`, `$menuId` and `$menuChecked` bound; DOM ops inside them are forwarded to the window automatically.\nThe tree may be an expression instead of a literal — `{ \"var\": \"$menu\" }`, or a file. Load a file with `\"data\": true`, otherwise it is resolved as an expression and the `do` handlers are destroyed before they arrive.",
+        "Set the native menu from a JSON item tree. Calling it again replaces the current menu, which is how you grey out an item or toggle a checkbox — there is no separate update op.\nWithout `window` this is the application menu. With it, the menu attaches to that window alone (on macOS, where the menu bar belongs to the app, the focused window's menu becomes the application menu).\n`do` steps run in the **main** process with `menuLabel`, `menuId` and `menuChecked` bound; DOM ops inside them are forwarded to the window automatically.\nThe tree may be an expression instead of a literal — `{ \"$var\": \"menu\" }`, or a file. Load a file with `\"data\": true`, otherwise it is resolved as an expression and the `do` handlers are destroyed before they arrive.",
       examples: [
-        "{ \"menu\": [{ \"label\": \"File\", \"submenu\": [{ \"label\": \"Quit\", \"role\": \"quit\" }] }] }",
-        "{ \"menu\": { \"file\": \"menu.json\", \"data\": true } }",
+        "{ \"$menu\": [{ \"label\": \"File\", \"submenu\": [{ \"label\": \"Quit\", \"role\": \"quit\" }] }] }",
+        "{ \"$menu\": { \"$file\": \"menu.json\", \"data\": true } }",
       ],
       siblings: {
         window: {
@@ -158,7 +158,7 @@ export class MenuNode extends Node {
     return resolve(def.window ?? null, context, async (target) => {
       const { Menu, app } = await import("electron");
 
-      const template = await buildMenuTemplate(def.menu, context, (raw, steps, item, win) => {
+      const template = await buildMenuTemplate(def.$menu, context, (raw, steps, item, win) => {
         // Electron hands the click the window whose menu it was, so a nested DOM
         // op targets the right renderer with no author effort.
         const extra: Record<string, unknown> = {
@@ -170,7 +170,7 @@ export class MenuNode extends Node {
         if (name) extra.windowName = name;
         // A click fires long after the step that built the menu returned, so
         // the resolver is no longer around this call. runStepsDetached keeps the
-        // item's own `catch` working and stops a synchronous throw escaping.
+        // item's own `$catch` working and stops a synchronous throw escaping.
         runStepsDetached(steps, childContext(context, extra), raw).catch((err: unknown) => {
           console.error(`[MenuNode] "${String(item.label ?? item.id ?? "item")}" failed:`, err);
         });

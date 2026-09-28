@@ -69,13 +69,13 @@ afterEach(() => { globalThis.fetch = realFetch; });
 /** Load a name into the shared instance, so the play tests have a buffer. */
 async function load(name: string): Promise<void> {
   stubFetch("RIFFdata");
-  await resolve({ "audio-load": name, url: `/audio/${name}.wav` }, {});
+  await resolve({ "$audio-load": name, url: `/audio/${name}.wav` }, {});
 }
 
 test("audio-load: a missing file throws with the status, rather than a console line", async () => {
   stubFetch("", 404);
   await assert.rejects(
-    async () => { await resolve({ "audio-load": "shoot", url: "/audio/shoot.wav" }, {}); },
+    async () => { await resolve({ "$audio-load": "shoot", url: "/audio/shoot.wav" }, {}); },
     (err: Error & { status?: number }) => {
       assert.equal(err.status, 404);
       assert.match(err.message, /Audio "shoot" failed to load from \/audio\/shoot\.wav: 404/);
@@ -87,7 +87,7 @@ test("audio-load: a missing file throws with the status, rather than a console l
 test("audio-load: an undecodable file says so, and catch can see it", async () => {
   stubFetch("not audio at all");
   const out = await resolve(
-    { "audio-load": "broken", url: "/audio/broken.wav", catch: [{ var: "$error.message" }] },
+    { "$audio-load": "broken", url: "/audio/broken.wav", $catch: [{ $var: "error.message" }] },
     {},
   );
   assert.match(out as string, /Audio "broken" from \/audio\/broken\.wav could not be decoded: bad header/);
@@ -97,15 +97,15 @@ test("audio-load: an undecodable file says so, and catch can see it", async () =
 // twice in quick succession.
 test("audio-play: the same name overlaps by default", async () => {
   await load("shoot");
-  await resolve({ "audio-play": "shoot" }, {});
-  await resolve({ "audio-play": "shoot" }, {});
+  await resolve({ "$audio-play": "shoot" }, {});
+  await resolve({ "$audio-play": "shoot" }, {});
   assert.equal(FakeSource.playing().length, 2);
 });
 
 test("audio-play: restart stops what was already playing", async () => {
   await load("music");
-  await resolve({ "audio-play": "music", loop: true }, {});
-  await resolve({ "audio-play": "music", loop: true, restart: true }, {});
+  await resolve({ "$audio-play": "music", loop: true }, {});
+  await resolve({ "$audio-play": "music", loop: true, restart: true }, {});
   assert.equal(FakeSource.playing().length, 1);
   assert.equal(FakeSource.live[0].stopped, true);
   assert.equal(FakeSource.live[1].loop, true);
@@ -113,10 +113,10 @@ test("audio-play: restart stops what was already playing", async () => {
 
 test("audio-stop: stops every sound under the name", async () => {
   await load("shoot");
-  await resolve({ "audio-play": "shoot" }, {});
-  await resolve({ "audio-play": "shoot" }, {});
-  await resolve({ "audio-play": "shoot" }, {});
-  await resolve({ "audio-stop": "shoot" }, {});
+  await resolve({ "$audio-play": "shoot" }, {});
+  await resolve({ "$audio-play": "shoot" }, {});
+  await resolve({ "$audio-play": "shoot" }, {});
+  await resolve({ "$audio-stop": "shoot" }, {});
   assert.equal(FakeSource.playing().length, 0);
 });
 
@@ -129,9 +129,9 @@ function levelOf(source: FakeSource): FakeGain {
 
 test("audio-volume: one level for the name, shared by every sound under it", async () => {
   await load("shoot");
-  await resolve({ "audio-play": "shoot", volume: 1 }, {});
-  await resolve({ "audio-play": "shoot", volume: 1 }, {});
-  await resolve({ "audio-volume": "shoot", volume: 0.25 }, {});
+  await resolve({ "$audio-play": "shoot", volume: 1 }, {});
+  await resolve({ "$audio-play": "shoot", volume: 1 }, {});
+  await resolve({ "$audio-volume": "shoot", volume: 0.25 }, {});
 
   const [first, second] = FakeSource.playing();
   assert.equal(levelOf(first), levelOf(second));
@@ -142,15 +142,15 @@ test("audio-volume: one level for the name, shared by every sound under it", asy
 // before anything plays, and used to do nothing at all.
 test("audio-volume: set before anything plays, and it still applies", async () => {
   await load("music");
-  await resolve({ "audio-volume": "music", volume: 0.3 }, {});
-  await resolve({ "audio-play": "music" }, {});
+  await resolve({ "$audio-volume": "music", volume: 0.3 }, {});
+  await resolve({ "$audio-play": "music" }, {});
   assert.equal(levelOf(FakeSource.playing()[0]).gain.value, 0.3);
 });
 
 test("audio-volume: the level and the per-play volume multiply, they do not replace", async () => {
   await load("shoot");
-  await resolve({ "audio-volume": "shoot", volume: 0.5 }, {});
-  await resolve({ "audio-play": "shoot", volume: 0.8 }, {});
+  await resolve({ "$audio-volume": "shoot", volume: 0.5 }, {});
+  await resolve({ "$audio-play": "shoot", volume: 0.8 }, {});
   const source = FakeSource.playing()[0];
   // A deliberately quiet shot stays quiet relative to the chosen level: the
   // graph multiplies 0.8 through 0.5 rather than one winning.
@@ -160,10 +160,10 @@ test("audio-volume: the level and the per-play volume multiply, they do not repl
 
 test("audio-volume: a level survives the sounds it was set for", async () => {
   await load("shoot");
-  await resolve({ "audio-volume": "shoot", volume: 0.4 }, {});
-  await resolve({ "audio-play": "shoot" }, {});
-  await resolve({ "audio-stop": "shoot" }, {});
-  await resolve({ "audio-play": "shoot" }, {});
+  await resolve({ "$audio-volume": "shoot", volume: 0.4 }, {});
+  await resolve({ "$audio-play": "shoot" }, {});
+  await resolve({ "$audio-stop": "shoot" }, {});
+  await resolve({ "$audio-play": "shoot" }, {});
   assert.equal(levelOf(FakeSource.playing()[0]).gain.value, 0.4);
 });
 
@@ -171,22 +171,22 @@ test("audio-volume: a level survives the sounds it was set for", async () => {
 // them directly is what lets a load carry headers, credentials or a timeout.
 test("audio-load: takes bytes already in hand, in any of the byte shapes", async () => {
   const wav = new TextEncoder().encode("RIFFdata");
-  await resolve({ "audio-load": "a", content: { var: "$bytes" } }, { bytes: wav.buffer });
-  await resolve({ "audio-load": "b", content: { var: "$bytes" } }, { bytes: wav });
-  await resolve({ "audio-load": "c", content: { var: "$bytes" } }, { bytes: new Blob([wav]) });
-  await resolve({ "audio-play": "a" }, {});
-  await resolve({ "audio-play": "b" }, {});
-  await resolve({ "audio-play": "c" }, {});
+  await resolve({ "$audio-load": "a", content: { $var: "bytes" } }, { bytes: wav.buffer });
+  await resolve({ "$audio-load": "b", content: { $var: "bytes" } }, { bytes: wav });
+  await resolve({ "$audio-load": "c", content: { $var: "bytes" } }, { bytes: new Blob([wav]) });
+  await resolve({ "$audio-play": "a" }, {});
+  await resolve({ "$audio-play": "b" }, {});
+  await resolve({ "$audio-play": "c" }, {});
   assert.equal(FakeSource.playing().length, 3);
 });
 
 test("audio-load: needs one of url or content, and content must be bytes", async () => {
   await assert.rejects(
-    async () => { await resolve({ "audio-load": "nothing" }, {}); },
+    async () => { await resolve({ "$audio-load": "nothing" }, {}); },
     /Audio "nothing" needs a url to fetch or content to decode/,
   );
   await assert.rejects(
-    async () => { await resolve({ "audio-load": "wrong", content: "/audio/x.wav" }, {}); },
+    async () => { await resolve({ "$audio-load": "wrong", content: "/audio/x.wav" }, {}); },
     /Audio "wrong" content must be bytes/,
   );
 });
@@ -195,18 +195,18 @@ test("audio-load: needs one of url or content, and content must be bytes", async
 // under generated names grows for its whole life.
 test("audio-unload: forgets the sounds, the buffer and the level", async () => {
   await load("shoot");
-  await resolve({ "audio-volume": "shoot", volume: 0.4 }, {});
-  await resolve({ "audio-play": "shoot" }, {});
-  await resolve({ "audio-unload": "shoot" }, {});
+  await resolve({ "$audio-volume": "shoot", volume: 0.4 }, {});
+  await resolve({ "$audio-play": "shoot" }, {});
+  await resolve({ "$audio-unload": "shoot" }, {});
   assert.equal(FakeSource.playing().length, 0);
 
   // The buffer is gone, so playing again does nothing at all.
-  await resolve({ "audio-play": "shoot" }, {});
+  await resolve({ "$audio-play": "shoot" }, {});
   assert.equal(FakeSource.playing().length, 0);
 
   // And the level went with it: a reload starts at full, not at 0.4.
   await load("shoot");
-  await resolve({ "audio-play": "shoot" }, {});
+  await resolve({ "$audio-play": "shoot" }, {});
   assert.equal(levelOf(FakeSource.playing()[0]).gain.value, 1);
 });
 
@@ -214,9 +214,9 @@ test("dispose: closes the context and drops everything it held", async () => {
   const node = new AudioNode();
   const own = createResolver([...coreNodes(), node]);
   stubFetch("RIFFdata");
-  await own({ "audio-load": "theme", url: "/audio/theme.wav" }, {});
-  await own({ "audio-volume": "theme", volume: 0.5 }, {});
-  await own({ "audio-play": "theme", loop: true }, {});
+  await own({ "$audio-load": "theme", url: "/audio/theme.wav" }, {});
+  await own({ "$audio-volume": "theme", volume: 0.5 }, {});
+  await own({ "$audio-play": "theme", loop: true }, {});
 
   const graph = node.graph;
   assert.ok(graph, "expected a graph to have been built");
@@ -239,9 +239,9 @@ test("dispose: safe before anything was ever played", () => {
 
 test("a sound that ends on its own is forgotten", async () => {
   await load("shoot");
-  await resolve({ "audio-play": "shoot" }, {});
+  await resolve({ "$audio-play": "shoot" }, {});
   const source = FakeSource.live[FakeSource.live.length - 1];
   source.onended?.();
   // Stopping a name whose sounds all ended is a no-op, not a throw.
-  await resolve({ "audio-stop": "shoot" }, {});
+  await resolve({ "$audio-stop": "shoot" }, {});
 });

@@ -91,13 +91,13 @@ export function decrypt(self: CryptoNode, ciphertext: string): string {
  * Handles cryptographic operations (server-only, requires Node.js).
  *
  * Supported operations:
- * - { "hash": "password" }              -> "$2b$10$..." (bcrypt hash)
- * - { "hash": "password", "rounds": 12 } -> bcrypt with custom rounds
- * - { "verify": ["password", "$2b$..."] } -> true/false (bcrypt compare)
- * - { "randomHex": 32 }                 -> random hex string (32 bytes)
- * - { "sha256": "text" }                -> SHA-256 hex digest
- * - { "encrypt": "plaintext" }          -> AES-256-GCM encrypted string
- * - { "decrypt": "ciphertext" }         -> decrypted plaintext
+ * - { "$hash": "password" }              -> "$2b$10$..." (bcrypt hash)
+ * - { "$hash": "password", "rounds": 12 } -> bcrypt with custom rounds
+ * - { "$verify": ["password", "$2b$..."] } -> true/false (bcrypt compare)
+ * - { "$randomHex": 32 }                 -> random hex string (32 bytes)
+ * - { "$sha256": "text" }                -> SHA-256 hex digest
+ * - { "$encrypt": "plaintext" }          -> AES-256-GCM encrypted string
+ * - { "$decrypt": "ciphertext" }         -> decrypted plaintext
  */
 export class CryptoNode extends Node {
   static schema: JexsNodeSchema = {
@@ -107,7 +107,7 @@ export class CryptoNode extends Node {
       markdownDescription: "Computes the SHA-256 digest of a string. Pass `encoding` for `base64` or `base64url` instead of hex, which is what a digest going into a header or a URL wants.",
       outputDescription: "A 64-character lowercase hex string, or the digest in the requested `encoding`.",
       examples: [
-        "{ \"sha256\": { \"var\": \"$token\" } }",
+        "{ \"$sha256\": { \"$var\": \"token\" } }",
       ],
       siblings: {
         encoding: {
@@ -128,7 +128,7 @@ export class CryptoNode extends Node {
       markdownDescription: "Computes an HMAC of the message under the key. This is what verifies a signed webhook: recompute the signature over the raw body and compare it to the header the sender supplied, with `timingSafeEqual` rather than `eq`.",
       outputDescription: "The MAC in the requested `encoding` (hex by default).",
       examples: [
-        "{ \"hmac\": [{ \"var\": \"$request.rawBody\" }, { \"var\": \"$env.WEBHOOK_SECRET\" }], \"as\": \"expected\" }",
+        "{ \"$hmac\": [{ \"$var\": \"request.rawBody\" }, { \"$var\": \"env.WEBHOOK_SECRET\" }], \"$as\": \"expected\" }",
       ],
       siblings: {
         algorithm: {
@@ -155,7 +155,7 @@ export class CryptoNode extends Node {
       markdownDescription: "Compares two strings in constant time. Use it for anything secret: an `eq` on a token or a signature returns as soon as the first byte differs, and the time that takes tells an attacker how much of a guess was right.\n\nBoth sides are digested before comparing, so values of different lengths compare safely and the comparison leaks no length.",
       outputDescription: "`true` when the two are identical.",
       examples: [
-        "{ \"timingSafeEqual\": [{ \"var\": \"$request.headers.x-signature\" }, { \"var\": \"$expected\" }] }",
+        "{ \"$timingSafeEqual\": [{ \"$var\": \"request.headers.x-signature\" }, { \"$var\": \"expected\" }] }",
       ],
     },
     encrypt: {
@@ -164,7 +164,7 @@ export class CryptoNode extends Node {
       markdownDescription: "Encrypts a string with AES-256-GCM using the app secret key (`APP_SECRET` env or an auto-generated `app/secret.key`).",
       outputDescription: "A string `\"iv:authTag:ciphertext\"` (all hex). Pass it back to `decrypt` to recover the plaintext.",
       examples: [
-        "{ \"encrypt\": { \"var\": \"$token\" } }",
+        "{ \"$encrypt\": { \"$var\": \"token\" } }",
       ],
     },
     decrypt: {
@@ -173,7 +173,7 @@ export class CryptoNode extends Node {
       markdownDescription: "Decrypts a string previously produced by `encrypt` (expects `\"iv:authTag:ciphertext\"`, all hex).",
       outputDescription: "The original plaintext string. Throws if the format is malformed or the GCM auth tag fails to verify.",
       examples: [
-        "{ \"decrypt\": { \"var\": \"$stored\" } }",
+        "{ \"$decrypt\": { \"$var\": \"stored\" } }",
       ],
     },
     hash: {
@@ -182,7 +182,7 @@ export class CryptoNode extends Node {
       markdownDescription: "Hashes a password with bcrypt. Pass `\"rounds\"` for the cost factor (default 10).",
       outputDescription: "A bcrypt hash string (e.g. `$2b$10$…`), safe to store. Check it later with `verify`.",
       examples: [
-        "{ \"hash\": { \"var\": \"$body.password\" }, \"rounds\": 12 }",
+        "{ \"$hash\": { \"$var\": \"body.password\" }, \"rounds\": 12 }",
       ],
       siblings: {
         rounds: {
@@ -201,7 +201,7 @@ export class CryptoNode extends Node {
       markdownDescription: "Compares a plaintext password against a bcrypt hash.",
       outputDescription: "`true` if the password matches the hash, otherwise `false`.",
       examples: [
-        "{ \"verify\": [{ \"var\": \"$body.password\" }, { \"var\": \"$user.password_hash\" }] }",
+        "{ \"$verify\": [{ \"$var\": \"body.password\" }, { \"$var\": \"user.password_hash\" }] }",
       ],
     },
     randomHex: {
@@ -210,7 +210,7 @@ export class CryptoNode extends Node {
       markdownDescription: "Generates cryptographically random bytes (default 32).",
       outputDescription: "A hex string `2 × bytes` characters long.",
       examples: [
-        "{ \"randomHex\": 16 }",
+        "{ \"$randomHex\": 16 }",
       ],
     },
     uuid: {
@@ -219,7 +219,7 @@ export class CryptoNode extends Node {
       markdownDescription: "Generates a random (version 4) UUID. Use it for an id a database has not issued yet: an idempotency key, a correlation id, a row id chosen before the insert.",
       outputDescription: "A 36-character UUID, e.g. `\"3f8a1c2e-…\"`.",
       examples: [
-        "{ \"uuid\": true, \"as\": \"requestId\" }",
+        "{ \"$uuid\": true, \"$as\": \"requestId\" }",
       ],
     },
   };
@@ -235,7 +235,7 @@ export class CryptoNode extends Node {
   }
 
   sha256(def: Record<string, unknown>, context: Context) {
-    return resolveAll([def.sha256, def.encoding], context, ([value, encoding]) =>
+    return resolveAll([def.$sha256, def.encoding], context, ([value, encoding]) =>
       createHash("sha256")
         .update(this.toString(value))
         .digest(this.getOption(encoding, ENCODINGS, "sha256 encoding") ?? "hex"),
@@ -244,9 +244,9 @@ export class CryptoNode extends Node {
 
   hmac(def: Record<string, unknown>, context: Context) {
     // The tuple resolves before it is split, so the whole pair may come from one
-    // expression: `{ "hmac": { "var": "$signing" } }` is as valid as writing the
+    // expression: `{ "$hmac": { "$var": "signing" } }` is as valid as writing the
     // two values out.
-    return resolveAll([def.hmac, def.algorithm, def.encoding], context,
+    return resolveAll([def.$hmac, def.algorithm, def.encoding], context,
       ([args, algorithm, encoding]) => {
         const [message, key] = pair(args, "hmac", "[message, key]");
         return createHmac(
@@ -260,7 +260,7 @@ export class CryptoNode extends Node {
   }
 
   timingSafeEqual(def: Record<string, unknown>, context: Context) {
-    return resolve(def.timingSafeEqual, context, args => {
+    return resolve(def.$timingSafeEqual, context, args => {
       const [a, b] = pair(args, "timingSafeEqual", "[value, value]");
       // Digested first so the two buffers are always the same length: the raw
       // comparison throws on a mismatch, and returning early for one would leak
@@ -272,15 +272,15 @@ export class CryptoNode extends Node {
   }
 
   encrypt(def: Record<string, unknown>, context: Context) {
-    return resolve(def.encrypt, context, v => encrypt(this, this.toString(v)));
+    return resolve(def.$encrypt, context, v => encrypt(this, this.toString(v)));
   }
 
   decrypt(def: Record<string, unknown>, context: Context) {
-    return resolve(def.decrypt, context, v => decrypt(this, this.toString(v)));
+    return resolve(def.$decrypt, context, v => decrypt(this, this.toString(v)));
   }
 
   hash(def: Record<string, unknown>, context: Context) {
-    return resolve(def.hash, context, v => {
+    return resolve(def.$hash, context, v => {
       const str = this.toString(v);
       if (!def.rounds) return bcrypt.hash(str, 10);
       return resolve(def.rounds, context, r => bcrypt.hash(str, this.toNumber(r)));
@@ -288,14 +288,14 @@ export class CryptoNode extends Node {
   }
 
   verify(def: Record<string, unknown>, context: Context) {
-    return resolve(def.verify, context, args => {
+    return resolve(def.$verify, context, args => {
       const [plainVal, hashedVal] = pair(args, "verify", "[password, hash]");
       return bcrypt.compare(this.toString(plainVal), this.toString(hashedVal));
     });
   }
 
   randomHex(def: Record<string, unknown>, context: Context) {
-    return resolve(def.randomHex, context, v => {
+    return resolve(def.$randomHex, context, v => {
       // Absent means the documented 32. Anything else has to be a real count:
       // `toNumber` reads "abc" as 0, and the `|| 32` that followed then handed
       // back a token of a size nobody asked for.

@@ -32,7 +32,7 @@ export class DateNode extends Node {
       markdownDescription: "Returns the current timestamp. Pass a format string (`\"ms\"`, `\"iso\"`, `\"datetime\"`) or `true` (shorthand for `\"ms\"`).",
       outputDescription: "A **number** (Unix milliseconds) for `ms`/`true`; otherwise a **string**: `iso` → ISO-8601, `datetime` → `YYYY-MM-DD HH:MM:SS` in UTC.",
       examples: [
-        "{ \"dateNow\": \"iso\" }",
+        "{ \"$dateNow\": \"iso\" }",
       ],
     },
     dateAdd: {
@@ -44,7 +44,7 @@ export class DateNode extends Node {
       markdownDescription: "Adds a duration to a Unix-ms timestamp. Interval formats: `\"500ms\"`, `\"30s\"`, `\"5m\"`, `\"1h\"`, `\"7d\"`.",
       outputDescription: "The shifted timestamp in the `format` (default `ms`): a **number** for `ms`, else a formatted **string**. `null` if fewer than two args are given.",
       examples: [
-        "{ \"dateAdd\": [{ \"dateNow\": \"ms\" }, \"7d\"], \"format\": \"iso\" }",
+        "{ \"$dateAdd\": [{ \"$dateNow\": \"ms\" }, \"7d\"], \"format\": \"iso\" }",
       ],
       siblings: {
         format: formatSibling("ms"),
@@ -54,7 +54,7 @@ export class DateNode extends Node {
       markdownDescription: "Formats a Unix-ms timestamp.",
       outputDescription: "The timestamp in the `format` (default `datetime`): a **number** for `ms`, otherwise a formatted **string** (`iso` or `datetime` UTC).",
       examples: [
-        "{ \"dateFormat\": { \"var\": \"$createdAt\" }, \"format\": \"iso\" }",
+        "{ \"$dateFormat\": { \"$var\": \"createdAt\" }, \"format\": \"iso\" }",
       ],
       siblings: {
         format: formatSibling("datetime"),
@@ -65,7 +65,7 @@ export class DateNode extends Node {
       markdownDescription: "Parses a date string into a Unix-ms timestamp, the inverse of `dateFormat`. Accepts anything `Date.parse` understands (ISO-8601 recommended). A number passes through unchanged.",
       outputDescription: "A **number** (Unix milliseconds), or `null` if the value cannot be parsed.",
       examples: [
-        "{ \"dateParse\": \"2026-07-01T12:00:00Z\" }",
+        "{ \"$dateParse\": \"2026-07-01T12:00:00Z\" }",
       ],
     },
     dateDiff: {
@@ -78,7 +78,7 @@ export class DateNode extends Node {
       markdownDescription: "Difference between two Unix-ms timestamps as `[from, to]`, in whole `unit`s (default `ms`). Positive when `to` is later than `from`. Units are fixed-length: `\"ms\"`, `\"second\"`, `\"minute\"`, `\"hour\"`, `\"day\"`, `\"week\"` (calendar months/years are not supported; extract parts with `datePart`).",
       outputDescription: "A **number** of whole units, truncated toward zero and signed. `null` if fewer than two args are given or the unit is unknown.",
       examples: [
-        "{ \"dateDiff\": [{ \"var\": \"$start\" }, { \"var\": \"$end\" }], \"unit\": \"day\" }",
+        "{ \"$dateDiff\": [{ \"$var\": \"start\" }, { \"$var\": \"end\" }], \"unit\": \"day\" }",
       ],
       siblings: {
         unit: {
@@ -101,7 +101,7 @@ export class DateNode extends Node {
       markdownDescription: "Extracts a single component from a Unix-ms timestamp, in UTC. Choose the component with the `part` sibling.",
       outputDescription: "A **number**: `month` is 1-12, `day` is 1-31, `weekday` is 0-6 (0 = Sunday). `null` if `part` is missing or unknown.",
       examples: [
-        "{ \"datePart\": { \"var\": \"$ts\" }, \"part\": \"weekday\" }",
+        "{ \"$datePart\": { \"$var\": \"ts\" }, \"part\": \"weekday\" }",
       ],
       siblings: {
         part: {
@@ -124,7 +124,7 @@ export class DateNode extends Node {
       markdownDescription: "Snaps a Unix-ms timestamp down to the start of a `unit` (default `\"day\"`), in UTC. Weeks start on Monday (ISO-8601).",
       outputDescription: "The boundary timestamp in the `format` (default `ms`): a **number** for `ms`, else a formatted **string**.",
       examples: [
-        "{ \"dateStartOf\": { \"var\": \"$ts\" }, \"unit\": \"month\", \"format\": \"iso\" }",
+        "{ \"$dateStartOf\": { \"$var\": \"ts\" }, \"unit\": \"month\", \"format\": \"iso\" }",
       ],
       siblings: {
         unit: {
@@ -148,7 +148,7 @@ export class DateNode extends Node {
       markdownDescription: "Snaps a Unix-ms timestamp up to the last millisecond of a `unit` (default `\"day\"`), in UTC. Weeks start on Monday (ISO-8601).",
       outputDescription: "The boundary timestamp in the `format` (default `ms`): a **number** for `ms`, else a formatted **string**.",
       examples: [
-        "{ \"dateEndOf\": { \"var\": \"$ts\" }, \"unit\": \"day\" }",
+        "{ \"$dateEndOf\": { \"$var\": \"ts\" }, \"unit\": \"day\" }",
       ],
       siblings: {
         unit: {
@@ -181,8 +181,8 @@ export class DateNode extends Node {
       markdownDescription: "Formats a Unix-ms timestamp as a locale-aware relative-time string via `Intl.RelativeTimeFormat`. Tuple form `[target, base]`: `target` is phrased relative to `base`, which defaults to now (matching date-fns `intlFormatDistance` and moment `.from()`). Auto-selects the largest fitting unit (second through year) unless `unit` forces one; month and year use approximate 30-day / 365-day lengths, so long spans are rounded.",
       outputDescription: "A **string** like `\"3 hours ago\"` or `\"in 5 minutes\"`. A past `target` reads \"... ago\", a future one \"in ...\".",
       examples: [
-        "{ \"dateRelative\": [{ \"var\": \"$createdAt\" }] }",
-        "{ \"dateRelative\": [{ \"var\": \"$ts\" }, { \"var\": \"$now\" }], \"style\": \"short\" }",
+        "{ \"$dateRelative\": [{ \"$var\": \"createdAt\" }] }",
+        "{ \"$dateRelative\": [{ \"$var\": \"ts\" }, { \"$var\": \"now\" }], \"style\": \"short\" }",
       ],
       siblings: {
         unit: {
@@ -226,15 +226,15 @@ export class DateNode extends Node {
   };
 
   dateNow(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.dateNow, context, fmt =>
+    return resolve(def.$dateNow, context, fmt =>
       formatDate(Date.now(), fmt === true ? "ms" : String(fmt))
     );
   }
 
   dateAdd(def: Record<string, unknown>, context: Context): NodeValue {
-    const args = this.toArray(def.dateAdd);
+    const args = this.toArray(def.$dateAdd);
     if (args.length < 2) return null;
-    return resolve(def.dateAdd, context, resolvedArgs => {
+    return resolve(def.$dateAdd, context, resolvedArgs => {
       const a = this.toArray(resolvedArgs);
       const base = this.toNumber(a[0]);
       const interval = String(a[1]);
@@ -244,13 +244,13 @@ export class DateNode extends Node {
   }
 
   dateFormat(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.dateFormat, context, ms =>
+    return resolve(def.$dateFormat, context, ms =>
       emitDate(this.toNumber(ms), def, context, "datetime")
     );
   }
 
   dateParse(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.dateParse, context, v => {
+    return resolve(def.$dateParse, context, v => {
       if (typeof v === "number") return v;
       const ms = Date.parse(String(v));
       return Number.isNaN(ms) ? null : ms;
@@ -258,9 +258,9 @@ export class DateNode extends Node {
   }
 
   dateDiff(def: Record<string, unknown>, context: Context): NodeValue {
-    const args = this.toArray(def.dateDiff);
+    const args = this.toArray(def.$dateDiff);
     if (args.length < 2) return null;
-    return resolve(def.dateDiff, context, resolvedArgs => {
+    return resolve(def.$dateDiff, context, resolvedArgs => {
       const a = this.toArray(resolvedArgs);
       const from = this.toNumber(a[0]);
       const to = this.toNumber(a[1]);
@@ -271,13 +271,13 @@ export class DateNode extends Node {
 
   datePart(def: Record<string, unknown>, context: Context): NodeValue {
     if (def.part == null) return null;
-    return resolve(def.datePart, context, ts =>
+    return resolve(def.$datePart, context, ts =>
       resolve(def.part, context, part => extractPart(this.toNumber(ts), String(part)))
     );
   }
 
   dateStartOf(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.dateStartOf, context, ts => {
+    return resolve(def.$dateStartOf, context, ts => {
       const base = this.toNumber(ts);
       if (!def.unit) return emitDate(boundary(base, "day", false), def, context, "ms");
       return resolve(def.unit, context, u =>
@@ -287,7 +287,7 @@ export class DateNode extends Node {
   }
 
   dateEndOf(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.dateEndOf, context, ts => {
+    return resolve(def.$dateEndOf, context, ts => {
       const base = this.toNumber(ts);
       if (!def.unit) return emitDate(boundary(base, "day", true), def, context, "ms");
       return resolve(def.unit, context, u =>
@@ -297,7 +297,7 @@ export class DateNode extends Node {
   }
 
   dateRelative(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def.dateRelative, def.unit, def.locale, def.numeric, def.style], context,
+    return resolveAll([def.$dateRelative, def.unit, def.locale, def.numeric, def.style], context,
       ([args, unitRaw, locale, numeric, style]) => {
         const a = this.toArray(args);
         const base = a.length > 1 && a[1] != null ? this.toNumber(a[1]) : Date.now();

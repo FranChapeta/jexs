@@ -10,63 +10,63 @@ export class ArrayNode extends Node {
       markdownDescription: "Returns the first element of an array.",
       outputDescription: "The first element (any type), or `undefined` if the array is empty.",
       examples: [
-        "{ \"first\": { \"var\": \"$items\" } }",
+        "{ \"$first\": { \"$var\": \"items\" } }",
       ],
     },
     last: {
       markdownDescription: "Returns the last element of an array.",
       outputDescription: "The last element (any type), or `undefined` if the array is empty.",
       examples: [
-        "{ \"last\": { \"var\": \"$items\" } }",
+        "{ \"$last\": { \"$var\": \"items\" } }",
       ],
     },
     count: {
       output: "number",
       markdownDescription: "Returns the length of an array, object (key count), or string.",
       examples: [
-        "{ \"count\": { \"var\": \"$items\" } }",
+        "{ \"$count\": { \"$var\": \"items\" } }",
       ],
     },
     reverse: {
       output: "array",
       markdownDescription: "Returns a new array with elements in reverse order.",
       examples: [
-        "{ \"reverse\": { \"var\": \"$items\" } }",
+        "{ \"$reverse\": { \"$var\": \"items\" } }",
       ],
     },
     unique: {
       output: "array",
       markdownDescription: "Removes duplicate values using strict equality.",
       examples: [
-        "{ \"unique\": [1, 2, 2, 3] }",
+        "{ \"$unique\": [1, 2, 2, 3] }",
       ],
     },
     flatten: {
       output: "array",
       markdownDescription: "Recursively flattens a nested array.",
       examples: [
-        "{ \"flatten\": [[1, [2, [3]]]] }",
+        "{ \"$flatten\": [[1, [2, [3]]]] }",
       ],
     },
     sort: {
       output: "array",
       markdownDescription: "Sorts an array ascending (numbers numerically, strings lexicographically).",
       examples: [
-        "{ \"sort\": [3, 1, 2] }",
+        "{ \"$sort\": [3, 1, 2] }",
       ],
     },
     sortDesc: {
       output: "array",
       markdownDescription: "Sorts an array descending.",
       examples: [
-        "{ \"sortDesc\": [3, 1, 2] }",
+        "{ \"$sortDesc\": [3, 1, 2] }",
       ],
     },
     shuffle: {
       output: "array",
       markdownDescription: "Randomly reorders an array **in place** (Fisher-Yates) and returns it. Draws from the seeded RNG when `randomSeed` has been set (reproducible), otherwise `Math.random`. Pass `clone: true` to shuffle a copy and leave the source unchanged.",
       examples: [
-        "{ \"shuffle\": { \"var\": \"$deck\" } }",
+        "{ \"$shuffle\": { \"$var\": \"deck\" } }",
       ],
     },
     sortBy: {
@@ -74,7 +74,7 @@ export class ArrayNode extends Node {
       output: "array",
       markdownDescription: "Sorts an array of objects by a key. Direction is `\"asc\"` (default) or `\"desc\"`.",
       examples: [
-        "{ \"sortBy\": [{ \"var\": \"$users\" }, \"name\", \"desc\"] }",
+        "{ \"$sortBy\": [{ \"$var\": \"users\" }, \"name\", \"desc\"] }",
       ],
     },
     pluck: {
@@ -87,7 +87,7 @@ export class ArrayNode extends Node {
       markdownDescription: "Extracts the value of a key (dot-path) from each object in an array.",
       outputDescription: "An array of each object's value at the key, with `undefined` in slots where the object lacks it.",
       examples: [
-        "{ \"pluck\": [{ \"var\": \"$users\" }, \"name\"] }",
+        "{ \"$pluck\": [{ \"$var\": \"users\" }, \"name\"] }",
       ],
     },
     slice: {
@@ -103,7 +103,7 @@ export class ArrayNode extends Node {
       output: "array",
       markdownDescription: "Returns a portion of an array.",
       examples: [
-        "{ \"slice\": [{ \"var\": \"$items\" }, 0, 5] }",
+        "{ \"$slice\": [{ \"$var\": \"items\" }, 0, 5] }",
       ],
     },
     push: {
@@ -113,10 +113,10 @@ export class ArrayNode extends Node {
         { description: "The item to append." },
       ],
       output: "array",
-      markdownDescription: "Appends an item to an array **in place** and returns that array. The array referenced by the first argument is mutated, so point it at a `var` (e.g. `{ \"var\": \"$items\" }`), not a literal. If the first argument is not an array, returns a new single-element array. For a non-mutating append use `{ \"merge\": [arr, [item]] }`.",
+      markdownDescription: "Appends an item to an array **in place** and returns that array. The array referenced by the first argument is mutated, so point it at a `var` (e.g. `{ \"$var\": \"items\" }`), not a literal. If the first argument is not an array, returns a new single-element array. For a non-mutating append use `{ \"$merge\": [arr, [item]] }`.",
       outputDescription: "The same (now longer) array; or a new `[item]` when the target is not an array.",
       examples: [
-        "{ \"push\": [{ \"var\": \"$items\" }, \"new\"] }",
+        "{ \"$push\": [{ \"$var\": \"items\" }, \"new\"] }",
       ],
     },
     unshift: {
@@ -129,21 +129,21 @@ export class ArrayNode extends Node {
       markdownDescription: "Prepends an item to an array **in place** and returns that array. Mutates the array referenced by the first argument, so point it at a `var`, not a literal. If the first argument is not an array, returns a new single-element array.",
       outputDescription: "The same (now longer) array; or a new `[item]` when the target is not an array.",
       examples: [
-        "{ \"unshift\": [{ \"var\": \"$items\" }, \"first\"] }",
+        "{ \"$unshift\": [{ \"$var\": \"items\" }, \"first\"] }",
       ],
     },
     pop: {
       markdownDescription: "Removes the **last** element of an array **in place** and returns it.",
       outputDescription: "The removed element (any type), or `undefined` if the array is empty or not an array.",
       examples: [
-        "{ \"pop\": { \"var\": \"$items\" } }",
+        "{ \"$pop\": { \"$var\": \"items\" } }",
       ],
     },
     shift: {
       markdownDescription: "Removes the **first** element of an array **in place** and returns it.",
       outputDescription: "The removed element (any type), or `undefined` if the array is empty or not an array.",
       examples: [
-        "{ \"shift\": { \"var\": \"$items\" } }",
+        "{ \"$shift\": { \"$var\": \"items\" } }",
       ],
     },
     remove: {
@@ -155,7 +155,7 @@ export class ArrayNode extends Node {
       markdownDescription: "Removes the element at an index **in place** and returns it. (For predicate/value removal use `filter`.)",
       outputDescription: "The removed element (any type), or `undefined` if the index is out of range.",
       examples: [
-        "{ \"remove\": [{ \"var\": \"$items\" }, 2] }",
+        "{ \"$remove\": [{ \"$var\": \"items\" }, 2] }",
       ],
     },
     insert: {
@@ -169,7 +169,7 @@ export class ArrayNode extends Node {
       markdownDescription: "Inserts a value at an index **in place** (clamped to the array bounds) and returns the array.",
       outputDescription: "The same (now longer) array.",
       examples: [
-        "{ \"insert\": [{ \"var\": \"$items\" }, 0, \"first\"] }",
+        "{ \"$insert\": [{ \"$var\": \"items\" }, 0, \"first\"] }",
       ],
     },
     move: {
@@ -183,7 +183,7 @@ export class ArrayNode extends Node {
       markdownDescription: "Moves the element at `from` to index `to` **in place** and returns the array. Out-of-range `from` is a no-op; `to` is clamped to bounds.",
       outputDescription: "The same array, reordered.",
       examples: [
-        "{ \"move\": [{ \"var\": \"$items\" }, 2, 0] }",
+        "{ \"$move\": [{ \"$var\": \"items\" }, 2, 0] }",
       ],
     },
     merge: {
@@ -191,16 +191,16 @@ export class ArrayNode extends Node {
       markdownDescription: "Merges multiple arrays (concatenation) or multiple objects (shallow merge).",
       outputDescription: "A single shallow-merged **object** when every input is a plain object (later keys win); otherwise all inputs concatenated into one **array**.",
       examples: [
-        "{ \"merge\": [{ \"a\": 1 }, { \"b\": 2 }] }",
+        "{ \"$merge\": [{ \"a\": 1 }, { \"b\": 2 }] }",
       ],
     },
     filter: {
       tuple: 2,
       output: "array",
-      markdownDescription: "Returns the items of an array for which a condition is truthy. Tuple form: `[<array>, <condition>]`.\nEach iteration exposes the current element as `item` (rename via the `item`/`index` siblings), plus `index` and `loop`. Read the element with `{ \"var\": \"item\" }`; a leading `$` is optional.",
+      markdownDescription: "Returns the items of an array for which a condition is truthy. Tuple form: `[<array>, <condition>]`.\nEach iteration exposes the current element as `item` (rename via the `item`/`index` siblings), plus `index` and `loop`. Read the element with `{ \"$var\": \"item\" }`; a leading `$` is optional.",
       examples: [
-        "{ \"filter\": [{ \"var\": \"$nums\" }, { \"gt\": [{ \"var\": \"item\" }, 2] }] }",
-        "{ \"filter\": [{ \"var\": \"$users\" }, { \"eq\": [{ \"var\": \"u.role\" }, \"admin\"] }], \"item\": \"u\" }",
+        "{ \"$filter\": [{ \"$var\": \"nums\" }, { \"$gt\": [{ \"$var\": \"item\" }, 2] }] }",
+        "{ \"$filter\": [{ \"$var\": \"users\" }, { \"$eq\": [{ \"$var\": \"u.role\" }, \"admin\"] }], \"item\": \"u\" }",
       ],
       siblings: {
         item: {
@@ -215,11 +215,11 @@ export class ArrayNode extends Node {
     },
     find: {
       tuple: 2,
-      markdownDescription: "Returns the first item of an array for which a condition is truthy. Tuple form: `[<array>, <condition>]`.\nEach iteration exposes the current element as `item` (rename via the `item`/`index` siblings), plus `index` and `loop`. Read the element with `{ \"var\": \"item\" }`; a leading `$` is optional.",
+      markdownDescription: "Returns the first item of an array for which a condition is truthy. Tuple form: `[<array>, <condition>]`.\nEach iteration exposes the current element as `item` (rename via the `item`/`index` siblings), plus `index` and `loop`. Read the element with `{ \"$var\": \"item\" }`; a leading `$` is optional.",
       outputDescription: "The first matching item (any type), or `undefined` if none match.",
       examples: [
-        "{ \"find\": [{ \"var\": \"$users\" }, { \"eq\": [{ \"var\": \"item.role\" }, \"admin\"] }] }",
-        "{ \"find\": [{ \"var\": \"$users\" }, { \"eq\": [{ \"var\": \"u.role\" }, \"admin\"] }], \"item\": \"u\" }",
+        "{ \"$find\": [{ \"$var\": \"users\" }, { \"$eq\": [{ \"$var\": \"item.role\" }, \"admin\"] }] }",
+        "{ \"$find\": [{ \"$var\": \"users\" }, { \"$eq\": [{ \"$var\": \"u.role\" }, \"admin\"] }], \"item\": \"u\" }",
       ],
       siblings: {
         item: {
@@ -236,7 +236,7 @@ export class ArrayNode extends Node {
       output: "array",
       markdownDescription: "Transforms each item by resolving a template.\nEach iteration exposes the current element as `item` and its position as `index` (rename via the `item`/`index` siblings), plus `loop` (`item`, `index`, `key`, `first`, `last`, `length`).\nWhen `do` is an array it is resolved as a literal (all elements), not as sequential steps.",
       examples: [
-        "{ \"map\": { \"var\": \"$nums\" }, \"as\": \"num\", \"do\": { \"multiply\": [{ \"var\": \"$num\" }, 2] } }",
+        "{ \"$map\": { \"$var\": \"nums\" }, \"$as\": \"num\", \"do\": { \"$multiply\": [{ \"$var\": \"num\" }, 2] } }",
       ],
       siblings: {
         item: {
@@ -255,11 +255,11 @@ export class ArrayNode extends Node {
     },
     reduce: {
       tuple: 3,
-      markdownDescription: "Reduces an array to a single value. Tuple form: `[<array>, <reducer>, <initial>]`.\nEach iteration exposes the current element as `item` (rename via the `item`/`index` siblings), plus `index`, `accumulator`, and `loop`. Read them with `{ \"var\": \"item\" }` / `{ \"var\": \"accumulator\" }`; a leading `$` is optional.",
+      markdownDescription: "Reduces an array to a single value. Tuple form: `[<array>, <reducer>, <initial>]`.\nEach iteration exposes the current element as `item` (rename via the `item`/`index` siblings), plus `index`, `accumulator`, and `loop`. Read them with `{ \"$var\": \"item\" }` / `{ \"$var\": \"accumulator\" }`; a leading `$` is optional.",
       outputDescription: "The final accumulator value, typed by the reducer or initial value (the initial value is returned as-is for an empty array).",
       examples: [
-        "{ \"reduce\": [{ \"var\": \"$nums\" }, { \"add\": [{ \"var\": \"accumulator\" }, { \"var\": \"item\" }] }, 0] }",
-        "{ \"reduce\": [{ \"var\": \"$nums\" }, { \"add\": [{ \"var\": \"accumulator\" }, { \"var\": \"n\" }] }, 0], \"item\": \"n\" }",
+        "{ \"$reduce\": [{ \"$var\": \"nums\" }, { \"$add\": [{ \"$var\": \"accumulator\" }, { \"$var\": \"item\" }] }, 0] }",
+        "{ \"$reduce\": [{ \"$var\": \"nums\" }, { \"$add\": [{ \"$var\": \"accumulator\" }, { \"$var\": \"n\" }] }, 0], \"item\": \"n\" }",
       ],
       siblings: {
         item: {
@@ -282,14 +282,14 @@ export class ArrayNode extends Node {
       markdownDescription: "Groups an array of objects by a key. Returns an object keyed by group values.",
       outputDescription: "An object mapping each distinct group-key (stringified) to the **array** of items in that group.",
       examples: [
-        "{ \"groupBy\": [{ \"var\": \"$users\" }, \"role\"] }",
+        "{ \"$groupBy\": [{ \"$var\": \"users\" }, \"role\"] }",
       ],
     },
     fromEntries: {
       output: "object",
       markdownDescription: "Builds an object from `[{ key, value }]` pairs (the inverse of `entries` in the object node). Also accepts `[key, value]` tuple arrays.",
       examples: [
-        "{ \"fromEntries\": { \"var\": \"$pairs\" } }",
+        "{ \"$fromEntries\": { \"$var\": \"pairs\" } }",
       ],
     },
     includes: {
@@ -305,7 +305,7 @@ export class ArrayNode extends Node {
       output: "boolean",
       markdownDescription: "Checks if an array contains a value: `[arr, value]`.\nWith three arguments `[arr, key, value]`, checks if any object has that key-value pair.",
       examples: [
-        "{ \"includes\": [{ \"var\": \"$roles\" }, \"admin\"] }",
+        "{ \"$includes\": [{ \"$var\": \"roles\" }, \"admin\"] }",
       ],
     },
     index: {
@@ -317,7 +317,7 @@ export class ArrayNode extends Node {
       markdownDescription: "Returns the element at a given index.",
       outputDescription: "The element at the index (any type), or `undefined` if out of range.",
       examples: [
-        "{ \"index\": [{ \"var\": \"$items\" }, 2] }",
+        "{ \"$index\": [{ \"$var\": \"items\" }, 2] }",
       ],
     },
     range: {
@@ -333,7 +333,7 @@ export class ArrayNode extends Node {
       output: "array",
       markdownDescription: "Generates a numeric sequence. Inclusive on both ends.",
       examples: [
-        "{ \"range\": [1, 5] }",
+        "{ \"$range\": [1, 5] }",
       ],
     },
     listFormat: {
@@ -342,8 +342,8 @@ export class ArrayNode extends Node {
       markdownDescription: "Joins an array into a locale-aware list string via `Intl.ListFormat`. Each element is coerced to a string.",
       outputDescription: "A single string, e.g. `[\"a\", \"b\", \"c\"]` -> `\"a, b, and c\"` (defaults: `conjunction`, `long`).",
       examples: [
-        "{ \"listFormat\": [\"a\", \"b\", \"c\"] }",
-        "{ \"listFormat\": { \"var\": \"$tags\" }, \"type\": \"disjunction\" }",
+        "{ \"$listFormat\": [\"a\", \"b\", \"c\"] }",
+        "{ \"$listFormat\": { \"$var\": \"tags\" }, \"type\": \"disjunction\" }",
       ],
       siblings: {
         locale: {
@@ -382,15 +382,15 @@ export class ArrayNode extends Node {
   };
 
   first(def: Record<string, unknown>, c: Context) {
-    return resolve(def.first, c, v => this.toArray(v)[0]);
+    return resolve(def.$first, c, v => this.toArray(v)[0]);
   }
 
   last(def: Record<string, unknown>, c: Context) {
-    return resolve(def.last, c, v => { const a = this.toArray(v); return a[a.length - 1]; });
+    return resolve(def.$last, c, v => { const a = this.toArray(v); return a[a.length - 1]; });
   }
 
   count(def: Record<string, unknown>, c: Context) {
-    return resolve(def.count, c, value => {
+    return resolve(def.$count, c, value => {
       if (Array.isArray(value)) return value.length;
       if (this.isObject(value)) return Object.keys(value).length;
       if (typeof value === "string") return value.length;
@@ -400,13 +400,13 @@ export class ArrayNode extends Node {
 
   reverse(def: Record<string, unknown>, c: Context) {
     return resolve(def.clone, c, cl =>
-      resolve(def.reverse, c, v => mutArr(v, this.toBoolean(cl)).reverse()));
+      resolve(def.$reverse, c, v => mutArr(v, this.toBoolean(cl)).reverse()));
   }
 
   unique(def: Record<string, unknown>, c: Context) {
     return resolve(def.clone, c, cl => {
       const clone = this.toBoolean(cl);
-      return resolve(def.unique, c, v => {
+      return resolve(def.$unique, c, v => {
         const u = [...new Set(this.toArray(v))];
         if (clone || !Array.isArray(v)) return u;
         v.splice(0, v.length, ...u);
@@ -418,7 +418,7 @@ export class ArrayNode extends Node {
   flatten(def: Record<string, unknown>, c: Context) {
     return resolve(def.clone, c, cl => {
       const clone = this.toBoolean(cl);
-      return resolve(def.flatten, c, v => {
+      return resolve(def.$flatten, c, v => {
         const f = this.toArray(v).flat(Infinity);
         if (clone || !Array.isArray(v)) return f;
         v.splice(0, v.length, ...f);
@@ -429,23 +429,23 @@ export class ArrayNode extends Node {
 
   sort(def: Record<string, unknown>, c: Context) {
     return resolve(def.clone, c, cl =>
-      resolve(def.sort, c, v => sortInPlace(mutArr(v, this.toBoolean(cl)), false)));
+      resolve(def.$sort, c, v => sortInPlace(mutArr(v, this.toBoolean(cl)), false)));
   }
 
   sortDesc(def: Record<string, unknown>, c: Context) {
     return resolve(def.clone, c, cl =>
-      resolve(def.sortDesc, c, v => sortInPlace(mutArr(v, this.toBoolean(cl)), true)));
+      resolve(def.$sortDesc, c, v => sortInPlace(mutArr(v, this.toBoolean(cl)), true)));
   }
 
   shuffle(def: Record<string, unknown>, c: Context) {
     return resolve(def.clone, c, cl =>
-      resolve(def.shuffle, c, v => shuffleInPlace(mutArr(v, this.toBoolean(cl)), c)));
+      resolve(def.$shuffle, c, v => shuffleInPlace(mutArr(v, this.toBoolean(cl)), c)));
   }
 
   sortBy(def: Record<string, unknown>, c: Context) {
     return resolve(def.clone, c, cl => {
       const clone = this.toBoolean(cl);
-      return resolve(def.sortBy, c, args => {
+      return resolve(def.$sortBy, c, args => {
         const a = this.toArray(args);
         const arr = mutArr(a[0], clone);
         const key = this.toString(a[1]);
@@ -461,7 +461,7 @@ export class ArrayNode extends Node {
   }
 
   pluck(def: Record<string, unknown>, c: Context) {
-    return resolve(def.pluck, c, args => {
+    return resolve(def.$pluck, c, args => {
       const a = this.toArray(args);
       const arr = this.toArray(a[0]);
       const key = this.toString(a[1]);
@@ -470,7 +470,7 @@ export class ArrayNode extends Node {
   }
 
   slice(def: Record<string, unknown>, c: Context) {
-    return resolve(def.slice, c, args => {
+    return resolve(def.$slice, c, args => {
       const a = this.toArray(args);
       const arr = this.toArray(a[0]);
       const start = this.toNumber(a[1]);
@@ -482,7 +482,7 @@ export class ArrayNode extends Node {
   push(def: Record<string, unknown>, c: Context) {
     return resolve(def.clone, c, cl => {
       const clone = this.toBoolean(cl);
-      return resolve(def.push, c, args => {
+      return resolve(def.$push, c, args => {
         const a = this.toArray(args);
         const item = a.length > 1 ? a[1] : undefined;
         if (!Array.isArray(a[0])) return [item];
@@ -496,7 +496,7 @@ export class ArrayNode extends Node {
   unshift(def: Record<string, unknown>, c: Context) {
     return resolve(def.clone, c, cl => {
       const clone = this.toBoolean(cl);
-      return resolve(def.unshift, c, args => {
+      return resolve(def.$unshift, c, args => {
         const a = this.toArray(args);
         const item = a.length > 1 ? a[1] : undefined;
         if (!Array.isArray(a[0])) return [item];
@@ -510,7 +510,7 @@ export class ArrayNode extends Node {
   pop(def: Record<string, unknown>, c: Context) {
     return resolve(def.clone, c, cl => {
       const clone = this.toBoolean(cl);
-      return resolve(def.pop, c, v => {
+      return resolve(def.$pop, c, v => {
         if (!Array.isArray(v)) return undefined;
         return clone ? v[v.length - 1] : v.pop();
       });
@@ -520,7 +520,7 @@ export class ArrayNode extends Node {
   shift(def: Record<string, unknown>, c: Context) {
     return resolve(def.clone, c, cl => {
       const clone = this.toBoolean(cl);
-      return resolve(def.shift, c, v => {
+      return resolve(def.$shift, c, v => {
         if (!Array.isArray(v)) return undefined;
         return clone ? v[0] : v.shift();
       });
@@ -530,7 +530,7 @@ export class ArrayNode extends Node {
   remove(def: Record<string, unknown>, c: Context) {
     return resolve(def.clone, c, cl => {
       const clone = this.toBoolean(cl);
-      return resolve(def.remove, c, args => {
+      return resolve(def.$remove, c, args => {
         const a = this.toArray(args);
         const arr = a[0];
         if (!Array.isArray(arr)) return undefined;
@@ -544,7 +544,7 @@ export class ArrayNode extends Node {
   insert(def: Record<string, unknown>, c: Context) {
     return resolve(def.clone, c, cl => {
       const clone = this.toBoolean(cl);
-      return resolve(def.insert, c, args => {
+      return resolve(def.$insert, c, args => {
         const a = this.toArray(args);
         if (!Array.isArray(a[0])) return a[0];
         const arr = clone ? [...a[0]] : a[0];
@@ -558,7 +558,7 @@ export class ArrayNode extends Node {
   move(def: Record<string, unknown>, c: Context) {
     return resolve(def.clone, c, cl => {
       const clone = this.toBoolean(cl);
-      return resolve(def.move, c, args => {
+      return resolve(def.$move, c, args => {
         const a = this.toArray(args);
         if (!Array.isArray(a[0])) return a[0];
         const arr = clone ? [...a[0]] : a[0];
@@ -573,7 +573,7 @@ export class ArrayNode extends Node {
   }
 
   merge(def: Record<string, unknown>, c: Context) {
-    return resolve(def.merge, c, args => {
+    return resolve(def.$merge, c, args => {
       const resolved = this.toArray(args);
       if (resolved.length > 0 && resolved.every(r => this.isObject(r) && !Array.isArray(r))) {
         const result: Record<string, unknown> = {};
@@ -585,7 +585,7 @@ export class ArrayNode extends Node {
   }
 
   filter(def: Record<string, unknown>, context: Context) {
-    const args = this.toArray(def.filter);
+    const args = this.toArray(def.$filter);
     return resolveAll([def.item, def.index], context, ([itemRaw, indexRaw]) => {
       const itemName = typeof itemRaw === "string" ? itemRaw : "item";
       const indexName = typeof indexRaw === "string" ? indexRaw : "index";
@@ -614,7 +614,7 @@ export class ArrayNode extends Node {
   }
 
   find(def: Record<string, unknown>, context: Context) {
-    const args = this.toArray(def.find);
+    const args = this.toArray(def.$find);
     return resolveAll([def.item, def.index], context, ([itemRaw, indexRaw]) => {
       const itemName = typeof itemRaw === "string" ? itemRaw : "item";
       const indexName = typeof indexRaw === "string" ? indexRaw : "index";
@@ -649,7 +649,7 @@ export class ArrayNode extends Node {
     return resolveAll([def.item, def.index], context, ([itemRaw, indexRaw]) => {
       const itemName = typeof itemRaw === "string" ? itemRaw : "item";
       const indexName = typeof indexRaw === "string" ? indexRaw : "index";
-      return resolve(def.map, context, arr => {
+      return resolve(def.$map, context, arr => {
         const items = this.toArray(arr);
         const results: unknown[] = [];
         let i = 0;
@@ -669,7 +669,7 @@ export class ArrayNode extends Node {
   }
 
   reduce(def: Record<string, unknown>, context: Context) {
-    const args = this.toArray(def.reduce);
+    const args = this.toArray(def.$reduce);
     return resolveAll([def.item, def.index], context, ([itemRaw, indexRaw]) => {
       const itemName = typeof itemRaw === "string" ? itemRaw : "item";
       const indexName = typeof indexRaw === "string" ? indexRaw : "index";
@@ -696,7 +696,7 @@ export class ArrayNode extends Node {
   }
 
   groupBy(def: Record<string, unknown>, c: Context) {
-    return resolve(def.groupBy, c, args => {
+    return resolve(def.$groupBy, c, args => {
       const a = this.toArray(args);
       const arr = this.toArray(a[0]);
       const key = this.toString(a[1]);
@@ -711,7 +711,7 @@ export class ArrayNode extends Node {
   }
 
   fromEntries(def: Record<string, unknown>, c: Context) {
-    return resolve(def.fromEntries, c, value => {
+    return resolve(def.$fromEntries, c, value => {
       const result: Record<string, unknown> = {};
       for (const e of this.toArray(value)) {
         if (this.isObject(e) && "key" in e) result[this.toString(e.key)] = e.value;
@@ -722,7 +722,7 @@ export class ArrayNode extends Node {
   }
 
   includes(def: Record<string, unknown>, c: Context) {
-    return resolve(def.includes, c, args => {
+    return resolve(def.$includes, c, args => {
       const a = this.toArray(args);
       const arr = this.toArray(a[0]);
       if (a.length >= 3) {
@@ -735,14 +735,14 @@ export class ArrayNode extends Node {
   }
 
   index(def: Record<string, unknown>, c: Context) {
-    return resolve(def.index, c, args => {
+    return resolve(def.$index, c, args => {
       const a = this.toArray(args);
       return this.toArray(a[0])[this.toNumber(a[1])];
     });
   }
 
   range(def: Record<string, unknown>, c: Context) {
-    return resolve(def.range, c, args => {
+    return resolve(def.$range, c, args => {
       const a = this.toArray(args);
       const start = this.toNumber(a[0]);
       const end = this.toNumber(a[1]);
@@ -756,7 +756,7 @@ export class ArrayNode extends Node {
   }
 
   listFormat(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.listFormat, def.locale, def.type, def.style], c, ([value, locale, type, style]) => {
+    return resolveAll([def.$listFormat, def.locale, def.type, def.style], c, ([value, locale, type, style]) => {
       const opts: Intl.ListFormatOptions = {};
       if (type != null) opts.type = this.toString(type) as Intl.ListFormatType;
       if (style != null) opts.style = this.toString(style) as Intl.ListFormatStyle;

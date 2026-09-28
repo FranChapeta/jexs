@@ -157,8 +157,8 @@ test("parseTls distinguishes unset from off", () => {
 });
 
 // Certificate material only ever goes under a named key. A bare PEM string
-// would make `{"ssl": {"var": "$x"}}` mean options or a CA depending on the
-// runtime type of `$x` — one template, two meanings.
+// would make `{"ssl": {"$var": "x"}}` mean options or a CA depending on the
+// runtime type of `x` — one template, two meanings.
 test("the ssl field refuses a bare string that is not a boolean spelling", () => {
   assert.throws(() => parseTls(CA_PEM), /is not a TLS setting/);
   assert.throws(() => parseTls(CA_PEM), /material goes under a key/);
@@ -247,11 +247,11 @@ after(async () => { await DatabaseNode.closeAll(dbCtx); });
 
 test("url and the discrete endpoint properties are alternatives, not layers", async () => {
   await assert.rejects(
-    async () => connect({ database: "connect", name: "c1", url: "postgres://h/d", host: "elsewhere" }),
+    async () => connect({ $database: "connect", name: "c1", url: "postgres://h/d", host: "elsewhere" }),
     /already carries the endpoint/,
   );
   await assert.rejects(
-    async () => connect({ database: "connect", name: "c2", url: "sqlite:a.db", filename: "b.db" }),
+    async () => connect({ $database: "connect", name: "c2", url: "sqlite:a.db", filename: "b.db" }),
     /already carries the endpoint/,
   );
 });
@@ -262,7 +262,7 @@ test("url and the discrete endpoint properties are alternatives, not layers", as
 // since the field takes PEM content it is the ONLY channel for loaded material.
 test("ssl layers over a url instead of colliding with it", async () => {
   const r = await connect({
-    database: "connect", name: "c3",
+    $database: "connect", name: "c3",
     url: "postgres://h/d?sslmode=no-verify",
     ssl: { ca: CA_PEM },
   });
@@ -277,9 +277,9 @@ test("ssl layers over a url instead of colliding with it", async () => {
 // binding — so a statement with no placeholders failed with "Expected 1
 // bindings, saw 0". A real guard turns it back into the no-bindings call.
 test("raw works with bindings omitted, present, or wrong", async () => {
-  await connect({ database: "connect", name: "mem", url: "sqlite::memory:" });
+  await connect({ $database: "connect", name: "mem", url: "sqlite::memory:" });
   const run = (step: Record<string, unknown>) =>
-    connect({ ...step, database: "raw", connection: "mem" });
+    connect({ ...step, $database: "raw", connection: "mem" });
 
   assert.deepEqual(await run({ sql: "select 1 as n" }), [{ n: 1 }]);
   assert.deepEqual(await run({ sql: "select ? as n", bindings: [7] }), [{ n: 7 }]);
@@ -300,14 +300,14 @@ test("raw works with bindings omitted, present, or wrong", async () => {
 // now that the drivers are optional peers.
 test("using an unopened connection names it and lists the drivers", async () => {
   await assert.rejects(
-    async () => connect({ database: "raw", connection: "typo", sql: "select 1" }),
+    async () => connect({ $database: "raw", connection: "typo", sql: "select 1" }),
     /Database "typo" is not connected\.[\s\S]*npm install pg\s+for \{ "type": "pg" \}/,
   );
 });
 
 test("a type contradicting the url scheme is refused", async () => {
   await assert.rejects(
-    async () => connect({ database: "connect", name: "c4", type: "mysql", url: "postgres://h/d" }),
+    async () => connect({ $database: "connect", name: "c4", type: "mysql", url: "postgres://h/d" }),
     /contradicts the url scheme/,
   );
 });
@@ -322,18 +322,18 @@ test("cache-connect refuses a url alongside the discrete endpoint", async () => 
     await Promise.resolve(cacheResolve(step, {}));
 
   await assert.rejects(
-    async () => run({ "cache-connect": "redis", url: "redis://h:6379", host: "elsewhere" }),
+    async () => run({ "$cache-connect": "redis", url: "redis://h:6379", host: "elsewhere" }),
     /already carries the endpoint/,
   );
   await assert.rejects(
-    async () => run({ "cache-connect": "redis", url: "redis://h:6379", password: "p" }),
+    async () => run({ "$cache-connect": "redis", url: "redis://h:6379", password: "p" }),
     /already carries the endpoint/,
   );
   // `tls` is not part of the endpoint, so it still rides along with a url.
-  assert.equal(await run({ "cache-connect": "redis", url: "rediss://h:6379", tls: true }), "redis");
+  assert.equal(await run({ "$cache-connect": "redis", url: "rediss://h:6379", tls: true }), "redis");
   // memcached has no url at all, so its server list is the only spelling.
   assert.equal(
-    await run({ "cache-connect": "memcached", servers: ["h:11211"], username: "u" }),
+    await run({ "$cache-connect": "memcached", servers: ["h:11211"], username: "u" }),
     "memcached",
   );
   await Cache.close();
@@ -348,10 +348,10 @@ test("cache-connect refuses an unknown driver instead of falling back to memory"
     await Promise.resolve(cacheResolve(step, {}));
 
   await assert.rejects(
-    async () => run({ "cache-connect": "redys" }),
+    async () => run({ "$cache-connect": "redys" }),
     /Unknown cache driver "redys" \(expected memory, redis, memcached\)/,
   );
-  assert.equal(await run({ "cache-connect": "memory" }), "memory");
+  assert.equal(await run({ "$cache-connect": "memory" }), "memory");
   await Cache.close();
 });
 

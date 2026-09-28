@@ -50,12 +50,12 @@ test("notificationOptions maps the primary value to title and drops non-scalars"
   assert.equal(o.icon, "assets/done.png");
 
   assert.equal(notificationOptions({}).title, "");
-  assert.equal(notificationOptions({ notify: "T", body: { var: "$x" } }).body, undefined);
+  assert.equal(notificationOptions({ notify: "T", body: { $var: "x" } }).body, undefined);
 });
 
 test("saveDialogOptions maps the primary value to title and filters junk", () => {
   const o = saveDialogOptions({
-    "dialog-save": "Save game",
+    "$dialog-save": "Save game",
     defaultPath: "save.json",
     buttonLabel: "Write",
     filters: [{ name: "JSON", extensions: ["json"] }, { name: "bad" }, "nope"],

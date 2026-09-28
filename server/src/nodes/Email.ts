@@ -72,7 +72,7 @@ function attachmentContent(value: unknown, filename: string): string | Buffer {
   if (ArrayBuffer.isView(value)) return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
   throw new Error(
     `Attachment "${filename}" needs string or binary content. Load the file first, e.g. ` +
-    `{ "file": "/reports/summary.pdf", "as": "pdf" } then { "content": { "var": "$pdf" } }`,
+    `{ "$file": "/reports/summary.pdf", "$as": "pdf" } then { "content": { "$var": "pdf" } }`,
   );
 }
 
@@ -221,7 +221,7 @@ const NO_FROM = "email needs a from address: set `from` on email-connect, or on 
  * Addresses as one short string, for an error message. Capped at three and a
  * count, because an uncaught HTTP error's message becomes the response body, and
  * a failed send to a hundred people should not hand that list to whoever made
- * the request. The full set stays in `$smtp.rejected`, which only a `catch`
+ * the request. The full set stays in `smtp.rejected`, which only a `$catch`
  * that asks for it can read.
  */
 function label(to: string | string[]): string {
@@ -247,7 +247,7 @@ export class EmailNode extends Node {
    * key and value unchecked. Both have to tell their own shape apart from an
    * expression that produces it, since both are objects: the presence of the
    * shape's required key is the discriminator, and anything else routes to
-   * `exprFlat` so `{ "var": "$invite" }` still validates.
+   * `exprFlat` so `{ "$var": "invite" }` still validates.
    */
   static schemaDefs: Record<string, Record<string, unknown>> = {
     _listHeaders: {
@@ -309,12 +309,12 @@ export class EmailNode extends Node {
     email: {
       type: ["string", "array"],
       output: "object",
-      markdownDescription: "Sends an email via SMTP to one address or a list of them, over the transport `email-connect` opened. Requires `subject`; use `body` for plain text, `html` for an HTML body, or both.\n\nA delivery failure throws a `502` HTTP error, so an enclosing `catch` gets `$error.status` and `$error.message`, plus `$smtp` (`{ code, responseCode, command }`) telling apart an auth rejection from a refused connection. A send where every recipient was rejected throws the same way, so nothing is reported as sent that was not.",
+      markdownDescription: "Sends an email via SMTP to one address or a list of them, over the transport `email-connect` opened. Requires `subject`; use `body` for plain text, `html` for an HTML body, or both.\n\nA delivery failure throws a `502` HTTP error, so an enclosing `$catch` gets `error.status` and `error.message`, plus `smtp` (`{ code, responseCode, command }`) telling apart an auth rejection from a refused connection. A send where every recipient was rejected throws the same way, so nothing is reported as sent that was not.",
       outputDescription: "`{ messageId, accepted, rejected, response }`. `accepted` and `rejected` are address lists, so a send that reached some recipients but not all is visible rather than silent. Adds `previewUrl` on the Ethereal development transport.",
       examples: [
-        "{ \"email\": { \"var\": \"$user.email\" }, \"subject\": \"Welcome!\", \"html\": \"<p>Hi there</p>\" }",
-        "{ \"email\": [\"a@example.com\", \"b@example.com\"], \"cc\": { \"var\": \"$manager\" }, \"subject\": \"Report\", \"body\": \"Attached.\", \"attachments\": [{ \"filename\": \"report.pdf\", \"content\": { \"var\": \"$pdf\" } }] }",
-        "{ \"email\": { \"var\": \"$ticket.reporter\" }, \"subject\": { \"concat\": [\"Re: \", { \"var\": \"$ticket.subject\" }] }, \"body\": { \"var\": \"$reply\" }, \"inReplyTo\": { \"var\": \"$ticket.messageId\" }, \"references\": { \"var\": \"$ticket.thread\" } }",
+        "{ \"$email\": { \"$var\": \"user.email\" }, \"subject\": \"Welcome!\", \"html\": \"<p>Hi there</p>\" }",
+        "{ \"$email\": [\"a@example.com\", \"b@example.com\"], \"cc\": { \"$var\": \"manager\" }, \"subject\": \"Report\", \"body\": \"Attached.\", \"attachments\": [{ \"filename\": \"report.pdf\", \"content\": { \"$var\": \"pdf\" } }] }",
+        "{ \"$email\": { \"$var\": \"ticket.reporter\" }, \"subject\": { \"$concat\": [\"Re: \", { \"$var\": \"ticket.subject\" }] }, \"body\": { \"$var\": \"reply\" }, \"inReplyTo\": { \"$var\": \"ticket.messageId\" }, \"references\": { \"$var\": \"ticket.thread\" } }",
       ],
       siblings: {
         subject: {
@@ -370,7 +370,7 @@ export class EmailNode extends Node {
           $ref: "#/$defs/_icalEvent",
           markdownDescription: "A calendar invitation, which is what makes a client render an accept/decline card instead of a dead attachment. Either the calendar text itself, or `{ method, content, filename }`.\n\n`method` must match the `METHOD:` inside the content: `REQUEST` to invite, `CANCEL` to withdraw, `PUBLISH` (the default) for an event that is merely announced. Content is text or bytes, never a path, so load an `.ics` with `file` first.",
           examples: [
-            "{ \"method\": \"REQUEST\", \"filename\": \"meeting.ics\", \"content\": { \"var\": \"$invite\" } }",
+            "{ \"method\": \"REQUEST\", \"filename\": \"meeting.ics\", \"content\": { \"$var\": \"invite\" } }",
           ],
         },
         attachments: {
@@ -386,9 +386,9 @@ export class EmailNode extends Node {
               encoding: { type: "string", description: "Encoding of a string `content` (e.g. `\"base64\"`)." },
             },
           },
-          markdownDescription: "Files to attach, each `{ filename, content }`. Content is bytes or text, never a path. Load it the way Jexs loads anything, `{ \"file\": \"/reports/x.pdf\", \"as\": \"pdf\" }`, then pass `{ \"var\": \"$pdf\" }`.",
+          markdownDescription: "Files to attach, each `{ filename, content }`. Content is bytes or text, never a path. Load it the way Jexs loads anything, `{ \"$file\": \"/reports/x.pdf\", \"$as\": \"pdf\" }`, then pass `{ \"$var\": \"pdf\" }`.",
           examples: [
-            "[{ \"filename\": \"invoice.pdf\", \"content\": { \"var\": \"$pdf\" } }]",
+            "[{ \"filename\": \"invoice.pdf\", \"content\": { \"$var\": \"pdf\" } }]",
           ],
         },
         headers: {
@@ -403,12 +403,12 @@ export class EmailNode extends Node {
     "email-connect": {
       type: "string",
       output: "string",
-      markdownDescription: "Opens the SMTP transport every `email` step then sends over. The value is a connection string (`smtps://user:pass@smtp.example.com`), a bare hostname with the details in siblings, or `\"ethereal\"` for a development transport that captures mail and returns a preview URL instead of delivering it.\n\nCall it once at startup, reading credentials the way any other value arrives, `{ \"var\": \"$env.SMTP_URL\" }`. A later call replaces the transport. There is no implicit configuration: without this, an `email` step says so rather than guessing.",
+      markdownDescription: "Opens the SMTP transport every `email` step then sends over. The value is a connection string (`smtps://user:pass@smtp.example.com`), a bare hostname with the details in siblings, or `\"ethereal\"` for a development transport that captures mail and returns a preview URL instead of delivering it.\n\nCall it once at startup, reading credentials the way any other value arrives, `{ \"$var\": \"env.SMTP_URL\" }`. A later call replaces the transport. There is no implicit configuration: without this, an `email` step says so rather than guessing.",
       outputDescription: "The configured host.",
       examples: [
-        "{ \"email-connect\": { \"var\": \"$env.SMTP_URL\" }, \"from\": \"noreply@example.com\" }",
-        "{ \"email-connect\": \"smtp.example.com\", \"port\": 587, \"user\": \"apikey\", \"password\": { \"var\": \"$env.SMTP_PASS\" }, \"tls\": true }",
-        "{ \"email-connect\": \"ethereal\" }",
+        "{ \"$email-connect\": { \"$var\": \"env.SMTP_URL\" }, \"from\": \"noreply@example.com\" }",
+        "{ \"$email-connect\": \"smtp.example.com\", \"port\": 587, \"user\": \"apikey\", \"password\": { \"$var\": \"env.SMTP_PASS\" }, \"tls\": true }",
+        "{ \"$email-connect\": \"ethereal\" }",
       ],
       siblings: {
         port: {
@@ -434,10 +434,10 @@ export class EmailNode extends Node {
         tls: {
           type: ["boolean", "string", "object"],
           enum: TLS_STRINGS,
-          markdownDescription: "TLS for the connection, also spelled `ssl`, and the same knob it is on `cache-connect` and `database`. `true` encrypts and verifies against the system trust store, and **fails** rather than sending in the clear. Worth setting on any connection that is not already `secure`, because SMTP's own default is to upgrade only if the server offers to, which is exactly what an attacker strips. An object does the same with its own material: `ca`, `cert`, `key`, `passphrase`, `servername`, `rejectUnauthorized`, `minVersion`, `ciphers`. `false` refuses TLS altogether, for a local relay that has none.\n\nCertificates are PEM **content**, not paths: load the file first with `{ \"file\": \"/certs/smtp-ca.pem\", \"raw\": true, \"as\": \"ca\" }` and pass `{ \"var\": \"$ca\" }`.",
+          markdownDescription: "TLS for the connection, also spelled `ssl`, and the same knob it is on `cache-connect` and `database`. `true` encrypts and verifies against the system trust store, and **fails** rather than sending in the clear. Worth setting on any connection that is not already `secure`, because SMTP's own default is to upgrade only if the server offers to, which is exactly what an attacker strips. An object does the same with its own material: `ca`, `cert`, `key`, `passphrase`, `servername`, `rejectUnauthorized`, `minVersion`, `ciphers`. `false` refuses TLS altogether, for a local relay that has none.\n\nCertificates are PEM **content**, not paths: load the file first with `{ \"$file\": \"/certs/smtp-ca.pem\", \"raw\": true, \"$as\": \"ca\" }` and pass `{ \"$var\": \"ca\" }`.",
           examples: [
             "true",
-            "{ \"ca\": { \"var\": \"$ca\" }, \"servername\": \"mail.internal\" }",
+            "{ \"ca\": { \"$var\": \"ca\" }, \"servername\": \"mail.internal\" }",
           ],
         },
         timeout: {
@@ -450,7 +450,7 @@ export class EmailNode extends Node {
 
   ["email-connect"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveObj(def, context, async o => {
-      const target = this.toString(o["email-connect"]).trim();
+      const target = this.toString(o["$email-connect"]).trim();
       if (!target) throw new Error("email-connect needs a host, an smtp:// url, or \"ethereal\"");
 
       this.preview = target.toLowerCase() === "ethereal";
@@ -478,7 +478,7 @@ export class EmailNode extends Node {
     if (!t) {
       throw createHttpError(
         500,
-        "Email has no transport: run { \"email-connect\": … } at startup: a url " +
+        "Email has no transport: run { \"$email-connect\": … } at startup: a url " +
         "(\"smtps://user:pass@host\"), a hostname with the credentials alongside, " +
         "or \"ethereal\" for a development preview transport.",
       );
@@ -488,7 +488,7 @@ export class EmailNode extends Node {
     const headerDef = this.isObject(headers) ? headers : {};
     return resolveObj(fields, context, o =>
       resolveObj(headerDef, context, async headerValues => {
-        const to = addresses(o.email);
+        const to = addresses(o.$email);
         if (!to) throw new Error("email needs at least one recipient");
         // The preflight only proved a `from` was WRITTEN; this is checking the resolved value.
         if (o.from == null && !this.defaultFrom) throw new Error(NO_FROM);

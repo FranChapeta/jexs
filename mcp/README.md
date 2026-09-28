@@ -64,8 +64,8 @@ At startup it loads both artifacts `jexs schema` writes into the project's `.jex
   renders. It is generated from each Node class's authored `static schema`, so it is documentation
   rather than validation.
 - **`combined.schema.json`** is the JSON Schema document the editor validates against. The server
-  uses it for two things: `validate_file` hands it to Ajv, and the global step keys (`as`, `return`,
-  `catch`, `then`, `bubble`) are read from its `$defs.exprFlat.properties`, which is where the
+  uses it for two things: `validate_file` hands it to Ajv, and the global step keys (`$as`, `$return`,
+  `$catch`, `$then`, `$bubble`) are read from its `$defs.exprFlat.properties`, which is where the
   generator already publishes them.
 
 If neither loads, every tool says so and tells you to run `jexs schema`.
@@ -74,7 +74,7 @@ The rest of `src/`:
 
 - `index.json` is the whole server: startup, the `stdio-listen` NDJSON loop (which redirects
   `console.log` to stderr to keep stdout clean for protocol data), and a `switch` on
-  `$message.method` for `initialize`, `tools/list`, `tools/call`, `ping`, notifications, and a
+  `message.method` for `initialize`, `tools/list`, `tools/call`, `ping`, notifications, and a
   JSON-RPC error for anything else.
 - `tools.json` is the tool list returned by `tools/list`.
 - `walk.json` collects every key in a target file; `walk-unknown.json` finds keys that are not an op,
@@ -94,17 +94,15 @@ covers `initialize`, `tools/list`, `ping` and the unknown-method branch as well.
 
 Building a non-trivial program in the JSON surfaced a few sharp edges worth knowing:
 
-- A step whose **value contains a `return` key** halts the surrounding `runSteps` (that is how the
-  `return` step works). So binding any foreign data that might carry one, a file the user asked
-  about, or `exprFlat.properties` (which literally has a `return` key, since `return` is a global
-  step key), ends the sequence instead. Bind it wrapped: `{ "fromEntries": [["node", ...]] }`, then
-  read `$box.node`.
+- A step whose **value contains a `$return` key** halts the surrounding `runSteps` (that is how
+  `$return` works). So binding any foreign data that might carry one, a file the user asked about,
+  or `exprFlat.properties` (which literally has a `$return` key, since that is where the global
+  step keys are published), ends the sequence instead. Bind it wrapped: `{ "$fromEntries": [["node", ...]] }`, then
+  read `box.node`.
 - A **bare `[]` is not a valid step.** `runSteps` requires every step to be an expression object, so
   a walker whose fallthrough branch was a literal `[]` threw on the first scalar leaf of any file.
-- An object with an **`error` key** dispatches to `ErrorNode` (which throws), so a JSON-RPC error
-  reply must be built with `fromEntries` to keep `error` a data key.
 - `map`'s `do` as an **array** resolves in parallel (a data array), it is *not* a step sequence. Use
-  a single expression, and inline lookups instead of `as`.
+  a single expression, and inline lookups instead of `$as`.
 - `exec`'s **`params` keys are literal names**, resolved per entry: you cannot spread a map that was
   computed at runtime through it. To seed context from dynamic data, build the step array instead and
   put a `setVars` step in front of the expression.
