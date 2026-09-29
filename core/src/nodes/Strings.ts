@@ -1,6 +1,7 @@
 import { Node, Context } from "./Node.js";
 import { resolve, resolveAll } from "../Resolver.js";
-import type { JexsNodeSchema } from "../schema.js";
+import { toBooleanValue, toStringValue } from "../helpers.js";
+import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
 
 /**
  * Chunk size for feeding `btoa`, because `String.fromCharCode(...bytes)` is a
@@ -8,6 +9,22 @@ import type { JexsNodeSchema } from "../schema.js";
  * output. Retires on Node 25+, whose V8 has `Uint8Array.prototype.toBase64`.
  */
 const BASE64_CHUNK = 8192;
+
+const FLAGS: JexsPropertySchema = {
+  type: "string",
+  pattern: "^(?!.*(.).*\\1)[imsuv]*$",
+  markdownDescription: "Regular expression flags, each at most once: `i` (ignore case), `m` (multiline `^`/`$`), `s` (`.` matches newlines), `u` / `v` (Unicode). Whether to match once or everywhere is the `all` sibling, not a `g` flag.",
+};
+
+// Selected by value, so `flags` is refused unless `regex` is literally true (or
+// an expression that may resolve to it).
+const REGEX: JexsPropertySchema = {
+  type: "boolean",
+  default: false,
+  variantBy: "value",
+  markdownDescription: "Read the pattern slot as a regular expression source (no surrounding slashes) instead of literal text. Without it the slot is always literal, so text from data never runs as a pattern.",
+  variants: { true: { siblings: { flags: FLAGS } } },
+};
 
 export class StringNode extends Node {
   static schema: JexsNodeSchema = {
@@ -146,33 +163,36 @@ export class StringNode extends Node {
       tuple: 3,
       prefixItems: [
         { type: "string", description: "The input string." },
-        { type: "string", description: "The search string, or a `/pattern/flags` regular expression." },
-        { type: "string", description: "The replacement string (`$1`/`$&` group refs work for regex searches)." },
+        { type: "string", description: "The text to find, matched literally unless `regex: true`." },
+        { type: "string", description: "The replacement. Inserted as-is, except under `regex: true`, where `$1`, `$<name>` and `$&` insert captures." },
       ],
       output: "string",
-      markdownDescription: "Replaces occurrences in `[input, search, replacement]`. A `search` of the form `/pattern/flags` is treated as a regular expression (so `$1`/`$&` group refs work in the replacement); any other string is matched literally. Replaces all occurrences by default; set `all: false` for only the first (literal), or omit the `g` flag (regex).",
+      markdownDescription: "Replaces occurrences in `[input, find, replacement]`. The search is literal and replaces every occurrence; set `all: false` for only the first, and `regex: true` to search with a regular expression.",
       examples: [
         "{ \"$replace\": [\"foo foo\", \"foo\", \"bar\"] }",
-        "{ \"$replace\": [\"a1 b2\", \"/\\\\d/g\", \"#\"] }",
+        "{ \"$replace\": [\"a1 b22\", \"\\\\d+\", \"#\"], \"regex\": true }",
       ],
       siblings: {
         all: {
           type: "boolean",
-          description: "Replace all occurrences (default `true`). For `/regex/` patterns the `g` flag controls this unless `all` is set explicitly.",
+          description: "Replace every occurrence (default `true`); `false` replaces only the first.",
         },
+        regex: REGEX,
       },
     },
     split: {
       tuple: 2,
       prefixItems: [
         { type: "string", description: "The string to split." },
-        { type: "string", description: "The separator, or a `/pattern/flags` regular expression." },
+        { type: "string", description: "The separator, matched literally unless `regex: true`." },
       ],
       output: "array",
-      markdownDescription: "Splits a string into an array. A `/pattern/flags` separator splits on a regular expression.",
+      markdownDescription: "Splits a string into an array. Pass `regex: true` to split on a regular expression.",
       examples: [
         "{ \"$split\": [\"a,b,c\", \",\"] }",
+        "{ \"$split\": [\"a , b,c\", \"\\\\s*,\\\\s*\"], \"regex\": true }",
       ],
+      siblings: { regex: REGEX },
     },
     join: {
       tuple: [
@@ -261,25 +281,56 @@ export class StringNode extends Node {
       tuple: 2,
       prefixItems: [
         { type: "string", description: "The string to test." },
-        { type: "string", description: "The substring to look for, or a `/pattern/flags` regular expression." },
+        { type: "string", description: "The substring to look for, matched literally unless `regex: true`." },
       ],
       output: "boolean",
-      markdownDescription: "Returns `true` if a string contains the given substring. A `/pattern/flags` needle tests a regular expression instead.",
+      markdownDescription: "Returns `true` if a string contains the given substring. Pass `regex: true` to test a regular expression instead.",
       examples: [
         "{ \"$contains\": [\"hello world\", \"world\"] }",
+        "{ \"$contains\": [{ \"$var\": \"name\" }, \"^admin\"], \"regex\": true, \"flags\": \"i\" }",
       ],
+      siblings: { regex: REGEX },
     },
     match: {
       tuple: 2,
       prefixItems: [
-        { type: "string", description: "The string to match against." },
-        { type: "string", description: "The pattern: `/pattern/flags` or a bare pattern." },
+        { type: "string", description: "The string to search." },
+        { type: "string", description: "The regular expression source, without surrounding slashes." },
       ],
-      output: "array",
-      outputDescription: "Array of matches, or `null` when nothing matches. With the `g` flag every match; otherwise the first match plus capture groups.",
-      markdownDescription: "Matches a regular expression against a string. The pattern may be `/pattern/flags` or a bare pattern.",
+      output: "object",
+      outputDescription: "The first match as `{ match, index, captures, groups }`, or `null` when nothing matches. `captures` lists the numbered groups and `groups` the named ones; a group that took no part in the match is `null`.",
+      markdownDescription: "Matches a regular expression against a string and returns the first match. Pass `all: true` for every match, and `capture` for one group's text instead of the whole match object.",
       examples: [
-        "{ \"$match\": [\"a1 b2\", \"/\\\\d/g\"] }",
+        "{ \"$match\": [\"2026-09-28\", \"(?<year>\\\\d{4})-(\\\\d{2})\"] }",
+        "{ \"$match\": [{ \"$var\": \"path\" }, \"^/users/(\\\\d+)\"], \"capture\": 1 }",
+        "{ \"$match\": [\"a1 b22\", \"\\\\d+\"], \"all\": true, \"capture\": 0 }",
+      ],
+      siblings: { flags: FLAGS },
+      variants: {
+        all: {
+          type: "boolean",
+          output: "array",
+          markdownDescription: "Return every match, as an array of match objects (`[]` when there are none).",
+          variants: {
+            capture: {
+              type: ["number", "string"],
+              output: "array",
+              outputDescription: "The chosen group's text from every match, `null` where a match left it unset.",
+            },
+          },
+        },
+        capture: {
+          type: ["number", "string"],
+          output: "string",
+          markdownDescription: "Return one group's text instead of the match object: a number picks a numbered group (`0` is the whole match), a string a named group. `null` when nothing matches or the group took no part.",
+        },
+      },
+    },
+    escapeRegex: {
+      output: "string",
+      markdownDescription: "Escapes every regular-expression metacharacter, so the text matches itself when spliced into a pattern for `regex: true` or `$match`.",
+      examples: [
+        "{ \"$match\": [{ \"$var\": \"line\" }, { \"$concat\": [\"^\", { \"$escapeRegex\": { \"$var\": \"key\" } }, \"=(.*)\"] }], \"capture\": 1 }",
       ],
     },
     normalize: {
@@ -435,18 +486,27 @@ export class StringNode extends Node {
   }
 
   replace(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.$replace, def.all], c, ([args, all]) =>
-      doReplace(args, all as boolean | undefined),
-    );
+    return resolveAll([def.$replace, def.all, def.regex, def.flags], c, ([args, all, regex, flags]) => {
+      const a = this.toArray(args);
+      if (a.length < 3) return "";
+      const str = this.toString(a[0]);
+      const replacement = this.toString(a[2]);
+      if (regexMode("replace", regex, flags)) {
+        return str.replace(compileRegex(this.regexCache, "replace", a[1], flags, all !== false), replacement);
+      }
+      const find = this.toString(a[1]);
+      // A function replacer, so `$&` and `$1` in literal text are inserted as written.
+      return all === false ? str.replace(find, () => replacement) : str.split(find).join(replacement);
+    });
   }
 
   split(def: Record<string, unknown>, c: Context) {
-    return resolve(def.$split, c, args => {
+    return resolveAll([def.$split, def.regex, def.flags], c, ([args, regex, flags]) => {
       const a = this.toArray(args);
-      if (a.length < 2) return this.toString(a[0]).split("");
-      // A `/pattern/flags` separator splits on a regular expression.
-      const re = toRegex(a[1]);
-      return this.toString(a[0]).split(re ?? this.toString(a[1]));
+      const str = this.toString(a[0]);
+      if (regexMode("split", regex, flags)) return str.split(compileRegex(this.regexCache, "split", a[1], flags, false));
+      if (a.length < 2) return str.split("");
+      return str.split(this.toString(a[1]));
     });
   }
 
@@ -487,23 +547,29 @@ export class StringNode extends Node {
   }
 
   contains(def: Record<string, unknown>, c: Context) {
-    return resolve(def.$contains, c, args => {
+    return resolveAll([def.$contains, def.regex, def.flags], c, ([args, regex, flags]) => {
       const a = this.toArray(args);
-      // A `/pattern/flags` needle tests a regular expression; else substring.
-      // `search` saves/restores lastIndex, so a cached g/y regex stays safe.
-      const re = toRegex(a[1]);
-      return re ? this.toString(a[0]).search(re) !== -1 : this.toString(a[0]).includes(this.toString(a[1]));
+      const str = this.toString(a[0]);
+      if (regexMode("contains", regex, flags)) return compileRegex(this.regexCache, "contains", a[1], flags, false).test(str);
+      return str.includes(this.toString(a[1]));
     });
   }
 
   match(def: Record<string, unknown>, c: Context) {
-    return resolve(def.$match, c, args => {
+    return resolveAll([def.$match, def.all, def.capture, def.flags], c, ([args, all, capture, flags]) => {
       const a = this.toArray(args);
-      // `match` is always regex: a `/re/flags` literal carries flags; a bare
-      // string is coerced to a RegExp by String.prototype.match.
-      const re = toRegex(a[1]);
-      return this.toString(a[0]).match(re ?? this.toString(a[1]));
+      const str = this.toString(a[0]);
+      const pick = capture == null ? toMatchObject : (m: RegExpMatchArray) => captureOf(m, capture);
+      if (this.toBoolean(all)) {
+        return [...str.matchAll(compileRegex(this.regexCache, "match", a[1], flags, true))].map(m => pick(m));
+      }
+      const m = compileRegex(this.regexCache, "match", a[1], flags, false).exec(str);
+      return m ? pick(m) : null;
     });
+  }
+
+  escapeRegex(def: Record<string, unknown>, c: Context) {
+    return resolve(def.$escapeRegex, c, v => this.toString(v).replace(REGEX_SPECIALS, "\\$&"));
   }
 
   normalize(def: Record<string, unknown>, c: Context) {
@@ -522,85 +588,90 @@ export class StringNode extends Node {
       return out;
     });
   }
+
+  /**
+   * Compiled patterns, per instance so one resolver's templates never evict
+   * another's. FIFO-bounded; a hit is a single `Map.get`.
+   */
+  private readonly regexCache = new Map<string, RegExp>();
 }
 
 type NormalizationForm = "NFC" | "NFD" | "NFKC" | "NFKD";
 const NORMALIZE_FORMS = new Set<string>(["NFC", "NFD", "NFKC", "NFKD"]);
 
-function doReplace(args: unknown, all: boolean | undefined): string {
-  const a = Array.isArray(args) ? (args as unknown[]) : args != null ? [args] : [];
-  if (a.length < 3) return "";
-  const str = String(a[0] ?? "");
-  const replacement = String(a[2] ?? "");
+const REGEX_CACHE_MAX = 200;
+const REGEX_CACHE_MAX_SOURCE = 1024;
+const REGEX_FLAGS = /^(?!.*(.).*\1)[imsuv]*$/;
 
-  // A `/pattern/flags` search is a regular expression; anything else is literal.
-  const re = toRegex(a[1]);
-  if (re) return str.replace(withGlobal(re, all), replacement);
-
-  const search = String(a[1] ?? "");
-  // Literal: replace all by default; `all: false` replaces only the first.
-  return all === false ? str.replace(search, replacement) : str.split(search).join(replacement);
+/** Whether an op runs in regex mode. `flags` on a literal search is refused
+ *  rather than ignored, since the step would not do what it says. */
+function regexMode(op: string, regex: unknown, flags: unknown): boolean {
+  if (toBooleanValue(regex)) return true;
+  if (flags != null) throw new Error(`$${op}: "flags" applies only with "regex": true`);
+  return false;
 }
 
-// Slug normalization regexes, hoisted out of the per-call chain. All are used
-// only with String.replace (which resets lastIndex), so the shared `/g` consts
-// are safe — do not call .test()/.exec() on them.
+/** Compile `pattern` with `flags` (plus `g` when `global`) through `cache`. */
+function compileRegex(
+  cache: Map<string, RegExp>,
+  op: string,
+  pattern: unknown,
+  flags: unknown,
+  global: boolean,
+): RegExp {
+  const source = toStringValue(pattern);
+  const own = flags == null ? "" : toStringValue(flags);
+  if (!REGEX_FLAGS.test(own)) {
+    throw new Error(`Invalid regex flags "${own}" in $${op}: use i, m, s, u or v, each once; match once or everywhere with "all"`);
+  }
+  const key = own + (global ? "g" : "") + "\0" + source;
+  const hit = cache.get(key);
+  if (hit) {
+    hit.lastIndex = 0;
+    return hit;
+  }
+  let re: RegExp;
+  try {
+    re = new RegExp(source, global ? own + "g" : own);
+  } catch (e) {
+    throw new Error(`Invalid regex "${source}" in $${op}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (source.length <= REGEX_CACHE_MAX_SOURCE) {
+    // size >= MAX guarantees at least one entry, so the oldest key is non-null.
+    if (cache.size >= REGEX_CACHE_MAX) cache.delete(cache.keys().next().value!);
+    cache.set(key, re);
+  }
+  return re;
+}
+
+/** A match as plain JSON: groups that took no part come back `null`, not `undefined`. */
+function toMatchObject(m: RegExpMatchArray): Record<string, unknown> {
+  const groups: Record<string, string | null> = {};
+  for (const [name, value] of Object.entries(m.groups ?? {})) groups[name] = value ?? null;
+  return { match: m[0], index: m.index ?? 0, captures: m.slice(1).map(v => v ?? null), groups };
+}
+
+/** One group's text: a number picks a numbered group (0 the whole match), a
+ *  string a named one. A name the pattern does not define is a template bug. */
+function captureOf(m: RegExpMatchArray, capture: unknown): string | null {
+  if (typeof capture === "number") return m[capture] ?? null;
+  const name = String(capture);
+  if (!m.groups || !(name in m.groups)) throw new Error(`$match: the pattern has no group named "${name}"`);
+  return m.groups[name] ?? null;
+}
+
+// Slug normalization regexes and the escapeRegex set, hoisted out of the per-call
+// chain. All are used only with String.replace (which resets lastIndex), so the
+// shared `/g` consts are safe — do not call .test()/.exec() on them.
 const SLUG_DIACRITICS = /[̀-ͯ]/g;
 const SLUG_NON_ALNUM = /[^a-z0-9\s-]/g;
 const SLUG_SPACES = /\s+/g;
 const SLUG_DASHES = /-+/g;
 const SLUG_EDGE_DASHES = /^-|-$/g;
-
-const REGEX_LITERAL = /^\/(.+)\/([a-z]*)$/;
-
-// Cache parsed `/pattern/flags` literals (including the `null` non-match result).
-// Only strings starting with `/` (charCode 47) are cached — a `/...` literal is
-// the only form REGEX_LITERAL can match — so dynamic literal needles passed to
-// contains/split don't pollute the cache. When full we evict the oldest entry
-// (FIFO, via Map insertion order); the hit path stays a single Map.get with no
-// reorder. Literal cardinality is bounded by the templates in play.
-const _regexCache = new Map<string, RegExp | null>();
-const REGEX_CACHE_MAX = 200;
-
-/** Parse a `/pattern/flags` string into a RegExp, or null if not that form. */
-function toRegex(search: unknown): RegExp | null {
-  if (typeof search !== "string") return null;
-  const cacheable = search.charCodeAt(0) === 47;
-  if (cacheable) {
-    const hit = _regexCache.get(search);
-    if (hit !== undefined) {
-      // A shared regex with the g/y flag carries lastIndex between calls; reset
-      // it so repeated test/exec/match always start from the beginning.
-      if (hit) hit.lastIndex = 0;
-      return hit;
-    }
-  }
-  const m = REGEX_LITERAL.exec(search);
-  let re: RegExp | null = null;
-  if (m) {
-    try {
-      re = new RegExp(m[1], m[2]);
-    } catch {
-      re = null;
-    }
-  }
-  if (cacheable) {
-    // size >= MAX guarantees at least one entry, so the oldest key is non-null.
-    if (_regexCache.size >= REGEX_CACHE_MAX) _regexCache.delete(_regexCache.keys().next().value!);
-    _regexCache.set(search, re);
-  }
-  return re;
-}
-
-/** Align a RegExp's `g` flag with an explicit `all`; leave it untouched if `all`
- *  is omitted (the pattern's own flags decide). */
-function withGlobal(re: RegExp, all: boolean | undefined): RegExp {
-  if (all === undefined) return re;
-  const hasG = re.flags.includes("g");
-  if (all && !hasG) return new RegExp(re.source, re.flags + "g");
-  if (!all && hasG) return new RegExp(re.source, re.flags.replace("g", ""));
-  return re;
-}
+// The syntax characters plus `/`: every escape here is valid under the `u` and
+// `v` flags too. `-` is left alone, since `\-` is a syntax error under both and
+// `-` is only special inside a character class.
+const REGEX_SPECIALS = /[\\^$.*+?()[\]{}|/]/g;
 
 function doPad(args: unknown, side: "start" | "end"): string {
   const a = Array.isArray(args) ? (args as unknown[]) : args != null ? [args] : [];

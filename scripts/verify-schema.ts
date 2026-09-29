@@ -74,13 +74,17 @@ const cases: Case[] = [
   { label: "string-slot accepts unannotated (any-output) expression (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $foreach: [1, 2], item: { $var: "dynamic" }, do: "x" } },
 
-  // Regex via /re/ detection on string ops, with per-op output narrowing in slots.
-  { label: "replace with /regex/ search (string-output) standalone", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $replace: ["a1 b2", "/\\d/g", "#"] } },
+  // Regex opt-in on string ops, with per-op output narrowing in slots.
+  { label: "replace with regex: true (string-output) standalone", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $replace: ["a1 b2", "\\d", "#"], regex: true } },
   { label: "string-slot accepts replace (regex substitution, string-output) (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $foreach: [1], item: { $replace: ["a1", "/\\d/g", "#"] }, do: "y" } },
-  { label: "string-slot rejects match (array-output) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
-    expr: { $foreach: [1], item: { $match: ["a1", "/\\d/g"] }, do: "y" } },
+    expr: { $foreach: [1], item: { $replace: ["a1", "\\d", "#"], regex: true }, do: "y" } },
+  { label: "string-slot rejects match all (array-output) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $foreach: [1], item: { $match: ["a1", "\\d"], all: true }, do: "y" } },
+  { label: "string-slot accepts match capture (string-output) (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $foreach: [1], item: { $match: ["a1", "(\\d)"], capture: 1 }, do: "y" } },
+  { label: "flags without regex: true (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $contains: ["a", "A"], flags: "i" } },
   // Variants — value-mode (tailwind): op chosen by the primary enum value.
   { label: "tailwind build (value-mode) standalone", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $tailwind: "build", data: { $var: "t" } } },

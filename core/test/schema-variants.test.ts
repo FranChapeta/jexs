@@ -151,9 +151,36 @@ test("sibling-mode: boolean slot accepts the boolean variant but rejects the arr
   assert.equal(validAt("$defs/exprFlat", inParallel({ $fakesib: "x", toArr2: "y" })), false);
 });
 
-test("string ops carry regex via /re/: replace (string-output) accepted, match (array) rejected in a string slot", () => {
-  assert.equal(validAt("$defs/exprFlat", inItem({ $replace: ["a1", "/\\d/g", "#"] })), true);
-  assert.equal(validAt("$defs/exprFlat", inItem({ $match: ["a1", "/\\d/g"] })), false);
+test("regex string ops: replace (string) accepted, match all (array) rejected in a string slot", () => {
+  assert.equal(validAt("$defs/exprFlat", inItem({ $replace: ["a1", "\\d", "#"], regex: true })), true);
+  assert.equal(validAt("$defs/exprFlat", inItem({ $match: ["a1", "\\d"], all: true })), false);
+  assert.equal(validAt("$defs/exprFlat", inItem({ $match: ["a1", "\\d"] })), false);
+});
+
+test("match capture narrows to a string, and to an array under all", () => {
+  // `$join`'s first slot is typed array, so it tells an array output from `any`.
+  const inArray = (e: unknown) => ({ $join: [e, ","] });
+  assert.equal(validAt("$defs/exprFlat", inItem({ $match: ["a1", "(\\d)"], capture: 1 })), true);
+  assert.equal(validAt("$defs/exprFlat", inArray({ $match: ["a1", "(\\d)"], capture: 1 })), false);
+  assert.equal(validAt("$defs/exprFlat", inItem({ $match: ["a1", "\\d"], all: true, capture: 0 })), false);
+  assert.equal(validAt("$defs/exprFlat", inArray({ $match: ["a1", "\\d"], all: true, capture: 0 })), true);
+  assert.equal(validAt("$defs/exprFlat", inArray({ $match: ["a1", "\\d"], capture: 0, all: true })), true);
+});
+
+test("match capture is typed number-or-name both standalone and under all", () => {
+  for (const all of [{}, { all: true }]) {
+    assert.equal(validAt("$defs/exprFlat", { $match: ["a", "(?<y>a)"], ...all, capture: "y" }), true);
+    assert.equal(validAt("$defs/exprFlat", { $match: ["a", "a"], ...all, capture: { $var: "n" } }), true);
+    assert.equal(validAt("$defs/exprFlat", { $match: ["a", "a"], ...all, capture: true }), false);
+    assert.equal(validAt("$defs/exprFlat", { $match: ["a", "a"], ...all, capture: [1] }), false);
+  }
+});
+
+test("regex flags: refused without regex: true, and outside i/m/s/u/v", () => {
+  assert.equal(validAt("$defs/exprFlat", { $contains: ["a", "A"], regex: true, flags: "i" }), true);
+  assert.equal(validAt("$defs/exprFlat", { $contains: ["a", "A"], flags: "i" }), false);
+  assert.equal(validAt("$defs/exprFlat", { $contains: ["a", "A"], regex: true, flags: "g" }), false);
+  assert.equal(validAt("$defs/exprFlat", { $match: ["a", "A"], flags: "ii" }), false);
 });
 
 test("value-mode: string slot accepts the string variant value, rejects the array one", () => {

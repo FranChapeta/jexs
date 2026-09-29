@@ -25,6 +25,9 @@ export type JexsOutput = JexsType | "any";
 export interface JexsPropertySchema {
   type?: JexsType | readonly JexsType[];
   enum?: readonly unknown[];
+  /** Regular expression a literal string value must match (JSON Schema `pattern`).
+   *  Constrains only the literal; an expression in the slot is not checked. */
+  pattern?: string;
   items?: JexsPropertySchema;
   description?: string;
   markdownDescription?: string;

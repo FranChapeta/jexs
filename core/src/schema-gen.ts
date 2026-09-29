@@ -260,6 +260,14 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
     return out;
   }
 
+  if (prop.pattern !== undefined && prop.type === "string") {
+    const out: EmittedSchema = prop.literal
+      ? { type: "string", pattern: prop.pattern }
+      : { if: { type: "string" }, then: { pattern: prop.pattern }, else: { ...FILTERED_REF.string } };
+    liftMetadata(prop, out);
+    return out;
+  }
+
   if (prop.literal && prop.type) {
     const out: EmittedSchema = { type: prop.type };
     if (prop.enum) out.enum = [...prop.enum];

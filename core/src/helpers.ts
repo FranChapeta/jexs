@@ -25,15 +25,16 @@ export function isAssociativeArray(
  * little over the cap degrades gracefully instead of flushing wholesale. We do
  * NOT reorder on hit, so the lookup stays a single `Map.get`.
  *
- * Callers MUST NOT mutate the returned array — it is shared across calls.
+ * The returned array is shared across calls, so it is frozen: a caller that
+ * mutates it throws instead of corrupting path reads everywhere else.
  */
-const _pathCache = new Map<string, string[]>();
+const _pathCache = new Map<string, readonly string[]>();
 const PATH_CACHE_MAX = 500;
 
-export function splitPath(path: string): string[] {
+export function splitPath(path: string): readonly string[] {
   let parts = _pathCache.get(path);
   if (parts) return parts;
-  parts = path.split(".");
+  parts = Object.freeze(path.split("."));
   // size >= MAX guarantees at least one entry, so the oldest key is non-null.
   if (_pathCache.size >= PATH_CACHE_MAX) _pathCache.delete(_pathCache.keys().next().value!);
   _pathCache.set(path, parts);
