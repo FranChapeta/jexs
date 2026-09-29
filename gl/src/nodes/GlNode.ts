@@ -57,7 +57,7 @@ import {
 import { initEquirectSky, drawEquirectSky } from "../gl/skybox.js";
 import { raycastStore, type MeshEntry, type Bounds } from "@jexs/physics";
 import type { GpuMesh } from "../gl/types.js";
-import type { JexsNodeSchema } from "@jexs/core";
+import type { JexsNodeSchema, JexsPropertySchema } from "@jexs/core";
 
 // ─── Module-level scratch buffers ────────────────────────────────────────────
 
@@ -86,6 +86,37 @@ let _glPerfLastLog = 0;
 
 /** Enable verbose GL render logging. */
 export let _glDebug = false;
+
+type P = JexsPropertySchema;
+const vec = (description: string): P => ({ type: "array", items: { type: "number" }, description });
+
+/** Lighting, sky, fog and post-processing: set by `gl-init` and changed later by `gl-camera`. */
+const SCENE_SIBLINGS: Record<string, P> = {
+  lightDir:     vec("Directional light direction `[x, y, z]` (default `[-0.5, -0.7, -1]`)."),
+  lightColor:   vec("Directional light color `[r, g, b]`, each 0 to 1."),
+  ambient:      { type: "number", description: "Ambient light strength." },
+  ambientColor: vec("Ambient light color `[r, g, b]`, each 0 to 1."),
+  shininess:    { type: "number", description: "Specular exponent for lit surfaces." },
+  skyTop:       vec("Top color `[r, g, b]` of the procedural sky gradient, drawn when both `skyTop` and `skyBottom` are set."),
+  skyBottom:    vec("Bottom color `[r, g, b]` of the procedural sky gradient."),
+  skybox: {
+    type: ["string", "object", "boolean"],
+    description: "Equirectangular environment sky, drawn in place of the gradient: a texture name loaded with `gl-texture`, `{ texture, intensity, rotation }` (defaults 1 and 0), or `false` to remove it.",
+  },
+  fogColor: vec("Fog color `[r, g, b]`, each 0 to 1."),
+  fogNear:  { type: "number", description: "Distance where fog starts." },
+  fogFar:   { type: "number", description: "Distance where fog is total." },
+  ortho:    { type: "boolean", description: "Use an orthographic projection instead of a perspective one." },
+  fxaa:     { type: "boolean", description: "Apply FXAA anti-aliasing." },
+  bloom: {
+    type: ["boolean", "object"],
+    description: "Bloom post-processing: `true` for the defaults, or `{ threshold, intensity, radius }` (defaults 0.8, 0.5, 4).",
+  },
+  shadow: {
+    type: ["object", "boolean"],
+    description: "Directional-light shadows: `{ resolution, bias, softness, far }` (defaults 1024, 0.005, 2, 100). `gl-camera` turns them off with `false`.",
+  },
+};
 
 
 /** Pre-transform 3D vertices (pos3+normal3 interleaved) into a batch buffer. Returns new offset. */
@@ -149,6 +180,22 @@ export class GlNode extends Node {
           type: "array",
           description: "Steps to run each animation frame (`dt`, `time` available).",
         },
+        virtualWidth:  { type: "number", description: "Width of the coordinate space entities are placed in, scaled to the canvas by `fit` (default: the canvas width)." },
+        virtualHeight: { type: "number", description: "Height of the coordinate space entities are placed in (default: the canvas height)." },
+        fit: {
+          type: "string",
+          enum: ["contain", "cover", "stretch"],
+          default: "contain",
+          description: "How the virtual space scales to the canvas: letterboxed, cropped, or distorted.",
+        },
+        perspective: { type: "boolean", description: "Render in 3D with a perspective camera." },
+        mode3d:      { type: "boolean", description: "Same as `perspective`." },
+        cameraZ:     { type: "number", description: "Initial camera Z in 3D (default 5)." },
+        fov:         { type: "number", description: "Initial field of view in degrees in 3D (default 60)." },
+        budget:      { type: "number", description: "Milliseconds `on-frame` may take; after a frame that ran over, the next run is deferred past rendering and input (default 8)." },
+        metrics:     { type: "boolean", description: "Show an FPS and draw-call overlay." },
+        resize:      { type: "boolean", default: true, description: "Resize the canvas backing store when its CSS size changes." },
+        ...SCENE_SIBLINGS,
       },
     },
     "gl-destroy": {
@@ -176,7 +223,7 @@ export class GlNode extends Node {
     "gl-camera": {
       type: "boolean",
       output: "null",
-      markdownDescription: "Controls the camera. In 2D: `x`, `y`, `zoom`, `rotation`, `follow` (entity id).\nShake: `shake` (intensity), `shakeDuration`, `shakeDecay`. Trauma: `trauma` (0–1 accumulated).\nIn 3D: `z`, `fov`, `near`, `far`, `lookAt` ([x,y,z]), `up` ([x,y,z]).",
+      markdownDescription: "Controls the camera, and changes the scene settings `gl-init` took. In 2D: `x`, `y`, `zoom`, `rotation`, `follow` (entity id).\nShake: `shake` (intensity), `shakeDuration`, `shakeDecay`. Trauma: `trauma` (0–1 accumulated).\nIn 3D: `z`, `fov`, `near`, `far`, `lookAt` ([x,y,z]), `up` ([x,y,z]), and `followMode` for first or third person.",
       examples: [
         "{ \"$gl-camera\": true, \"follow\": \"player\", \"zoom\": 1.5 }",
       ],
@@ -193,13 +240,52 @@ export class GlNode extends Node {
           type: "number",
           description: "Camera zoom factor.",
         },
+        rotation: { type: "number", description: "2D camera rotation in degrees." },
         follow: {
-          type: "string",
-          description: "Entity ID to follow.",
+          type: ["string", "null"],
+          description: "Entity ID to follow, or `null` to stop.",
         },
+        z:      { type: "number", description: "3D camera Z position." },
+        fov:    { type: "number", description: "3D field of view in degrees (default 60)." },
+        near:   { type: "number", description: "3D near clipping plane (default 0.1)." },
+        far:    { type: "number", description: "3D far clipping plane (default 1000)." },
+        lookAt: vec("3D point the camera faces, `[x, y, z]` (default `[0, 0, 0]`)."),
+        up:     vec("3D up direction `[x, y, z]` (default `[0, 1, 0]`)."),
+        pitch:  { type: "number", description: "Look pitch in degrees, used by `followMode`." },
+        yaw:    { type: "number", description: "Look yaw in degrees, used by `followMode`." },
+        followMode: {
+          type: ["string", "null"],
+          enum: ["fps", "tps"],
+          description: "Follow the `follow` entity in 3D: `fps` from its eyes, `tps` from behind it, or `null` to stop.",
+          variants: {
+            fps: { siblings: { followOffsetZ: { type: "number", description: "Eye height above the entity's base (default 0)." } } },
+            tps: {
+              siblings: {
+                tpsDistance: { type: "number", description: "Distance behind the entity (default 8)." },
+                tpsHeight:   { type: "number", description: "Height above the entity's base (default 6)." },
+              },
+            },
+          },
+        },
+        ...SCENE_SIBLINGS,
+      },
+      variants: {
         shake: {
           type: "number",
-          description: "Shake intensity.",
+          description: "Start a shake of this intensity.",
+          siblings: {
+            shakeDuration: { type: "number", description: "Shake length in seconds (default 0.3)." },
+            shakeDecay:    { type: "number", description: "Falloff exponent over the shake (default 1)." },
+          },
+        },
+        trauma: {
+          type: "number",
+          description: "Add trauma, capped at 1; the camera shakes by trauma squared as it decays.",
+          siblings: {
+            traumaDecay:   { type: "number", description: "Trauma lost per second (default 1)." },
+            maxShake:      { type: "number", description: "Offset at full trauma (default 10)." },
+            maxShakeAngle: { type: "number", description: "Rotation in degrees at full trauma (default 3)." },
+          },
         },
       },
     },
@@ -561,6 +647,12 @@ export class GlNode extends Node {
       examples: [
         "{ \"$gl-ssao\": true, \"radius\": 0.5, \"bias\": 0.025, \"intensity\": 1.5 }",
       ],
+      type: "boolean",
+      siblings: {
+        radius:    { type: "number", description: "Sampling radius in world units (default 0.5)." },
+        bias:      { type: "number", description: "Depth bias against self-occlusion (default 0.025)." },
+        intensity: { type: "number", description: "Darkening strength (default 1.5)." },
+      },
     },
     "gl-particle": {
       output: "null",

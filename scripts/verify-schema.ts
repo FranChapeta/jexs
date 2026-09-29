@@ -223,6 +223,20 @@ const cases: Case[] = [
   { label: "create with a broken inline document (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { $query: "create", schema: { properties: {}, table: 5 } } },
 
+  // gl-camera: follow-mode offsets belong to their mode, shake tuning to `shake`.
+  { label: "gl-camera tps with its distance (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { "$gl-camera": true, follow: "player", followMode: "tps", tpsDistance: 10, yaw: 90 } },
+  { label: "gl-camera fps with a tps distance (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "$gl-camera": true, followMode: "fps", tpsDistance: 10 } },
+  { label: "gl-camera shake with a non-number duration (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "$gl-camera": true, shake: 5, shakeDuration: "long" } },
+  { label: "gl-camera scene settings (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { "$gl-camera": true, fogColor: [0.5, 0.5, 0.6], bloom: true, shadow: false, skybox: "sky" } },
+  { label: "gl-init with a bad fit (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "$gl-init": "#c", fit: "fill" } },
+  { label: "gl-ssao with a non-number radius (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "$gl-ssao": true, radius: "wide" } },
+
   // Exclusive variant siblings on other value-selected ops; Element's `tag` opts out.
   { label: "database raw refuses connect's ssl (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { $database: "raw", sql: "select 1", ssl: true } },
