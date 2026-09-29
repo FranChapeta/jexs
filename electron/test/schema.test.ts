@@ -90,36 +90,6 @@ test("window-open accepts its declared siblings and expressions in them", () => 
   );
 });
 
-// Opening is `window-open`, so `window` is free to be a target sibling. If the
-// open op still owned the bare `window` key, {"window": ..., "$window-title": ...}
-// would dispatch on whichever key came first in the object.
-test("window is a sibling, not a handler key", () => {
-  const byKey = (combined as unknown as { byKey: Record<string, unknown> }).byKey;
-  assert.ok(!("window" in byKey), "`window` must not be a dispatch key");
-});
-
-// The general form of that bug, caught systematically rather than one name at a
-// time. The resolver dispatches on the first key it recognizes in an object, so a
-// sibling that is also a handler key silently hijacks the step whenever an author
-// happens to write it first. `menu` as a sibling on `tray` did exactly that:
-// { "$menu": [...], "tray": "icon.png" } set the application menu and never made
-// the tray. Siblings must not shadow any dispatch key, in this package or core.
-test("no sibling anywhere shadows a handler key", () => {
-  const byKey = (combined as unknown as { byKey: Record<string, unknown> }).byKey;
-  const offenders: string[] = [];
-
-  for (const NodeClass of electronNodeClasses) {
-    const schema = NodeClass.schema as Record<string, { siblings?: Record<string, unknown> }>;
-    for (const [op, method] of Object.entries(schema)) {
-      for (const sibling of Object.keys(method.siblings ?? {})) {
-        if (sibling in byKey) offenders.push(`${op} declares sibling "${sibling}", which is also an op`);
-      }
-    }
-  }
-
-  assert.deepEqual(offenders, []);
-});
-
 // No-arg ops carry the target in the primary slot; valued ops take their value
 // there and target through the `window` sibling.
 test("no-arg window ops accept a name or true", () => {
@@ -188,12 +158,12 @@ test("tray reuses the same item shape as menu", () => {
     validAt("$defs/exprFlat", {
       $tray: "assets/icon.png",
       tooltip: "App",
-      items: [{ label: "Quit", role: "quit" }],
+      menu: [{ label: "Quit", role: "quit" }],
     }),
     true,
   );
   assert.equal(
-    validAt("$defs/exprFlat", { $tray: "assets/icon.png", items: [{ lable: "Quit" }] }),
+    validAt("$defs/exprFlat", { $tray: "assets/icon.png", menu: [{ lable: "Quit" }] }),
     false,
   );
 });

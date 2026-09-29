@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createResolver, coreNodes, type Context } from "@jexs/core";
+import { Node, createResolver, coreNodes, type Context } from "@jexs/core";
 import { RouterNode } from "../src/nodes/Router.js";
 import { FileNode } from "../src/nodes/File.js";
 
@@ -138,4 +138,48 @@ test("paramRegex on a catch-all is anchored to the whole rest of the path", asyn
 
 test("an invalid paramRegex names the pattern", async () => {
   await assert.rejects(() => at(idRoute("["), "/x"), /Invalid paramRegex "\["/);
+});
+
+// ── Route nodes written as steps ─────────────────────────────────────────────
+
+test("an $if node adds its subtree only when the condition holds", async () => {
+  const routes = {
+    children: {
+      admin: { $if: { $var: "isAdmin" }, then: { $var: "adminRoutes" } },
+      "**": { methods: { GET: { run: [{ $concat: ["fallback"] }] } } },
+    },
+  };
+  const adminRoutes = { methods: { GET: { run: [{ $concat: ["admin"] }] } } };
+  const request = { method: "GET", path: "/admin" };
+  assert.deepEqual(await get(routes, { request, isAdmin: true, adminRoutes }), { response: "admin" });
+  assert.deepEqual(await get(routes, { request, isAdmin: false, adminRoutes }), { response: "fallback" });
+});
+
+test("a node written as a step resolves only when reached, after the params above it", async () => {
+  class SubtreeNode extends Node {
+    seen: unknown[] = [];
+    subtree(_def: Record<string, unknown>, context: Context) {
+      this.seen.push(context.team);
+      return { methods: { GET: { run: [{ $var: "team" }] } } };
+    }
+  }
+  const subtrees = new SubtreeNode();
+  const local = createResolver([...coreNodes(), new RouterNode(), subtrees]);
+  const routes = { children: { "*": { paramName: "team", children: { roster: { $subtree: true } } } } };
+  const go = (path: string) => Promise.resolve(local({ $routes: routes }, { request: { method: "GET", path } }));
+
+  await assert.rejects(() => go("/red/elsewhere"), { status: 404 });
+  assert.deepEqual(subtrees.seen, []);
+  assert.deepEqual(await go("/red/roster"), { response: "red" });
+  assert.deepEqual(subtrees.seen, ["red"]);
+});
+
+test("a node that resolves to anything but a route tree is an error", async () => {
+  const routes = { children: { bad: { $concat: ["not a tree"] } } };
+  await assert.rejects(() => at(routes, "/bad"), (err: { status?: number; message?: string }) =>
+    err.status === 500 && /\/bad: a route node must be, or resolve to, a route tree/.test(String(err.message)));
+});
+
+test("a root written as a step that yields nothing matches nothing", async () => {
+  await assert.rejects(() => get({ $if: false, then: { $var: "never" } }), { status: 404 });
 });

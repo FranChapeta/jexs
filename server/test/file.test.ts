@@ -75,30 +75,30 @@ test("delete refuses a directory", async () => {
   assert.equal(await run({ $file: "/keepme/inside.txt", exists: true }), true);
 });
 
-test("copyTo duplicates and leaves the source alone", async () => {
+test("copy duplicates and leaves the source alone", async () => {
   await fs.writeFile(abs("source.txt"), "payload");
-  assert.equal(await run({ $file: "/source.txt", copyTo: "/copy.txt" }), true);
+  assert.equal(await run({ $file: "/source.txt", copy: "/copy.txt" }), true);
   assert.equal(await fs.readFile(abs("copy.txt"), "utf8"), "payload");
   assert.equal(await run({ $file: "/source.txt", exists: true }), true);
 });
 
-test("copyTo overwrites an existing destination, like write", async () => {
+test("copy overwrites an existing destination, like write", async () => {
   await fs.writeFile(abs("new.txt"), "new");
   await fs.writeFile(abs("old.txt"), "old");
-  assert.equal(await run({ $file: "/new.txt", copyTo: "/old.txt" }), true);
+  assert.equal(await run({ $file: "/new.txt", copy: "/old.txt" }), true);
   assert.equal(await fs.readFile(abs("old.txt"), "utf8"), "new");
 });
 
-test("moveTo relocates and removes the source", async () => {
+test("move relocates and removes the source", async () => {
   await fs.writeFile(abs("moving.txt"), "cargo");
-  assert.equal(await run({ $file: "/moving.txt", moveTo: "/moved.txt" }), true);
+  assert.equal(await run({ $file: "/moving.txt", move: "/moved.txt" }), true);
   assert.equal(await fs.readFile(abs("moved.txt"), "utf8"), "cargo");
   assert.equal(await run({ $file: "/moving.txt", exists: true }), false);
 });
 
 test("a missing source is a failure, not a silent success", async () => {
-  assert.equal(await run({ $file: "/ghost.txt", copyTo: "/anywhere.txt" }), false);
-  assert.equal(await run({ $file: "/ghost.txt", moveTo: "/anywhere.txt" }), false);
+  assert.equal(await run({ $file: "/ghost.txt", copy: "/anywhere.txt" }), false);
+  assert.equal(await run({ $file: "/ghost.txt", move: "/anywhere.txt" }), false);
 });
 
 test("the path may be an expression, as everywhere else", async () => {

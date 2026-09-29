@@ -67,11 +67,11 @@ test("mapRange: linear remap, extrapolates by default", () => {
   assert.equal(resolve({ $mapRange: [-5, 0, 10, 0, 100] }, {}), -50);
 });
 
-test("mapRange: clampToRange bounds the result to [outMin, outMax]", () => {
-  assert.equal(resolve({ $mapRange: [15, 0, 10, 0, 100], clampToRange: true }, {}), 100);
-  assert.equal(resolve({ $mapRange: [-5, 0, 10, 0, 100], clampToRange: true }, {}), 0);
+test("mapRange: clamp bounds the result to [outMin, outMax]", () => {
+  assert.equal(resolve({ $mapRange: [15, 0, 10, 0, 100], clamp: true }, {}), 100);
+  assert.equal(resolve({ $mapRange: [-5, 0, 10, 0, 100], clamp: true }, {}), 0);
   // Inverted output range still clamps correctly.
-  assert.equal(resolve({ $mapRange: [15, 0, 10, 100, 0], clampToRange: true }, {}), 0);
+  assert.equal(resolve({ $mapRange: [15, 0, 10, 100, 0], clamp: true }, {}), 0);
 });
 
 test("mapRange: zero-width input range returns outMin", () => {

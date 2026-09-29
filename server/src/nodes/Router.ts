@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, resolve, runSteps, createHttpError } from "@jexs/core";
+import { Node, Context, NodeValue, isStep, resolve, runSteps, createHttpError } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { validate } from "../validate.js";
 
@@ -27,15 +27,6 @@ interface RouteNode {
   paramRegex?: string;
   methods?: Record<string, RouteHandler>;
   children?: Record<string, RouteNode>;
-  if?: unknown;
-  else?: unknown;
-}
-
-function toBoolean(value: unknown): boolean {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") return value !== 0;
-  if (typeof value === "string") return value !== "" && value !== "0" && value.toLowerCase() !== "false";
-  return value !== null && value !== undefined;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -43,18 +34,27 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * True when `value` is shaped like a route tree (has structural route-tree keys
- * at the top level). Used to bypass `resolve()` for literal trees — otherwise
- * the resolver would walk into them and eagerly evaluate `{ "$file": "..." }`
- * leaves into rendered HTML before the matcher ever sees them.
- *
- * Expression values (e.g. `{ "$var": "routes" }`, `{ "$file": "...", "data": true }`)
- * don't have these markers and still flow through `resolve()` below.
+ * The route node `value` stands for. A literal node is used as written. A step
+ * (`{ "$var": "adminRoutes" }`, or an `$if` returning one) is resolved when the
+ * matcher reaches it, so it sees the params captured above it and never runs for
+ * a path that does not reach it. Resolving the whole tree up front would instead
+ * run every step inside it: each `$file` leaf would render before matching.
+ * Nothing there, or a falsy result (an `$if` whose condition failed), means no
+ * node, and matching moves on.
  */
-function isRouteTreeShape(value: unknown): value is RouteNode {
-  if (!isObject(value)) return false;
-  return "methods" in value || "children" in value
-      || "paramName" in value || "paramRegex" in value;
+async function nodeAt(value: unknown, where: string, context: Context): Promise<RouteNode | null> {
+  if (!isStep(value)) return isObject(value) ? value as RouteNode : null;
+  const node = await resolve(value, context);
+  if (!node) return null;
+  if (!isObject(node) || isStep(node)) {
+    throw createHttpError(500, `${where}: a route node must be, or resolve to, a route tree`);
+  }
+  return node as RouteNode;
+}
+
+/** Where a node sits, for an error: the path segments matched so far, then its key. */
+function nodePath(segments: string[], index: number, key: string): string {
+  return "/" + [...segments.slice(0, index), key].join("/");
 }
 
 /** Compiled `paramRegex` by route entry, with the pattern it was built from. */
@@ -76,25 +76,11 @@ function paramRegexOf(paramRegexes: ParamRegexes, node: RouteNode, pattern: stri
   return re;
 }
 
-/**
- * RouterNode - Handles route matching and execution.
- *
- * Matches when definition has "routes" key:
- * {
- *   "routes": {
- *     "login": { "methods": { "GET": { "$file": "..." } } },
- *     "*": { "paramName": "id", "methods": { ... } }
- *   }
- * }
- *
- * Uses request path and method from context to find matching route,
- * then executes the handler's run steps.
- */
 export class RouterNode extends Node {
   static schema: JexsNodeSchema = {
     routes: {
       $ref: "#/$defs/_routesSlot",
-      markdownDescription: "Matches the incoming request path and method against a route tree, then executes the handler.\nSupports exact segments, `*` (single param with optional `paramName`/`paramRegex`),\n`**` (catch-all), conditional `\"if\"` guards per node, and `queryParams`/`body` validation.\n\n`paramRegex` is anchored to the whole segment (for `**`, the whole rest of the path), so `\"new|edit\"` matches `new` but not `newsletter`.\n\nA handler is a `file` to render or a `run` of steps, never both, or an expression resolving to one of those. A `WS` handler completes a WebSocket upgrade by calling `socket-accept` as a `run` step.",
+      markdownDescription: "Matches the incoming request path and method against a route tree, then executes the handler.\nSupports exact segments, `*` (single param with optional `paramName`/`paramRegex`),\n`**` (catch-all), and `queryParams`/`body` validation.\n\n`paramRegex` is anchored to the whole segment (for `**`, the whole rest of the path), so `\"new|edit\"` matches `new` but not `newsletter`.\n\nA handler is a `$file` step or a `run` of steps, never both, or an expression resolving to one of those. A `WS` handler completes a WebSocket upgrade by calling `socket-accept` as a `run` step.\n\nA route node written as a step is resolved when the matcher reaches it, after the params above it are captured, so `{ \"$if\": <cond>, \"then\": { \"$var\": \"adminRoutes\" } }` adds a subtree only when the condition holds; a failed condition leaves no node there. Hold such a subtree by reference, stored with `$setVars` and `raw: true` or loaded with `$file` and `data: true`: `$if` resolves the branch it picks, so an inline subtree would run its handlers.",
       outputDescription: "The matched handler's result. A `$file` step or `run` that renders to a string is wrapped as `{ response: <html> }`; a handler that returns an object passes it through unchanged, as either a response envelope (`{ response, responseStatus, responseType, responseHeaders }`) or a bare JSON value. Throws a 404 HTTP error when no route matches, so use a catch-all route (`**`) or wrap calls in `$catch` to handle not-found.",
       examples: [
         "{ \"$routes\": { \"children\": { \"users\": { \"methods\": { \"GET\": { \"$file\": \"pages/users.json\" } } } } } }",
@@ -103,13 +89,9 @@ export class RouterNode extends Node {
   };
 
   static schemaDefs = {
+    // A route node, or a step that produces one (resolved when reached).
     _routesSlot: {
-      if: {
-        anyOf: [
-          { required: ["methods"] },   { required: ["children"] },
-          { required: ["paramName"] }, { required: ["paramRegex"] },
-        ],
-      },
+      if: { type: "object", propertyNames: { not: { pattern: "^\\$" } } },
       then: { $ref: "#/$defs/_routeNode" },
       else: { $ref: "#/$defs/exprFlat" },
     },
@@ -119,11 +101,9 @@ export class RouterNode extends Node {
         paramName:  { type: "string" },
         paramRegex: { type: "string", format: "regex" },
         methods:    { $ref: "#/$defs/_routeMethods" },
-        children:   { type: "object", additionalProperties: { $ref: "#/$defs/_routeNode" } },
-        if:    {},
-        else:  {},
+        children:   { type: "object", additionalProperties: { $ref: "#/$defs/_routesSlot" } },
       },
-      additionalProperties: { $ref: "#/$defs/_routeNode" },
+      additionalProperties: false,
     },
     _routeMethods: {
       type: "object",
@@ -160,24 +140,15 @@ export class RouterNode extends Node {
   private readonly paramRegexes: ParamRegexes = new WeakMap();
 
   routes(def: Record<string, unknown>, context: Context): NodeValue {
-    const dispatch = async (rootNode: unknown): Promise<NodeValue> => {
-      if (!isObject(rootNode)) {
-        console.error("[RouterNode] Invalid routes definition");
-        return null;
-      }
-      const method = context.request?.method?.toUpperCase() ?? "GET";
-      const path = context.request?.path ?? "/";
-      const handler = await matchRoute(
-        this.paramRegexes,
-        rootNode as RouteNode,
-        path,
-        method,
-        context,
-      );
+    const method = context.request?.method?.toUpperCase() ?? "GET";
+    const path = context.request?.path ?? "/";
+    return (async () => {
+      const root = await nodeAt(def.$routes, "/", context);
+      const handler = root ? await matchRoute(this.paramRegexes, root, path, method, context) : null;
       if (!handler) throw createHttpError(404, "Not Found");
       if (isHandlerShape(handler)) return executeHandler(handler, context);
 
-      // Not a `file`/`run` object, so the handler is an expression that has to
+      // Not a `$file`/`run` object, so the handler is an expression that has to
       // produce one. What it produces is the handler, `queryParams` and `body`
       // included, and takes the same path as an inline object.
       return resolve(handler, context, value => {
@@ -185,23 +156,14 @@ export class RouterNode extends Node {
           throw createHttpError(500, `${method} ${path}: a route handler must be, or resolve to, a "$file" step or a "run" object`);
         }
         return executeHandler(value, context);
-      }) as NodeValue;
-    };
-
-    // Fast path: the value is already a literal route tree. Skip resolve() —
-    // otherwise it would walk in and turn { "$file": "..." } handler leaves
-    // into rendered HTML before the matcher ever runs.
-    if (isRouteTreeShape(def.$routes)) {
-      return dispatch(def.$routes);
-    }
-    // Expression path: e.g. { "$var": "routes" } or { "$file": "routes.json", "data": true }.
-    return resolve(def.$routes, context, dispatch);
+      });
+    })() as Promise<NodeValue>;
   }
 }
 
 /**
- * Match route against path starting from root node.
- * Conditions are evaluated during traversal, params set on context.
+ * Match route against path starting from root node. Params are set on context
+ * as they are captured, and a node written as a step is resolved when reached.
  */
 async function matchRoute(
   paramRegexes: ParamRegexes,
@@ -214,7 +176,6 @@ async function matchRoute(
 
   // If path is "/" (no segments), check root methods
   if (segments.length === 0) {
-    if (await checkConditionFails(root, context)) return null;
     return root.methods?.[method] ?? null;
   }
 
@@ -241,29 +202,32 @@ async function matchSegments(
 
   // 1. Try exact match
   if (segment in children) {
-    const node = children[segment];
-    const result = await matchNode(paramRegexes, node, segments, index, method, context);
-    if (result) return result;
+    const node = await nodeAt(children[segment], nodePath(segments, index, segment), context);
+    if (node) {
+      const result = await matchNode(paramRegexes, node, segments, index, method, context);
+      if (result) return result;
+    }
   }
 
-  // 2. Try * (single param)
+  // 2. Try * (single param). Resolved first: its paramRegex and paramName are on the node.
   if ("*" in children) {
-    const node = children["*"];
-
-    // Check regex constraint
-    if (node.paramRegex) {
-      if (!paramRegexOf(paramRegexes, node, node.paramRegex).test(segment)) {
-        return tryCatchAll(paramRegexes, children, segments, index, method, context);
+    const node = await nodeAt(children["*"], nodePath(segments, index, "*"), context);
+    if (node) {
+      // Check regex constraint
+      if (node.paramRegex) {
+        if (!paramRegexOf(paramRegexes, node, node.paramRegex).test(segment)) {
+          return tryCatchAll(paramRegexes, children, segments, index, method, context);
+        }
       }
-    }
 
-    // Capture param on context
-    if (node.paramName) {
-      context[node.paramName] = segment;
-    }
+      // Capture param on context
+      if (node.paramName) {
+        context[node.paramName] = segment;
+      }
 
-    const result = await matchNode(paramRegexes, node, segments, index, method, context);
-    if (result) return result;
+      const result = await matchNode(paramRegexes, node, segments, index, method, context);
+      if (result) return result;
+    }
   }
 
   // 3. Try ** (catch-all)
@@ -282,7 +246,8 @@ async function tryCatchAll(
   context: Context,
 ): Promise<RouteHandler | null> {
   if ("**" in children) {
-    const node = children["**"];
+    const node = await nodeAt(children["**"], nodePath(segments, index, "**"), context);
+    if (!node) return null;
     const rest = segments.slice(index).join("/");
 
     // Validate against paramRegex before capturing — a non-matching rest-path
@@ -296,7 +261,6 @@ async function tryCatchAll(
       context[node.paramName] = rest;
     }
 
-    if (await checkConditionFails(node, context)) return null;
     return node.methods?.[method] ?? null;
   }
 
@@ -305,7 +269,6 @@ async function tryCatchAll(
 
 /**
  * Match a specific node (after segment matched).
- * Evaluates "if" condition before proceeding — stops early on failure.
  */
 async function matchNode(
   paramRegexes: ParamRegexes,
@@ -315,8 +278,6 @@ async function matchNode(
   method: string,
   context: Context,
 ): Promise<RouteHandler | null> {
-  if (await checkConditionFails(node, context)) return null;
-
   const nextIndex = index + 1;
   const isLast = nextIndex >= segments.length;
 
@@ -339,14 +300,6 @@ async function matchNode(
 }
 
 /**
- * Returns true if the node has an "if" condition that evaluates to false.
- */
-function checkConditionFails(node: RouteNode, context: Context): unknown {
-  if (!node.if) return false;
-  return resolve(node.if, context, result => !toBoolean(result));
-}
-
-/**
  * Execute route handler
  */
 async function executeHandler(
@@ -359,7 +312,7 @@ async function executeHandler(
     const result = await Promise.resolve(runSteps(handler.run, context));
     return isResponse(result) ? result : asBody(result ?? null);
   }
-  // A `file`, then, since `isHandlerShape` admits nothing else. Resolved through
+  // A `$file` step, then, since `isHandlerShape` admits nothing else. Resolved through
   // the resolver so FileNode loads it and ElementNode renders it.
   return resolve(handler, context, asBody);
 }

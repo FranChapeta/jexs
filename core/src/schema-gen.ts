@@ -43,11 +43,9 @@ import type {
  * constrain output type.
  *
  * `mapVal` is deliberately NOT routed to `exprFlat`: a `map: true` slot's keys are
- * names the node keeps verbatim (variables, headers, columns, case labels), which
- * the runtime resolves per entry via `resolveObj` without ever dispatching the map
- * itself. Routing it to `exprFlat` would dispatch on those keys, so a column named
- * `email` or a variable named `fetch` would be validated as that op. Keys are
- * therefore opaque and only the VALUES are checked.
+ * names the node keeps verbatim (variables, headers, case labels), read key by key,
+ * so the map itself never dispatches. Keys are therefore opaque and only the
+ * VALUES are checked.
  */
 export const sharedDefs = {
   anyVal: {
@@ -189,7 +187,7 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
     // `map` fixes the KEY semantics (opaque); `type` says only which CONTAINER
     // shapes are accepted. No type-or-expr wrapping and no output narrowing here:
     // an opaque-key map has no expression alternative to narrow. `array` present
-    // means a list of maps (query `data`'s rows), and the one-or-many shape is
+    // means a list of maps, and the one-or-many shape is
     // emitted inline rather than as its own $defs entry, since dedupeShapes hoists
     // any shape that gains a second use.
     const types = prop.type === undefined

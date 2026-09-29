@@ -31,14 +31,14 @@ export class TrayNode extends Node {
       markdownDescription:
         "Put an icon in the system tray. The value is the icon path, relative to the project root.\nCalling it again updates the existing tray in place rather than adding a second one, so this doubles as the update path for the tooltip or the menu.\n**A tray app outlives its windows**: closing the last window no longer quits on Windows or Linux, because minimize-to-tray is the whole point. Give the tray menu a Quit item, or the app becomes unkillable from the UI.",
       examples: [
-        "{ \"$tray\": \"assets/icon.png\", \"tooltip\": \"My App\", \"items\": [{ \"label\": \"Quit\", \"role\": \"quit\" }] }",
+        "{ \"$tray\": \"assets/icon.png\", \"tooltip\": \"My App\", \"menu\": [{ \"label\": \"Quit\", \"role\": \"quit\" }] }",
       ],
       siblings: {
         tooltip: { type: "string", description: "Hover text for the tray icon." },
-        items: {
+        menu: {
           type: "array",
           items: { $ref: "#/$defs/_menuItem" },
-          description: "Right-click menu, using the same item shape as `menu`.",
+          description: "Right-click menu, using the same item shape as `$menu`.",
         },
         do: { steps: true, description: "Steps run in the main process when the icon is clicked." },
       },
@@ -50,7 +50,7 @@ export class TrayNode extends Node {
     },
   };
 
-  // `items` and `do` must reach their builders raw, so only the scalar siblings
+  // `menu` and `do` must reach their builders raw, so only the scalar siblings
   // go through the resolver.
   tray(def: Record<string, unknown>, context: Context): NodeValue {
     const scalars = { tray: def.$tray, tooltip: def.tooltip };
@@ -66,8 +66,8 @@ export class TrayNode extends Node {
 
       if (typeof r.tooltip === "string") tray.setToolTip(r.tooltip);
 
-      if (def.items !== undefined) {
-        const template = await buildMenuTemplate(def.items, context, (raw, steps, item) => {
+      if (def.menu !== undefined) {
+        const template = await buildMenuTemplate(def.menu, context, (raw, steps, item) => {
           const extra = { menuLabel: item.label, menuId: item.id, menuChecked: item.checked };
           runStepsDetached(steps, childContext(context, extra), raw).catch((err: unknown) => {
             console.error(`[TrayNode] "${String(item.label ?? "item")}" failed:`, err);

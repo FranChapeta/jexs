@@ -217,15 +217,15 @@ export class MathNode extends Node {
         { type: "number", description: "Upper bound of the output range." },
       ],
       output: "number",
-      markdownDescription: "Linearly remaps a value from one range to another: `[value, inMin, inMax, outMin, outMax]`. Extrapolates by default; set `clampToRange: true` to bound the result to `[outMin, outMax]`. When `inMin === inMax` it returns `outMin`.",
+      markdownDescription: "Linearly remaps a value from one range to another: `[value, inMin, inMax, outMin, outMax]`. Extrapolates by default; set `clamp: true` to bound the result to `[outMin, outMax]`. When `inMin === inMax` it returns `outMin`.",
       examples: [
         "{ \"$mapRange\": [5, 0, 10, 0, 100] }",
-        "{ \"$mapRange\": [15, 0, 10, 0, 100], \"clampToRange\": true }",
+        "{ \"$mapRange\": [15, 0, 10, 0, 100], \"clamp\": true }",
       ],
       siblings: {
-        clampToRange: {
+        clamp: {
           type: "boolean",
-          description: "Clamp the result to `[outMin, outMax]` instead of extrapolating (default `false`). Named to avoid colliding with the `clamp` op.",
+          description: "Clamp the result to `[outMin, outMax]` instead of extrapolating (default `false`).",
         },
       },
     },
@@ -516,7 +516,7 @@ export class MathNode extends Node {
   }
 
   mapRange(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.$mapRange, def.clampToRange], c, ([values, clampRaw]) => {
+    return resolveAll([def.$mapRange, def.clamp], c, ([values, clampRaw]) => {
       const a = this.toArray(values);
       if (a.length < 5) return 0;
       const value = this.toNumber(a[0]);

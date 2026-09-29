@@ -115,12 +115,12 @@ export class FileNode extends Node {
           output: "boolean",
           markdownDescription: "Deletes the file. Already absent counts as success, so cleanup steps are repeatable. Refuses directories, since there is deliberately no recursive delete.",
         },
-        copyTo: {
+        copy: {
           type: "string",
           output: "boolean",
-          markdownDescription: "Copies the file to another path, overwriting any file already there. The destination resolves the same way the source does.\nNamed `copyTo` rather than `copy` because `copy` is the client's clipboard op, and a step carrying both keys would dispatch on whichever came first.",
+          markdownDescription: "Copies the file to another path, overwriting any file already there. The destination resolves the same way the source does.",
         },
-        moveTo: {
+        move: {
           type: "string",
           output: "boolean",
           markdownDescription: "Moves or renames the file, overwriting any file already there. The destination resolves the same way the source does.\nFalls back to copy-then-delete when the destination is on another drive or mount, which a plain rename cannot cross.",
@@ -182,8 +182,8 @@ export class FileNode extends Node {
     if ("exists" in def) return statFile(def, context, this.rootAbs, "exists");
     if ("stat" in def) return statFile(def, context, this.rootAbs, "stat");
     if ("delete" in def) return deleteFile(def, context, this.rootAbs);
-    if ("copyTo" in def) return transferFile(def, context, this.rootAbs, "copyTo");
-    if ("moveTo" in def) return transferFile(def, context, this.rootAbs, "moveTo");
+    if ("copy" in def) return transferFile(def, context, this.rootAbs, "copy");
+    if ("move" in def) return transferFile(def, context, this.rootAbs, "move");
     return loadFile(def, context, this.rootAbs);
   }
 
@@ -419,7 +419,7 @@ function transferFile(
   def: Record<string, unknown>,
   context: Context,
   rootAbs: string,
-  mode: "copyTo" | "moveTo",
+  mode: "copy" | "move",
 ): unknown {
   return resolveAll([def.$file, def[mode]], context, async ([fromValue, toValue]) => {
     const fileDir = getFileDir(context);
@@ -429,7 +429,7 @@ function transferFile(
     const to = resolvePath(toValue, rootAbs, fileDir);
 
     try {
-      if (mode === "copyTo") {
+      if (mode === "copy") {
         await fs.copyFile(from, to);
         return true;
       }
@@ -445,7 +445,7 @@ function transferFile(
       return true;
     } catch (error) {
       const e = error as Error;
-      const verb = mode === "copyTo" ? "copying" : "moving";
+      const verb = mode === "copy" ? "copying" : "moving";
       console.error(`[FileNode] Error ${verb} ${from} to ${to}:`, e.message);
       return false;
     }

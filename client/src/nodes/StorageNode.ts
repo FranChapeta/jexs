@@ -63,9 +63,6 @@ export class StorageNode extends Node {
   };
 
   static commonSiblings: Record<string, JexsPropertySchema> = {
-    // `session` shares a name with SessionNode's handler key, but the combined
-    // schema gates dispatch by primary key — when a `storage-*` op is present,
-    // `session` is validated as this sibling, not as a SessionNode op.
     session: {
       type: "boolean",
       description: "If true, target `sessionStorage` instead of `localStorage`.",

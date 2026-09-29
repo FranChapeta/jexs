@@ -18,7 +18,7 @@
  * - { "$entity-get": id }               — full entity object
  */
 
-import { Node, Context, NodeValue, resolve, resolveObj, ownedKey } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveObj, isOwnedKey } from "@jexs/core";
 import {
   EntityStore, EntityMeta, FIELD_OFFSETS,
   ENTITY_TYPES, BLEND_MODES,
@@ -499,7 +499,7 @@ export class EntityNode extends Node {
       if (r["dirZ"]         !== undefined) meta.dirZ        = Number(r["dirZ"]);
 
       for (const key of keys) {
-        if (!KNOWN_KEYS.has(key) && ownedKey(key) === null) meta.custom[key] = r[key];
+        if (!KNOWN_KEYS.has(key) && !isOwnedKey(key)) meta.custom[key] = r[key];
       }
 
       // Sync packed collision arrays now that group/mask/type/meshId are final
@@ -582,7 +582,7 @@ export class EntityNode extends Node {
       const meta = store.meta[slot]!;
 
       for (const key of Object.keys(r)) {
-        if (ownedKey(key) !== null) continue;
+        if (isOwnedKey(key)) continue;
         const v = r[key];
           switch (key) {
             case "translation": {

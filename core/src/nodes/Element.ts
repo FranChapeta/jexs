@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue } from "./Node.js";
-import { resolve, resolveAll, translate, ownedKey } from "../Resolver.js";
+import { resolve, resolveAll, translate, isOwnedKey } from "../Resolver.js";
 import { hasVariables, interpolate } from "./Variables.js";
 import { escapeHtml, escapeScriptJson, isObject } from "../helpers.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
@@ -289,7 +289,7 @@ function renderAttrs(
 ): string | Promise<string> {
   const entries = Object.entries(def).filter(([k]) => {
     if (allowContent && k === "content") return true;
-    return !RESERVED_KEYS.has(k) && ownedKey(k) === null;
+    return !RESERVED_KEYS.has(k) && !isOwnedKey(k);
   });
   if (entries.length === 0) return "";
 

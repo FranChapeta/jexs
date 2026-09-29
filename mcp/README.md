@@ -97,8 +97,8 @@ The rest of `src/`:
 - `tools.json` is the tool list returned by `tools/list`.
 - `walk.json` collects every key in a target file; `walk-unknown.json` finds keys that are not an op,
   a global key, or a sibling of their step's op but are one character-shuffle from one;
-  `walk-lint.json` flags the two dispatch foot-guns (multiple handler keys in one object; a data
-  object whose first key isn't a handler but a later key is). `suggest.json` is the shared
+  `walk-lint.json` flags the two dispatch foot-guns (a step naming more than one `$` op; an op name
+  written without its `$`, which leaves the object as plain data). `suggest.json` is the shared
   did-you-mean matcher. Each is preloaded once with `data: true` and recurses by `exec`-ing its own
   var, so none is re-read per node.
 

@@ -1,5 +1,5 @@
 import { Knex as KnexType } from "knex";
-import { Node, Context, NodeValue, ownedKey, resolve, resolveObj, runSteps } from "@jexs/core";
+import { Node, Context, NodeValue, isOwnedKey, isStep, resolve, resolveObj, runSteps } from "@jexs/core";
 import { DatabaseNode } from "./Database.js";
 import { SchemaNode } from "./Schema.js";
 import type { JexsMethodSchema, JexsNodeSchema, JexsOutput, JexsPropertySchema } from "@jexs/core";
@@ -216,7 +216,7 @@ export type WhereValue =
  *  so the static schema initializer can read them (a `const` is not hoisted). */
 const CLAUSE: Record<string, JexsPropertySchema> = {
   where:        { description: "WHERE clause: `{ column: value }`, an operator object (`{ column: { gt: 5 } }`), or nested `or`/`and`." },
-  data:         { map: true, type: ["object", "array"], description: "Row data: an object, or an array of rows." },
+  data:         { $ref: "#/$defs/_queryRows", description: "Row data: an object, an array of rows, or an expression producing either." },
   orderBy:      { description: "ORDER BY: `{ column: 'asc' | 'desc' }`." },
   groupBy:      { description: "GROUP BY column name or array of names." },
   first:        { type: "boolean", description: "Return a single row instead of an array." },
@@ -260,6 +260,11 @@ function op(output: JexsOutput, markdown: string, clauses: string[], rowsWhenRet
  * and narrows the output.
  */
 export class QueryNode extends Node {
+  static schemaDefs: Record<string, Record<string, unknown>> = {
+    // `data` resolves whole, so an expression is one more object here.
+    _queryRows: { anyOf: [{ type: "object" }, { type: "array", items: { type: "object" } }] },
+  };
+
   static schema: JexsNodeSchema = {
     query: {
       type: "string",
@@ -328,12 +333,6 @@ async function execQuery(def: Record<string, unknown>, context: Context): Promis
   }
 }
 
-/** A value that dispatches: an object with a `$` op key. */
-function isStep(value: unknown): boolean {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    && Object.keys(value).some(k => ownedKey(k) !== null);
-}
-
 /** The table documents a query touches: every table `create` makes, otherwise
  *  the one it names (a stand-in when it is not registered, so the global
  *  validator still sees the table name). */
@@ -376,7 +375,7 @@ function toQuery(r: Record<string, unknown>): QueryDefinition {
   }
   const query: Record<string, unknown> = { type };
   for (const [k, v] of Object.entries(r)) {
-    if (ownedKey(k) === null && k !== "connection" && k !== "system") query[k] = v;
+    if (!isOwnedKey(k) && k !== "connection" && k !== "system") query[k] = v;
   }
   return query as unknown as QueryDefinition;
 }

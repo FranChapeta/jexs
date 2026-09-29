@@ -62,10 +62,9 @@ export interface JexsPropertySchema {
    *  its length) fall back to anyVal. */
   prefixItems?: readonly JexsPropertySchema[];
   /** Opaque-key map: the KEYS are names the node keeps verbatim (variable names,
-   *  header names, column names, case labels) and the VALUES are expressions. The
-   *  map is never dispatched as an expression itself, matching the per-entry
-   *  `resolveObj` the runtime resolves these with, so a key that happens to
-   *  collide with a handler key stays a name.
+   *  header names, case labels) and the VALUES are expressions. The node reads the
+   *  map key by key, so the container itself is never an expression: here
+   *  `{ "$var": "x" }` is a map with one key, not a lookup.
    *
    *  `map` describes the KEYS; a `type` alongside it describes the CONTAINER, so
    *  the two are orthogonal. An opaque-key map has no expression alternative, so
@@ -74,7 +73,7 @@ export interface JexsPropertySchema {
    *
    *    map: true                            an object (the default)
    *    map: true, type: "object"            the same, spelled out
-   *    map: true, type: ["object","array"]  one map or a list of them (query `data`)
+   *    map: true, type: ["object","array"]  one map or a list of them
    *    map: true, type: "array"             a list of maps only
    */
   map?: boolean;

@@ -159,7 +159,18 @@ export const KEY_PREFIX = "$";
 
 /** The resolver-owned name in `key` (`"$concat"` → `"concat"`), or null for any other key. */
 export function ownedKey(key: string): string | null {
-  return key.charCodeAt(0) === 36 /* $ */ ? key.slice(1) : null;
+  return isOwnedKey(key) ? key.slice(1) : null;
+}
+
+/** Whether the resolver owns `key`, without building its bare name. */
+export function isOwnedKey(key: string): boolean {
+  return key.charCodeAt(0) === 36 /* $ */;
+}
+
+/** An object with a `$` key: a step the resolver acts on. An object without one
+ *  is data, whose values are resolved but which never dispatches itself. */
+export function isStep(value: unknown): value is Record<string, unknown> {
+  return isObject(value) && Object.keys(value).some(isOwnedKey);
 }
 
 /**

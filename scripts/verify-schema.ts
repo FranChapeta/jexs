@@ -509,8 +509,8 @@ const cases: Case[] = [
   { label: "concat of plain strings (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $concat: ["Hello, ", { $var: "name" }] } },
 
-  // `routes` takes a literal tree OR an expression producing one; the discriminator
-  // mirrors the runtime's isRouteTreeShape (methods/children/paramName/paramRegex).
+  // `routes`, and every node inside it, is a literal tree or a step producing one,
+  // told apart by a `$` key as the runtime's nodeAt does.
   { label: "routes as a literal tree (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $routes: { children: { users: { methods: { GET: { $file: "pages/users.json" } } } } } } },
   { label: "routes from a var expression (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
@@ -519,10 +519,16 @@ const cases: Case[] = [
     expr: { $routes: { $file: "routes.json", data: true } } },
   { label: "routes literal tree with a bad method (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { $routes: { methods: { FETCH: { $file: "x.json" } } } } },
+  { label: "a route node from a var (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $routes: { children: { admin: { $var: "adminRoutes" } } } } },
+  { label: "a route node from an $if (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $routes: { children: { admin: { $if: { $var: "session.admin" }, then: { $var: "adminRoutes" } } } } } },
+  { label: "a route node with its own if guard (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $routes: { children: { admin: { if: { $var: "session.admin" }, methods: { GET: { $file: "a.json" } } } } } } },
+  { label: "a route node with a misspelled key (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $routes: { children: { users: { method: { GET: { $file: "u.json" } } } } } } },
   // A route file is a step wrapping the tree, so it matches the root via `steps`.
-  // `_routeNode` is underscored and therefore NOT a root branch: as one it accepted
-  // any object of objects (it recurses through additionalProperties) and passed
-  // whole files that are broken expressions.
+  // `_routeNode` is underscored and therefore NOT a root branch.
   { label: "a route file, tree wrapped in a step (valid)", schemaRef: "", expectValid: true,
     expr: [{ $routes: { children: { email: { methods: { GET: { run: [{ response: "x" }] } } } } } }] },
   { label: "a wrapped tree with a handler-key segment name (valid)", schemaRef: "", expectValid: true,

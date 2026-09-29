@@ -23,7 +23,7 @@ export {
   // The keys the resolver owns: `$`-prefixed, the op a step dispatches on plus
   // the global step keys. Hosts that inspect or filter a call need them, to tell
   // `$as` or `$catch` from an op and either from a sibling.
-  GLOBAL_KEYS, KEY_PREFIX, ownedKey,
+  GLOBAL_KEYS, KEY_PREFIX, ownedKey, isOwnedKey, isStep,
   type ResolverFn, type Resolver, type ResolverKeys,
 } from "./Resolver.js";
 

@@ -503,11 +503,9 @@
             "$if": { "$notEmpty": { "$var": "id" } },
             "then": {
               "$stdio-write": {
-                "$fromEntries": [
-                  ["jsonrpc", "2.0"],
-                  ["id", { "$var": "id" }],
-                  ["error", { "code": -32601, "message": { "$concat": ["Method not found: ", { "$var": "message.method" }] } }]
-                ]
+                "jsonrpc": "2.0",
+                "id": { "$var": "id" },
+                "error": { "code": -32601, "message": { "$concat": ["Method not found: ", { "$var": "message.method" }] } }
               }
             },
             "else": null
@@ -518,11 +516,9 @@
             "$if": { "$notEmpty": { "$var": "id" } },
             "then": {
               "$stdio-write": {
-                "$fromEntries": [
-                  ["jsonrpc", "2.0"],
-                  ["id", { "$var": "id" }],
-                  ["error", { "code": -32603, "message": { "$concat": ["Internal error: ", { "$coalesce": [{ "$var": "error.message" }, { "$stringify": { "$var": "error" } }] }] } }]
-                ]
+                "jsonrpc": "2.0",
+                "id": { "$var": "id" },
+                "error": { "code": -32603, "message": { "$concat": ["Internal error: ", { "$coalesce": [{ "$var": "error.message" }, { "$stringify": { "$var": "error" } }] }] } }
               }
             },
             "else": null

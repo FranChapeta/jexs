@@ -214,6 +214,12 @@ function walk(schema: Schema, v: Val): void {
       // A route leaf is resolved as a FileNode step, so its `file` is an op key;
       // `run` is the router's step list, and `queryParams`/`body` hold JSON Schema,
       // whose keywords (`not`, `if`) must not be read as ops.
+      // A route node's own `if` guard is gone: the node becomes an `$if` step
+      // returning its subtree by reference, which is a restructure, not a rename.
+      if (schema.$ref === "#/$defs/_routeNode" && v.k === "obj") {
+        const guard = v.props.find(p => p.key === "if");
+        if (guard) reviews.push({ at: guard.keyStart, message: "route node has an `if` guard; rewrite it as { \"$if\": <cond>, \"then\": <subtree by reference> }" });
+      }
       if (schema.$ref === "#/$defs/_routeHandler" && v.k === "obj") {
         for (const p of v.props) {
           if (p.key === "file") { renameKey(p); walk({ $ref: "#/$defs/strOrExpr" }, p.value); }
@@ -280,6 +286,16 @@ function siblingSchema(op: string, key: string): Schema {
 /** Objects that dispatch on a key other than their first: data that happens to hold an op name, or a real step written out of order. Reported for review. */
 const suspicious: Array<{ first: string; op: string; at: number }> = [];
 
+/** Other spots the codemod cannot rewrite on its own, reported for review. */
+const reviews: Array<{ at: number; message: string }> = [];
+
+/** Siblings that were named to avoid an op's name and now take their natural one, by op. */
+const SIBLING_RENAMES: Record<string, Record<string, string>> = {
+  mapRange: { clampToRange: "clamp" },
+  file: { copyTo: "copy", moveTo: "move" },
+  tray: { items: "menu" },
+};
+
 /**
  * A context path (a `var` or a tree op's value) no longer takes a leading `$`,
  * and nothing strips one any more. Covers a literal path and one built with
@@ -325,6 +341,8 @@ function walkExpr(v: Val): void {
       if (!rawValues) walk(C.vp[op] ?? siblingSchema(op, op), p.value);
       continue;
     }
+    const renamed = SIBLING_RENAMES[op]?.[key];
+    if (renamed) add({ start: p.keyStart, end: p.keyEnd, text: p.shorthand ? `${renamed}: ${p.key}` : renamed });
     walk(siblingSchema(op, p.key), p.value);
   }
 }
@@ -493,6 +511,9 @@ for (const f of files) {
   }
   for (const s of [...new Map(suspicious.splice(0).map(x => [x.at, x])).values()]) {
     console.log(`  review ${f}: dispatches on "${s.op}" though "${s.first}" comes first (data holding an op name, or a step written out of order)`);
+  }
+  for (const r of [...new Map(reviews.splice(0).map(x => [x.at, x])).values()]) {
+    console.log(`  review ${f}:${text.slice(0, r.at).split("\n").length}: ${r.message}`);
   }
 }
 console.log(`${changed} of ${files.length} files ${dry ? "would change" : "changed"}.`);
