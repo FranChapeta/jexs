@@ -107,3 +107,35 @@ test("only the handler expression is resolved, not a step's value", async () => 
   const ctx = { a: { run: [{ $var: "b" }] }, b: { $file: "/page.json" }, greeting: "x" };
   assert.deepEqual(await get(routes, ctx), { $file: "/page.json" });
 });
+
+// ── paramRegex ──
+
+const at = (routes: unknown, urlPath: string) =>
+  get(routes, { request: { method: "GET", path: urlPath } });
+const idRoute = (paramRegex: string) => ({
+  children: { "*": { paramName: "id", paramRegex, methods: { GET: { run: [{ $var: "id" }] } } } },
+});
+
+test("paramRegex is anchored, so an alternation must match the whole segment", async () => {
+  assert.deepEqual(await at(idRoute("new|edit"), "/new"), { response: "new" });
+  assert.deepEqual(await at(idRoute("new|edit"), "/edit"), { response: "edit" });
+  await assert.rejects(() => at(idRoute("new|edit"), "/newsletter"), { status: 404 });
+  await assert.rejects(() => at(idRoute("new|edit"), "/reedit"), { status: 404 });
+});
+
+test("paramRegex still constrains a plain pattern", async () => {
+  assert.deepEqual(await at(idRoute("\\d+"), "/42"), { response: "42" });
+  await assert.rejects(() => at(idRoute("\\d+"), "/4a"), { status: 404 });
+});
+
+test("paramRegex on a catch-all is anchored to the whole rest of the path", async () => {
+  const routes = {
+    children: { "**": { paramName: "rest", paramRegex: "a|b/c", methods: { GET: { run: [{ $var: "rest" }] } } } },
+  };
+  assert.deepEqual(await at(routes, "/b/c"), { response: "b/c" });
+  await assert.rejects(() => at(routes, "/a/x"), { status: 404 });
+});
+
+test("an invalid paramRegex names the pattern", async () => {
+  await assert.rejects(() => at(idRoute("["), "/x"), /Invalid paramRegex "\["/);
+});

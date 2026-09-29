@@ -53,7 +53,7 @@ Top-level arrays are step lists run sequentially. Each step can store its result
 ]
 ```
 
-Routes are a tree: `methods` handles the current path, `children` nests segments, and `*` captures a single param under `paramName` (here available to the page as `id`), optionally constrained by `paramRegex`.
+Routes are a tree: `methods` handles the current path, `children` nests segments, and `*` captures a single param under `paramName` (here available to the page as `id`), optionally constrained by `paramRegex`, which must match the whole segment.
 
 Setting `"client": true` makes the server serve the `@jexs/client` browser bundle and auto-inject the script tag into rendered `<head>` elements.
 

@@ -79,7 +79,7 @@ npm install @jexs/server @jexs/core
 ]
 ```
 
-Routes are a tree, not flat path strings: `methods` handles the current path (keyed by HTTP verb), `children` nests path segments, `*` captures a single segment under `paramName` (constrained by an optional `paramRegex`), and `**` captures the remainder. A captured param is exposed to the handler as a top-level context var (`$id` above), the query string as `request.query`, and the parsed body as `request.body`. A handler is a `file` to render or a `run` of steps, not both, or an expression that resolves to one of those, and anything else is an error rather than a response. It may also declare `queryParams` and/or `body` JSON Schemas, validated against `request.query` / `request.body` and returning a 400 on failure.
+Routes are a tree, not flat path strings: `methods` handles the current path (keyed by HTTP verb), `children` nests path segments, `*` captures a single segment under `paramName` (constrained by an optional `paramRegex`, which must match the whole segment), and `**` captures the remainder. A captured param is exposed to the handler as a top-level context var (`$id` above), the query string as `request.query`, and the parsed body as `request.body`. A handler is a `file` to render or a `run` of steps, not both, or an expression that resolves to one of those, and anything else is an error rather than a response. It may also declare `queryParams` and/or `body` JSON Schemas, validated against `request.query` / `request.body` and returning a 400 on failure.
 
 Run with the `jexs` CLI — it resolves the entry as steps, and each `listen` step in it binds a port (add more `listen` steps to serve more ports):
 

@@ -57,13 +57,22 @@ function isRouteTreeShape(value: unknown): value is RouteNode {
       || "paramName" in value || "paramRegex" in value;
 }
 
-const regexCache = new Map<string, RegExp>();
-function getCachedRegex(pattern: string): RegExp {
-  let re = regexCache.get(pattern);
-  if (!re) {
-    re = new RegExp(`^${pattern}$`);
-    regexCache.set(pattern, re);
+/** Compiled `paramRegex` by route entry, with the pattern it was built from. */
+type ParamRegexes = WeakMap<RouteNode, { pattern: string; re: RegExp }>;
+
+/** The route entry's `paramRegex`, anchored to the whole value: the group keeps an
+ *  alternation like `new|edit` from matching `newsletter`. The stored pattern
+ *  catches an entry whose `paramRegex` was reassigned. */
+function paramRegexOf(paramRegexes: ParamRegexes, node: RouteNode, pattern: string): RegExp {
+  const hit = paramRegexes.get(node);
+  if (hit && hit.pattern === pattern) return hit.re;
+  let re: RegExp;
+  try {
+    re = new RegExp(`^(?:${pattern})$`);
+  } catch (e) {
+    throw new Error(`Invalid paramRegex "${pattern}": ${e instanceof Error ? e.message : String(e)}`);
   }
+  paramRegexes.set(node, { pattern, re });
   return re;
 }
 
@@ -85,7 +94,7 @@ export class RouterNode extends Node {
   static schema: JexsNodeSchema = {
     routes: {
       $ref: "#/$defs/_routesSlot",
-      markdownDescription: "Matches the incoming request path and method against a route tree, then executes the handler.\nSupports exact segments, `*` (single param with optional `paramName`/`paramRegex`),\n`**` (catch-all), conditional `\"if\"` guards per node, and `queryParams`/`body` validation.\n\nA handler is a `file` to render or a `run` of steps, never both, or an expression resolving to one of those. A `WS` handler completes a WebSocket upgrade by calling `socket-accept` as a `run` step.",
+      markdownDescription: "Matches the incoming request path and method against a route tree, then executes the handler.\nSupports exact segments, `*` (single param with optional `paramName`/`paramRegex`),\n`**` (catch-all), conditional `\"if\"` guards per node, and `queryParams`/`body` validation.\n\n`paramRegex` is anchored to the whole segment (for `**`, the whole rest of the path), so `\"new|edit\"` matches `new` but not `newsletter`.\n\nA handler is a `file` to render or a `run` of steps, never both, or an expression resolving to one of those. A `WS` handler completes a WebSocket upgrade by calling `socket-accept` as a `run` step.",
       outputDescription: "The matched handler's result. A `$file` step or `run` that renders to a string is wrapped as `{ response: <html> }`; a handler that returns an object passes it through unchanged, as either a response envelope (`{ response, responseStatus, responseType, responseHeaders }`) or a bare JSON value. Throws a 404 HTTP error when no route matches, so use a catch-all route (`**`) or wrap calls in `$catch` to handle not-found.",
       examples: [
         "{ \"$routes\": { \"children\": { \"users\": { \"methods\": { \"GET\": { \"$file\": \"pages/users.json\" } } } } } }",
@@ -108,7 +117,7 @@ export class RouterNode extends Node {
       type: "object",
       properties: {
         paramName:  { type: "string" },
-        paramRegex: { type: "string" },
+        paramRegex: { type: "string", format: "regex" },
         methods:    { $ref: "#/$defs/_routeMethods" },
         children:   { type: "object", additionalProperties: { $ref: "#/$defs/_routeNode" } },
         if:    {},
@@ -143,6 +152,13 @@ export class RouterNode extends Node {
     _jsonSchema: { $ref: "https://json-schema.org/draft/2020-12/schema" },
   };
 
+  /**
+   * Compiled `paramRegex`, per RouterNode so resolvers never share an entry.
+   * Keyed by the route entry, so each one lives exactly as long as the route
+   * tree that declared it.
+   */
+  private readonly paramRegexes: ParamRegexes = new WeakMap();
+
   routes(def: Record<string, unknown>, context: Context): NodeValue {
     const dispatch = async (rootNode: unknown): Promise<NodeValue> => {
       if (!isObject(rootNode)) {
@@ -152,6 +168,7 @@ export class RouterNode extends Node {
       const method = context.request?.method?.toUpperCase() ?? "GET";
       const path = context.request?.path ?? "/";
       const handler = await matchRoute(
+        this.paramRegexes,
         rootNode as RouteNode,
         path,
         method,
@@ -187,6 +204,7 @@ export class RouterNode extends Node {
  * Conditions are evaluated during traversal, params set on context.
  */
 async function matchRoute(
+  paramRegexes: ParamRegexes,
   root: RouteNode,
   urlPath: string,
   method: string,
@@ -202,7 +220,7 @@ async function matchRoute(
 
   // Match segments starting from root's children
   if (root.children) {
-    return matchSegments(root.children, segments, 0, method, context);
+    return matchSegments(paramRegexes, root.children, segments, 0, method, context);
   }
 
   return null;
@@ -212,6 +230,7 @@ async function matchRoute(
  * Recursively match segments against children
  */
 async function matchSegments(
+  paramRegexes: ParamRegexes,
   children: Record<string, RouteNode>,
   segments: string[],
   index: number,
@@ -223,7 +242,7 @@ async function matchSegments(
   // 1. Try exact match
   if (segment in children) {
     const node = children[segment];
-    const result = await matchNode(node, segments, index, method, context);
+    const result = await matchNode(paramRegexes, node, segments, index, method, context);
     if (result) return result;
   }
 
@@ -233,9 +252,8 @@ async function matchSegments(
 
     // Check regex constraint
     if (node.paramRegex) {
-      const regex = getCachedRegex(node.paramRegex);
-      if (!regex.test(segment)) {
-        return tryCatchAll(children, segments, index, method, context);
+      if (!paramRegexOf(paramRegexes, node, node.paramRegex).test(segment)) {
+        return tryCatchAll(paramRegexes, children, segments, index, method, context);
       }
     }
 
@@ -244,18 +262,19 @@ async function matchSegments(
       context[node.paramName] = segment;
     }
 
-    const result = await matchNode(node, segments, index, method, context);
+    const result = await matchNode(paramRegexes, node, segments, index, method, context);
     if (result) return result;
   }
 
   // 3. Try ** (catch-all)
-  return tryCatchAll(children, segments, index, method, context);
+  return tryCatchAll(paramRegexes, children, segments, index, method, context);
 }
 
 /**
  * Try to match catch-all route
  */
 async function tryCatchAll(
+  paramRegexes: ParamRegexes,
   children: Record<string, RouteNode>,
   segments: string[],
   index: number,
@@ -268,7 +287,7 @@ async function tryCatchAll(
 
     // Validate against paramRegex before capturing — a non-matching rest-path
     // means this catch-all does not apply (mirrors the `*` single-param check).
-    if (node.paramRegex && !getCachedRegex(node.paramRegex).test(rest)) {
+    if (node.paramRegex && !paramRegexOf(paramRegexes, node, node.paramRegex).test(rest)) {
       return null;
     }
 
@@ -289,6 +308,7 @@ async function tryCatchAll(
  * Evaluates "if" condition before proceeding — stops early on failure.
  */
 async function matchNode(
+  paramRegexes: ParamRegexes,
   node: RouteNode,
   segments: string[],
   index: number,
@@ -306,6 +326,7 @@ async function matchNode(
 
   if (node.children) {
     return matchSegments(
+      paramRegexes,
       node.children,
       segments,
       nextIndex,
