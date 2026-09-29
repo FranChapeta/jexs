@@ -1,0 +1,23 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "dev.jexs/mcp",
+  "title": "Jexs",
+  "description": "Search, describe, validate and run Jexs JSON expression templates against a project's own schema",
+  "repository": {
+    "url": "https://github.com/FranChapeta/jexs",
+    "source": "github",
+    "subfolder": "mcp"
+  },
+  "websiteUrl": "https://jexs.dev",
+  "version": "0.10.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@jexs/mcp",
+      "version": "0.10.1",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

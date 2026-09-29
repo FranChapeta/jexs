@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "jexs-dev": {
+    "jexs": {
       "command": "node",
       "args": ["server/dist/cli.js", "run", "@jexs/mcp"]
     }

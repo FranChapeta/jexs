@@ -620,9 +620,9 @@ async function main(): Promise<void> {
 
   // .mcp.json — registers @jexs/mcp so MCP-compatible AI clients (Claude Code,
   // Claude Desktop, etc.) can introspect this project's Jexs node registry.
-  // @jexs/mcp is a 100% JSON package (no bin), so it's launched via the `jexs`
-  // CLI from @jexs/server: `jexs run @jexs/mcp` resolves the package's `jexs`
-  // entry and runs it, rooted at the project (cwd) for schema discovery.
+  // It's launched via the `jexs` CLI from @jexs/server: `jexs run @jexs/mcp`
+  // resolves the package's `jexs` entry and runs it, rooted at the project
+  // (cwd) for schema discovery.
   //
   // Both packages are devDependencies, so this runs the INSTALLED copies rather
   // than whatever `npx -y` would fetch. That matters because the server reads the
@@ -634,19 +634,19 @@ async function main(): Promise<void> {
     join(dir, ".mcp.json"),
     formatJson({
       mcpServers: {
-        "jexs-dev": { command: "node", args: ["node_modules/@jexs/server/dist/cli.js", "run", "@jexs/mcp"] },
+        "jexs": { command: "node", args: ["node_modules/@jexs/server/dist/cli.js", "run", "@jexs/mcp"] },
       },
     }) + "\n",
   );
 
-  // .claude/settings.json — pre-approves the jexs-dev MCP server so Claude Code
+  // .claude/settings.json — pre-approves the Jexs MCP server so Claude Code
   // doesn't prompt for each introspection call. The @jexs/mcp tools only read
   // (search/describe/list/inspect/validate); `resolve_expression` evaluates against
   // a live resolver, so it can do whatever a template can.
   writeFileSync(
     join(dir, ".claude", "settings.json"),
     formatJson({
-      permissions: { allow: ["mcp__jexs-dev"] },
+      permissions: { allow: ["mcp__jexs"] },
     }) + "\n",
   );
 

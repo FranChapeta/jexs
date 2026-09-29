@@ -6,24 +6,41 @@
 
 ## Run it
 
-Install it alongside the CLI and point `.mcp.json` at the installed copy:
+To try it, point any MCP client at the npm package. It starts anywhere, and its tools work once
+the working directory is a Jexs project with a generated `.jexs/`:
+
+```json
+{ "mcpServers": { "jexs": { "command": "npx", "args": ["-y", "@jexs/mcp"] } } }
+```
+
+In Claude Code, the same thing is one command (add `--scope project` to write it to the project's
+`.mcp.json`):
+
+```bash
+claude mcp add jexs -- npx -y @jexs/mcp
+```
+
+On native Windows, some clients can't start `npx` directly: use `cmd` as the command and
+`/c npx -y @jexs/mcp` as its arguments (`claude mcp add jexs -- cmd /c npx -y @jexs/mcp`).
+
+For day-to-day work, install it alongside the CLI and point `.mcp.json` at the installed copy:
 
 ```bash
 npm i -D @jexs/mcp @jexs/server
 ```
 
 ```json
-{ "mcpServers": { "jexs-dev": {
+{ "mcpServers": { "jexs": {
   "command": "node", "args": ["node_modules/@jexs/server/dist/cli.js", "run", "@jexs/mcp"] } } }
 ```
 
-Projects scaffolded by `@jexs/create` get this already. The package has no `bin`, so the `jexs`
-CLI launches it by resolving its `package.json` `"jexs"` entry.
+Projects scaffolded by `@jexs/create` get this already. The `jexs` CLI launches it by resolving
+its `package.json` `"jexs"` entry.
 
-Prefer the installed copy over `npx -y -p @jexs/server -p @jexs/mcp jexs run @jexs/mcp`. The npx
-form still works, but it fetches the latest release on every editor launch (so it needs the network)
-and pairs that runtime with whatever `.jexs/` schemas your *pinned* `@jexs/server` generated. When
-those drift far enough apart the server says so and tells you to rerun `jexs schema`.
+Prefer the installed copy over `npx -y @jexs/mcp` in a real project. The npx form fetches the
+latest release on every editor launch (so it needs the network) and pairs that runtime with whatever
+`.jexs/` schemas your *pinned* `@jexs/server` generated. When those drift far enough apart the
+server says so and tells you to rerun `jexs schema`.
 
 From a checkout of this repo (after `npm run build`):
 
@@ -50,8 +67,9 @@ files, make network calls and touch the database exactly as the app would.
 
 ## How it works
 
-There is no launcher. `jexs run @jexs/mcp` reads this package's `package.json` `"jexs":
-"src/index.json"` and runs that entry through a `[...coreNodes(), ...serverNodes({ root })]` resolver
+The only JavaScript is `bin/jexs-mcp.mjs`, the `npx` entry point, which hands `src/index.json` to
+the `jexs` CLI's `run`. `jexs run @jexs/mcp` does the same by reading this package's
+`package.json` `"jexs": "src/index.json"`, and runs that entry through a `[...coreNodes(), ...serverNodes({ root })]` resolver
 rooted at the cwd. `FileNode` resolves a relative `{ file }` against the loading file's own
 directory, so the template's siblings are just `"tools.json"`, `"walk.json"`, wherever the package is
 installed; a `/`-prefixed path anchors at `root`, which is how it reads the target project's files.

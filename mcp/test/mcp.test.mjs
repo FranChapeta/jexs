@@ -1,5 +1,5 @@
 /**
- * End-to-end tests for the jexs-dev MCP server.
+ * End-to-end tests for the Jexs MCP server.
  *
  * Plain ESM, not TypeScript, because @jexs/mcp is a 100% JSON package: it ships
  * no source to compile and no tsconfig, and a .ts test here would be the only
@@ -19,7 +19,8 @@
 import { test, before, after, describe } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -109,7 +110,7 @@ describe("protocol", () => {
   test("initialize echoes a supported protocol version and identifies itself", async () => {
     const r = await rpc("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } });
     assert.equal(r.result.protocolVersion, "2024-11-05");
-    assert.equal(r.result.serverInfo.name, "jexs-dev");
+    assert.equal(r.result.serverInfo.name, "jexs");
     assert.match(r.result.serverInfo.version, /^\d+\.\d+\.\d+/, "serverInfo.version should come from the package, not a placeholder");
     assert.match(String(r.result.instructions), /var/, "instructions should teach the read/write model");
   });
@@ -321,5 +322,63 @@ describe("list_nodes", () => {
     const { text } = await callTool("list_nodes", { package: "@jexs/physics" });
     assert.match(text, /VectorNode/);
     assert.doesNotMatch(text, /ArrayNode \(@jexs\/core\)/);
+  });
+});
+
+/**
+ * Run the `jexs-mcp` bin in `cwd` for one short session: send `messages` (ids 1..n) and
+ * collect the response to each, in order.
+ * @param {string} cwd
+ * @param {Array<{ method: string, params?: unknown }>} messages
+ * @returns {Promise<RpcResponse[]>}
+ */
+function binSession(cwd, messages) {
+  const proc = spawn("node", [path.join(repoRoot, "mcp", "bin", "jexs-mcp.mjs")], { cwd });
+  /** @type {Map<number, RpcResponse>} */
+  const byId = new Map();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { proc.kill(); reject(new Error(`bin answered ${byId.size}/${messages.length} requests`)); }, 30000);
+    let buf = "";
+    proc.stdout.setEncoding("utf8");
+    proc.stdout.on("data", chunk => {
+      buf += chunk;
+      let nl;
+      while ((nl = buf.indexOf("\n")) !== -1) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line) continue;
+        const msg = JSON.parse(line);
+        if (typeof msg.id === "number") byId.set(msg.id, msg);
+      }
+      if (byId.size === messages.length) {
+        clearTimeout(timer);
+        // Wait for the exit: on Windows a live process holds its cwd, so the caller couldn't remove it yet.
+        proc.once("exit", () => resolve(messages.map((_, i) => /** @type {RpcResponse} */ (byId.get(i + 1)))));
+        proc.kill();
+      }
+    });
+    for (const [i, m] of messages.entries()) {
+      proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: i + 1, ...m }) + "\n");
+    }
+  });
+}
+
+describe("jexs-mcp bin", () => {
+  const init = { method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } } };
+
+  test("starts the same server as `jexs run @jexs/mcp`", async () => {
+    const [i, list] = await binSession(repoRoot, [init, { method: "tools/list" }]);
+    assert.equal(i.result?.serverInfo?.name, "jexs");
+    assert.ok((list.result?.tools ?? []).some(t => t.name === "search_ops"));
+  });
+
+  test("outside a Jexs project, tools point the reader at `npm create @jexs`", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "jexs-mcp-"));
+    try {
+      const [, call] = await binSession(dir, [init, { method: "tools/call", params: { name: "search_ops", arguments: { query: "concat" } } }]);
+      assert.match(String(call.result?.content?.[0]?.text), /npm create @jexs/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

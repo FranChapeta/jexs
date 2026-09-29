@@ -1,4 +1,4 @@
-// Exercises the jexs-dev MCP server over stdio: launches it with `jexs run
+// Exercises the Jexs MCP server over stdio: launches it with `jexs run
 // @jexs/mcp` (the 100% JSON package, resolved via its package.json `jexs` entry),
 // runs a full MCP session (initialize -> tools/list -> a tools/call for each tool
 // -> ping -> an unknown method), and prints a snippet of each response.

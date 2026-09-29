@@ -113,6 +113,8 @@ A few rules govern how every expression is resolved. Worth internalizing — the
 | [`@jexs/mcp`](mcp) | MCP server exposing node introspection to Claude Code / Claude Desktop | Node.js | [![npm](https://img.shields.io/npm/v/@jexs/mcp.svg)](https://www.npmjs.com/package/@jexs/mcp) |
 | [`@jexs/create`](create) | `npm create jexs` project scaffolder | Node.js | [![npm](https://img.shields.io/npm/v/@jexs/create.svg)](https://www.npmjs.com/package/@jexs/create) |
 
+The MCP server runs with `npx -y @jexs/mcp` in any MCP client, or in Claude Code via `claude mcp add jexs -- npx -y @jexs/mcp`. Scaffolded projects have it set up already.
+
 `@jexs/client` lazy-loads `@jexs/physics` and `@jexs/gl` only when nodes from those packages are first encountered in the JSON — pay for what you use.
 
 ## Building from source
