@@ -36,13 +36,11 @@
   {
     "$as": "instructions",
     "$join": [
-      [
-        "Jexs is a JSON expression language: a step is an object whose one `$`-prefixed key names the op it runs (`{ \"$concat\": [...] }`), and its other keys are that op's options. An object without a `$` key is plain data. A JSON array is a step sequence; the last step's value is the result.",
-        "Reads come from context via `{ \"$var\": \"name\" }`; writes go through `$as` or `$setVars`. There is no get/set node.",
-        "Use these tools instead of guessing at key names: `search_ops` to find an operation, `describe_op` for its siblings and return type, `describe_def` for a shared `#/$defs/` shape, `inspect_file` and `validate_file` to check a template you wrote, and `resolve_expression` to actually run one."
-      ],
-      "\n\n"
-    ]
+      "Jexs is a JSON expression language: a step is an object whose one `$`-prefixed key names the op it runs (`{ \"$concat\": [...] }`), and its other keys are that op's options. An object without a `$` key is plain data. A JSON array is a step sequence; the last step's value is the result.",
+      "Reads come from context via `{ \"$var\": \"name\" }`; writes go through `$as` or `$setVars`. There is no get/set node.",
+      "Use these tools instead of guessing at key names: `search_ops` to find an operation, `describe_op` for its siblings and return type, `describe_def` for a shared `#/$defs/` shape, `inspect_file` and `validate_file` to check a template you wrote, and `resolve_expression` to actually run one."
+    ],
+    "separator": "\n\n"
   },
   {
     "$stdio-listen": true,
@@ -85,7 +83,7 @@
                     },
                     "$catch": [{ "$return": { "content": [{ "type": "text", "text": { "$concat": ["Error: ", { "$coalesce": [{ "$var": "error.message" }, { "$stringify": { "$var": "error" } }] }] } }], "isError": true } }]
                   },
-                  { "content": [{ "type": "text", "text": { "$stringify": [{ "$var": "out" }, 2] } }] }
+                  { "content": [{ "type": "text", "text": { "$stringify": { "$var": "out" }, "indent": 2 } }] }
                 ],
                 "list_nodes": [
                   { "$as": "wanted", "$var": "args.package" },
@@ -101,23 +99,21 @@
                         { "$coalesce": [{ "$var": { "$concat": ["nodePackage.", { "$var": "cls" }] } }, "?"] },
                         "): ",
                         {
-                          "$join": [
-                            {
-                              "$map": { "$var": { "$concat": ["byNode.", { "$var": "cls" }] } },
-                              "item": "op",
-                              "do": {
-                                "$concat": [
-                                  { "$var": "op" },
-                                  {
-                                    "$if": { "$notEmpty": { "$var": { "$concat": ["byKey.", { "$var": "op" }, ".variantDocs"] } } },
-                                    "then": { "$concat": [" (ops: ", { "$join": [{ "$map": { "$var": { "$concat": ["byKey.", { "$var": "op" }, ".variantDocs"] } }, "item": "v", "do": { "$var": "v.value" } }, ", "] }, ")"] },
-                                    "else": ""
-                                  }
-                                ]
-                              }
-                            },
-                            ", "
-                          ]
+                          "$join": {
+                            "$map": { "$var": { "$concat": ["byNode.", { "$var": "cls" }] } },
+                            "item": "op",
+                            "do": {
+                              "$concat": [
+                                { "$var": "op" },
+                                {
+                                  "$if": { "$notEmpty": { "$var": { "$concat": ["byKey.", { "$var": "op" }, ".variantDocs"] } } },
+                                  "then": { "$concat": [" (ops: ", { "$join": { "$map": { "$var": { "$concat": ["byKey.", { "$var": "op" }, ".variantDocs"] } }, "item": "v", "do": { "$var": "v.value" } }, "separator": ", " }, ")"] },
+                                  "else": ""
+                                }
+                              ]
+                            }
+                          },
+                          "separator": ", "
                         }
                       ]
                     }
@@ -130,13 +126,13 @@
                           "$concat": [
                             { "$var": "banner" },
                             "Packages: ",
-                            { "$join": [{ "$var": "pkgNames" }, ", "] },
+                            { "$join": { "$var": "pkgNames" }, "separator": ", " },
                             "\n",
                             { "$if": { "$notEmpty": { "$var": "wanted" } }, "then": { "$concat": ["Filtered to: ", { "$var": "wanted" }, "\n"] }, "else": "" },
                             "\n",
-                            { "$if": { "$empty": { "$var": "classLines" } }, "then": { "$concat": ["No node classes match \"", { "$var": "wanted" }, "\"."] }, "else": { "$join": [{ "$var": "classLines" }, "\n"] } },
+                            { "$if": { "$empty": { "$var": "classLines" } }, "then": { "$concat": ["No node classes match \"", { "$var": "wanted" }, "\"."] }, "else": { "$join": { "$var": "classLines" }, "separator": "\n" } },
                             "\n\nGlobal step keys (handled by the resolver, usable on any step): ",
-                            { "$join": [{ "$var": "globalNames" }, ", "] }
+                            { "$join": { "$var": "globalNames" }, "separator": ", " }
                           ]
                         }
                       }
@@ -145,7 +141,7 @@
                 ],
                 "search_ops": [
                   { "$as": "q", "$lower": { "$coalesce": [{ "$var": "args.query" }, ""] } },
-                  { "$as": "qSorted", "$join": [{ "$sort": { "$split": [{ "$var": "q" }, ""] } }, ""] },
+                  { "$as": "qSorted", "$join": { "$sort": { "$split": [{ "$var": "q" }, ""] } }, "separator": "" },
                   { "$as": "wanted", "$var": "args.package" },
                   {
                     "$as": "hits",
@@ -164,7 +160,7 @@
                                     { "$var": "q" }
                                   ]
                                 },
-                                { "$eq": [{ "$join": [{ "$sort": { "$split": [{ "$lower": { "$var": "item" } }, ""] } }, ""] }, { "$var": "qSorted" }] }
+                                { "$eq": [{ "$join": { "$sort": { "$split": [{ "$lower": { "$var": "item" } }, ""] } }, "separator": "" }, { "$var": "qSorted" }] }
                               ]
                             }
                           ]
@@ -209,7 +205,7 @@
                                   "\"",
                                   { "$if": { "$gt": [{ "$count": { "$var": "hits" } }, 25] }, "then": ", showing the first 25", "else": "" },
                                   ":\n\n",
-                                  { "$join": [{ "$pluck": [{ "$var": "shown" }, "line"] }, "\n"] },
+                                  { "$join": { "$pluck": [{ "$var": "shown" }, "line"] }, "separator": "\n" },
                                   "\n\nRun describe_op on any of these for its siblings, return type and examples."
                                 ]
                               }
@@ -245,70 +241,64 @@
                           "$concat": [
                             "Siblings:\n",
                             {
-                              "$join": [
-                                {
-                                  "$map": { "$var": "sibs" },
-                                  "item": "s",
-                                  "do": {
-                                    "$concat": [
-                                      "  - ",
-                                      { "$var": "s.name" },
-                                      { "$if": { "$var": "s.required" }, "then": " (required)", "else": "" },
-                                      { "$if": { "$notEmpty": { "$var": "s.output" } }, "then": { "$concat": [" -> ", { "$var": "s.output" }] }, "else": "" },
-                                      {
-                                        "$if": { "$notEmpty": { "$var": "s.when" } },
-                                        "then": {
-                                          "$concat": [
-                                            " [only with ",
-                                            {
-                                              "$join": [
-                                                {
-                                                  "$map": { "$var": "s.when" },
-                                                  "item": "t",
-                                                  "do": { "$if": { "$includes": [{ "$keys": { "$var": "t" } }, "value"] }, "then": { "$concat": [{ "$var": "t.key" }, ": ", { "$stringify": { "$var": "t.value" } }] }, "else": { "$var": "t.key" } }
-                                                },
-                                                " + "
-                                              ]
+                              "$join": {
+                                "$map": { "$var": "sibs" },
+                                "item": "s",
+                                "do": {
+                                  "$concat": [
+                                    "  - ",
+                                    { "$var": "s.name" },
+                                    { "$if": { "$var": "s.required" }, "then": " (required)", "else": "" },
+                                    { "$if": { "$notEmpty": { "$var": "s.output" } }, "then": { "$concat": [" -> ", { "$var": "s.output" }] }, "else": "" },
+                                    {
+                                      "$if": { "$notEmpty": { "$var": "s.when" } },
+                                      "then": {
+                                        "$concat": [
+                                          " [only with ",
+                                          {
+                                            "$join": {
+                                              "$map": { "$var": "s.when" },
+                                              "item": "t",
+                                              "do": { "$if": { "$includes": [{ "$keys": { "$var": "t" } }, "value"] }, "then": { "$concat": [{ "$var": "t.key" }, ": ", { "$stringify": { "$var": "t.value" } }] }, "else": { "$var": "t.key" } }
                                             },
-                                            "]"
-                                          ]
-                                        },
-                                        "else": ""
+                                            "separator": " + "
+                                          },
+                                          "]"
+                                        ]
                                       },
-                                      { "$if": { "$notEmpty": { "$var": "s.description" } }, "then": { "$concat": [": ", { "$var": "s.description" }] }, "else": "" },
-                                      { "$if": { "$notEmpty": { "$var": "s.outputDescription" } }, "then": { "$concat": [" Returns: ", { "$var": "s.outputDescription" }] }, "else": "" },
-                                      {
-                                        "$if": { "$notEmpty": { "$var": "s.values" } },
-                                        "then": {
-                                          "$concat": [
-                                            "\n",
-                                            {
-                                              "$join": [
-                                                {
-                                                  "$map": { "$var": "s.values" },
-                                                  "item": "v",
-                                                  "do": {
-                                                    "$concat": [
-                                                      "      - `",
-                                                      { "$stringify": { "$var": "v.value" } },
-                                                      "`",
-                                                      { "$if": { "$notEmpty": { "$var": "v.output" } }, "then": { "$concat": [" -> ", { "$var": "v.output" }] }, "else": "" },
-                                                      { "$if": { "$notEmpty": { "$var": "v.description" } }, "then": { "$concat": [": ", { "$var": "v.description" }] }, "else": "" }
-                                                    ]
-                                                  }
-                                                },
-                                                "\n"
-                                              ]
-                                            }
-                                          ]
-                                        },
-                                        "else": ""
-                                      }
-                                    ]
-                                  }
-                                },
-                                "\n"
-                              ]
+                                      "else": ""
+                                    },
+                                    { "$if": { "$notEmpty": { "$var": "s.description" } }, "then": { "$concat": [": ", { "$var": "s.description" }] }, "else": "" },
+                                    { "$if": { "$notEmpty": { "$var": "s.outputDescription" } }, "then": { "$concat": [" Returns: ", { "$var": "s.outputDescription" }] }, "else": "" },
+                                    {
+                                      "$if": { "$notEmpty": { "$var": "s.values" } },
+                                      "then": {
+                                        "$concat": [
+                                          "\n",
+                                          {
+                                            "$join": {
+                                              "$map": { "$var": "s.values" },
+                                              "item": "v",
+                                              "do": {
+                                                "$concat": [
+                                                  "      - `",
+                                                  { "$stringify": { "$var": "v.value" } },
+                                                  "`",
+                                                  { "$if": { "$notEmpty": { "$var": "v.output" } }, "then": { "$concat": [" -> ", { "$var": "v.output" }] }, "else": "" },
+                                                  { "$if": { "$notEmpty": { "$var": "v.description" } }, "then": { "$concat": [": ", { "$var": "v.description" }] }, "else": "" }
+                                                ]
+                                              }
+                                            },
+                                            "separator": "\n"
+                                          }
+                                        ]
+                                      },
+                                      "else": ""
+                                    }
+                                  ]
+                                }
+                              },
+                              "separator": "\n"
                             }
                           ]
                         },
@@ -321,29 +311,27 @@
                           "$concat": [
                             "Operations (value of this key):\n",
                             {
-                              "$join": [
-                                {
-                                  "$map": { "$var": "entry.variantDocs" },
-                                  "item": "v",
-                                  "do": {
-                                    "$concat": [
-                                      "  - `",
-                                      { "$var": "v.value" },
-                                      "`",
-                                      { "$if": { "$notEmpty": { "$var": "v.output" } }, "then": { "$concat": [" -> ", { "$var": "v.output" }] }, "else": "" },
-                                      { "$if": { "$notEmpty": { "$var": "v.description" } }, "then": { "$concat": [": ", { "$var": "v.description" }] }, "else": "" }
-                                    ]
-                                  }
-                                },
-                                "\n"
-                              ]
+                              "$join": {
+                                "$map": { "$var": "entry.variantDocs" },
+                                "item": "v",
+                                "do": {
+                                  "$concat": [
+                                    "  - `",
+                                    { "$var": "v.value" },
+                                    "`",
+                                    { "$if": { "$notEmpty": { "$var": "v.output" } }, "then": { "$concat": [" -> ", { "$var": "v.output" }] }, "else": "" },
+                                    { "$if": { "$notEmpty": { "$var": "v.description" } }, "then": { "$concat": [": ", { "$var": "v.description" }] }, "else": "" }
+                                  ]
+                                }
+                              },
+                              "separator": "\n"
                             }
                           ]
                         },
                         "else": ""
                       },
-                      { "$as": "exBlock", "$if": { "$notEmpty": { "$var": "primary.examples" } }, "then": { "$concat": ["Examples:\n", { "$join": [{ "$map": { "$var": "primary.examples" }, "item": "ex", "do": { "$concat": ["  ", { "$var": "ex" }] } }, "\n"] }] }, "else": "" },
-                      { "content": [{ "type": "text", "text": { "$concat": [{ "$var": "banner" }, { "$join": [{ "$filter": [[{ "$var": "heading" }, { "$var": "desc" }, { "$var": "returns" }, { "$var": "sibBlock" }, { "$var": "opsBlock" }, { "$var": "exBlock" }], { "$notEmpty": { "$var": "item" } }] }, "\n\n"] }] } }] }
+                      { "$as": "exBlock", "$if": { "$notEmpty": { "$var": "primary.examples" } }, "then": { "$concat": ["Examples:\n", { "$join": { "$map": { "$var": "primary.examples" }, "item": "ex", "do": { "$concat": ["  ", { "$var": "ex" }] } }, "separator": "\n" }] }, "else": "" },
+                      { "content": [{ "type": "text", "text": { "$concat": [{ "$var": "banner" }, { "$join": { "$filter": [[{ "$var": "heading" }, { "$var": "desc" }, { "$var": "returns" }, { "$var": "sibBlock" }, { "$var": "opsBlock" }, { "$var": "exBlock" }], { "$notEmpty": { "$var": "item" } }] }, "separator": "\n\n" }] } }] }
                     ],
                     "else": [
                       { "$as": "g", "$var": { "$concat": ["globalDocs.keys.", { "$var": "op" }] } },
@@ -360,7 +348,7 @@
                                   { "$var": "op" },
                                   "\n\n",
                                   { "$coalesce": [{ "$var": "g.markdownDescription" }, { "$var": "g.description" }, ""] },
-                                  { "$if": { "$notEmpty": { "$var": "g.examples" } }, "then": { "$concat": ["\n\nExamples:\n", { "$join": [{ "$map": { "$var": "g.examples" }, "item": "ex", "do": { "$concat": ["  ", { "$var": "ex" }] } }, "\n"] }] }, "else": "" }
+                                  { "$if": { "$notEmpty": { "$var": "g.examples" } }, "then": { "$concat": ["\n\nExamples:\n", { "$join": { "$map": { "$var": "g.examples" }, "item": "ex", "do": { "$concat": ["  ", { "$var": "ex" }] } }, "separator": "\n" }] }, "else": "" }
                                 ]
                               }
                             }
@@ -373,7 +361,7 @@
                               {
                                 "type": "text",
                                 "text": {
-                                  "$concat": [{ "$var": "banner" }, "Unknown op: ", { "$var": "op" }, "\n", { "$if": { "$notEmpty": { "$var": "near" } }, "then": { "$concat": ["Did you mean: ", { "$join": [{ "$var": "near" }, ", "] }, "?"] }, "else": "Run search_ops to find an operation, or list_nodes to see them all." }]
+                                  "$concat": [{ "$var": "banner" }, "Unknown op: ", { "$var": "op" }, "\n", { "$if": { "$notEmpty": { "$var": "near" } }, "then": { "$concat": ["Did you mean: ", { "$join": { "$var": "near" }, "separator": ", " }, "?"] }, "else": "Run search_ops to find an operation, or list_nodes to see them all." }]
                                 }
                               }
                             ],
@@ -389,7 +377,7 @@
                   { "$as": "def", "$var": { "$concat": ["extraDefs.", { "$var": "name" }] } },
                   {
                     "$if": { "$notEmpty": { "$var": "def" } },
-                    "then": { "content": [{ "type": "text", "text": { "$concat": [{ "$var": "banner" }, { "$var": "name" }, "\n\n", { "$stringify": [{ "$var": "def" }, 2] }] } }] },
+                    "then": { "content": [{ "type": "text", "text": { "$concat": [{ "$var": "banner" }, { "$var": "name" }, "\n\n", { "$stringify": { "$var": "def" }, "indent": 2 }] } }] },
                     "else": [
                       { "$as": "defNames", "$keys": { "$var": "extraDefs" } },
                       { "$as": "near", "$exec": { "$var": "suggest" }, "params": { "needle": { "$var": "name" }, "haystack": { "$var": "defNames" } } },
@@ -403,7 +391,7 @@
                                 "Unknown $defs: ",
                                 { "$var": "name" },
                                 "\n",
-                                { "$if": { "$notEmpty": { "$var": "near" } }, "then": { "$concat": ["Did you mean: ", { "$join": [{ "$var": "near" }, ", "] }, "?"] }, "else": { "$concat": ["Available: ", { "$join": [{ "$sort": { "$var": "defNames" } }, ", "] }] } }
+                                { "$if": { "$notEmpty": { "$var": "near" } }, "then": { "$concat": ["Did you mean: ", { "$join": { "$var": "near" }, "separator": ", " }, "?"] }, "else": { "$concat": ["Available: ", { "$join": { "$sort": { "$var": "defNames" } }, "separator": ", " }] } }
                               ]
                             }
                           }
@@ -423,8 +411,8 @@
                       { "$as": "usedKeys", "$sort": { "$filter": [{ "$var": "allKeys" }, { "$includes": [{ "$var": "opKeys" }, { "$var": "item" }] }] } },
                       { "$as": "unknownKeys", "$exec": { "$var": "walkUnknown" }, "params": { "node": { "$var": "box.node" }, "path": "" } },
                       { "$as": "warnings", "$exec": { "$var": "walkLint" }, "params": { "node": { "$var": "box.node" }, "path": "" } },
-                      { "$as": "lintText", "$if": { "$notEmpty": { "$var": "warnings" } }, "then": { "$join": [{ "$map": { "$var": "warnings" }, "item": "w", "do": { "$concat": ["  - ", { "$var": "w" }] } }, "\n"] }, "else": "  none" },
-                      { "$as": "unknownText", "$if": { "$notEmpty": { "$var": "unknownKeys" } }, "then": { "$join": [{ "$map": { "$sort": { "$unique": { "$var": "unknownKeys" } } }, "item": "k", "do": { "$concat": ["  - ", { "$var": "k" }] } }, "\n"] }, "else": "  none" },
+                      { "$as": "lintText", "$if": { "$notEmpty": { "$var": "warnings" } }, "then": { "$join": { "$map": { "$var": "warnings" }, "item": "w", "do": { "$concat": ["  - ", { "$var": "w" }] } }, "separator": "\n" }, "else": "  none" },
+                      { "$as": "unknownText", "$if": { "$notEmpty": { "$var": "unknownKeys" } }, "then": { "$join": { "$map": { "$sort": { "$unique": { "$var": "unknownKeys" } } }, "item": "k", "do": { "$concat": ["  - ", { "$var": "k" }] } }, "separator": "\n" }, "else": "  none" },
                       {
                         "content": [
                           {
@@ -436,10 +424,10 @@
                                 { "$var": "args.filePath" },
                                 "\n",
                                 "Packages: ",
-                                { "$join": [{ "$var": "pkgNames" }, ", "] },
+                                { "$join": { "$var": "pkgNames" }, "separator": ", " },
                                 "\n\n",
                                 "Node keys used:\n  ",
-                                { "$join": [{ "$var": "usedKeys" }, ", "] },
+                                { "$join": { "$var": "usedKeys" }, "separator": ", " },
                                 "\n\n",
                                 "Possible typos (a key that is not an op, a global key, or a sibling of its step's op, but is one character-shuffle away from one):\n",
                                 { "$var": "unknownText" },
@@ -478,7 +466,7 @@
                                     { "$var": "banner" },
                                     { "$var": "args.filePath" },
                                     " does not validate against the project schema.\n\n",
-                                    { "$join": [{ "$slice": [{ "$var": "lines" }, 0, 20] }, "\n"] },
+                                    { "$join": { "$slice": [{ "$var": "lines" }, 0, 20] }, "separator": "\n" },
                                     { "$if": { "$gt": [{ "$count": { "$var": "lines" } }, 20] }, "then": { "$concat": ["\n  ... and ", { "$count": { "$var": "lines" } }, " distinct errors in total."] }, "else": "" },
                                     "\n\nThese are the paths where a schema branch rejected the document; the union bookkeeping (anyOf/oneOf) is filtered out. A key the schema does not know is usually a typo or a package that is not installed."
                                   ]
@@ -493,7 +481,7 @@
                   }
                 ]
               },
-              "default": { "content": [{ "type": "text", "text": { "$concat": ["Unknown tool: ", { "$var": "tool" }, ". Available: ", { "$join": [{ "$pluck": [{ "$var": "toolDefs" }, "name"] }, ", "] }] } }], "isError": true }
+              "default": { "content": [{ "type": "text", "text": { "$concat": ["Unknown tool: ", { "$var": "tool" }, ". Available: ", { "$join": { "$pluck": [{ "$var": "toolDefs" }, "name"] }, "separator": ", " }] } }], "isError": true }
             },
             { "$stdio-write": { "jsonrpc": "2.0", "id": { "$var": "id" }, "result": { "$var": "result" } } }
           ]

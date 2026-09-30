@@ -129,19 +129,17 @@ export class StringNode extends Node {
       ],
     },
     stringify: {
-      tuple: [
-        1,
-        2,
-      ],
-      prefixItems: [
-        { description: "The value to serialize." },
-        { type: "number", description: "Indentation width for pretty-printing." },
-      ],
       output: "string",
-      markdownDescription: "Serializes a value to a JSON string. Pass `[value, indent]` to pretty-print.",
+      markdownDescription: "Serializes a value to a JSON string, whatever its type: an array is serialized as the array.",
       examples: [
-        "{ \"$stringify\": [{ \"$var\": \"obj\" }, 2] }",
+        "{ \"$stringify\": { \"$var\": \"obj\" }, \"indent\": 2 }",
       ],
+      siblings: {
+        indent: {
+          type: "number",
+          description: "Spaces to indent each level by, to pretty-print. Omitted or 0, the output is on one line.",
+        },
+      },
     },
     substring: {
       tuple: [
@@ -195,19 +193,19 @@ export class StringNode extends Node {
       siblings: { regex: REGEX },
     },
     join: {
-      tuple: [
-        1,
-        2,
-      ],
-      prefixItems: [
-        { type: "array", description: "The array to join." },
-        { type: "string", description: "The separator (default `\",\"`)." },
-      ],
+      type: "array",
       output: "string",
       markdownDescription: "Joins an array into a string with a separator (default `\",\"`).",
       examples: [
-        "{ \"$join\": [[\"a\", \"b\", \"c\"], \" - \"] }",
+        "{ \"$join\": [\"a\", \"b\", \"c\"], \"separator\": \" - \" }",
       ],
+      siblings: {
+        separator: {
+          type: "string",
+          default: ",",
+          description: "Put between items. Omitted, `\",\"`.",
+        },
+      },
     },
     padStart: {
       tuple: [
@@ -465,14 +463,9 @@ export class StringNode extends Node {
   }
 
   stringify(def: Record<string, unknown>, c: Context) {
-    return resolve(def.$stringify, c, args => {
-      if (Array.isArray(args)) {
-        const a = args as unknown[];
-        const indent = a.length > 1 ? Number(a[1]) || 0 : 0;
-        return JSON.stringify(a[0], null, indent || undefined);
-      }
-      return JSON.stringify(args);
-    });
+    return resolveAll([def.$stringify, def.indent ?? 0], c, ([value, indent]) =>
+      JSON.stringify(value, null, Number(indent) || undefined),
+    );
   }
 
   substring(def: Record<string, unknown>, c: Context) {
@@ -511,10 +504,9 @@ export class StringNode extends Node {
   }
 
   join(def: Record<string, unknown>, c: Context) {
-    return resolve(def.$join, c, args => {
-      const a = this.toArray(args);
-      return this.toArray(a[0]).map(v => this.toString(v)).join(a.length > 1 ? this.toString(a[1]) : ",");
-    });
+    return resolveAll([def.$join, def.separator ?? ","], c, ([items, separator]) =>
+      this.toArray(items).map(v => this.toString(v)).join(this.toString(separator)),
+    );
   }
 
   padStart(def: Record<string, unknown>, c: Context) {

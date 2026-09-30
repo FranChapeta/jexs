@@ -29,7 +29,7 @@
   {
     "$as": "warn",
     "$if": { "$gt": [{ "$count": { "$var": "stepOps" } }, 1] },
-    "then": { "$concat": [{ "$var": "where" }, ": names more than one op (", { "$join": [{ "$var": "stepOps" }, ", "] }, "); a step dispatches on exactly one, so the resolver refuses it."] },
+    "then": { "$concat": [{ "$var": "where" }, ": names more than one op (", { "$join": { "$var": "stepOps" }, "separator": ", " }, "); a step dispatches on exactly one, so the resolver refuses it."] },
     "else": {
       "$if": { "$and": [{ "$empty": { "$var": "stepOps" } }, { "$notEmpty": { "$var": "bare" } }, { "$var": "looksLikeStep" }] },
       "then": { "$concat": [{ "$var": "where" }, ": \"", { "$var": "bare" }, "\" is plain data here, not a step; an op is named with \"$\", so write \"$", { "$var": "bare" }, "\" to run it."] },

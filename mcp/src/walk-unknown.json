@@ -35,7 +35,7 @@
         "$concat": [
           { "$var": "where" }, ".", { "$var": "k" },
           " is not an op",
-          { "$if": { "$notEmpty": { "$var": "near" } }, "then": { "$concat": [", did you mean: ", { "$join": [{ "$var": "near" }, ", "] }, "?"] }, "else": "" }
+          { "$if": { "$notEmpty": { "$var": "near" } }, "then": { "$concat": [", did you mean: ", { "$join": { "$var": "near" }, "separator": ", " }, "?"] }, "else": "" }
         ]
       }
     ]
@@ -63,7 +63,7 @@
         "$concat": [
           { "$var": "where" }, ".", { "$var": "k" },
           " is not a key of \"", { "$var": "dispatcher" }, "\", did you mean: ",
-          { "$join": [{ "$exec": { "$var": "suggest" }, "params": { "needle": { "$var": "k" }, "haystack": { "$var": "ownSiblings" } } }, ", "] },
+          { "$join": { "$exec": { "$var": "suggest" }, "params": { "needle": { "$var": "k" }, "haystack": { "$var": "ownSiblings" } } }, "separator": ", " },
           "?"
         ]
       }

@@ -1,7 +1,7 @@
 [
   { "$as": "n", "$lower": { "$var": "needle" } },
   { "$as": "nLen", "$count": { "$var": "n" } },
-  { "$as": "nSorted", "$join": [{ "$sort": { "$split": [{ "$var": "n" }, ""] } }, ""] },
+  { "$as": "nSorted", "$join": { "$sort": { "$split": [{ "$var": "n" }, ""] } }, "separator": "" },
   {
     "$as": "hits",
     "$filter": [
@@ -15,7 +15,7 @@
             "$or": [
               { "$contains": [{ "$lower": { "$var": "item" } }, { "$var": "n" }] },
               { "$contains": [{ "$var": "n" }, { "$lower": { "$var": "item" } }] },
-              { "$eq": [{ "$join": [{ "$sort": { "$split": [{ "$lower": { "$var": "item" } }, ""] } }, ""] }, { "$var": "nSorted" }] }
+              { "$eq": [{ "$join": { "$sort": { "$split": [{ "$lower": { "$var": "item" } }, ""] } }, "separator": "" }, { "$var": "nSorted" }] }
             ]
           }
         ]

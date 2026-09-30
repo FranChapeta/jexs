@@ -337,6 +337,12 @@ function walkExpr(v: Val): void {
     if (op === undefined) { walk(ANY, p.value); continue; }
     if (key === op && (!migrated || p.key.startsWith("$"))) {
       if (!migrated) renameKey(p);
+      if (!migrated && op === "stringify" && p.value.k === "arr") {
+        reviews.push({ at: p.keyStart, message: "`$stringify` serializes its value as given now, arrays included; `[value, indent]` becomes `value` with an `indent` sibling" });
+      }
+      if (!migrated && op === "join" && p.value.k === "arr") {
+        reviews.push({ at: p.keyStart, message: "`$join` takes the array itself now; `[array, separator]` becomes `array` with a `separator` sibling" });
+      }
       if (op === "var" || op.startsWith("tree-")) stripPathDollar(p.value);
       if (!rawValues) walk(C.vp[op] ?? siblingSchema(op, op), p.value);
       continue;

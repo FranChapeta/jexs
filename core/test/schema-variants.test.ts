@@ -158,8 +158,8 @@ test("regex string ops: replace (string) accepted, match all (array) rejected in
 });
 
 test("match capture narrows to a string, and to an array under all", () => {
-  // `$join`'s first slot is typed array, so it tells an array output from `any`.
-  const inArray = (e: unknown) => ({ $join: [e, ","] });
+  // `$join`'s value is typed array, so it tells an array output from `any`.
+  const inArray = (e: unknown) => ({ $join: e, separator: "," });
   assert.equal(validAt("$defs/exprFlat", inItem({ $match: ["a1", "(\\d)"], capture: 1 })), true);
   assert.equal(validAt("$defs/exprFlat", inArray({ $match: ["a1", "(\\d)"], capture: 1 })), false);
   assert.equal(validAt("$defs/exprFlat", inItem({ $match: ["a1", "\\d"], all: true, capture: 0 })), false);

@@ -24,6 +24,25 @@ test("normalize: unknown form falls back to NFC", () => {
   assert.equal(resolve({ $normalize: "é", form: "bogus" }, {}), "é");
 });
 
+// ── stringify — the value as given; indent is a sibling ──
+
+test("stringify: an array is serialized whole, literal or from a variable", () => {
+  assert.equal(resolve({ $stringify: ["a", 2] }, {}), '["a",2]');
+  assert.equal(resolve({ $stringify: { $var: "list" } }, { list: ["a", "b"] }), '["a","b"]');
+});
+
+test("stringify: indent pretty-prints", () => {
+  assert.equal(resolve({ $stringify: { a: [1] }, indent: 2 }, {}), '{\n  "a": [\n    1\n  ]\n}');
+  assert.equal(resolve({ $stringify: { a: 1 }, indent: 0 }, {}), '{"a":1}');
+});
+
+// ── join — the array as given; separator is a sibling ──
+
+test("join: an array from a variable is joined whole", () => {
+  assert.equal(resolve({ $join: { $var: "list" } }, { list: ["a", "b"] }), "a,b");
+  assert.equal(resolve({ $join: ["a", "b", "c"], separator: " - " }, {}), "a - b - c");
+});
+
 // ── segment — Intl.Segmenter, Unicode-correct unlike split/length ──
 
 test("segment: grapheme keeps emoji whole where length over-counts", () => {
