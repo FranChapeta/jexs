@@ -23,7 +23,7 @@ const tag = (siblings: Record<string, A>) => ({ siblings });
 // (not per-variant). `class`/`style` accept their special shapes.
 const GLOBAL: Record<string, A> = {
   content: { description: "Children of the element: a string or mixed array of strings and expressions." },
-  events:  { $ref: "#/$defs/_eventMap", description: "DOM event handlers, keyed by event name: `{ \"$tag\": \"button\", \"events\": { \"click\": { \"do\": [...] } } }`." },
+  events:  { $ref: "#/$defs/_eventMap", description: "DOM event handlers, keyed by event name: `{ \"$tag\": \"button\", \"events\": { \"click\": { \"do\": [...] } } }`. Two names are not DOM events: `load` runs once when the element is hydrated, and `sw-message` runs for each message the service worker posts (`$sw-post`), with the message as `value`." },
   class:   { type: ["string", "array", "object"], description: "Class list: a string, array, or `{ className: bool }` map." },
   id:      str("Element id."),
   style:   { type: ["object", "string"], description: "Inline style: a camel/kebab-case object, or a string." },
@@ -261,10 +261,10 @@ function buildInjections(tag: string, def: Record<string, unknown>, context: Con
 
   if (tag === "head") {
     if (context._clientScript) {
-      result += `<script type="module" src="${escapeHtml(String(context._clientScript))}"></script>`;
-    }
-    if (context._swRegistration) {
-      result += `<script>${String(context._swRegistration)}</script>`;
+      // The client script registers the service worker named here, so the page
+      // needs no inline script for it.
+      const sw = context._swScript ? ` data-sw="${escapeHtml(String(context._swScript))}"` : "";
+      result += `<script type="module" src="${escapeHtml(String(context._clientScript))}"${sw}></script>`;
     }
   }
 

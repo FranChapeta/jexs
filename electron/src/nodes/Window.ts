@@ -279,10 +279,6 @@ export async function openWindow(opts: Record<string, unknown> = {}): Promise<st
  * origin -- but if that ever failed the bundle would not load and the app would
  * be dead, so the scheme is listed explicitly. It costs nothing: the `app://`
  * handler serves only files under `dist/browser` and 404s everything else.
- *
- * Note this forbids the inline service-worker registration ElementNode injects
- * when `_swRegistration` is set. Only ServerNode.listen sets that, for its HTTP
- * static route, so the electron runner never produces it.
  */
 export const SHELL_CSP =
   "script-src 'self' app:; object-src 'none'; base-uri 'none'";

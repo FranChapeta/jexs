@@ -554,6 +554,42 @@ const cases: Case[] = [
   { label: "a row with an `email` column needs no subject (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $query: "insert", table: "users", data: [{ email: "a@b.c" }] } },
 
+  // A listener's `sw` settings resolve at listen time; per-event steps go under `events`.
+  { label: "sw config with routes and events (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $listen: 3000, client: true, do: [], sw: {
+      precache: ["/offline.html"],
+      routes: [
+        { path: "/jexs/chunks/**", strategy: "cache-first" },
+        { path: ["/", "/**"], strategy: "network-first", fallback: "/offline.html" },
+      ],
+      skipWaiting: true,
+      claim: true,
+      events: {
+        push: [{ "$sw-notify": { $var: "data.title" }, actions: [{ action: "open", title: "Open" }] }],
+        notificationclick: { "$sw-open": { $var: "notification.data.url" } },
+      },
+    } } },
+  { label: "sw route with an unknown strategy (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $listen: 3000, client: true, do: [], sw: { routes: [{ path: "/**", strategy: "fastest" }] } } },
+  { label: "sw route without a strategy (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $listen: 3000, client: true, do: [], sw: { routes: [{ path: "/**" }] } } },
+  { label: "sw route without a path (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $listen: 3000, client: true, do: [], sw: { routes: [{ strategy: "cache-first" }] } } },
+  { label: "sw settings from expressions (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $listen: 3000, client: true, do: [], sw: { precache: { $var: "urls" }, routes: { $var: "routes" } } } },
+  { label: "sw events from an expression (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $listen: 3000, client: true, do: [], sw: { events: { $file: "sw-events.json", data: true } } } },
+  { label: "sw events from an unknown op (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $listen: 3000, client: true, do: [], sw: { events: { $fiel: "sw-events.json" } } } },
+  { label: "sw event name misspelled (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $listen: 3000, client: true, do: [], sw: { events: { notifcationclick: { "$sw-open": "/" } } } } },
+  { label: "sw fetch is not an event (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $listen: 3000, client: true, do: [], sw: { events: { fetch: { "$sw-post": 1 } } } } },
+  { label: "sw handlers outside events (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $listen: 3000, client: true, do: [], sw: { push: { "$sw-notify": "Hi" } } } },
+  { label: "sw event steps are checked (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $listen: 3000, client: true, do: [], sw: { events: { push: { "$sw-notify": "Hi", requireInteraction: "yes" } } } } },
+
   // `steps: true` takes an array of expressions OR a single one, since runSteps
   // normalizes a lone expression into a one-step sequence. Both stay type-checked;
   // an untyped slot would accept anything at all.

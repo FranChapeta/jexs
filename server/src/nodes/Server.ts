@@ -5,10 +5,10 @@ import path from "node:path";
 import { URL } from "node:url";
 import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
-import { Context, Node, NodeValue, isHttpError, resolve, resolveAll } from "@jexs/core";
+import { Context, Node, NodeValue, isHttpError, isStep, resolve, resolveAll, resolveObj } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { safeRelative } from "./File.js";
-import { defaultSwConfig } from "../sw.js";
+import { serviceWorkerScript } from "../sw.js";
 
 /**
  * ServerNode - Starts HTTP listeners from JSON.
@@ -94,7 +94,9 @@ interface Listener {
   startupContext: Context;
   maxBodySize: number;
   staticDirs: Map<string, string>;
-  swConfig: { path: string; content: string } | null;
+  /** The generated service worker: where it is served, its config as JSON, and
+   *  the browser bundle it starts the runtime from. */
+  sw: { path: string; config: string; dir: string } | null;
   publicDir: string;
 }
 
@@ -194,10 +196,16 @@ async function handleRequest(
     const headers = req.headers;
     const cookies = parseCookies(req);
 
-    // Serve SW config JSON (registered at startup by the listen step)
-    if (method === "GET" && listener.swConfig !== null && requestPath === listener.swConfig.path) {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(listener.swConfig.content);
+    // The service worker is generated, not a file: its bytes carry the config.
+    if (method === "GET" && listener.sw !== null && requestPath === listener.sw.path) {
+      const script = await serviceWorkerScript(listener.sw.config, listener.sw.dir);
+      res.writeHead(200, {
+        "Content-Type": "text/javascript; charset=utf-8",
+        "Content-Length": String(Buffer.byteLength(script)),
+        "Cache-Control": cacheControlFor(requestPath, true),
+        "Service-Worker-Allowed": "/",
+      });
+      res.end(script);
       return;
     }
 
@@ -748,7 +756,7 @@ export class ServerNode extends Node {
     listen: {
       type: "number",
       output: "null",
-      markdownDescription: "Starts an HTTP listener on the given port. Pass per-request steps in `\"do\"`.\nSet `\"client\": true` (or a path string) to auto-serve the `@jexs/client` browser bundle\nand inject the script tag into rendered `<head>` elements.\nSet `\"sw\"` to an object to enable service worker registration.\n\n**Multiple ports.** Bind more ports by adding more `{ \"$listen\": ..., \"do\": [...] }` steps. Each is an independent listener with its own `do` pipeline, `client`, `sw`, and `maxBodySize`.\n\n**Per-request `do` execution.** The steps run in order against a fresh per-request context. The universal `\"as\"` key is honored (stored into the context for later steps), as is `setVars`. Two stop-signals halt the loop early: a step that resolves to `{ \"$return\": X }` (yields `X`) or to a **response object** (a value with a `response` key).\n\n**Response object.** The final value becomes the HTTP response. A bare string is sent as `text/html`; any other bare value is sent as JSON. For full control return an object:\n- `response`: the body (string, or any JSON value for `responseType: \"json\"`). For `responseType: \"redirect\"` it is the `Location` URL.\n- `responseStatus`: HTTP status code (default `200`).\n- `responseType`: `\"html\"` | `\"json\"` | `\"text\"` | `\"redirect\"` | a literal MIME string (e.g. `\"image/png\"`). When omitted it is inferred: string → `html`, otherwise `json`.\n- `responseHeaders` / `responseHeader`: extra response headers (singular overrides plural on collision).",
+      markdownDescription: "Starts an HTTP listener on the given port. Pass per-request steps in `\"do\"`.\nSet `\"client\": true` (or a path string) to auto-serve the `@jexs/client` browser bundle\nand inject the script tag into rendered `<head>` elements.\nSet `\"sw\"` (with `\"client\"`) to run a service worker: what it precaches, how it answers requests (`routes`), and the steps it resolves per event (`events`).\n\n**Multiple ports.** Bind more ports by adding more `{ \"$listen\": ..., \"do\": [...] }` steps. Each is an independent listener with its own `do` pipeline, `client`, `sw`, and `maxBodySize`.\n\n**Per-request `do` execution.** The steps run in order against a fresh per-request context. The universal `\"as\"` key is honored (stored into the context for later steps), as is `setVars`. Two stop-signals halt the loop early: a step that resolves to `{ \"$return\": X }` (yields `X`) or to a **response object** (a value with a `response` key).\n\n**Response object.** The final value becomes the HTTP response. A bare string is sent as `text/html`; any other bare value is sent as JSON. For full control return an object:\n- `response`: the body (string, or any JSON value for `responseType: \"json\"`). For `responseType: \"redirect\"` it is the `Location` URL.\n- `responseStatus`: HTTP status code (default `200`).\n- `responseType`: `\"html\"` | `\"json\"` | `\"text\"` | `\"redirect\"` | a literal MIME string (e.g. `\"image/png\"`). When omitted it is inferred: string → `html`, otherwise `json`.\n- `responseHeaders` / `responseHeader`: extra response headers (singular overrides plural on collision).",
       examples: [
         "{ \"$listen\": 3000, \"client\": true, \"do\": [{ \"$session\": \"load\" }, { \"$routes\": { \"$var\": \"routes\" } }] }",
         "{ \"response\": \"{\\\"ok\\\":true}\", \"responseType\": \"json\", \"responseStatus\": 201 }",
@@ -768,9 +776,78 @@ export class ServerNode extends Node {
         },
         sw: {
           type: "object",
-          description: "Service worker config object. Pass `{}` to use the default config.",
+          description: "Service worker config. The settings resolve once, when the listener starts; `events` pass through as steps for the worker. The server serves `<client path>/sw.js`, which starts the worker runtime with the config inline, and the client script registers it. Requires `client`.",
+          properties: {
+            precache: {
+              type: "array",
+              items: { type: "string" },
+              description: "URLs cached when the worker installs, on top of every route's `fallback`, which is precached on its own. One failed URL fails the install, so a new version never activates with a partial cache.",
+            },
+            routes: {
+              type: "array",
+              description: "How GET requests are answered, tried in order; the first match wins. A request no route matches, and any non-GET request, goes to the browser untouched. Without routes the worker handles no requests at all.",
+              items: {
+                type: "object",
+                properties: {
+                  path: {
+                    type: ["string", "array"],
+                    items: { type: "string" },
+                    required: true,
+                    description: "The paths the route answers, in the router's segment syntax: `*` is one segment, `**` the rest (one or more, so `\"/**\"` leaves `\"/\"` out). Same-origin, or an absolute URL for another origin (`\"https://cdn.example/fonts/**\"`); a list answers any of them. `[\"/\", \"/**\"]` is every same-origin request.",
+                  },
+                  strategy: {
+                    type: "string",
+                    enum: ["cache-first", "network-first", "stale-while-revalidate"],
+                    required: true,
+                    description: "`cache-first`: cache, else network (content-hashed URLs). `network-first`: network, else cache (pages, API data). `stale-while-revalidate`: cache now, refreshed in the background.",
+                  },
+                  fallback: {
+                    type: "string",
+                    description: "URL served from the cache when both the network and the cache miss, e.g. `\"/offline.html\"`. It is precached on install, so it need not be listed in `precache`. Omitted, a 503.",
+                  },
+                },
+              },
+            },
+            skipWaiting: {
+              type: "boolean",
+              description: "Activate a new version as soon as it installs, instead of when every tab of the old one has closed. Those tabs move to the new worker mid-session, so they may request files the new version no longer has.",
+            },
+            claim: {
+              type: "boolean",
+              description: "On activate, take control of open pages no worker controls yet, so the first visit is served by the worker without a reload.",
+            },
+            events: {
+              $ref: "#/$defs/_swEvents",
+              description: "Steps the worker resolves when an event fires, by event name, with the `sw-*` ops. Every handler also sees `version`, the worker's version. `fetch` is not an event here: requests are answered by `routes`. A step producing the map resolves at listen time; hold such a map by reference (`$setVars` with `raw: true`, or `$file` with `data: true`) so its steps are not run on the server.",
+            },
+          },
         },
       },
+    },
+  };
+
+  static schemaDefs = {
+    // A service worker's events by name, or a step that produces them (resolved
+    // at listen time). The generator gives a nested `properties` object no step
+    // alternative, so the `$` key decides here, as `_routesSlot` does for routes.
+    _swEvents: {
+      if: { type: "object", propertyNames: { not: { pattern: "^\\$" } } },
+      then: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          install: { $ref: "#/$defs/steps", description: "A new version installs, after `precache`. A failure fails the install." },
+          activate: { $ref: "#/$defs/steps", description: "A new version takes over, after old caches are deleted and `claim` runs." },
+          push: { $ref: "#/$defs/steps", description: "A push message arrives. `data` is its payload: JSON, text, or `null`." },
+          pushsubscriptionchange: { $ref: "#/$defs/steps", description: "The browser changed or dropped the push subscription. `oldSubscription` and `newSubscription` are each `{ endpoint, keys }` or `null`; tell your server here." },
+          notificationclick: { $ref: "#/$defs/steps", description: "A notification (or one of its `actions`) is clicked. `notification` is `{ title, body, tag, icon, badge, image, actions, timestamp, requireInteraction, silent, data }`, `action` the button's id." },
+          notificationclose: { $ref: "#/$defs/steps", description: "A notification is dismissed. `notification` is `{ title, body, tag, icon, badge, image, actions, timestamp, requireInteraction, silent, data }`." },
+          message: { $ref: "#/$defs/steps", description: "A page posted a message to the worker. `data` is the message, `source` the page (`{ id, url, type }`, or `null` from anything else); `$sw-post` replies to it." },
+          sync: { $ref: "#/$defs/steps", description: "A background sync registered by a page runs, once the network is back. `tag` names it; `lastChance` is true on the browser's final retry." },
+          periodicsync: { $ref: "#/$defs/steps", description: "A periodic background sync runs. `tag` names it." },
+        },
+      },
+      else: { $ref: "#/$defs/exprFlat" },
     },
   };
 
@@ -792,7 +869,7 @@ export class ServerNode extends Node {
         startupContext: context,
         maxBodySize: 1_048_576, // 1 MB default
         staticDirs: new Map(),
-        swConfig: null,
+        sw: null,
         publicDir: path.resolve(process.cwd(), "public"),
       };
 
@@ -802,9 +879,10 @@ export class ServerNode extends Node {
       }
 
       // Client bundle auto-serving
+      const servePath = typeof def.client === "string" ? def.client : "/jexs";
+      let browserDir: string | null = null;
       if (def.client) {
-        const servePath = typeof def.client === "string" ? def.client : "/jexs";
-        const browserDir = resolveClientBrowserDir();
+        browserDir = resolveClientBrowserDir();
         if (browserDir) {
           serveStaticDir(listener, servePath, browserDir);
           context._clientScript = `${servePath}/client.js`;
@@ -813,14 +891,28 @@ export class ServerNode extends Node {
         }
       }
 
-      // Service worker
-      if (def.sw && typeof def.sw === "object" && !Array.isArray(def.sw)) {
-        const servePath = typeof def.client === "string" ? def.client : "/jexs";
-        const swConfig = Object.keys(def.sw as object).length > 0
-          ? (def.sw as Record<string, unknown>)
-          : defaultSwConfig(typeof context._clientScript === "string" ? context._clientScript : undefined);
-        listener.swConfig = { path: `${servePath}/sw-config.json`, content: JSON.stringify(swConfig) };
-        context._swRegistration = `if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('${servePath}/sw.js',{scope:'/',type:'module'}))}`;
+      // Service worker: its runtime ships in the browser bundle, and the client
+      // script registers it, so it needs `client`. The settings resolve here,
+      // once. `events` is a map of steps for the worker, so a literal map passes
+      // through untouched; a step producing one resolves to it.
+      if (def.sw !== undefined) {
+        const sw = def.sw;
+        if (!this.isObject(sw) || Object.keys(sw).length === 0) {
+          console.warn('[ServerNode] "sw" takes a config, e.g. { "precache": ["/offline.html"], "routes": [...], "events": {...} }; no service worker is registered');
+        } else if (!def.client) {
+          console.warn('[ServerNode] "sw" needs "client": the service worker runtime ships in the browser bundle; no service worker is registered');
+        } else if (browserDir) {
+          const { events, ...settings } = sw;
+          const resolved = await resolveObj(settings, context, r => r);
+          const eventMap = isStep(events) ? await resolve(events, context) : events;
+          if (eventMap != null && (!this.isObject(eventMap) || isStep(eventMap))) {
+            console.warn('[ServerNode] "sw.events" must be, or resolve to, a map of event names to steps; no service worker is registered');
+          } else {
+            const config = eventMap == null ? resolved : { ...resolved, events: eventMap };
+            listener.sw = { path: `${servePath}/sw.js`, config: JSON.stringify(config), dir: browserDir };
+            context._swScript = listener.sw.path;
+          }
+        }
       }
 
       const httpServer = http.createServer((req, res) => handleRequest(req, res, listener));

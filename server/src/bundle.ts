@@ -73,7 +73,7 @@ export async function bundleClient(
 
   const entryPoints: Record<string, string> = {
     client: entryPath,
-    sw: path.join(clientDist, "sw.js"),
+    "sw-runtime": path.join(clientDist, "sw.js"),
     resolverWorker: path.join(clientDist, "resolverWorker.js"),
   };
   // The physics worker STATICALLY imports @jexs/physics, so unlike the lazy

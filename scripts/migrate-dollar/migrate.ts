@@ -314,6 +314,25 @@ function stripPathDollar(v: Val): void {
   if (concat?.value.k === "arr" && concat.value.items[0]) stripPathDollar(concat.value.items[0]);
 }
 
+/**
+ * A listener's `sw` used to map event names to steps; its keys are event names,
+ * never ops (a `fetch` event is not the `fetch` op), so only the steps under them
+ * are migrated. The config itself changed shape, which is left for review:
+ * precaching, routes, skipWaiting and claim are config now, and the handlers
+ * move under `events`. Returns true when it walked the value.
+ */
+function migrateServiceWorker(op: string, key: string, p: Prop): boolean {
+  if (op !== "listen" || key !== "sw" || p.value.k !== "obj") return false;
+  reviews.push({
+    at: p.keyStart,
+    message: p.value.props.length === 0
+      ? "`sw: {}` no longer registers a default service worker; remove it, or write a config"
+      : "`sw` is now { precache, routes, skipWaiting, claim, events }: `sw-cache` becomes `precache` (plus `skipWaiting: true`, which install used to do on its own), `sw-claim` becomes `claim`, `sw-strategy` becomes a route (`prefix: \"/assets/*\"` becomes `path: \"/assets/**\"`), and the other handlers move under `events`",
+  });
+  for (const event of p.value.props) walk(ANY, event.value);
+  return true;
+}
+
 function walkExpr(v: Val): void {
   if (v.k === "arr") { for (const it of v.items) walk(ANY, it); return; }
   if (v.k !== "obj") return;
@@ -349,6 +368,7 @@ function walkExpr(v: Val): void {
     }
     const renamed = SIBLING_RENAMES[op]?.[key];
     if (renamed) add({ start: p.keyStart, end: p.keyEnd, text: p.shorthand ? `${renamed}: ${p.key}` : renamed });
+    if (migrateServiceWorker(op, key, p)) continue;
     walk(siblingSchema(op, p.key), p.value);
   }
 }

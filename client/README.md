@@ -34,7 +34,73 @@ npm install @jexs/client @jexs/core
 - `gl-*` — pulls in `@jexs/gl`
 - `entity-*`, `physics-*`, `v-*`, `collision-*`, `joint-*`, `parseGLB`, ... — pulls in `@jexs/physics`
 
-`sw-*` (`ServiceWorkerNode`) is not in this set: it registers in the service-worker entry point (`sw.js`), which runs its own resolver.
+`sw-*` (`ServiceWorkerNode`) is not in this set: it runs in the service worker, which has its own resolver (see below).
+
+## Service worker
+
+A service worker is a config: what to precache, how to answer requests, and the steps to resolve when an event fires.
+
+```json
+{
+  "$listen": 3000,
+  "client": true,
+  "sw": {
+    "precache": ["/"],
+    "routes": [
+      { "path": "/jexs/chunks/**", "strategy": "cache-first" },
+      { "path": ["/", "/**"], "strategy": "network-first", "fallback": "/offline.html" }
+    ],
+    "skipWaiting": true,
+    "claim": true,
+    "events": {
+      "push": { "$sw-notify": { "$var": "data.title" }, "body": { "$var": "data.body" }, "data": { "url": { "$var": "data.url" } } },
+      "notificationclick": { "$sw-open": { "$var": "notification.data.url" } }
+    }
+  }
+}
+```
+
+| Key | Does |
+|---|---|
+| `precache` | URLs cached on install, for pages to open offline without a route pointing at them. Every route's `fallback` is precached on its own. One failure fails the install, so a new version never activates with a partial cache. |
+| `routes` | How GET requests are answered, tried in order, first match wins: `cache-first`, `network-first` or `stale-while-revalidate`, for a `path` in the router's segment syntax (`*` one segment, `**` the rest, so `/**` leaves `/` out; an absolute URL for another origin; or a list), with an optional cached `fallback`. Unmatched and non-GET requests go to the browser untouched; without routes the worker handles no requests at all. |
+| `skipWaiting` | Activate a new version at once instead of when every tab of the old one has closed. Those tabs move over mid-session, so they may ask for files the new version no longer has. |
+| `claim` | On activate, take control of pages no worker controls yet, so the first visit is served without a reload. |
+| `events` | Steps per event: `install`, `activate`, `push`, `notificationclick`, `notificationclose`, `message`, `sync`, ... |
+
+Use `cache-first` only for URLs whose content never changes under the same name, such as the bundle's hashed `/jexs/chunks/`; unhashed files belong under `network-first` or `stale-while-revalidate`.
+
+With `@jexs/server`, `sw` on a `client` listener serves `/jexs/sw.js` and the client script registers it at scope `/`. Its settings are expressions like anything else, resolved once when the listener starts (`"precache": { "$var": "offlinePages" }`). A literal `events` map is left for the worker to resolve; `events` can also be a step that produces the map, as long as it hands the map over by reference (`$file` with `data: true`, or a variable set with `raw: true`), so the server does not run the handlers' steps. The generated script embeds the config and a version hashed from it and the bundle, so changing either installs a new worker into a fresh cache and deletes the old one.
+
+On a static host, write `sw.js` beside the bundle yourself and bump `version` to ship a change:
+
+```js
+import { startServiceWorker } from "./sw-runtime.js";
+startServiceWorker({ /* config */ }, { version: 2 });
+```
+
+Register it from the page with `navigator.serviceWorker.register("/jexs/sw.js", { scope: "/", type: "module" })`; serving it with `Service-Worker-Allowed: /` lets it control the whole origin.
+
+**Context per event**
+
+Every handler sees `version`, the worker's version (the hash the server generates, or the one passed to `startServiceWorker`).
+
+| Event | Context |
+|---|---|
+| `push` | `data`: the payload as JSON, or text, or `null` |
+| `notificationclick`, `notificationclose` | `notification`: `{ title, body, tag, icon, badge, image, actions, timestamp, requireInteraction, silent, data }`, and `action` (the button clicked) |
+| `message` | `data`: the message a page sent; `source`: that page as `{ id, url, type }`, or `null` |
+| `sync` | `tag`, and `lastChance`: true on the browser's final retry |
+| `periodicsync` | `tag` |
+| `pushsubscriptionchange` | `oldSubscription`, `newSubscription`: each `{ endpoint, keys }` or `null` |
+
+**Ops**
+
+| Op | Does |
+|---|---|
+| `$sw-notify` | Show a notification (`body`, `icon`, `badge`, `image`, `tag`, `actions`, `requireInteraction`, `silent`, `data`). |
+| `$sw-open` | Focus the window at a URL or open one; `navigate: true` reuses an open app window. |
+| `$sw-post` | Message pages: the sender, in a `message` handler, otherwise every window. Pages handle it with an `sw-message` event, the message as `value`. |
 
 ## Usage from HTML
 

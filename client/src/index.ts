@@ -172,4 +172,16 @@ if (typeof window !== "undefined") {
   } else {
     hydrate();
   }
+
+  // The server names its service worker on this script's tag (`data-sw`).
+  // Registered after load so its install does not compete with the page.
+  const swScript = document.querySelector<HTMLScriptElement>("script[data-sw]")?.dataset.sw;
+  if (swScript && "serviceWorker" in navigator) {
+    const register = () => {
+      navigator.serviceWorker.register(swScript, { scope: "/", type: "module" })
+        .catch(err => console.error("[Jexs] service worker registration failed:", err));
+    };
+    if (document.readyState === "complete") register();
+    else window.addEventListener("load", register, { once: true });
+  }
 }
