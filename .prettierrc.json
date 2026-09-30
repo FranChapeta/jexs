@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json.schemastore.org/prettierrc",
+  "objectWrap": "collapse",
+  "printWidth": 220,
+  "tabWidth": 2,
+  "useTabs": false,
+  "overrides": [{ "files": ["*.json", "*.jsonc"], "options": { "printWidth": 320, "objectWrap": "collapse", "tabWidth": 2 } }]
+}
