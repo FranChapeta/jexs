@@ -1,9 +1,6 @@
 import { Node, Context, NodeValue } from "./Node.js";
-import { resolveObj, GLOBAL_KEYS, ownedKey } from "../Resolver.js";
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return v !== null && typeof v === "object" && !Array.isArray(v);
-}
+import { resolveFields } from "../Resolver.js";
+import { isObject } from "../helpers.js";
 
 /**
  * A dynamic forwarder: claims a set of handler keys and hands each matching step
@@ -58,16 +55,10 @@ export class ProxyNode extends Node {
     // meaningful to forward, since a call is by definition a keyed object.
     if (!isObject(def)) return undefined;
 
-    return resolveObj(def, context, (resolved) => {
-      const call: Record<string, unknown> = {};
-      for (const k in resolved) {
-        const owned = ownedKey(k);
-        if (owned === null || !GLOBAL_KEYS.has(owned)) call[k] = resolved[k];
-      }
-      // Return the promise; the resolver applies the global step keys (`$as`,
-      // `$catch`, `$then`) to it in THIS thread. That is what makes a remote call
-      // behave exactly like a local one: the remote is only a value producer.
-      return Promise.resolve(this.forward(call, context));
-    });
+    // `resolveFields` leaves the global step keys (`$as`, `$catch`, `$then`) out of
+    // the call; the resolver applies them to the returned promise in THIS thread.
+    // That is what makes a remote call behave exactly like a local one: the remote
+    // is only a value producer.
+    return resolveFields(def, context, call => Promise.resolve(this.forward(call, context)));
   }
 }

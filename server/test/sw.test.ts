@@ -35,7 +35,7 @@ before(async () => {
 
   console.warn = (msg: unknown) => { warnings.push(String(msg)); };
   resolver = createResolver([...coreNodes(), new ServerNode()]);
-  await resolver.resolve(
+  await resolver(
     { $listen: PORT, client: true, sw: config, do: [{ $tag: "head" }] },
     { offlinePages: ["/offline.html"] },
   );
@@ -89,7 +89,7 @@ test("events from a step resolve to the map; a literal map's steps are left alon
   const other = createResolver([...coreNodes(), new ServerNode()]);
   try {
     const swEvents = { push: { "$sw-notify": { $var: "data.title" } } };
-    await other.resolve(
+    await other(
       { $listen: PORT + 3, client: true, sw: { events: { $var: "swEvents" } }, do: [{ response: "routed" }] },
       { swEvents },
     );
@@ -99,7 +99,7 @@ test("events from a step resolve to the map; a literal map's steps are left alon
     assert.deepEqual(JSON.parse(call[1]), { events: swEvents });
 
     const ctx: Record<string, unknown> = {};
-    await other.resolve({ $listen: PORT + 4, client: true, sw: { events: { $concat: ["no", "map"] } }, do: [] }, ctx);
+    await other({ $listen: PORT + 4, client: true, sw: { events: { $concat: ["no", "map"] } }, do: [] }, ctx);
     assert.equal(ctx._swScript, undefined);
     assert.ok(warnings.some(w => w.includes('"sw.events"')), warnings.join("\n"));
   } finally {
@@ -111,9 +111,9 @@ test("an empty sw, or one without client, warns and registers nothing", async ()
   const other = createResolver([...coreNodes(), new ServerNode()]);
   try {
     const ctxEmpty: Record<string, unknown> = {};
-    await other.resolve({ $listen: PORT + 1, client: true, sw: {}, do: [{ $tag: "head" }] }, ctxEmpty);
+    await other({ $listen: PORT + 1, client: true, sw: {}, do: [{ $tag: "head" }] }, ctxEmpty);
     const ctxNoClient: Record<string, unknown> = {};
-    await other.resolve({ $listen: PORT + 2, sw: config, do: [{ response: "routed" }] }, ctxNoClient);
+    await other({ $listen: PORT + 2, sw: config, do: [{ response: "routed" }] }, ctxNoClient);
 
     assert.equal(ctxEmpty._swScript, undefined);
     assert.equal(ctxNoClient._swScript, undefined);

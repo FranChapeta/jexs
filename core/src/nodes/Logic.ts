@@ -1,6 +1,5 @@
 import { Node, Context, NodeValue, childContext } from "./Node.js";
-import { resolve, resolveAll, resolveObj } from "../Resolver.js";
-import { runSteps, resolveSteps } from "../Resolver.js";
+import { resolve, resolveAll, isStep, runSteps } from "../Resolver.js";
 import { hasAnyKey, isObject } from "../helpers.js";
 import type { JexsNodeSchema } from "../schema.js";
 
@@ -31,7 +30,7 @@ export class LogicNode extends Node {
         cases: {
           map: true,
           required: true,
-          description: "Object mapping string keys to result expressions.",
+          description: "Object mapping string keys to result expressions; only the matched one is resolved. A step here resolves to a lookup table instead, and the matched entry is returned as data.",
         },
         default: {
           description: "Value to resolve when no case matches.",
@@ -236,7 +235,7 @@ export class LogicNode extends Node {
       siblings: {
         params: {
           map: true,
-          description: "Scoped variables merged into a shallow copy of the context for the steps.",
+          description: "Scoped variables merged into a shallow copy of the context for the steps: a map of values, or a step resolving to one.",
         },
       },
     },
@@ -245,21 +244,28 @@ export class LogicNode extends Node {
   if(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$if, context, condition =>
       this.toBoolean(condition)
-        ? ("then" in def ? resolveSteps(def.then, context) : true)
-        : ("else" in def ? resolveSteps(def.else, context) : undefined)
+        ? ("then" in def ? runSteps(def.then, context) : true)
+        : ("else" in def ? runSteps(def.else, context) : undefined)
     );
   }
 
   switch(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$switch, context, value => {
       const cases = def.cases;
+      const key = this.toString(value);
+      const fallback = (): unknown => "default" in def ? runSteps(def.default, context) : undefined;
+      // A step resolves to a lookup table, whose entries are data: the matched one
+      // comes back as it is, never run. A literal map stays lazy: only the matched
+      // case is resolved.
+      if (isStep(cases)) {
+        return resolve(cases, context, table =>
+          this.isObject(table) && Object.hasOwn(table, key) ? table[key] : fallback());
+      }
       if (!this.isObject(cases)) {
         if (!("cases" in def)) throw new Error("switch needs a `cases` map");
-        return "default" in def ? resolveSteps(def.default, context) : undefined;
+        return fallback();
       }
-      const key = this.toString(value);
-      if (key in cases) return resolveSteps(cases[key], context);
-      return "default" in def ? resolveSteps(def.default, context) : undefined;
+      return Object.hasOwn(cases, key) ? runSteps(cases[key], context) : fallback();
     });
   }
 
@@ -285,12 +291,9 @@ export class LogicNode extends Node {
         },
       });
 
-      const run = Array.isArray(template)
-        ? (ctx: Context) => runSteps(template, ctx)
-        : (ctx: Context) => resolve(template, ctx);
 
       if (this.toBoolean(parallel)) {
-        return Promise.all(arr.map((item, i) => run(buildContext(item, i))))
+        return Promise.all(arr.map((item, i) => runSteps(template, buildContext(item, i))))
           .then(results => results.length ? results[results.length - 1] : null);
       }
 
@@ -299,7 +302,7 @@ export class LogicNode extends Node {
       function next(): unknown {
         if (i >= arr.length) return last;
         const idx = i++;
-        const r = run(buildContext(arr[idx], idx));
+        const r = runSteps(template, buildContext(arr[idx], idx));
         if (r instanceof Promise) return r.then(v => { last = v; return next(); });
         last = r;
         return next();
@@ -447,14 +450,12 @@ export class LogicNode extends Node {
 
   exec(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$exec, context, value => {
-      // With `params`, run the steps against a shallow copy of the context with
-      // the resolved params merged in — the caller's context stays untouched.
-      if ("params" in def && this.isObject(def.params)) {
-        return resolveObj(def.params, context, resolved =>
-          resolveSteps(value, childContext(context, resolved))
-        );
-      }
-      return resolveSteps(value, context);
+      if (def.params === undefined) return runSteps(value, context);
+      // With `params` (a map, or a step resolving to one), run the steps against
+      // a shallow copy of the context with them merged in; the caller's context
+      // stays untouched.
+      return resolve(def.params, context, params =>
+        runSteps(value, this.isObject(params) ? childContext(context, params) : context));
     });
   }
 }

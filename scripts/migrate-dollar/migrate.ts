@@ -294,6 +294,7 @@ const SIBLING_RENAMES: Record<string, Record<string, string>> = {
   mapRange: { clampToRange: "clamp" },
   file: { copyTo: "copy", moveTo: "move" },
   tray: { items: "menu" },
+  setVars: { raw: "data" },
 };
 
 /**
@@ -343,7 +344,7 @@ function walkExpr(v: Val): void {
   const op = migrated ? migratedOp : v.props.find(p => HANDLERS.has(p.key))?.key;
   const first = v.props.find(p => !GLOBALS.has(bare(p)));
   if (!migrated && op && first && first.key !== op) suspicious.push({ first: first.key, op, at: first.keyStart });
-  const rawValues = op === "setVars" && v.props.some(p => p.key === "raw" && p.value.k === "lit" && p.value.value === true);
+  const rawValues = op === "setVars" && v.props.some(p => (p.key === "raw" || p.key === "data") && p.value.k === "lit" && p.value.value === true);
   for (const p of v.props) {
     const key = bare(p);
     const global = migrated ? p.key.startsWith("$") && GLOBALS.has(key) : GLOBALS.has(key) && !(key === "then" && op === "if");

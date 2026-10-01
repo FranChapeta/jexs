@@ -66,9 +66,9 @@ test("handing one live context to a second resolver is refused", () => {
   const a = createResolver(coreNodes(), { context: ctx });
   const b = createResolver(coreNodes());
 
-  assert.throws(() => b.resolve({ $concat: ["x"] }, ctx), /already running in another resolver/);
+  assert.throws(() => b({ $concat: ["x"] }, ctx), /already running in another resolver/);
   // Re-entering the SAME resolver is fine, so repeated entry calls work.
-  assert.doesNotThrow(() => a.resolve({ $concat: ["x"] }, ctx));
+  assert.doesNotThrow(() => a({ $concat: ["x"] }, ctx));
 });
 
 // `then` defers the work to a microtask and runs its continuation later. The old
@@ -78,7 +78,7 @@ test("a fire-and-forget continuation stays with its own resolver", async () => {
   const ctx: Context = {};
   const a = createResolver([...coreNodes(), markerNode("A")], { context: ctx });
 
-  const out = await a.runSteps([
+  const out = await a([
     { $sleep: 10, $then: [{ $setVars: { landed: { $op: 1 } }, $bubble: true }] },
     { $concat: ["next"] },
   ], ctx);
@@ -133,8 +133,8 @@ test("timers belong to their own resolver and survive another's teardown", async
   const b = createResolver(coreNodes(), { context: ctxB });
 
   const start = { $tick: "start", id: "shared", rate: 60, do: [{ $setVars: { hits: { $add: [{ $var: "hits" }, 1] } }, $bubble: true }] };
-  a.resolve(start, ctxA);
-  b.resolve(start, ctxB);
+  a(start, ctxA);
+  b(start, ctxB);
 
   await tick();
   assert.ok((ctxA.hits as number) > 0, "A's timer ran");

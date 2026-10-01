@@ -1,6 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
-import { Node, Context, NodeValue, resolve, resolveAll, resolveObj, runSteps, childContext } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll, runSteps, childContext } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
 function toBoolean(value: unknown): boolean {
@@ -91,7 +91,7 @@ export class FileNode extends Node {
         },
         params: {
           map: true,
-          description: "Scoped variables passed into the loaded file's context.",
+          description: "Scoped variables passed into the loaded file's context: a map of values, or a step resolving to one.",
         },
       },
       variants: {
@@ -315,13 +315,12 @@ function loadFile(
     // `$bubble` inside the file can write state upward past the file boundary.
     const fileDir = path.dirname(filePath);
     let fileContext: Context = childContext(context, { [FILE_DIR]: fileDir });
-    if ("params" in def && isObject(def.params)) {
-      const params = def.params;
-      const pResolved = resolveObj(params, context, r => r);
-      const resolved = (pResolved instanceof Promise ? await pResolved : pResolved) as Record<string, unknown>;
-      // Re-derive from the caller so params merge on top AND the parent link
-      // (non-enumerable, so dropped by a plain spread) still points at the caller.
-      fileContext = childContext(context, { [FILE_DIR]: fileDir, ...resolved });
+    if (def.params !== undefined) {
+      // A map, or a step resolving to one. Re-derive from the caller so params
+      // merge on top AND the parent link (non-enumerable, so dropped by a plain
+      // spread) still points at the caller.
+      const params = await resolve(def.params, context);
+      if (isObject(params)) fileContext = childContext(context, { [FILE_DIR]: fileDir, ...params });
     }
 
     // From here, anything that throws is application code — let it propagate.

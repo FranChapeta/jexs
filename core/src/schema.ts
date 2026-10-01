@@ -61,15 +61,13 @@ export interface JexsPropertySchema {
    *  Pairs with `tuple` for arity; slots past the list (when `tuple`'s max exceeds
    *  its length) fall back to anyVal. */
   prefixItems?: readonly JexsPropertySchema[];
-  /** Opaque-key map: the KEYS are names the node keeps verbatim (variable names,
-   *  header names, case labels) and the VALUES are expressions. The node reads the
-   *  map key by key, so the container itself is never an expression: here
-   *  `{ "$var": "x" }` is a map with one key, not a lookup.
+  /** A map: the KEYS are names the node keeps verbatim (variable names, header
+   *  names, case labels) and the VALUES are expressions. Keys without `$` are never
+   *  ops, so a literal map is plain data; the slot may also hold a step that
+   *  resolves to an object (`{ "$var": "headers" }`). It validates like an object
+   *  slot, and marks the keys as names for the reader.
    *
-   *  `map` describes the KEYS; a `type` alongside it describes the CONTAINER, so
-   *  the two are orthogonal. An opaque-key map has no expression alternative, so
-   *  `type` here says only which container shapes are accepted and does NOT get
-   *  the type-or-expression wrapping or output narrowing a normal typed slot gets:
+   *  `map` describes the KEYS; a `type` alongside it describes the CONTAINER:
    *
    *    map: true                            an object (the default)
    *    map: true, type: "object"            the same, spelled out

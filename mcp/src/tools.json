@@ -72,7 +72,7 @@
       "type": "object",
       "properties": {
         "expression": { "description": "A Jexs JSON expression to resolve, e.g. { \"$concat\": [\"a\", \"b\"] }." },
-        "vars": { "type": "object", "description": "Optional. Context variables to seed, so the expression can read them via { \"$var\": \"name\" }." }
+        "vars": { "type": "object", "description": "Optional. Context variables to seed, so the expression can read them via { \"$var\": \"name\" }. Taken as-is: values are not resolved, so a var may hold steps or other templates. To compute a value, do it inside the expression (e.g. a leading $setVars step)." }
       },
       "required": ["expression"]
     }

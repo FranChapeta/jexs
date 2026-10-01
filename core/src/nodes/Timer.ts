@@ -34,7 +34,7 @@ const LIFECYCLE_OPS: Record<string, JexsMethodSchema> = {
 interface TimerState {
   id: string;
   intervalMs: number;
-  steps: unknown[];
+  steps: unknown;
   context: Context;
   /** The originating step, so a deferred failure can honor its `$catch`. */
   def: Record<string, unknown>;
@@ -235,11 +235,9 @@ function startTick(
     const id = String(idRaw);
     const rate = Number(rateRaw);
     // No steps means a timer that ticks forever doing nothing, which looks like a
-    // hung app rather than a mistake, so it is an error rather than a no-op. A
-    // lone expression is normalized here because TimerState.steps is an array;
-    // runSteps would take it either way.
+    // hung app rather than a mistake, so it is an error rather than a no-op.
     if (def.do === undefined) throw new Error("timer needs `do` steps");
-    const steps = Array.isArray(def.do) ? def.do : [def.do];
+    const steps = def.do;
     const detach = detachRaw === true || detachRaw === 1 || detachRaw === "1" || detachRaw === "true";
 
     const prev = registry.get(id);
@@ -284,19 +282,13 @@ function scheduleTick(state: TimerState): void {
 
     if (state.detach) {
       // Fire-and-forget: reschedule immediately without waiting for the steps.
-      void runStepsDetached(state.steps, state.context, state.def)
-        .catch(err => {
-          console.error(`[tick] Error in "${state.id}":`, err);
-        });
+      void runStepsDetached(state.steps, state.context, state.def, `[tick] Error in "${state.id}":`);
 
       if (state.registry.has(state.id)) scheduleTick(state);
       return;
     }
 
-    runStepsDetached(state.steps, state.context, state.def)
-      .catch(err => {
-        console.error(`[tick] Error in "${state.id}":`, err);
-      })
+    runStepsDetached(state.steps, state.context, state.def, `[tick] Error in "${state.id}":`)
       .finally(() => {
         if (state.registry.has(state.id)) scheduleTick(state);
       });
@@ -322,11 +314,9 @@ function startCron(
   return resolveAll([def.id, def.every], context, ([id, every]: unknown[]) => {
     const intervalMs = parseInterval(String(every));
     // No steps means a timer that ticks forever doing nothing, which looks like a
-    // hung app rather than a mistake, so it is an error rather than a no-op. A
-    // lone expression is normalized here because TimerState.steps is an array;
-    // runSteps would take it either way.
+    // hung app rather than a mistake, so it is an error rather than a no-op.
     if (def.do === undefined) throw new Error("timer needs `do` steps");
-    const steps = Array.isArray(def.do) ? def.do : [def.do];
+    const steps = def.do;
 
     const prev = registry.get(String(id));
     if (prev?.timerId != null) clearInterval(prev.timerId);

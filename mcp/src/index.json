@@ -38,7 +38,7 @@
     "$join": [
       "Jexs is a JSON expression language: a step is an object whose one `$`-prefixed key names the op it runs (`{ \"$concat\": [...] }`), and its other keys are that op's options. An object without a `$` key is plain data. A JSON array is a step sequence; the last step's value is the result.",
       "Reads come from context via `{ \"$var\": \"name\" }`; writes go through `$as` or `$setVars`. There is no get/set node.",
-      "Use these tools instead of guessing at key names: `search_ops` to find an operation, `describe_op` for its siblings and return type, `describe_def` for a shared `#/$defs/` shape, `inspect_file` and `validate_file` to check a template you wrote, and `resolve_expression` to actually run one."
+      "Use these tools instead of guessing at key names: `search_ops` to find an operation, `describe_op` for its siblings and return type, `describe_def` for a `#/$defs/` shape a node contributes, `inspect_file` and `validate_file` to check a template you wrote, and `resolve_expression` to actually run one."
     ],
     "separator": "\n\n"
   },
@@ -75,13 +75,8 @@
               "cases": {
                 "resolve_expression": [
                   {
-                    "$as": "out",
-                    "$exec": {
-                      "$if": { "$empty": { "$var": "args.vars" } },
-                      "then": { "$var": "args.expression" },
-                      "else": { "$merge": [[{ "$fromEntries": [["$setVars", { "$var": "args.vars" }]] }], { "$if": { "$isType": [{ "$var": "args.expression" }, "array"] }, "then": { "$var": "args.expression" }, "else": [{ "$var": "args.expression" }] }] }
-                    },
-                    "$catch": [{ "$return": { "content": [{ "type": "text", "text": { "$concat": ["Error: ", { "$coalesce": [{ "$var": "error.message" }, { "$stringify": { "$var": "error" } }] }] } }], "isError": true } }]
+                    "$setVars": { "out": { "$exec": { "$var": "args.expression" }, "params": { "$var": "args.vars" } } },
+                    "$catch":{ "$return": { "content": [{ "type": "text", "text": { "$concat": ["Error: ", { "$coalesce": [{ "$var": "error.message" }, { "$stringify": { "$var": "error" } }] }] } }], "isError": true } }
                   },
                   { "content": [{ "type": "text", "text": { "$stringify": { "$var": "out" }, "indent": 2 } }] }
                 ],

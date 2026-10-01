@@ -1,7 +1,7 @@
 import Knex, { Knex as KnexType } from "knex";
 import fs from "node:fs";
 import path from "node:path";
-import { Node, Context, NodeValue, resolve, resolveAll, resolveObj, resolverFor } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll, resolveFields, resolverFor } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import {
   mergeTls, parseDbUrl, parseTls, TLS_STRINGS,
@@ -490,7 +490,7 @@ function knexFor(config: DatabaseConfig): KnexType {
 const ENDPOINT_SIBLINGS = ["host", "port", "user", "password", "db", "filename"] as const;
 
 function doConnect(self: DatabaseNode, def: Record<string, unknown>, context: Context): unknown {
-  return resolveObj(def, context, r => {
+  return resolveFields(def, context, r => {
     const name = String(r.name ?? "default");
     // A `url` supplies the whole endpoint and picks the driver via its scheme.
     const fromUrl = r.url ? parseDbUrl(String(r.url)) : null;

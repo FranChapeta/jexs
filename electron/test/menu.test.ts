@@ -27,7 +27,7 @@ test("scalar fields resolve, including expressions", async () => {
   assert.equal(item.enabled, true);
 });
 
-// The whole reason buildMenuTemplate exists rather than a blanket resolveObj:
+// The whole reason buildMenuTemplate exists rather than a blanket resolveFields:
 // resolving `do` in main would find no DOM handler for setText and quietly turn
 // the step into a plain object, destroying the handler instead of dispatching it.
 test("do steps reach the click handler raw, never resolved", async () => {
@@ -138,7 +138,7 @@ test("a menu item's $catch receives the failure with error bound", async () => {
   // attaches. This test caught exactly that bug in the node handlers.
   const ctx = childContext(ctxIn(), { menuLabel: "Boom" });
   const out = await Promise.resolve()
-    .then(() => resolver.runSteps(raw.do, ctx))
+    .then(() => resolver(raw.do, ctx))
     .catch((err: unknown) => handleErr(err, raw, ctx));
   assert.equal(out, "caught: nope");
 });
@@ -149,7 +149,7 @@ test("without a catch, a deferred failure still rejects rather than vanishing", 
 
   await assert.rejects(
     Promise.resolve()
-      .then(() => resolver.runSteps(raw.do, ctx))
+      .then(() => resolver(raw.do, ctx))
       .catch((err: unknown) => handleErr(err, raw, ctx)),
     /unhandled/,
   );

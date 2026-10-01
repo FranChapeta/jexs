@@ -1,5 +1,5 @@
 import {
-  Node, Context, NodeValue, childContext, resolveObj, runStepsDetached,
+  Node, Context, NodeValue, childContext, resolveFields, runStepsDetached,
 } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
@@ -42,7 +42,7 @@ export class NotificationNode extends Node {
       silent: def.silent,
       icon: def.icon,
     };
-    return resolveObj(fields, context, async (r) => {
+    return resolveFields(fields, context, async (r) => {
       const { Notification } = await import("electron");
       if (!Notification.isSupported()) return null;
 
@@ -50,9 +50,7 @@ export class NotificationNode extends Node {
       if (Array.isArray(def.do)) {
         const steps = def.do;
         notification.on("click", () => {
-          runStepsDetached(steps, childContext(context, {}), def).catch((err: unknown) => {
-            console.error("[NotificationNode] click handler failed:", err);
-          });
+          void runStepsDetached(steps, childContext(context, {}), def, "[NotificationNode] click handler failed:");
         });
       }
       notification.show();

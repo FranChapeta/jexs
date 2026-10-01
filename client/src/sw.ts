@@ -64,7 +64,7 @@ export function startServiceWorker(input: unknown, options: ServiceWorkerOptions
   const events = config.events;
 
   const run = (type: string, event: ExtendableEvent): unknown =>
-    resolver.resolveSteps(events[type], { ...eventContext(type, event), version, _event: event });
+    resolver(events[type], { ...eventContext(type, event), version, _event: event });
 
   // A fallback is served exactly when the network is gone, so it is only any use
   // cached: every route's fallback is precached along with `precache`. `addAll`

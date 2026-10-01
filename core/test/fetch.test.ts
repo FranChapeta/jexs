@@ -48,6 +48,12 @@ test("fetch: sends literal and expression headers", async () => {
   });
 });
 
+test("fetch: headers may be a step resolving to a map", async () => {
+  const { calls } = stubFetch();
+  await resolve({ $fetch: "/api/me", headers: { $var: "h" } }, { h: { "X-Trace": "t1" } });
+  assert.deepEqual(sentHeaders(calls[0].init), { "x-trace": "t1" });
+});
+
 test("fetch: an author Content-Type replaces the JSON default, whatever its casing", async () => {
   const { calls } = stubFetch();
   await resolve(

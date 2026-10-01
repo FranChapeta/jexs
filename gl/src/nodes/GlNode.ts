@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue } from "@jexs/core";
-import { resolve, resolveAll, resolveObj, runSteps } from "@jexs/core";
+import { resolve, resolveAll, resolveFields, runSteps } from "@jexs/core";
 import {
   EntityStore,
   STRIDE,
@@ -673,7 +673,7 @@ export class GlNode extends Node {
     const resolvable: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(def)) { if (k !== "on-frame") resolvable[k] = v; }
 
-    return resolveObj(resolvable, context, r => {
+    return resolveFields(resolvable, context, r => {
       const selector = String(r["$gl-init"]);
 
       const prev = GlNode.instances.get(selector);
@@ -935,7 +935,7 @@ export class GlNode extends Node {
 
       GlNode.scheduleRender(inst);
       return null;
-    }); // resolveObj
+    }); // resolveFields
   }
 
   // ── gl-destroy ──────────────────────────────────────────────────────────
@@ -958,7 +958,7 @@ export class GlNode extends Node {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
 
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       let px = Number(r["x"]);
       let py = Number(r["y"]);
       if (inst.store.virtualWidth) {
@@ -1032,7 +1032,7 @@ export class GlNode extends Node {
         }
       }
       return null;
-    }); // resolveObj
+    }); // resolveFields
   }
 
   // ── gl-camera ───────────────────────────────────────────────────────────
@@ -1041,7 +1041,7 @@ export class GlNode extends Node {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
 
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const cam = inst.camera;
       if (r["x"] !== undefined) cam.x = Number(r["x"]);
       if (r["y"] !== undefined) cam.y = Number(r["y"]);
@@ -1178,7 +1178,7 @@ export class GlNode extends Node {
   ["gl-font"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const name = String(r["$gl-font"]);
       const atlasName = String(r["atlas"]);     // a registered gl-texture name
       const metricsRaw = r["metrics"];          // parsed BMFont JSON (from a file/fetch node) or a JSON string
@@ -1207,7 +1207,7 @@ export class GlNode extends Node {
   ["gl-register-mesh"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const idRaw = r["$gl-register-mesh"];
       if (idRaw == null) return null;
       const id = String(idRaw);
@@ -1310,7 +1310,7 @@ export class GlNode extends Node {
   ["gl-atlas"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const name = String(r["$gl-atlas"]);
       const src = String(r["src"]);
       const cols = Number(r["cols"]) || 1;
@@ -1347,7 +1347,7 @@ export class GlNode extends Node {
   ["gl-animate"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const id = String(r["$gl-animate"]);
       const slot = inst.store.slot(id);
       if (slot === -1) return null;
@@ -1385,7 +1385,7 @@ export class GlNode extends Node {
   ["gl-frame"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const id = String(r["$gl-frame"]);
       const slot = inst.store.slot(id);
       if (slot === -1) return null;
@@ -1414,7 +1414,7 @@ export class GlNode extends Node {
   ["gl-tilemap"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const name = String(r["$gl-tilemap"]);
       const atlasName = String(r["atlas"]);
       const atlas = inst.atlases.get(atlasName);
@@ -1441,7 +1441,7 @@ export class GlNode extends Node {
   ["gl-tilemap-set"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const name = String(r["$gl-tilemap-set"]);
       const tm = inst.tilemaps.get(name);
       if (!tm) return null;
@@ -1518,7 +1518,7 @@ export class GlNode extends Node {
   ["gl-trail"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const entityId = String(r["$gl-trail"]);
       const length = r["length"] !== undefined ? Number(r["length"]) : 20;
       const width = r["width"] !== undefined ? Number(r["width"]) : 2;
@@ -1542,7 +1542,7 @@ export class GlNode extends Node {
   ["gl-raycast"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const from = r["from"] as { x: number; y: number; z?: number } | null;
       const dir = r["dir"] as { x: number; y: number; z?: number } | null;
       if (!from || !dir) return [];
@@ -1557,7 +1557,7 @@ export class GlNode extends Node {
   ["gl-text"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const id = String(r["$gl-text"]);
       const text = String(r["text"]);
       const font = r["font"] ? String(r["font"]) : "16px sans-serif";
@@ -1611,7 +1611,7 @@ export class GlNode extends Node {
   ["gl-shader"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const name = String(r["$gl-shader"]);
       const vert = r["vert"] ? String(r["vert"]) : VERT_SRC;
       const frag = r["frag"] ? String(r["frag"]) : FRAG_SRC;
@@ -1659,7 +1659,7 @@ export class GlNode extends Node {
   ["gl-transition"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const duration = r["duration"] !== undefined ? Number(r["duration"]) : 0.5;
       inst.transition = { type: "fade", duration, elapsed: 0 };
       inst.dirty = true;
@@ -1673,7 +1673,7 @@ export class GlNode extends Node {
   ["gl-tween"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const id = String(r["$gl-tween"]);
       const slot = inst.store.slot(id);
       if (slot === -1) return null;
@@ -1721,7 +1721,7 @@ export class GlNode extends Node {
     if (!inst) return null;
     return resolve(def["$gl-ssao"], context, enabled => {
       if (!enabled || enabled === "false") { inst.ssao = null; return null; }
-      return resolveObj(def, context, r => {
+      return resolveFields(def, context, r => {
         inst.ssao = {
           radius: Number(r["radius"] ?? 0.5),
           bias: Number(r["bias"] ?? 0.025),
@@ -1747,7 +1747,7 @@ export class GlNode extends Node {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
     if (!inst.gpuParticleProg) initGpuParticleProgram(inst, GlNode.createProgram);
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const gl = inst.gl;
       const actionStr = String(r["$gl-particle"]);
 

@@ -18,7 +18,7 @@
  * - { "$entity-get": id }               — full entity object
  */
 
-import { Node, Context, NodeValue, resolve, resolveObj, isOwnedKey } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveFields, isOwnedKey } from "@jexs/core";
 import {
   EntityStore, EntityMeta, FIELD_OFFSETS,
   ENTITY_TYPES, BLEND_MODES,
@@ -346,7 +346,7 @@ export class EntityNode extends Node {
   // ── entity-init ──────────────────────────────────────────────────────
 
   ["entity-init"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const id = String(r["$entity-init"]);
       // `shared:true` backs the store with growable SharedArrayBuffers so the host
       // (Server worker_threads / Client Web Worker) can step physics off-thread.
@@ -369,7 +369,7 @@ export class EntityNode extends Node {
     const store = getStore(context);
     if (!store) return null;
 
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const keys = Object.keys(def);
 
       const id     = String(r["$entity-add"]);
@@ -525,7 +525,7 @@ export class EntityNode extends Node {
   // ── entity-remove ────────────────────────────────────────────────────
 
   ["entity-remove"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const store = getStore(context);
       if (!store) return null;
       const id     = String(r["$entity-remove"]);
@@ -543,7 +543,7 @@ export class EntityNode extends Node {
     const store = getStore(context);
     if (!store) return null;
 
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const slot = store.slot(String(r["$entity-move"]));
       if (slot === -1) return null;
 
@@ -573,7 +573,7 @@ export class EntityNode extends Node {
     const store = getStore(context);
     if (!store) return null;
 
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const id   = String(r["$entity-update"]);
       const slot = store.slot(id);
       if (slot === -1) return null;
@@ -758,7 +758,7 @@ export class EntityNode extends Node {
   // ── entity-nearest ───────────────────────────────────────────────────
 
   ["entity-nearest"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const store = getStore(context);
       if (!store) return null;
       const group = String(r["$entity-nearest"]);

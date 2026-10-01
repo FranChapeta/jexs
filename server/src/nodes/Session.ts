@@ -1,5 +1,5 @@
 import { randomUUID, randomBytes } from "crypto";
-import { Node, Context, NodeValue, resolveObj } from "@jexs/core";
+import { Node, Context, NodeValue, resolve } from "@jexs/core";
 import { Cache } from "../cache/Cache.js";
 import type { JexsNodeSchema } from "@jexs/core";
 
@@ -50,18 +50,16 @@ export class SessionNode extends Node {
   };
 
   session(def: Record<string, unknown>, context: Context): NodeValue {
-    const sessionOp = def.$session;
-
-    if (sessionOp === "load") return loadSession(context);
-    if (sessionOp === "destroy") return destroySession(context);
-    if (sessionOp === "create") return createSession(context);
-    if (sessionOp === "regenerate") return regenerateSession(context);
-
-    if (sessionOp && typeof sessionOp === "object" && !Array.isArray(sessionOp)) {
-      return setSessionValues(sessionOp as Record<string, unknown>, context);
-    }
-
-    return null;
+    // A literal map has its values resolved; a step may resolve to an action
+    // name or to a map of values.
+    return resolve(def.$session, context, op => {
+      if (op === "load") return loadSession(context);
+      if (op === "destroy") return destroySession(context);
+      if (op === "create") return createSession(context);
+      if (op === "regenerate") return regenerateSession(context);
+      if (this.isObject(op)) return setSessionValues(op, context);
+      return null;
+    });
   }
 }
 
@@ -188,9 +186,7 @@ async function setSessionValues(
     isNew = true;
   }
 
-  const pResolved = resolveObj(values, context, r => r);
-  const resolvedValues = (pResolved instanceof Promise ? await pResolved : pResolved) as Record<string, unknown>;
-  Object.assign(sessionData.data, resolvedValues);
+  Object.assign(sessionData.data, values);
 
   await cache.set(PREFIX + sessionId, sessionData, TTL);
 

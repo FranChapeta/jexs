@@ -464,9 +464,9 @@ const cases: Case[] = [
   { label: "element if-on-tag is gated, not LogicNode if (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $tag: "div", if: { $var: "show" }, content: ["x"] } },
 
-  // Opaque-key maps (`map: true`). The KEYS are names the node keeps verbatim, so
-  // one colliding with a handler key must NOT be dispatched as that op — matching
-  // the per-entry resolveObj the runtime uses. Only the VALUES are checked.
+  // Map slots (`map: true`). The KEYS are names the node keeps verbatim; a key
+  // without `$` is never an op, so one spelled like an op is just a name. Only
+  // the VALUES are checked. The slot may also be a step resolving to an object.
   { label: "setVars: variable named `email` (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $setVars: { email: "a@b.c" } } },
   { label: "setVars: variable named `fetch` holding a number (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
@@ -485,6 +485,38 @@ const cases: Case[] = [
     expr: { $fetch: "/api/x", headers: "nope" } },
   { label: "map slot given an array (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { $setVars: [{ a: 1 }] } },
+  { label: "map slot from a $var (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $exec: { $var: "steps" }, params: { $var: "p" } } },
+  { label: "headers from a step (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $fetch: "/api/x", headers: { $var: "h" } } },
+  { label: "map slot from a string-output step (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $exec: { $var: "steps" }, params: { $upper: "x" } } },
+  { label: "setVars from an object step (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $setVars: { $var: "defaults" } } },
+  { label: "object slot from a string-output step (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "$v-scale": [{ $upper: "x" }, 2] } },
+  { label: "object slot from an object-output step (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { "$v-scale": [{ $var: "v" }, 2] } },
+  { label: "object slot given a string (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "$v-scale": ["up", 2] } },
+  { label: "object slot data with a broken step inside (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "$v-scale": [{ x: { $concta: 1 }, y: 0 }, 2] } },
+
+  // Data objects: an object without a `$` key is data, and its values are checked.
+  { label: "broken step inside a data object (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $concat: [{ a: { b: { $concta: 1 } } }] } },
+  { label: "steps inside nested data (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $stringify: { a: { b: [{ c: { $var: "x" } }] } } } },
+  { label: "broken step inside nested data in an undeclared sibling (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $var: "x", extra: { deep: [{ $upper: { $concta: 1 } }] } } },
+
+  // One op per step.
+  { label: "two ops in one step (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $concat: ["a"], $upper: "x" } },
+  { label: "op plus global keys (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $concat: ["a"], $as: "x", $catch: [{ $var: "error.message" }] } },
+  { label: "two hyphenated ops in one step (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "$storage-get": "a", "$storage-set": ["b", 1] } },
 
   // `map: true, type: ["object", "array"]`: query `data` is the one slot whose
   // runtime takes a row map OR a list of them.
@@ -537,7 +569,7 @@ const cases: Case[] = [
     expr: { $email: { a: {} }, body: { b: {} } } },
 
   // `required` siblings. Reported on the step itself, at any nesting depth, and
-  // never inside an opaque-key map (a column/variable named `email` is a name).
+  // never inside a map (a column/variable named `email` is a name).
   { label: "email without a subject (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { $email: "a@b.c", body: "hi" } },
   { label: "email with a subject (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
@@ -548,7 +580,7 @@ const cases: Case[] = [
     expr: { $email: "a@b.c", subject: "Hi", attachments: [{ filename: "a.pdf" }] } },
   { label: "attachment without a filename is fine, it defaults (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $email: "a@b.c", subject: "Hi", attachments: [{ content: { $var: "pdf" } }] } },
-  // The required marker must not leak into opaque-key maps or data rows.
+  // The required marker must not leak into maps or data rows.
   { label: "a variable named `email` needs no subject (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $setVars: { email: "a@b.c" } } },
   { label: "a row with an `email` column needs no subject (valid)", schemaRef: "$defs/exprFlat", expectValid: true,

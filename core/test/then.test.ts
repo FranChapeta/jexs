@@ -23,7 +23,7 @@ test("then: `if/then/else` still resolves the branch (its `if` owner shadows the
 
 test("then: fire-and-forget does not block the sequence and runs the continuation with $result", async () => {
   const ctx: Record<string, unknown> = {};
-  const out = resolve.runSteps([
+  const out = resolve([
     { $defer: "A", $then: [{ $as: "grabbed", $var: "result", $bubble: true }] },
     { $as: "second", $concat: ["step2"] },
     { $var: "second" },
@@ -41,7 +41,7 @@ test("then: fire-and-forget does not block the sequence and runs the continuatio
 
 test("then: a sibling `as` binds null (the result is delivered to `result`, not returned)", async () => {
   const ctx: Record<string, unknown> = {};
-  const out = resolve.runSteps([
+  const out = resolve([
     { $defer: "Z", $as: "sync", $then: [{ $as: "async", $var: "result", $bubble: true }], $bubble: true },
     { $var: "sync" },
   ], ctx);

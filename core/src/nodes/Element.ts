@@ -82,7 +82,7 @@ export class ElementNode extends Node {
           // `do` is an array of steps, or a single expression the runtime
           // (`buildEventsAttr`) wraps into a one-step array. Both branches require
           // an expression object: a bare primitive step is a no-op, so it's
-          // rejected here (unlike `mapVal`, whose trailing `else` would allow it).
+          // rejected here (unlike `anyVal`, whose trailing `else` would allow it).
           do: {
             if: { type: "array" },
             then: { items: { $ref: "#/$defs/exprFlat" } },

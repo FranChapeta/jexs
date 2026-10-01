@@ -1,7 +1,8 @@
 /**
  * One-off rewrite of node handlers for the `$` prefix: inside the handler method
  * for op K, reads of K through the handler's definition parameter (and through
- * the object a `resolveObj(def, ...)` callback receives) become reads of `$K`.
+ * the object a `resolveObj(def, ...)` / `resolveFields(def, ...)` callback
+ * receives) become reads of `$K`.
  * Every other property access is left alone, since `arr.map(...)` inside the
  * `map` handler is a method call, not the op.
  *
@@ -47,9 +48,9 @@ for (const file of process.argv.slice(2)) {
     const open = m.index! + m[0].length - 1;
     const end = blockEnd(s, open);
     const body = s.slice(open, end);
-    // The definition parameter, plus whatever a resolveObj(<param>, ctx, cb) callback names its result.
+    // The definition parameter, plus whatever a resolveObj/resolveFields(<param>, ctx, cb) callback names its result.
     const names = new Set([param]);
-    for (const r of body.matchAll(new RegExp(`resolveObj\\(\\s*${esc(param)}\\s*,\\s*\\w+\\s*,\\s*(?:async\\s*)?\\(?\\s*(\\w+)`, "g"))) names.add(r[1]);
+    for (const r of body.matchAll(new RegExp(`(?:resolveObj|resolveFields)\\(\\s*${esc(param)}\\s*,\\s*\\w+\\s*,\\s*(?:async\\s*)?\\(?\\s*(\\w+)`, "g"))) names.add(r[1]);
     for (const n of names) {
       const patterns = [
         new RegExp(`\\b${esc(n)}\\.${esc(key)}\\b(?![\\w$])`, "g"),        // def.key

@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue } from "./Node.js";
-import { resolve, resolveSteps } from "../Resolver.js";
+import { resolve, runSteps } from "../Resolver.js";
 import { collectTransferables } from "../helpers.js";
 import { acquireWorker, releaseWorker, type TaskWorkerLike } from "../workerPool.js";
 import type { JexsNodeSchema } from "../schema.js";
@@ -83,7 +83,7 @@ export class WorkerNode extends Node {
       // JSON works everywhere. Otherwise return the worker's Promise — the caller
       // may await it, collect it, or make it fire-and-forget via the universal
       // `$then` (which the resolver applies to this result).
-      if (!this.makeWorker) return resolveSteps(steps, params as Context);
+      if (!this.makeWorker) return runSteps(steps, params as Context);
       return dispatchThread(this.makeWorker, name, steps, params, idleMs);
     });
   }

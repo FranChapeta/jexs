@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue } from "./Node.js";
-import { resolveObj } from "../Resolver.js";
+import { resolveFields } from "../Resolver.js";
 import { createHttpError } from "../errors.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
 
@@ -122,7 +122,7 @@ export class FetchNode extends Node {
         },
         headers: {
           map: true,
-          markdownDescription: "Request headers. Each value is resolved as an expression and matched case-insensitively, so an explicit `Content-Type` replaces the `application/json` default. Entries resolving to `null`/`undefined` are dropped.",
+          markdownDescription: "Request headers: a map, or a step resolving to one. Each value is resolved as an expression and matched case-insensitively, so an explicit `Content-Type` replaces the `application/json` default. Entries resolving to `null`/`undefined` are dropped.",
           examples: [
             "{ \"headers\": { \"Authorization\": { \"$concat\": [\"Bearer \", { \"$var\": \"token\" }] }, \"Accept\": \"application/json\" } }",
           ],
@@ -183,9 +183,9 @@ export class FetchNode extends Node {
   };
 
   fetch(def: Record<string, unknown>, context: Context): NodeValue {
-    const headerDef = this.isObject(def.headers) ? def.headers : {};
     const opts: Record<string, unknown> = {
       url: def.$fetch,
+      headers: def.headers ?? null,
       method: def.method ?? "GET",
       body: def.body ?? null,
       type: def.type ?? null,
@@ -194,90 +194,89 @@ export class FetchNode extends Node {
       timeout: def.timeout ?? 0,
     };
     for (const [key] of PASSTHROUGH) opts[key] = def[key] ?? null;
-    return resolveObj(opts, context, o =>
-      resolveObj(headerDef, context, async headerValues => {
-        const url = this.toString(o.url);
-        const method = this.toString(o.method).toUpperCase() || "GET";
-        const full = this.toBoolean(o.full);
-        const headers = new Headers();
-        const options: RequestInit = { method, headers };
-        if (!BODYLESS.has(method) && o.body !== null && o.body !== undefined) {
-          // A raw body goes out verbatim so a custom Content-Type (form-encoded,
-          // plain text, XML) describes the payload it was written for, and so a
-          // binary upload survives the trip.
-          if (isRawBody(o.body)) {
-            options.body = o.body;
-          } else {
-            headers.set("Content-Type", "application/json");
-            options.body = JSON.stringify(o.body);
-          }
+    return resolveFields(opts, context, async o => {
+      const url = this.toString(o.url);
+      const method = this.toString(o.method).toUpperCase() || "GET";
+      const full = this.toBoolean(o.full);
+      const headers = new Headers();
+      const options: RequestInit = { method, headers };
+      if (!BODYLESS.has(method) && o.body !== null && o.body !== undefined) {
+        // A raw body goes out verbatim so a custom Content-Type (form-encoded,
+        // plain text, XML) describes the payload it was written for, and so a
+        // binary upload survives the trip.
+        if (isRawBody(o.body)) {
+          options.body = o.body;
+        } else {
+          headers.set("Content-Type", "application/json");
+          options.body = JSON.stringify(o.body);
         }
-        // Applied last, and `set` is case-insensitive, so an author's Content-Type
-        // replaces the default rather than appending a second value to it.
-        for (const [name, value] of Object.entries(headerValues)) {
-          if (value === null || value === undefined) continue;
-          headers.set(name, String(value));
-        }
-        // Merged in rather than assigned per key: RequestInit types each of these
-        // as its own enum, which a keyed loop cannot express without a cast.
-        for (const [key, allowed] of PASSTHROUGH) {
-          const value = this.getOption(o[key], allowed, `fetch ${key}`);
-          if (value) Object.assign(options, { [key]: value });
-        }
-        // Checked before the request goes out: a typo here should not cost a round trip.
-        const forcedKind = this.getOption(o.type, DECODE_KINDS, "fetch type");
-        const timeout = this.toNumber(o.timeout);
-        if (timeout > 0) options.signal = AbortSignal.timeout(timeout);
+      }
+      // Applied last, and `set` is case-insensitive, so an author's Content-Type
+      // replaces the default rather than appending a second value to it.
+      for (const [name, value] of Object.entries(this.isObject(o.headers) ? o.headers : {})) {
+        if (value === null || value === undefined) continue;
+        headers.set(name, String(value));
+      }
+      // Merged in rather than assigned per key: RequestInit types each of these
+      // as its own enum, which a keyed loop cannot express without a cast.
+      for (const [key, allowed] of PASSTHROUGH) {
+        const value = this.getOption(o[key], allowed, `fetch ${key}`);
+        if (value) Object.assign(options, { [key]: value });
+      }
+      // Checked before the request goes out: a typo here should not cost a round trip.
+      const forcedKind = this.getOption(o.type, DECODE_KINDS, "fetch type");
+      const timeout = this.toNumber(o.timeout);
+      if (timeout > 0) options.signal = AbortSignal.timeout(timeout);
 
-        const shouldThrow = this.toBoolean(o.throw);
-        let response: Response;
-        try {
-          response = await fetch(url, options);
-        } catch (err) {
-          const timedOut = timeout > 0 && err instanceof Error && err.name === "TimeoutError";
-          const reason = timedOut
-            ? `${method} ${url} timed out after ${timeout}ms`
-            : err instanceof Error ? err.message : String(err);
-          if (!shouldThrow) return full ? { status: 0, ok: false, headers: {}, body: null, url } : null;
-          if (timedOut) throw createHttpError(408, reason);
-          throw err;
-        }
+      const shouldThrow = this.toBoolean(o.throw);
+      let response: Response;
+      try {
+        response = await fetch(url, options);
+      } catch (err) {
+        const timedOut = timeout > 0 && err instanceof Error && err.name === "TimeoutError";
+        const reason = timedOut
+          ? `${method} ${url} timed out after ${timeout}ms`
+          : err instanceof Error ? err.message : String(err);
+        if (!shouldThrow) return full ? { status: 0, ok: false, headers: {}, body: null, url } : null;
+        if (timedOut) throw createHttpError(408, reason);
+        throw err;
+      }
 
-        // Derived rather than read off `response.ok`: that is exactly how the spec
-        // defines the property, and a Response-like that omits it (a polyfill, a
-        // stub) would otherwise read as a failure and throw on a perfectly good 200.
-        const ok = response.status >= 200 && response.status < 300;
-        if (!ok && shouldThrow) {
-          const text = await response.text().catch(() => "");
-          const reason = excerpt(text) || response.statusText;
-          throw createHttpError(
-            response.status,
-            `${method} ${url} failed with ${response.status}${reason ? `: ${reason}` : ""}`,
-            {
-              response: {
-                ok: false,
-                status: response.status,
-                headers: Object.fromEntries(response.headers.entries()),
-                body: errorBody(response, text),
-                url: response.url,
-              },
+      // Derived rather than read off `response.ok`: that is exactly how the spec
+      // defines the property, and a Response-like that omits it (a polyfill, a
+      // stub) would otherwise read as a failure and throw on a perfectly good 200.
+      const ok = response.status >= 200 && response.status < 300;
+      if (!ok && shouldThrow) {
+        const text = await response.text().catch(() => "");
+        const reason = excerpt(text) || response.statusText;
+        throw createHttpError(
+          response.status,
+          `${method} ${url} failed with ${response.status}${reason ? `: ${reason}` : ""}`,
+          {
+            response: {
+              ok: false,
+              status: response.status,
+              headers: Object.fromEntries(response.headers.entries()),
+              body: errorBody(response, text),
+              url: response.url,
             },
-          );
-        }
+          },
+        );
+      }
 
-        // 204/205 and HEAD carry no body by spec, so there is nothing to decode.
-        const body = method === "HEAD" || response.status === 204 || response.status === 205
-          ? null
-          : await decode(response, forcedKind ?? sniffKind(url, response));
+      // 204/205 and HEAD carry no body by spec, so there is nothing to decode.
+      const body = method === "HEAD" || response.status === 204 || response.status === 205
+        ? null
+        : await decode(response, forcedKind ?? sniffKind(url, response));
 
-        if (!full) return body;
-        return {
-          status: response.status,
-          ok,
-          headers: Object.fromEntries(response.headers.entries()),
-          body,
-          url: response.url,
-        };
-      }));
+      if (!full) return body;
+      return {
+        status: response.status,
+        ok,
+        headers: Object.fromEntries(response.headers.entries()),
+        body,
+        url: response.url,
+      };
+    });
   }
 }

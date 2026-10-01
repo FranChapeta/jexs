@@ -5,7 +5,7 @@ import path from "node:path";
 import { URL } from "node:url";
 import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
-import { Context, Node, NodeValue, isHttpError, isStep, resolve, resolveAll, resolveObj } from "@jexs/core";
+import { Context, Node, NodeValue, isHttpError, isStep, resolve, resolveAll, resolveFields } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { safeRelative } from "./File.js";
 import { serviceWorkerScript } from "../sw.js";
@@ -155,7 +155,6 @@ async function handleUpgrade(
 
     for (const step of listener.steps) {
       const stepResult = await resolve(step, context);
-      await storeStepAs(step, stepResult, context);
       if (upgrade.accepted) return;
       if (isResponse(stepResult)) {
         socket.destroy();
@@ -255,7 +254,6 @@ async function handleRequest(
     let result: unknown = null;
     for (const step of listener.steps) {
       result = await resolve(step, context);
-      await storeStepAs(step, result, context);
       if (isReturn(result)) {
         result = (result as Record<string, unknown>).$return ?? null;
         break;
@@ -321,22 +319,6 @@ async function handleRequest(
       response: "Internal Server Error",
       responseStatus: 500,
     });
-  }
-}
-
-/**
- * Honor the universal `"as"` key on a per-request step, mirroring core `runSteps`. The request
- * loop drives steps itself (to watch for response/return stop-signals) rather than going through
- * `runSteps`, so without this `{ "$file": "routes.json", "$as": "page" }` in a `listen.do` would
- * resolve but never store `page`. Writes into the shared request context so later steps can read
- * `{ "$var": "page" }`.
- */
-async function storeStepAs(step: unknown, value: unknown, context: Context): Promise<void> {
-  if (step && typeof step === "object" && !Array.isArray(step) && "$as" in step) {
-    const s = step as Record<string, unknown>;
-    // `$bubble` may be an expression: resolve it (mirrors core `storeAs`).
-    const bubble = "$bubble" in s ? Node.toBooleanValue(await resolve(s.$bubble, context)) : false;
-    Node.setContextValue(context, String(s.$as), value, bubble);
   }
 }
 
@@ -818,7 +800,7 @@ export class ServerNode extends Node {
             },
             events: {
               $ref: "#/$defs/_swEvents",
-              description: "Steps the worker resolves when an event fires, by event name, with the `sw-*` ops. Every handler also sees `version`, the worker's version. `fetch` is not an event here: requests are answered by `routes`. A step producing the map resolves at listen time; hold such a map by reference (`$setVars` with `raw: true`, or `$file` with `data: true`) so its steps are not run on the server.",
+              description: "Steps the worker resolves when an event fires, by event name, with the `sw-*` ops. Every handler also sees `version`, the worker's version. `fetch` is not an event here: requests are answered by `routes`. A step producing the map resolves at listen time; hold such a map by reference (`$setVars` or `$file` with `data: true`) so its steps are not run on the server.",
             },
           },
         },
@@ -903,7 +885,7 @@ export class ServerNode extends Node {
           console.warn('[ServerNode] "sw" needs "client": the service worker runtime ships in the browser bundle; no service worker is registered');
         } else if (browserDir) {
           const { events, ...settings } = sw;
-          const resolved = await resolveObj(settings, context, r => r);
+          const resolved = await resolveFields(settings, context, r => r);
           const eventMap = isStep(events) ? await resolve(events, context) : events;
           if (eventMap != null && (!this.isObject(eventMap) || isStep(eventMap))) {
             console.warn('[ServerNode] "sw.events" must be, or resolve to, a map of event names to steps; no service worker is registered');

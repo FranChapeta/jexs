@@ -15,7 +15,7 @@
  * FileNode (server) or FetchNode (core).
  */
 
-import { Node, Context, NodeValue, resolveAll, resolveObj } from "@jexs/core";
+import { Node, Context, NodeValue, resolveAll, resolveFields } from "@jexs/core";
 import { EntityStore } from "../EntityStore.js";
 import { computeBounds } from "../Bvh.js";
 import type {
@@ -703,7 +703,7 @@ export class MeshNode extends Node {
   }
 
   parseGLTF(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveObj(def, context, async r => {
+    return resolveFields(def, context, async r => {
       const arg = r["$parseGLTF"] as Record<string, unknown> | undefined;
       if (!arg) return null;
       const json = arg.json as Record<string, unknown>;
@@ -717,7 +717,7 @@ export class MeshNode extends Node {
   }
 
   ["register-mesh"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const store = getStore(context);
       if (!store) return null;
       const idRaw = r["$register-mesh"];

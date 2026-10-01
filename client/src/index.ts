@@ -153,11 +153,11 @@ if (typeof window !== "undefined") {
       host.onCall((message) => {
         Promise.resolve()
           .then(() => {
-            if (!("steps" in message)) return resolver.resolve(message.call, pageContext);
+            if (!("steps" in message)) return resolver(message.call, pageContext);
             const scope = message.params
               ? childContext(pageContext, message.params)
               : pageContext;
-            return resolver.runSteps(message.steps, scope);
+            return resolver(message.steps, scope);
           })
           .then(
             (value) => reply(message.id, serializable(value)),

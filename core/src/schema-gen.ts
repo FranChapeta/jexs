@@ -42,24 +42,35 @@ import type {
  * `anyVal` / `steps` keep referencing the unfiltered `exprFlat` since they don't
  * constrain output type.
  *
- * `mapVal` is deliberately NOT routed to `exprFlat`: a `map: true` slot's keys are
- * names the node keeps verbatim (variables, headers, case labels), read key by key,
- * so the map itself never dispatches. Keys are therefore opaque and only the
- * VALUES are checked.
+ * An object is a step when it has a `$` key and plain data otherwise, so the two
+ * branch apart: a step goes to `exprFlat`, and data goes to `dataVal`, whose
+ * values are checked in turn. The branches exclude each other, so every value is
+ * validated exactly once and validation stays linear in depth.
+ *
+ * `objOrExpr` is an object slot (and a `map: true` slot): a data object, or a
+ * step whose output is an object. A map's keys are names the node keeps verbatim
+ * (variables, headers, case labels), which data keys already are.
  */
+const IS_DATA = { propertyNames: { not: { pattern: "^\\" + KEY_PREFIX } } };
+
 export const sharedDefs = {
   anyVal: {
     if: { type: "object" },
-    then: { $ref: "#/$defs/exprFlat" },
+    then: { if: IS_DATA, then: { $ref: "#/$defs/dataVal" }, else: { $ref: "#/$defs/exprFlat" } },
     else: {
       if: { type: "array" },
-      then: { items: { if: { type: "object" }, then: { $ref: "#/$defs/exprFlat" }, else: {} } },
+      then: { items: { $ref: "#/$defs/anyVal" } },
       else: {},
     },
   },
-  mapVal: {
+  dataVal: {
     type: "object",
     additionalProperties: { $ref: "#/$defs/anyVal" },
+  },
+  objOrExpr: {
+    if: { type: "object", ...IS_DATA },
+    then: { $ref: "#/$defs/dataVal" },
+    else: { $ref: "#/$defs/exprFlat_object" },
   },
   strOrExpr:   { if: { type: "string"  }, then: {}, else: { $ref: "#/$defs/exprFlat_string"  } },
   numOrExpr:   { if: { type: "number"  }, then: {}, else: { $ref: "#/$defs/exprFlat_number"  } },
@@ -78,7 +89,7 @@ export const sharedDefs = {
 
 const REF = {
   anyVal:      { $ref: "#/$defs/anyVal"      },
-  mapVal:      { $ref: "#/$defs/mapVal"      },
+  objOrExpr:   { $ref: "#/$defs/objOrExpr"   },
   strOrExpr:   { $ref: "#/$defs/strOrExpr"   },
   numOrExpr:   { $ref: "#/$defs/numOrExpr"   },
   boolOrExpr:  { $ref: "#/$defs/boolOrExpr"  },
@@ -88,10 +99,8 @@ const REF = {
   exprFlat:    { $ref: "#/$defs/exprFlat"    },
 } as const;
 
-/** Output-filtered variants — used by enum and typed-array else branches in
- *  expandProperty. Keyed by the types that HAVE a filtered exprFlat (see
- *  OUTPUT_TYPES); `object` has none (object slots route to `{ type: "object" }`),
- *  so it's intentionally absent. */
+/** Output-filtered variants, used by enum and typed-array else branches in
+ *  expandProperty (object slots reach `exprFlat_object` through `objOrExpr`). */
 const FILTERED_REF: Record<Exclude<JexsType, "object">, EmittedSchema> = {
   string:  { $ref: "#/$defs/exprFlat_string"  },
   number:  { $ref: "#/$defs/exprFlat_number"  },
@@ -119,7 +128,7 @@ function typeOrExprRef(t: JexsType): EmittedSchema {
     case "boolean": return { ...REF.boolOrExpr  };
     case "null":    return { ...REF.nullOrExpr  };
     case "array":   return { ...REF.arrayOrExpr };
-    case "object":  return { type: "object" };
+    case "object":  return { ...REF.objOrExpr   };
   }
 }
 
@@ -184,12 +193,10 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
   }
 
   if (prop.map) {
-    // `map` fixes the KEY semantics (opaque); `type` says only which CONTAINER
-    // shapes are accepted. No type-or-expr wrapping and no output narrowing here:
-    // an opaque-key map has no expression alternative to narrow. `array` present
-    // means a list of maps, and the one-or-many shape is
-    // emitted inline rather than as its own $defs entry, since dedupeShapes hoists
-    // any shape that gains a second use.
+    // `map` says the keys are names; `type` says which CONTAINER shapes are
+    // accepted. A map is an object slot (`objOrExpr`), and `array` present means a
+    // list of maps. The one-or-many shape is emitted inline rather than as its own
+    // $defs entry, since dedupeShapes hoists any shape that gains a second use.
     const types = prop.type === undefined
       ? []
       : Array.isArray(prop.type) ? prop.type : [prop.type];
@@ -198,14 +205,14 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
 
     let out: EmittedSchema;
     if (!acceptsArray) {
-      out = { ...REF.mapVal };                              // a map
+      out = { ...REF.objOrExpr };                              // a map
     } else if (!acceptsObject) {
-      out = { type: "array", items: { ...REF.mapVal } };    // a list of maps
+      out = { type: "array", items: { ...REF.objOrExpr } };    // a list of maps
     } else {
-      out = {                                               // either (query `data`)
+      out = {                                                  // either (query `data`)
         if: { type: "array" },
-        then: { items: { ...REF.mapVal } },
-        else: { ...REF.mapVal },
+        then: { items: { ...REF.objOrExpr } },
+        else: { ...REF.objOrExpr },
       };
     }
     liftMetadata(prop, out);
@@ -352,6 +359,8 @@ export interface EmittedMethodSchema {
   $ref?: string;
   /** Per-handler catch-all for undeclared siblings, attached on merge. */
   additionalProperties?: EmittedSchema;
+  /** Refuses a second op key on the step, attached on merge. */
+  patternProperties?: Record<string, false>;
 }
 
 /** One output rule: while `cond` holds (and no earlier rule's does), the method
@@ -1025,7 +1034,7 @@ function buildRichMarkdown(methodKey: string, m: EmittedMethodSchema, docs: Sibl
 export const GLOBAL_KEY_DOCS: Record<string, { markdownDescription: string; examples?: string[] }> = {
   as: {
     markdownDescription:
-      "Store this step's result in a named context variable, read later via `{ \"$var\": \"name\" }`. Works on any step.",
+      "Store this step's result in a named context variable, read later via `{ \"$var\": \"name\" }`. Works on any step, at any depth. Nested in an argument, it is written when that argument settles, so read it from a later step rather than a sibling argument.",
     examples: ["{ \"$var\": \"user.name\", \"$as\": \"name\" }"],
   },
   return: {
@@ -1037,12 +1046,12 @@ export const GLOBAL_KEY_DOCS: Record<string, { markdownDescription: string; exam
   },
   catch: {
     markdownDescription:
-      "Step array to run if this expression throws. Catches ANY error, not just HTTP ones. The `error` context variable carries `{ message }`, plus `status` when the thrower was an HTTP error (and whatever further variables it offered, e.g. `fetch`'s `response`).",
+      "Step array to run if this expression throws. Catches ANY error, not just HTTP ones, on a step at any depth. The sequence then carries on with the catch's value as this step's result (so a sibling `$as` binds it). To end the enclosing sequence instead, return from the catch: a single expression lets `{ \"$return\": X }` through, while an array is a sequence of its own that consumes one level, so it needs `{ \"$return\": { \"$return\": X } }`. The `error` context variable carries `{ message }`, plus `status` when the thrower was an HTTP error (and whatever further variables it offered, e.g. `fetch`'s `response`).",
     examples: ["{ \"query-select\": \"users\", \"$catch\": [{ \"$var\": \"error.message\" }] }"],
   },
   then: {
     markdownDescription:
-      "Run these steps as a FIRE-AND-FORGET continuation (like a Promise `.then`): the step returns immediately (later steps do NOT block on it), and once this expression settles, the steps run with the result bound as `result`. A rejection runs `$catch`. The step itself yields `null` (the result is delivered to `result`, not returned), so a sibling `$as` here would bind `null`; read the value via `result` inside `$then`. Works on ANY node; use it to kick off async I/O (`query`, `file`, a host `dialog`, `thread`) without stalling the sequence. (Under `$if`, `then` is the branch, not a continuation.)",
+      "Run these steps as a FIRE-AND-FORGET continuation (like a Promise `.then`): the step returns immediately (later steps do NOT block on it), and once this expression settles, the steps run with the result bound as `result`. A rejection runs `$catch`. The step itself yields `null` (the result is delivered to `result`, not returned), so a sibling `$as` here would bind `null`; read the value via `result` inside `$then`. Works on ANY node, at any depth; use it to kick off async I/O (`query`, `file`, a host `dialog`, `thread`) without stalling the sequence. (Under `$if`, `then` is the branch, not a continuation.)",
     examples: ["{ \"query-select\": \"saves\", \"$then\": [{ \"set-html\": [\"#list\", { \"$var\": \"result\" }] }] }"],
   },
   bubble: {
@@ -1215,36 +1224,25 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
     anyOf: [{ required: [KEY_PREFIX + "as"] }, { required: [KEY_PREFIX + "setVars"] }],
   };
 
-  // Default schema for keys not enumerated in `properties` — i.e. siblings of
-  // a declared handler key, and any custom user keys. A sibling value may be a
-  // nested expression (object), a step/value array, or a primitive — dispatched
-  // by instance type via `if/then/else` (deterministic; no `anyOf` backtracking).
+  // Undeclared siblings (keys a handler's `properties` doesn't list) are checked
+  // as `anyVal`: a step, data, or a primitive, each branch validating its contents
+  // once.
   //
   // CRUCIAL: this lives on each `byKey` entry, NOT on `exprFlat` (whose
-  // `additionalProperties` is `true`). A node's declared siblings — including its
-  // big recursive ones (`content`, `cases`, step sequences) — are validated by
+  // `additionalProperties` is `true`). A node's declared siblings, including its
+  // big recursive ones (`content`, `cases`, step sequences), are validated by
   // that handler's `byKey.properties` via `dependentSchemas`. If `exprFlat` ALSO
   // had a recursive catch-all, every such sibling would be validated TWICE per
-  // nesting level — an O(2^depth) blow-up that makes the editor's JSON validator
+  // nesting level, an O(2^depth) blow-up that makes the editor's JSON validator
   // give up on deeply-nested files. Scoping the catch-all to `byKey` means each
-  // property is validated exactly once (by `properties` if declared, else by this
-  // catch-all), keeping validation full AND linear in depth.
-  // Stored as a shared $defs entry referenced from every byKey entry.
-  const additionalPropertiesDef: EmittedSchema = {
-    if: { type: "object" },
-    then: { ...REF.exprFlat },
-    else: {
-      if: { type: "array" },
-      then: { type: "array", items: { ...REF.anyVal } },
-      else: { type: ["string", "number", "boolean", "null"] },
-    },
-  };
-  const additionalPropertiesRef: EmittedSchema = { $ref: "#/$defs/_addProps" };
-
-  // The catch-all is per-handler (see above): each byKey entry validates its own
-  // undeclared siblings. exprFlat itself accepts unlisted keys freely (`true`).
-  for (const m of Object.values(byKey)) {
-    m.additionalProperties = { ...additionalPropertiesRef };
+  // property is validated exactly once.
+  //
+  // A step names one op: every `$` key other than the globals and the handler's
+  // own is refused, as the runtime refuses it.
+  for (const [methodKey, m] of Object.entries(byKey)) {
+    m.additionalProperties = { ...REF.anyVal };
+    const own = [...Object.keys(UNIVERSAL), methodKey].map(escapeRegex).join("|");
+    m.patternProperties = { [`^\\${KEY_PREFIX}(?!(?:${own})$)`]: false };
   }
 
   // A `$` key must be one the resolver knows: an op or a global. Anything else
@@ -1275,10 +1273,7 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
   // Keys whose output matches unconditionally are simply inherited (not relisted),
   // which is the bulk of the size saving vs. emitting every key per variant.
   //
-  // `object` is intentionally absent: object-typed slots route to a plain
-  // `{ type: "object" }` (see `typeOrExprRef`) rather than to an `exprFlat_object`,
-  // so emitting that variant would just be dead weight (zero references).
-  const OUTPUT_TYPES: JexsType[] = ["string", "number", "boolean", "array", "null"];
+  const OUTPUT_TYPES: JexsType[] = ["string", "number", "boolean", "array", "object", "null"];
   const filteredVariants: Record<string, EmittedSchema> = {};
   for (const target of OUTPUT_TYPES) {
     const rejected: Record<string, false> = {};
@@ -1337,7 +1332,6 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
     $id: "jexs://combined",
     $defs: {
       ...sharedDefs,
-      _addProps: additionalPropertiesDef,
       ...extraDefs,
       exprFlat,
       ...filteredVariants,
@@ -1360,6 +1354,10 @@ const DEDUP_METADATA = new Set(["markdownDescription", "examples", "description"
 const SCHEMA_SLOT_KEYS = ["if", "then", "else", "not", "items", "additionalProperties", "contains", "propertyNames"];
 const SCHEMA_LIST_KEYS = ["allOf", "anyOf", "oneOf", "prefixItems"];
 const SCHEMA_MAP_KEYS = ["properties", "$defs", "dependentSchemas", "patternProperties"];
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 function isSchemaObj(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);

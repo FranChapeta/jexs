@@ -1,27 +1,27 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createResolver, coreNodes } from "../src/index.js";
+import { createResolver, coreNodes, resolveFields } from "../src/index.js";
 
 // Use the function returned by createResolver (the entry resolver an app calls),
 // not the exported `resolve` wrapper — top-level catch must work here too.
 const resolve = createResolver(coreNodes());
 
-// resolveObj is used by many nodes on their full `def`; it must never eagerly
-// resolve the global step keys, or a `catch: [...]` would run on success.
-test("resolveObj skips the global step keys (as/return/catch)", () => {
+// resolveFields is used by many nodes on their full `def`; it must never eagerly
+// resolve the global step keys, or a `$catch: [...]` would run on success. They
+// belong to the resolver, so they are left out of the result entirely.
+test("resolveFields leaves out the global step keys", () => {
   const ctx: Record<string, unknown> = {};
+  createResolver(coreNodes(), { context: ctx });
   const obj = {
-    value: 1,
+    value: { $concat: ["a", "b"] },
     $catch: [{ $setVars: { caught: true } }],
     $return: { $setVars: { returned: true } },
     $as: "x",
   };
-  const r = resolve.resolveObj(obj, ctx, x => x) as Record<string, unknown>;
+  const r = resolveFields(obj, ctx, x => x) as Record<string, unknown>;
   assert.equal(ctx.caught, undefined);    // catch steps not executed on success
   assert.equal(ctx.returned, undefined);  // return not eagerly resolved
-  assert.equal(r.value, 1);               // ordinary keys still resolved
-  assert.deepEqual(r.$catch, [{ $setVars: { caught: true } }]); // kept raw
-  assert.equal(r.$as, "x");
+  assert.deepEqual(r, { value: "ab" });   // ordinary keys resolved, globals gone
 });
 
 test("catch: handles a top-level thrown error and exposes $error as { status, message }", () => {

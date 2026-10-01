@@ -1,5 +1,5 @@
 import {
-  Node, Context, NodeValue, childContext, resolveObj, runStepsDetached,
+  Node, Context, NodeValue, childContext, resolveFields, runStepsDetached,
 } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { buildMenuTemplate } from "./Menu.js";
@@ -54,7 +54,7 @@ export class TrayNode extends Node {
   // go through the resolver.
   tray(def: Record<string, unknown>, context: Context): NodeValue {
     const scalars = { tray: def.$tray, tooltip: def.tooltip };
-    return resolveObj(scalars, context, async (r) => {
+    return resolveFields(scalars, context, async (r) => {
       const { Tray, nativeImage, Menu } = await import("electron");
       const iconPath = typeof r.tray === "string" ? r.tray : "";
 
@@ -69,9 +69,7 @@ export class TrayNode extends Node {
       if (def.menu !== undefined) {
         const template = await buildMenuTemplate(def.menu, context, (raw, steps, item) => {
           const extra = { menuLabel: item.label, menuId: item.id, menuChecked: item.checked };
-          runStepsDetached(steps, childContext(context, extra), raw).catch((err: unknown) => {
-            console.error(`[TrayNode] "${String(item.label ?? "item")}" failed:`, err);
-          });
+          void runStepsDetached(steps, childContext(context, extra), raw, `[TrayNode] "${String(item.label ?? "item")}" failed:`);
         });
         tray.setContextMenu(Menu.buildFromTemplate(template));
       }
@@ -80,9 +78,7 @@ export class TrayNode extends Node {
         const steps = def.do;
         tray.removeAllListeners("click");
         tray.on("click", () => {
-          runStepsDetached(steps, childContext(context, {}), def).catch((err: unknown) => {
-            console.error("[TrayNode] click handler failed:", err);
-          });
+          void runStepsDetached(steps, childContext(context, {}), def, "[TrayNode] click handler failed:");
         });
       }
 

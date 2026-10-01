@@ -161,8 +161,7 @@ export class WebSocketNode extends Node {
       delete wsContext._upgrade;
 
       if (onConnect) {
-        runStepsDetached(onConnect, { ...wsContext }, def)
-          .catch(err => console.error("[WebSocket] on-connect error:", err));
+        void runStepsDetached(onConnect, { ...wsContext }, def, "[WebSocket] on-connect error:");
       }
 
       ws.on("message", (raw: WebSocket.RawData) => {
@@ -187,14 +186,12 @@ export class WebSocketNode extends Node {
           return;
         }
 
-        runStepsDetached(onMessage, { ...wsContext, message: messageData }, def)
-          .catch(err => console.error("[WebSocket] on-message error:", err));
+        void runStepsDetached(onMessage, { ...wsContext, message: messageData }, def, "[WebSocket] on-message error:");
       });
 
       ws.on("close", () => {
         if (onClose) {
-          runStepsDetached(onClose, { ...wsContext }, def)
-            .catch(err => console.error("[WebSocket] on-close error:", err));
+          void runStepsDetached(onClose, { ...wsContext }, def, "[WebSocket] on-close error:");
         }
 
         paths.get(path)?.delete(ws);

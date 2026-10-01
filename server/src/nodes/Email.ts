@@ -1,7 +1,7 @@
 import nodemailer from "nodemailer";
 import type { Transporter, SendMailOptions } from "nodemailer";
 import type SMTPTransport from "nodemailer/lib/smtp-transport/index.js";
-import { Node, Context, NodeValue, resolveObj, createHttpError } from "@jexs/core";
+import { Node, Context, NodeValue, resolveFields, createHttpError } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { parseTls, redactUrl, TLS_STRINGS } from "../connection.js";
 
@@ -393,7 +393,7 @@ export class EmailNode extends Node {
         },
         headers: {
           map: true,
-          markdownDescription: "Extra message headers, each value resolved as an expression. For the ones mail infrastructure reads rather than people:\n\n- **Deliverability.** `List-Unsubscribe` with `List-Unsubscribe-Post: List-Unsubscribe=One-Click`, which Gmail and Yahoo have required from bulk senders since February 2024. `Auto-Submitted: auto-generated` keeps out-of-office bots from replying to a password reset.\n- **Provider instructions.** `X-SMTPAPI` (SendGrid), `X-Mailgun-Variables`, `X-PM-Metadata-*` (Postmark), `X-SES-MESSAGE-TAGS`, which carry tags and metadata that come back on the provider's delivery webhooks.\n- **Your own.** A correlation id tying the send back to the request that caused it.\n\nNot for anything with its own sibling or nodemailer option (`replyTo`, message id, date, priority, the `List-*` set), which this would only fight.",
+          markdownDescription: "Extra message headers: a map, each value resolved as an expression, or a step resolving to one. For the ones mail infrastructure reads rather than people:\n\n- **Deliverability.** `List-Unsubscribe` with `List-Unsubscribe-Post: List-Unsubscribe=One-Click`, which Gmail and Yahoo have required from bulk senders since February 2024. `Auto-Submitted: auto-generated` keeps out-of-office bots from replying to a password reset.\n- **Provider instructions.** `X-SMTPAPI` (SendGrid), `X-Mailgun-Variables`, `X-PM-Metadata-*` (Postmark), `X-SES-MESSAGE-TAGS`, which carry tags and metadata that come back on the provider's delivery webhooks.\n- **Your own.** A correlation id tying the send back to the request that caused it.\n\nNot for anything with its own sibling or nodemailer option (`replyTo`, message id, date, priority, the `List-*` set), which this would only fight.",
           examples: [
             "{ \"List-Unsubscribe\": \"<https://example.com/u/abc>\", \"List-Unsubscribe-Post\": \"List-Unsubscribe=One-Click\" }",
           ],
@@ -449,7 +449,7 @@ export class EmailNode extends Node {
   };
 
   ["email-connect"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveObj(def, context, async o => {
+    return resolveFields(def, context, async o => {
       const target = this.toString(o["$email-connect"]).trim();
       if (!target) throw new Error("email-connect needs a host, an smtp:// url, or \"ethereal\"");
 
@@ -484,72 +484,68 @@ export class EmailNode extends Node {
       );
     }
 
-    const { headers, ...fields } = def;
-    const headerDef = this.isObject(headers) ? headers : {};
-    return resolveObj(fields, context, o =>
-      resolveObj(headerDef, context, async headerValues => {
-        const to = addresses(o.$email);
-        if (!to) throw new Error("email needs at least one recipient");
-        // The preflight only proved a `from` was WRITTEN; this is checking the resolved value.
-        if (o.from == null && !this.defaultFrom) throw new Error(NO_FROM);
+    return resolveFields(def, context, async o => {
+      const to = addresses(o.$email);
+      if (!to) throw new Error("email needs at least one recipient");
+      // The preflight only proved a `from` was WRITTEN; this is checking the resolved value.
+      if (o.from == null && !this.defaultFrom) throw new Error(NO_FROM);
 
-        const message: SendMailOptions = { to, subject: this.toString(o.subject) };
-        if (o.from != null) message.from = this.toString(o.from);
-        if (o.body != null) message.text = this.toString(o.body);
-        if (o.html != null) message.html = this.toString(o.html);
-        const cc = addresses(o.cc);
-        if (cc) message.cc = cc;
-        const bcc = addresses(o.bcc);
-        if (bcc) message.bcc = bcc;
-        const replyTo = addresses(o.replyTo);
-        if (replyTo) message.replyTo = Array.isArray(replyTo) ? replyTo.join(", ") : replyTo;
-        const priority = this.getOption(o.priority, PRIORITIES, "email priority");
-        if (priority) message.priority = priority;
-        if (o.inReplyTo != null) message.inReplyTo = this.toString(o.inReplyTo);
-        // Message ids take the same one-or-a-list shape an address field does.
-        const references = addresses(o.references);
-        if (references) message.references = references;
-        const files = attachments(o.attachments);
-        if (files) message.attachments = files;
-        const list = listHeaders(o.list);
-        if (list) message.list = list;
-        const invite = icalEvent(o.icalEvent);
-        if (invite) message.icalEvent = invite;
-        const extra: Record<string, string> = {};
-        for (const [name, value] of Object.entries(headerValues)) {
-          if (value === null || value === undefined) continue;
-          extra[name] = String(value);
-        }
-        if (Object.keys(extra).length > 0) message.headers = extra;
+      const message: SendMailOptions = { to, subject: this.toString(o.subject) };
+      if (o.from != null) message.from = this.toString(o.from);
+      if (o.body != null) message.text = this.toString(o.body);
+      if (o.html != null) message.html = this.toString(o.html);
+      const cc = addresses(o.cc);
+      if (cc) message.cc = cc;
+      const bcc = addresses(o.bcc);
+      if (bcc) message.bcc = bcc;
+      const replyTo = addresses(o.replyTo);
+      if (replyTo) message.replyTo = Array.isArray(replyTo) ? replyTo.join(", ") : replyTo;
+      const priority = this.getOption(o.priority, PRIORITIES, "email priority");
+      if (priority) message.priority = priority;
+      if (o.inReplyTo != null) message.inReplyTo = this.toString(o.inReplyTo);
+      // Message ids take the same one-or-a-list shape an address field does.
+      const references = addresses(o.references);
+      if (references) message.references = references;
+      const files = attachments(o.attachments);
+      if (files) message.attachments = files;
+      const list = listHeaders(o.list);
+      if (list) message.list = list;
+      const invite = icalEvent(o.icalEvent);
+      if (invite) message.icalEvent = invite;
+      const extra: Record<string, string> = {};
+      for (const [name, value] of Object.entries(this.isObject(o.headers) ? o.headers : {})) {
+        if (value === null || value === undefined) continue;
+        extra[name] = String(value);
+      }
+      if (Object.keys(extra).length > 0) message.headers = extra;
 
-        let info;
-        try {
-          info = await t.sendMail(message);
-        } catch (error) {
-          const reason = error instanceof Error ? error.message : String(error);
-          throw createHttpError(
-            502,
-            `Email to ${label(to)} failed: ${reason}`,
-            { smtp: isObject(error) ? { ...error } : {} }
-          );
-        }
+      let info;
+      try {
+        info = await t.sendMail(message);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw createHttpError(
+          502,
+          `Email to ${label(to)} failed: ${reason}`,
+          { smtp: isObject(error) ? { ...error } : {} }
+        );
+      }
 
-        // Reaching here means at least one recipient was accepted: a send the
-        // server refused outright rejects the promise above, with the addresses
-        // on the error. The lists are what tell a PARTIAL delivery apart.
-        const result: Record<string, unknown> = {
-          messageId: info.messageId,
-          accepted: (info.accepted ?? []).map(String),
-          rejected: (info.rejected ?? []).map(String),
-          response: info.response ?? null,
-        };
-        if (this.preview) {
-          const previewUrl = nodemailer.getTestMessageUrl(info);
-          console.log(`[EmailNode] Preview: ${previewUrl}`);
-          result.previewUrl = previewUrl;
-        }
-        return result;
-      }),
-    );
+      // Reaching here means at least one recipient was accepted: a send the
+      // server refused outright rejects the promise above, with the addresses
+      // on the error. The lists are what tell a PARTIAL delivery apart.
+      const result: Record<string, unknown> = {
+        messageId: info.messageId,
+        accepted: (info.accepted ?? []).map(String),
+        rejected: (info.rejected ?? []).map(String),
+        response: info.response ?? null,
+      };
+      if (this.preview) {
+        const previewUrl = nodemailer.getTestMessageUrl(info);
+        console.log(`[EmailNode] Preview: ${previewUrl}`);
+        result.previewUrl = previewUrl;
+      }
+      return result;
+    });
   }
 }

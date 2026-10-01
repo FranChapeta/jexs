@@ -1,4 +1,4 @@
-import { handleErr, runSteps, runStepsDetached, type Context } from "@jexs/core";
+import { runStepsDetached, type Context } from "@jexs/core";
 
 /** The shared render context for a browser page — event handlers read and write
  *  it, so state set by one handler is visible to the next. */
@@ -68,19 +68,10 @@ export function hydrate(root: HTMLElement | Document = document, context: Contex
         if (evt.type === "load") {
           applyEventData(context, { target: el, value: (el as HTMLInputElement).value ?? null, event: null });
           // `load` must stay SYNCHRONOUS: it runs during hydrate(), and callers
-          // read state a load handler seeds as soon as hydrate() returns.
-          // Detaching would defer it to a microtask and break that. So guard both
-          // paths by hand instead — previously a throw here escaped entirely.
-          try {
-            const r = runSteps(evt.do, context);
-            if (r instanceof Promise) {
-              r.catch(err => handleErr(err, evt, context))
-                .catch(err => console.error(`[Jexs] "load" handler failed:`, err));
-            }
-          } catch (err) {
-            try { handleErr(err, evt, context); }
-            catch (e) { console.error(`[Jexs] "load" handler failed:`, e); }
-          }
+          // read state a load handler seeds as soon as hydrate() returns. A
+          // detached run starts its steps on this stack, so that holds; only the
+          // outcome is a promise.
+          void runStepsDetached(evt.do, context, evt, `[Jexs] "load" handler failed:`);
         } else {
           if (evt.type === SW_MESSAGE) receiveServiceWorkerMessages(el);
           el.addEventListener(evt.type, (e: Event) => {
@@ -100,8 +91,7 @@ export function hydrate(root: HTMLElement | Document = document, context: Contex
             }
 
             applyEventData(context, eventData);
-            void runStepsDetached(evt.do, context, evt)
-              .catch(err => console.error(`[Jexs] "${evt.type}" handler failed:`, err));
+            void runStepsDetached(evt.do, context, evt, `[Jexs] "${evt.type}" handler failed:`);
           });
         }
       }

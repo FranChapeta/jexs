@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, resolve, resolveAll, resolveObj } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll, resolveFields } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -433,17 +433,17 @@ export class WindowNode extends Node {
       examples: ["{ \"$window-run\": [{ \"$setText\": [\"#status\", \"Saved\"] }], \"window\": \"editor\" }"],
       siblings: {
         window: WINDOW_SIBLING,
-        params: { map: true, description: "Values merged into the steps' scope, resolved in the main process before they cross." },
+        params: { map: true, description: "Values merged into the steps' scope (a map, or a step resolving to one), resolved in the main process before they cross." },
       },
     },
   };
 
   // Siblings arrive unresolved (the resolver only routes on the matched key), so
-  // everything goes through resolveObj/resolve first. Safe to blanket-resolve in
+  // everything goes through resolveFields/resolve first. Safe to blanket-resolve in
   // this node because it has no step-array siblings — Menu/Tray/Shortcut must NOT
   // do this, since their `do` and `submenu` have to reach the handler raw.
   ["window-open"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveObj(def, context, async (r) => {
+    return resolveFields(def, context, async (r) => {
       return openWindow({
         page: r["$window-open"],
         name: r.name,
@@ -517,7 +517,7 @@ export class WindowNode extends Node {
   }
 
   ["window-title"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveObj(def, context, (r) => {
+    return resolveFields(def, context, (r) => {
       const win = targetWindow(r.window, context);
       if (win) win.setTitle(this.toString(r["$window-title"]));
       return null;
@@ -525,7 +525,7 @@ export class WindowNode extends Node {
   }
 
   ["window-bounds"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveObj(def, context, (r) => {
+    return resolveFields(def, context, (r) => {
       const win = targetWindow(r.window, context);
       const bounds = boundsOptions(r["$window-bounds"]);
       if (win && Object.keys(bounds).length > 0) win.setBounds(bounds);
@@ -547,9 +547,9 @@ export class WindowNode extends Node {
     return resolve(def.window ?? null, context, target => {
       const win = targetWindow(target, context);
       if (!win) throw noWindowError("window-run");
-      if (!this.isObject(def.params)) return runInRenderer(win, def["$window-run"]);
-      return resolveObj(def.params, context, params =>
-        runInRenderer(win, def["$window-run"], params),
+      if (def.params === undefined) return runInRenderer(win, def["$window-run"]);
+      return resolve(def.params, context, params =>
+        runInRenderer(win, def["$window-run"], this.isObject(params) ? params : undefined),
       );
     });
   }

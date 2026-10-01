@@ -357,10 +357,9 @@ function requireListening(node: WebRTCNode, op: string): void {
 function runHandler(node: WebRTCNode, key: HandlerKey, extra: Record<string, unknown>): Promise<unknown> | null {
   const handler = node.handlers.get(key);
   if (!handler) return null;
-  const steps = Array.isArray(handler.body) ? handler.body : [handler.body];
   // Detached: these fire long after the `listen` step returned, so its own
   // `$catch` is the last handler left and anything past it reaches the console.
-  return runStepsDetached(steps, childContext(handler.context, extra), handler.def);
+  return runStepsDetached(handler.body, childContext(handler.context, extra), handler.def);
 }
 
 function fireHandler(node: WebRTCNode, key: HandlerKey, extra: Record<string, unknown>): void {

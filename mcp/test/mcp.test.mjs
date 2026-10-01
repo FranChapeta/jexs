@@ -309,6 +309,20 @@ describe("resolve_expression", () => {
     assert.ok(isError);
     assert.match(text, /boom/);
   });
+
+  test("vars are data: a var holding steps is not run while it is seeded", async () => {
+    const { text } = await callTool("resolve_expression", {
+      expression: { $exec: { $var: "steps" } },
+      vars: { steps: [{ $concat: ["hi ", { $var: "who" }] }], who: "there" },
+    });
+    assert.equal(text, '"hi there"');
+  });
+
+  test("a $return in the expression cannot end the handler itself", async () => {
+    const { text, isError } = await callTool("resolve_expression", { expression: { $return: 5 } });
+    assert.ok(!isError);
+    assert.deepEqual(JSON.parse(text), { $return: 5 });
+  });
 });
 
 describe("list_nodes", () => {

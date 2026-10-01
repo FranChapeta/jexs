@@ -773,11 +773,11 @@ function findNode(rt: TreeRuntime, path: string): HTMLElement | null {
 
 function fireChange(rt: TreeRuntime, delta: TreeDelta): void {
   if (!rt.onChangeSteps) return;
-  runStepsDetached(rt.onChangeSteps, {
+  void runStepsDetached(rt.onChangeSteps, {
     ...rt.context,
     delta,
     editorData: JSON.stringify(getData(rt), null, 2),
-  }).catch(err => console.error("[TreeNode] onChange error:", err));
+  }, null, "[TreeNode] onChange error:");
 }
 
 function fireSelect(rt: TreeRuntime): unknown {

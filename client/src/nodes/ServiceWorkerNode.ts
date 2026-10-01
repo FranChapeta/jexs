@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, resolve, resolveAll, resolveObj } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll, resolveFields } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
 /** The service worker global scope. Throws anywhere else, so a stray op fails loudly. */
@@ -102,7 +102,7 @@ export class ServiceWorkerNode extends Node {
   };
 
   ["sw-notify"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveObj(def, context, async r => {
+    return resolveFields(def, context, async r => {
       const title = r["$sw-notify"] == null ? "" : String(r["$sw-notify"]);
       if (!title) return null;
       const opts: NotificationOptions & { image?: string; actions?: { action: string; title: string; icon?: string }[] } = {};

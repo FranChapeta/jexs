@@ -72,15 +72,10 @@ function absoluteUrl(url: string): string {
 function run(conn: Conn, key: string, extra: Record<string, unknown>): void {
   const body = conn.def[key];
   if (body === undefined) return;
-  // A lone expression is a one-step sequence, the same normalization `resolveSteps`
-  // does and the same shape the `steps` schema def accepts, so a handler that does
-  // one thing does not have to be written as an array to be seen.
-  const steps = Array.isArray(body) ? body : [body];
   // A child scope per event, not a write onto the captured context: the handler
   // outlives the step, so binding into the parent would leak `wsMessage` into
   // everything else sharing that context and leave the last one behind for good.
-  runStepsDetached(steps, childContext(conn.context, extra), conn.def)
-    .catch(e => console.error(`[WS] ${key} error:`, e));
+  void runStepsDetached(body, childContext(conn.context, extra), conn.def, `[WS] ${key} error:`);
 }
 
 export class WsNode extends Node {

@@ -153,7 +153,7 @@ test("a proxied step blocks the next one and binds its value via as", async () =
     return "VALUE";
   }));
 
-  const out = await resolver.runSteps([
+  const out = await resolver([
     { $remoteslow: "x", $as: "got" },
     { $concat: ["got=", { $var: "got" }] },
   ], {});
@@ -175,8 +175,8 @@ test("a `then` sibling makes a proxied step fire-and-forget, as it would locally
     return "V";
   }));
 
-  const out = await resolver.runSteps([
-    { remotebg: "x", $then: [{ $concat: ["ignored"] }] },
+  const out = await resolver([
+    { $remotebg: "x", $then: [{ $concat: ["ignored"] }] },
     { $concat: ["next"] },
   ], {});
 

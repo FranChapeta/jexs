@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue } from "@jexs/core";
-import { resolve, resolveObj } from "@jexs/core";
+import { resolve, resolveFields } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { hydrate } from "../events.js";
 
@@ -101,7 +101,7 @@ export class ListNode extends Node {
   };
 
   ["list-add"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const list = document.querySelector(String(r["$list-add"]));
       const tmpl = document.querySelector(String(r.template)) as HTMLTemplateElement;
       if (list && tmpl && tmpl.content) {
@@ -152,7 +152,7 @@ export class ListNode extends Node {
     });
   }
   ["list-init"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const listSel = String(r["$list-init"]);
       const tmplSel = String(r.template);
       const fromSel = String(r.from);
@@ -251,7 +251,7 @@ export class ListNode extends Node {
     });
   }
   ["list-serialize"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const listSel = String(r["$list-serialize"]);
       const hiddenSel = String(r.to);
       const fields = (r.fields as string[]) || [];

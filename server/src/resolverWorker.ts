@@ -24,11 +24,11 @@ if (!isMainThread && parentPort) {
   const resolver = createResolver([...coreNodes(), ...serverNodes({ root })]);
   port.on("message", (req: ThreadRequest) => {
     const { rid, steps, params } = req;
-    // Through the resolver, not the free `runSteps`: that is what adopts this
+    // Through the resolver, not the free `runSteps`: that is what attaches this
     // context. `params` arrives over postMessage, and structured clone drops the
     // symbol carrying the resolver. `.then(() => ...)` so a SYNC throw is caught.
     Promise.resolve()
-      .then(() => resolver.runSteps(steps as unknown[], params))
+      .then(() => resolver(steps, params))
       .then((result) => port.postMessage({ rid, result }, collectTransferables(result) as readonly import("node:worker_threads").TransferListItem[]))
       .catch((err: unknown) => port.postMessage({ rid, error: err instanceof Error ? err.message : String(err) }));
   });

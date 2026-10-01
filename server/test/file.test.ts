@@ -110,3 +110,12 @@ test("the path may be an expression, as everywhere else", async () => {
     true,
   );
 });
+
+test("params merge into the loaded file's context, from a map or a step", async () => {
+  await fs.writeFile(abs("greet.json"), JSON.stringify({ $concat: ["hi ", { $var: "who" }] }));
+  assert.equal(await run({ $file: "/greet.json", params: { who: "map" } }), "hi map");
+  assert.equal(
+    await Promise.resolve(resolve({ $file: "/greet.json", params: { $var: "p" } }, { p: { who: "step" } })),
+    "hi step",
+  );
+});

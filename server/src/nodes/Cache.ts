@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, resolve, resolveAll, resolveObj, createHttpError } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll, resolveFields, createHttpError } from "@jexs/core";
 import { Cache, CacheConfig } from "../cache/Cache.js";
 import { parseTls, TLS_STRINGS } from "../connection.js";
 import type { JexsNodeSchema } from "@jexs/core";
@@ -144,7 +144,7 @@ export class CacheNode extends Node {
   };
 
   ["cache-connect"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       const type = cacheDriver(r["$cache-connect"]);
       const config: CacheConfig = { type };
 

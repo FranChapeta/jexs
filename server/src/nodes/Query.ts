@@ -1,5 +1,5 @@
 import { Knex as KnexType } from "knex";
-import { Node, Context, NodeValue, isOwnedKey, isStep, resolve, resolveObj, runSteps } from "@jexs/core";
+import { Node, Context, NodeValue, isOwnedKey, isStep, resolve, resolveFields, runSteps } from "@jexs/core";
 import { DatabaseNode } from "./Database.js";
 import { SchemaNode } from "./Schema.js";
 import type { JexsMethodSchema, JexsNodeSchema, JexsOutput, JexsPropertySchema } from "@jexs/core";
@@ -311,7 +311,7 @@ async function execQuery(def: Record<string, unknown>, context: Context): Promis
   // exception: a table document carries `validator` steps that must reach
   // the registry as steps, so only a step producing the document is resolved.
   const { schema, ...clauses } = def;
-  const r = await resolveObj(clauses, context, r => r);
+  const r = await resolveFields(clauses, context, r => r);
   if (schema !== undefined) r.schema = isStep(schema) ? await resolve(schema, context) : schema;
   const query = toQuery(r);
   // Omitted `connection` falls back to whichever opened first; getKnex owns

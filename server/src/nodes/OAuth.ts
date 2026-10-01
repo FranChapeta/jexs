@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, resolve, resolveAll, resolveObj, randomString } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll, resolveFields, randomString } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
 // Types
@@ -184,7 +184,7 @@ export class OAuthNode extends Node {
 }
 
 function doConfigure(def: Record<string, unknown>, context: Context): unknown {
-  return resolveObj(def, context, r => {
+  return resolveFields(def, context, r => {
     const name = String(r.provider);
     const clientId = String(r.clientId);
     const clientSecret = String(r.clientSecret);

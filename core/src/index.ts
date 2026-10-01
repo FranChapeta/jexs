@@ -14,8 +14,8 @@ export {
 
 // ── Resolver ──
 export {
-  createResolver, resolve, resolveAll, resolveObj,
-  runSteps, resolveSteps, handleErr, runStepsDetached,
+  createResolver, resolve, resolveAll, resolveFields,
+  runSteps, handleErr, runStepsDetached,
   // Node registration takes no context, so it has no resolver to read off one:
   // it hangs off the handle (`resolver.registerNode`) or, inside a lazy loader,
   // off the resolver the loader is handed.
@@ -85,9 +85,6 @@ export function coreNodes(): Node[] {
  *  node discovery consumes `mod.default ?? mod.nodes` — invoking it, since it's a
  *  factory. Same as {@link coreNodes}. */
 export const nodes = coreNodes;
-
-// ── Step runner ──
-// (runSteps and resolveSteps are already exported above via Resolver.js)
 
 // ── Helpers ──
 export { randomString, collectTransferables } from "./helpers.js";

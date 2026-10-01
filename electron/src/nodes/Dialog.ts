@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, resolveObj } from "@jexs/core";
+import { Node, Context, NodeValue, resolveFields } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
 /** Element type of OpenDialogOptions.properties (the string-literal union). */
@@ -124,7 +124,7 @@ export class DialogNode extends Node {
 
   // Siblings arrive unresolved, so resolve the whole def before building options.
   ["dialog-open"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveObj(def, context, async (r) => {
+    return resolveFields(def, context, async (r) => {
       const { dialog } = await import("electron");
       const res = await dialog.showOpenDialog(openDialogOptions(r));
       return res.filePaths as NodeValue;
@@ -132,7 +132,7 @@ export class DialogNode extends Node {
   }
 
   ["dialog-save"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveObj(def, context, async (r) => {
+    return resolveFields(def, context, async (r) => {
       const { dialog } = await import("electron");
       const res = await dialog.showSaveDialog(saveDialogOptions(r));
       // "" rather than null on cancel, so `empty` works and a path is always a
@@ -142,7 +142,7 @@ export class DialogNode extends Node {
   }
 
   ["dialog-message"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveObj(def, context, async (r) => {
+    return resolveFields(def, context, async (r) => {
       const { dialog } = await import("electron");
       const res = await dialog.showMessageBox(messageBoxOptions(r));
       return res.response as NodeValue;

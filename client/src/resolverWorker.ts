@@ -20,11 +20,11 @@ interface ThreadRequest { rid: number; steps: unknown; params: Record<string, un
 self.onmessage = (e: MessageEvent) => {
   const { rid, steps, params } = e.data as ThreadRequest;
   // `params` IS the worker's context; the steps resolve against it. Going through
-  // the resolver rather than the free `runSteps` is what adopts this context —
+  // the resolver rather than the free `runSteps` is what attaches this context —
   // `params` arrives over postMessage, and structured clone drops the symbol that
   // carries the resolver. `.then(() => ...)` so a SYNC throw is caught too.
   Promise.resolve()
-    .then(() => resolver.runSteps(steps as unknown[], params))
+    .then(() => resolver(steps, params))
     .then((result) => self.postMessage({ rid, result }, { transfer: collectTransferables(result) }))
     .catch((err: unknown) => self.postMessage({ rid, error: err instanceof Error ? err.message : String(err) }));
 };

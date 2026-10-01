@@ -236,7 +236,7 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean, useElectron: bo
   lines.push(`## Pitfalls (read before authoring or editing JSON)`);
   lines.push(``);
   lines.push(`- **\`foreach\` returns only the LAST iteration's value.** Use \`map\` when you need an array of every result (rendering lists, building option arrays, etc.).`);
-  lines.push(`- **\`if\` / \`switch\` branches that are arrays return only the LAST value** (they go through \`resolveSteps\`). When a branch needs to render multiple elements, wrap them in a single container, e.g. \`then: { $tag: "div", content: [<h2>, <table>] }\`, not \`then: [<h2>, <table>]\`.`);
+  lines.push(`- **\`if\` / \`switch\` branches that are arrays return only the LAST value** (they go through \`runSteps\`). When a branch needs to render multiple elements, wrap them in a single container, e.g. \`then: { $tag: "div", content: [<h2>, <table>] }\`, not \`then: [<h2>, <table>]\`.`);
   if (useServer) {
     lines.push(`- **\`{ "$file": "x.json" }\` resolves the file's contents as a Jexs expression by default.** Pass \`"data": true\` for raw parsed JSON, required for data files, route trees, schema dumps, anything you do NOT want the resolver to evaluate. Without \`data\`, an array file is run as a step sequence and an object file is resolved as a single expression.`);
   }
@@ -562,10 +562,7 @@ async function main(): Promise<void> {
   // .vscode/settings.json — wires JSON schema for autocomplete + disables VS Code's
   // built-in JSON formatter so prettier handles it (consistent with the `format` script).
   // Every layout keeps its templates in src/.
-  // Electron gets both, matching its `format` script: renderer templates in src/,
-  const jsonGlobs = useElectron
-    ? ["/src/**/*.json"]
-    : ["/src/**/*.json"];
+  const jsonGlobs = ["/src/**/*.json"];
   writeFileSync(
     join(dir, ".vscode", "settings.json"),
     formatJson({

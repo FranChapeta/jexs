@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, resolve, resolveObj } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveFields } from "@jexs/core";
 import { DatabaseNode } from "./Database.js";
 import { Cache } from "../cache/Cache.js";
 import { sha256 } from "./Crypto.js";
@@ -24,7 +24,7 @@ export class TranslationNode extends Node {
   };
 
   translate(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveObj(def, context, r => {
+    return resolveFields(def, context, r => {
       (context as Record<string, unknown>)._translate = {
         to: r.$translate ? String(r.$translate) : undefined,
         table: r.table ? String(r.table) : "translations",

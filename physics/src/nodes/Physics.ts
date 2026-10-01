@@ -55,7 +55,7 @@ export interface PhysicsConfig {
 interface CollisionHandler {
   id: string;
   groups: [string, string];
-  do: unknown[];
+  do: unknown;
   /**
    * Where the `do` steps run when physics is threaded off the main thread:
    * - "physics" (default): in the physics worker's resolver, against the
@@ -947,9 +947,8 @@ export class CollisionNode extends Node {
         : ["", ""];
       const id = idRaw !== null ? String(idRaw) : `h${w.handlers.length}`;
       if (def.do === undefined) throw new Error("collision-on needs `do` steps");
-      const steps = Array.isArray(def.do) ? def.do : [def.do];
       const thread = def.thread === "main" ? "main" : "physics";
-      w.handlers.push({ id, groups, do: steps, thread });
+      w.handlers.push({ id, groups, do: def.do, thread });
       return id;
     });
   }
@@ -1141,7 +1140,7 @@ function fireCollisionHandlers(world: PhysicsWorld, contacts: Contact[], onlyMai
   for (const { slotA, slotB, nx, ny, nz } of contacts) {
     const ma = world.store.meta[slotA]!, mb = world.store.meta[slotB]!;
     for (const h of world.handlers) {
-      if (h.do.length === 0) continue;
+      if (Array.isArray(h.do) && h.do.length === 0) continue;
       if (onlyMain && h.thread !== "main") continue;
       const [g1, g2] = h.groups;
       let ca: string, cb: string, cnx: number, cny: number, cnz: number;
