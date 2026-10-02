@@ -7,7 +7,9 @@ import { createResolver, coreNodes } from "@jexs/core";
 import { serverNodes } from "../src/index.js";
 import { SchemaNode } from "../src/nodes/Schema.js";
 
-const resolve = createResolver([...coreNodes(), ...serverNodes()]);
+// The registry is the resolver's own, so lookups go through a context attached to it.
+const registry = {};
+const resolve = createResolver([...coreNodes(), ...serverNodes()], { context: registry });
 // A file, not `:memory:`: each pooled connection would open its own empty in-memory database.
 const dir = await fs.mkdtemp(path.join(os.tmpdir(), "jexs-query-"));
 const conn = { connection: "query-test" };
@@ -63,7 +65,7 @@ test("validators authorize every query: global first, then the table's own", asy
       properties: { id: { type: "integer", primaryKey: true, autoIncrement: true }, author: { type: "string" } },
     } }, context);
     assert.deepEqual(context.seen, { global: "create:notes", table: "" });
-    assert.deepEqual(SchemaNode.get("notes")?.validator, table);
+    assert.deepEqual(SchemaNode.get(registry, "notes")?.validator, table);
 
     await resolve({ $query: "insert", ...conn, table: "notes", data: [{ author: "ada" }, { author: "bob" }] }, context);
     assert.deepEqual(context.seen, { global: "insert:notes", table: "insert:notes" });
@@ -74,7 +76,7 @@ test("validators authorize every query: global first, then the table's own", asy
     await assert.rejects(resolve({ $query: "delete", ...conn, table: "notes", where: { author: "bob" } }, context), /no deletes/);
     assert.equal(await resolve({ $query: "count", ...conn, table: "notes", system: true }, context), 2);
   } finally {
-    SchemaNode.globalValidator = null;
+    await resolve({ $schema: "validator", run: null }, {});
   }
 });
 
@@ -91,7 +93,7 @@ test("create applies a composite primary key, and MySQL-only options elsewhere a
 test("a table document needs a name and columns to be registered", async () => {
   await assert.rejects(resolve({ $query: "create", ...conn, system: true, schema: { table: 5, properties: {} } }, {}), /needs a `table` name and `properties`/);
   await assert.rejects(resolve({ $schema: "register", table: { table: "halfway" } }, {}), /needs a `table` name and `properties`/);
-  assert.equal(SchemaNode.get("halfway"), undefined);
+  assert.equal(SchemaNode.get(registry, "halfway"), undefined);
 });
 
 test("a column's SQL default is `sqlDefault`, apart from JSON Schema's `default`", async () => {
@@ -114,14 +116,14 @@ test("registering a table leaves the written document unchanged", async () => {
   const step = { $schema: "register", table: { table: "kept", properties: { name: { type: "string" } } } };
   await resolve(step, {});
   assert.deepEqual(step.table, { table: "kept", properties: { name: { type: "string" } } });
-  assert.ok(SchemaNode.get("kept")?.properties?.created_at, "the registry's copy has the common columns");
+  assert.ok(SchemaNode.get(registry, "kept")?.properties?.created_at, "the registry's copy has the common columns");
 });
 
 test("$schema get hands out a copy, so changing it leaves the registry alone", async () => {
   await resolve({ $schema: "register", table: { table: "copied", properties: { name: { type: "string" } } } }, {});
   const got = await resolve({ $schema: "get", table: "copied" }, {}) as { properties: Record<string, unknown> };
   got.properties.extra = { type: "string" };
-  assert.equal(SchemaNode.get("copied")?.properties?.extra, undefined);
+  assert.equal(SchemaNode.get(registry, "copied")?.properties?.extra, undefined);
 });
 
 test("a validator that changes `schema` does not change the registered table", async () => {
@@ -131,5 +133,22 @@ test("a validator that changes `schema` does not change the registered table", a
     validator: [{ $setVars: { "schema.properties.injected": { type: "string" } } }],
   } }, {});
   await resolve({ $query: "select", ...conn, table: "guarded" }, {});
-  assert.equal(SchemaNode.get("guarded")?.properties?.injected, undefined);
+  assert.equal(SchemaNode.get(registry, "guarded")?.properties?.injected, undefined);
+});
+
+// Table documents and the global validator belong to the resolver that
+// registered them, so they never judge another resolver's queries.
+test("two resolvers keep separate table registries and global validators", async () => {
+  const a = {};
+  const b = {};
+  const ra = createResolver([...coreNodes(), ...serverNodes()], { context: a });
+  const rb = createResolver([...coreNodes(), ...serverNodes()], { context: b });
+  await ra({ $schema: "register", table: { table: "isolated", properties: { email: { type: "string" } }, required: ["email"] } }, {});
+  await ra({ $schema: "validator", run: [{ $error: 403 }] }, {});
+
+  assert.ok(SchemaNode.get(a, "isolated"));
+  assert.equal(SchemaNode.get(b, "isolated"), undefined);
+  assert.equal(await rb({ $schema: "get", table: "isolated" }, {}), null);
+  assert.equal(SchemaNode.globalValidator(b), null);
+  assert.deepEqual(SchemaNode.validateInsert(b, "isolated", { name: "no email" }), { name: "no email" });
 });

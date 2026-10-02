@@ -1,6 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
-import { Node, Context, NodeValue, resolve, resolveAll } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll, resolverFor } from "@jexs/core";
 import { TableJsonSchema, ColumnSchema } from "./Query.js";
 import { sha256 } from "./Crypto.js";
 import { validate, validateDetailed, getValidator } from "../validate.js";
@@ -32,6 +32,15 @@ const strings = { type: "array", items: { type: "string" } };
  * Register inline:
  * { "$schema": "register", "table": { "table": "migrations", "properties": { ... } } }
  */
+/** The resolver's own SchemaNode, whose registry its queries consult. */
+export function schemaFor(context: Context): SchemaNode {
+  const node = resolverFor(context).nodeFor("schema");
+  if (!(node instanceof SchemaNode)) {
+    throw new Error("No SchemaNode in this resolver; build it with serverNodes().");
+  }
+  return node;
+}
+
 export class SchemaNode extends Node {
   /** `tableSchema` is a table document: JSON Schema for its rows, beside the
    *  settings that build and guard the table (display settings go under
@@ -194,8 +203,11 @@ export class SchemaNode extends Node {
     },
   };
 
-  private static schemas: Map<string, TableJsonSchema> = new Map();
-  static globalValidator: unknown = null;
+  /** Registered table documents and the global validator. Instance fields, so a
+   *  table registered in one resolver never judges another resolver's queries;
+   *  the statics below take a context to find their own node. */
+  private readonly schemas = new Map<string, TableJsonSchema>();
+  private globalValidator: unknown = null;
 
   /** Cache of `required`-stripped clones used to validate partial updates. */
   private static updateSchemas: WeakMap<TableJsonSchema, object> = new WeakMap();
@@ -227,27 +239,29 @@ export class SchemaNode extends Node {
     return resolve(def.$schema, context, op => {
       // Copies: a step that changes what it reads must not change the registry.
       if (op === "get") {
-        const found = SchemaNode.get(this.toString(def.table));
+        const found = this.schemas.get(this.toString(def.table));
         return found ? structuredClone(found) : null;
       }
       if (op === "list") {
-        return Array.from(SchemaNode.schemas.values(), schema => structuredClone(schema));
+        return Array.from(this.schemas.values(), schema => structuredClone(schema));
       }
       if (op === "validator") {
         if (def.run !== undefined) {
-          SchemaNode.globalValidator = def.run;
+          this.globalValidator = def.run;
         }
         return null;
       }
       if (op === "validate") {
         return doValidate(def, context);
       }
-      return doRegister(def, this.root);
+      return doRegister(def, context, this.root);
     });
   }
 
   // ============================================
-  // Static API (used by QueryNode)
+  // Static API (used by QueryNode). Statics rather than methods, since every
+  // method on a Node registers as an op; each takes the context to find the
+  // resolver's own registry.
   // ============================================
 
   /**
@@ -256,7 +270,7 @@ export class SchemaNode extends Node {
    * steps may change, and returns it. `withCommonColumns` adds the columns every
    * table gets (`system`, `created_at`) to that copy.
    */
-  static register(schema: TableJsonSchema, withCommonColumns = false): TableJsonSchema {
+  static register(context: Context, schema: TableJsonSchema, withCommonColumns = false): TableJsonSchema {
     if (typeof schema.table !== "string" || schema.properties === null || typeof schema.properties !== "object") {
       throw new Error("A table document needs a `table` name and `properties`.");
     }
@@ -265,20 +279,25 @@ export class SchemaNode extends Node {
     // Compile eagerly so a malformed schema throws at registration, not on the
     // first insert.
     getValidator(own);
-    this.schemas.set(own.table, own);
+    schemaFor(context).schemas.set(own.table, own);
     return own;
   }
 
-  static getAll(): TableJsonSchema[] {
-    return Array.from(this.schemas.values());
+  static getAll(context: Context): TableJsonSchema[] {
+    return Array.from(schemaFor(context).schemas.values());
   }
 
-  static get(tableName: string): TableJsonSchema | undefined {
-    return this.schemas.get(tableName);
+  static get(context: Context, tableName: string): TableJsonSchema | undefined {
+    return schemaFor(context).schemas.get(tableName);
   }
 
-  static validateInsert(tableName: string, data: unknown): unknown {
-    const schema = this.schemas.get(tableName);
+  /** The steps `$schema: "validator"` set, run before every query. */
+  static globalValidator(context: Context): unknown {
+    return schemaFor(context).globalValidator;
+  }
+
+  static validateInsert(context: Context, tableName: string, data: unknown): unknown {
+    const schema = this.get(context, tableName);
     if (!schema?.properties) return data;
 
     if (Array.isArray(data)) {
@@ -325,10 +344,11 @@ export class SchemaNode extends Node {
   }
 
   static validateUpdate(
+    context: Context,
     tableName: string,
     data: Record<string, unknown>,
   ): Record<string, unknown> {
-    const schema = this.schemas.get(tableName);
+    const schema = this.get(context, tableName);
     if (!schema?.properties) return data;
     const props = schema.properties;
 
@@ -465,7 +485,7 @@ function doValidate(def: Record<string, unknown>, context: Context): NodeValue {
     if (documentRaw !== null && typeof documentRaw === "object") {
       schema = documentRaw as object;
     } else if (typeof tableRaw === "string") {
-      schema = SchemaNode.get(tableRaw);
+      schema = SchemaNode.get(context, tableRaw);
       if (!schema) {
         return { valid: false, errors: [{ path: "", message: `no schema registered for table "${tableRaw}"`, keyword: "table" }] };
       }
@@ -484,10 +504,10 @@ function doValidate(def: Record<string, unknown>, context: Context): NodeValue {
   });
 }
 
-async function doRegister(def: Record<string, unknown>, root: string): Promise<unknown> {
+async function doRegister(def: Record<string, unknown>, context: Context, root: string): Promise<unknown> {
   // Inline schema document
   if (def.table && typeof def.table === "object") {
-    const schema = SchemaNode.register(def.table as TableJsonSchema, true);
+    const schema = SchemaNode.register(context, def.table as TableJsonSchema, true);
     return { registered: [schema.table] };
   }
 
@@ -507,7 +527,7 @@ async function doRegister(def: Record<string, unknown>, root: string): Promise<u
         const schema = JSON.parse(content) as TableJsonSchema;
         // The same keys that make the editor treat a file as a table document.
         if ("properties" in schema && "table" in schema) {
-          registered.push(SchemaNode.register(schema, true).table);
+          registered.push(SchemaNode.register(context, schema, true).table);
         }
       }
     } catch (error) {

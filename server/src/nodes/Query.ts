@@ -322,12 +322,12 @@ async function execQuery(def: Record<string, unknown>, context: Context): Promis
 
   switch (query.type) {
     case "select":  return executeSelect(knex, query, query.first === true) as Promise<NodeValue>;
-    case "insert":  return executeInsert(knex, query) as Promise<NodeValue>;
-    case "upsert":  return executeUpsert(knex, query) as Promise<NodeValue>;
-    case "update":  return executeUpdate(knex, query) as Promise<NodeValue>;
+    case "insert":  return executeInsert(knex, query, context) as Promise<NodeValue>;
+    case "upsert":  return executeUpsert(knex, query, context) as Promise<NodeValue>;
+    case "update":  return executeUpdate(knex, query, context) as Promise<NodeValue>;
     case "delete":  return executeDelete(knex, query) as Promise<NodeValue>;
     case "count":   return executeCount(knex, query) as Promise<NodeValue>;
-    case "create":  return executeCreate(knex, query) as Promise<NodeValue>;
+    case "create":  return executeCreate(knex, query, context) as Promise<NodeValue>;
     case "drop":    return executeDrop(knex, query) as Promise<NodeValue>;
     case "alter":   return executeAlter(knex, query) as Promise<NodeValue>;
   }
@@ -336,10 +336,10 @@ async function execQuery(def: Record<string, unknown>, context: Context): Promis
 /** The table documents a query touches: every table `create` makes, otherwise
  *  the one it names (a stand-in when it is not registered, so the global
  *  validator still sees the table name). */
-function tablesOf(query: QueryDefinition): TableJsonSchema[] {
-  if (query.type === "create") return resolveSchemas(query.schema);
+function tablesOf(query: QueryDefinition, context: Context): TableJsonSchema[] {
+  if (query.type === "create") return resolveSchemas(query.schema, context);
   if (!query.table) return [];
-  return [SchemaNode.get(query.table) ?? { table: query.table, properties: {} }];
+  return [SchemaNode.get(context, query.table) ?? { table: query.table, properties: {} }];
 }
 
 /**
@@ -353,17 +353,18 @@ function tablesOf(query: QueryDefinition): TableJsonSchema[] {
 async function runValidators(query: QueryDefinition, context: Context): Promise<void> {
   if (Reflect.get(context, VALIDATING) === true) return;
   const operation = query.type === "count" ? "select" : query.type;
-  for (const schema of tablesOf(query)) {
+  const global = SchemaNode.globalValidator(context);
+  for (const schema of tablesOf(query, context)) {
     // A table being created cannot approve its own creation: its document is
     // the caller's, so only the global validator judges it.
     const own = query.type === "create" ? undefined : schema.validator;
-    if (SchemaNode.globalValidator == null && own == null) continue;
+    if (global == null && own == null) continue;
     // A copy: a validator may narrow the query, but the registered document
     // stays as registered.
     const validatorContext: Context & { [VALIDATING]: true } = {
       ...context, [VALIDATING]: true, schema: structuredClone(schema), query, operation,
     };
-    for (const steps of [SchemaNode.globalValidator, own]) {
+    for (const steps of [global, own]) {
       if (steps != null) await runSteps(steps, validatorContext);
     }
   }
@@ -471,6 +472,7 @@ async function executeSelect(
 async function executeInsert(
   knex: KnexType,
   query: QueryDefinition,
+  context: Context,
 ): Promise<unknown> {
   if (!query.table) throw new Error("Query requires a table name");
   if (!query.data) {
@@ -478,7 +480,7 @@ async function executeInsert(
   }
 
   // Validate and enrich data (computed columns, type coercion)
-  const data = SchemaNode.validateInsert(query.table!, query.data);
+  const data = SchemaNode.validateInsert(context, query.table!, query.data);
 
   let builder = knex(query.table).insert(data);
   if (query.ignore) builder = builder.onConflict().ignore();
@@ -495,6 +497,7 @@ async function executeInsert(
 async function executeUpsert(
   knex: KnexType,
   query: QueryDefinition,
+  context: Context,
 ): Promise<unknown> {
   if (!query.table) throw new Error("Query requires a table name");
   if (!query.data) {
@@ -504,7 +507,7 @@ async function executeUpsert(
     throw new Error("UPSERT query requires conflict columns");
   }
 
-  const data = SchemaNode.validateInsert(query.table!, query.data);
+  const data = SchemaNode.validateInsert(context, query.table!, query.data);
 
   // `merge` (subset of columns) lets the conflict update touch only some columns
   // — e.g. keep `created_at` intact; omit to merge every inserted column.
@@ -525,6 +528,7 @@ async function executeUpsert(
 async function executeUpdate(
   knex: KnexType,
   query: QueryDefinition,
+  context: Context,
 ): Promise<unknown> {
   if (!query.table) throw new Error("Query requires a table name");
   const hasDelta = !!(query.increment || query.decrement);
@@ -534,7 +538,7 @@ async function executeUpdate(
 
   // Validate and filter data (strip unknown columns, coerce types).
   const data: Record<string, unknown> = query.data && !Array.isArray(query.data)
-    ? SchemaNode.validateUpdate(query.table!, query.data as Record<string, unknown>)
+    ? SchemaNode.validateUpdate(context, query.table!, query.data as Record<string, unknown>)
     : {};
 
   // Atomic deltas: `col = col +/- n`, applied as raw after validation so they
@@ -609,14 +613,15 @@ async function executeCount(
 async function executeCreate(
   knex: KnexType,
   query: QueryDefinition,
+  context: Context,
 ): Promise<{ table: string; created: boolean }[]> {
   const results: { table: string; created: boolean; error?: string }[] = [];
 
-  const schemas = resolveSchemas(query.schema);
+  const schemas = resolveSchemas(query.schema, context);
 
   for (const schema of schemas) {
     // Register schema for validation/computed columns
-    SchemaNode.register(schema);
+    SchemaNode.register(context, schema);
     const tableName = schema.table;
 
     try {
@@ -766,6 +771,7 @@ async function executeAlter(
  */
 function resolveSchemas(
   schema: string | TableJsonSchema | undefined,
+  context: Context,
 ): TableJsonSchema[] {
   if (!schema) {
     throw new Error("CREATE query requires schema");
@@ -778,11 +784,11 @@ function resolveSchemas(
 
   // "*" — all registered schemas
   if (schema === "*") {
-    return SchemaNode.getAll();
+    return SchemaNode.getAll(context);
   }
 
   // Lookup by table name
-  const found = SchemaNode.get(schema);
+  const found = SchemaNode.get(context, schema);
   if (found) return [found];
 
   throw new Error(`[QueryNode] Schema "${schema}" not found in registry`);
