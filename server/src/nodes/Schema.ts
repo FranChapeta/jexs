@@ -186,7 +186,7 @@ export class SchemaNode extends Node {
           markdownDescription: "Validates `data` against a JSON Schema (draft 2020-12): either a `document` handed in, or the schema registered for `table`. Returns the result rather than throwing, so the caller decides what a failure means.",
           siblings: {
             data: { description: "The value to check. Pass it through a `var` (loaded with `data: true`) when it is itself a Jexs template, otherwise it resolves as an expression before it can be checked." },
-            document: { description: "The JSON Schema document to check against. Reusing the same object across calls reuses the compiled validator, so load it once and pass it by `var`." },
+            document: { description: "The JSON Schema document to check against. It compiles once per distinct document, whether written inline or passed by `var`." },
             table: { type: "string", description: "Name of a registered table schema to check against, instead of `document`." },
           },
         },
@@ -455,9 +455,9 @@ export class SchemaNode extends Node {
  * `{ "$schema": "validate", "data": ..., "document"|"table": ... }`.
  *
  * `data` is resolved (it is normally a `var` holding an already-parsed value),
- * `document` is resolved too so it can be handed over by `var`, which is also
- * what keeps the compiled validator cached, since `getValidator` keys on the
- * schema object's identity and a `var` yields the same reference every call.
+ * and `document` too, so it can be handed over by `var`. Its compiled validator
+ * is cached by content as well as by object, so a document written inline
+ * compiles once however many times the step runs.
  */
 function doValidate(def: Record<string, unknown>, context: Context): NodeValue {
   return resolveAll([def.document ?? null, def.table ?? null, def.data ?? null], context, ([documentRaw, tableRaw, data]) => {

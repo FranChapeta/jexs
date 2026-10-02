@@ -188,3 +188,19 @@ test("a node that resolves to anything but a route tree is an error", async () =
 test("a root written as a step that yields nothing matches nothing", async () => {
   await assert.rejects(() => get({ $if: false, then: { $var: "never" } }), { status: 404 });
 });
+
+test("an expression handler's query schema validates every request", async () => {
+  const routes = { methods: { GET: { $var: "handler" } } };
+  const handler = () => ({ queryParams: { type: "object", required: ["q"] }, run: [{ $concat: ["ok"] }] });
+  for (let i = 0; i < 3; i++) {
+    const out = await Promise.resolve(resolve(
+      { $routes: routes },
+      { request: { method: "GET", path: "/", query: { q: "x" } }, handler: handler() },
+    ));
+    assert.deepEqual(out, { response: "ok" });
+  }
+  await assert.rejects(Promise.resolve(resolve(
+    { $routes: routes },
+    { request: { method: "GET", path: "/", query: {} }, handler: handler() },
+  )), /q/);
+});

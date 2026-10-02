@@ -23,16 +23,26 @@ const addFormats = addFormatsModule.default;
 const ajv = new Ajv2020({ allErrors: true, strict: false });
 addFormats(ajv);
 
-/** Compiled validators cached by schema-object identity. Route/table schema
- *  objects are stable after load, so each compiles once. Compilation also
- *  validates the schema itself — a malformed schema throws here. */
-const cache = new WeakMap<object, ValidateFunction>();
+/**
+ * Compiled validators, by the schema's JSON text. Ajv keeps every schema object
+ * it compiles for good, so it must only ever see one object per distinct schema:
+ * a route handler written as an expression hands over an equal but new
+ * `queryParams`/`body` object on every request, which would otherwise compile
+ * again each time, grow Ajv's cache without bound, and throw on a reused `$id`.
+ * Keying on the text, and compiling a copy made from it (Ajv's own cache is
+ * keyed by object), also means a schema changed in place gets a validator for
+ * what it says now. Compilation validates the schema itself, so a malformed one
+ * throws here.
+ */
+const cache = new Map<string, ValidateFunction>();
 
 export function getValidator(schema: object): ValidateFunction {
-  const cached = cache.get(schema);
-  if (cached) return cached;
-  const fn = ajv.compile(schema);
-  cache.set(schema, fn);
+  const key = JSON.stringify(schema);
+  let fn = cache.get(key);
+  if (!fn) {
+    fn = ajv.compile(JSON.parse(key) as object);
+    cache.set(key, fn);
+  }
   return fn;
 }
 
