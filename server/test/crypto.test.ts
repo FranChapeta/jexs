@@ -145,3 +145,8 @@ test("uuid: a version 4 uuid, different every time", () => {
   assert.match(first, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   assert.notEqual(first, second);
 });
+
+test("hash rounds that resolve to nothing take the default of 10", async () => {
+  const hash = await resolve({ $hash: "hunter2", rounds: { $var: "missing" } }, {}) as string;
+  assert.match(hash, /^\$2[aby]\$10\$/);
+});

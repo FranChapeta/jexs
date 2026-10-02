@@ -280,11 +280,8 @@ export class CryptoNode extends Node {
   }
 
   hash(def: Record<string, unknown>, context: Context) {
-    return resolve(def.$hash, context, v => {
-      const str = this.toString(v);
-      if (!def.rounds) return bcrypt.hash(str, 10);
-      return resolve(def.rounds, context, r => bcrypt.hash(str, this.toNumber(r)));
-    });
+    return resolveAll([def.$hash, def.rounds], context, ([v, rounds]) =>
+      bcrypt.hash(this.toString(v), rounds == null ? 10 : this.toNumber(rounds)));
   }
 
   verify(def: Record<string, unknown>, context: Context) {

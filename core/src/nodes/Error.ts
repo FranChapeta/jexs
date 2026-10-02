@@ -22,8 +22,10 @@ export class ErrorNode extends Node {
   };
 
   error(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def.$error, def.message ?? ""], context, ([code, message]) => {
-      throw createHttpError(Number(code), String(message));
+    return resolveAll([def.$error, def.message], context, ([code, message]) => {
+      // A status that resolves to nothing, or to no number, is a server error.
+      const status = Number(code);
+      throw createHttpError(Number.isInteger(status) ? status : 500, String(message ?? ""));
     });
   }
 }

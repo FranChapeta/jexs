@@ -186,6 +186,10 @@ export class OAuthNode extends Node {
 function doConfigure(def: Record<string, unknown>, context: Context): unknown {
   return resolveFields(def, context, r => {
     const name = String(r.provider);
+    // Required: a credential that resolves to nothing must not become "undefined".
+    if (r.clientId == null || r.clientSecret == null) {
+      throw new Error(`OAuth provider "${name}" needs clientId and clientSecret`);
+    }
     const clientId = String(r.clientId);
     const clientSecret = String(r.clientSecret);
 
@@ -250,10 +254,10 @@ function doAuthUrl(def: Record<string, unknown>, context: Context): unknown {
         ).join(" "),
       });
 
-      const state = def.state ? String(stateRaw) : randomString(32);
+      const state = stateRaw != null ? String(stateRaw) : randomString(32);
       params.set("state", state);
-      if (def.prompt) params.set("prompt", String(promptRaw));
-      if (def.accessType) params.set("access_type", String(accessTypeRaw));
+      if (promptRaw != null) params.set("prompt", String(promptRaw));
+      if (accessTypeRaw != null) params.set("access_type", String(accessTypeRaw));
 
       return `${config.authorizeUrl}?${params.toString()}`;
     },
@@ -425,8 +429,7 @@ function doGenerateState(def: Record<string, unknown>, context: Context): unknow
     return result;
   };
 
-  if (!def.length) return doGenerate(32);
-  return resolve(def.length, context, lengthRaw => doGenerate(Number(lengthRaw)));
+  return resolve(def.length, context, lengthRaw => doGenerate(lengthRaw == null ? 32 : Number(lengthRaw)));
 }
 
 function doListProviders(def: Record<string, unknown>, context: Context): unknown {

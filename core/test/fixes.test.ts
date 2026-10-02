@@ -65,3 +65,43 @@ test("a handler's single do step is sent as one step, not wrapped", () => {
   const [click] = eventsOf(String(resolver({ $tag: "button", events: { click: { do: { $setVars: { a: 1 } } } } }, {})));
   assert.deepEqual(click.do, { $setVars: { a: 1 } });
 });
+
+// A `$var` that resolves to nothing must still get the option's default: the
+// default belongs to the resolved value, not only to an absent key.
+test("$fetch throws on a non-2xx when `throw` resolves to nothing", async () => {
+  const resolver = createResolver(coreNodes());
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response("nope", { status: 500 })) as typeof fetch;
+  try {
+    await assert.rejects(Promise.resolve(resolver({ $fetch: "/x", throw: { $var: "missing" } }, {})), /500/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("$join's separator and $error's status and message fall back when they resolve to nothing", async () => {
+  const resolver = createResolver(coreNodes());
+  assert.equal(resolver({ $join: ["a", "b"], separator: { $var: "missing" } }, {}), "a,b");
+  const out = resolver({
+    $error: { $var: "missing" }, message: { $var: "missing" },
+    $catch: [{ $concat: [{ $var: "error.status" }, "|", { $var: "error.message" }] }],
+  }, {});
+  assert.equal(out, "500|");
+});
+
+test("a tick whose rate resolves to nothing runs at the default 60 per second", async () => {
+  const resolver = createResolver(coreNodes());
+  const ctx: Context = { n: 0 };
+  resolver({ $tick: "start", id: "t", rate: { $var: "missing" }, do: [{ $setVars: { n: { $add: [{ $var: "n" }, 1] } }, $bubble: true }] }, ctx);
+  await tick(100);
+  resolver({ $tick: "stop", id: "t" }, ctx);
+  resolver.destroy();
+  assert.ok((ctx.n as number) > 0 && (ctx.n as number) < 20, `ran ${String(ctx.n)} times in 100ms`);
+});
+
+test("$setVars' data flag may be an expression", () => {
+  const resolver = createResolver(coreNodes());
+  const ctx: Context = { asData: true };
+  resolver({ $setVars: { kept: { $concat: ["a", "b"] } }, data: { $var: "asData" } }, ctx);
+  assert.deepEqual(ctx.kept, { $concat: ["a", "b"] });
+});

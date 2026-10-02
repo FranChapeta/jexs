@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue } from "./Node.js";
-import { resolve, isStep } from "../Resolver.js";
+import { resolve, resolveAll, isStep } from "../Resolver.js";
 import { getNestedValue } from "../helpers.js";
 import type { JexsNodeSchema } from "../schema.js";
 
@@ -42,7 +42,7 @@ export class VariablesNode extends Node {
     const vars = def.$setVars;
     // `$bubble` (the global write modifier) may be an expression: resolve it once,
     // then coerce with the shared node truthiness rules before writing the entries.
-    return resolve(def.$bubble, context, bubbleRaw => {
+    return resolveAll([def.$bubble, def.data], context, ([bubbleRaw, dataRaw]) => {
       const bubble = this.toBoolean(bubbleRaw);
       // A step resolves to an object whose keys are all written at once.
       if (isStep(vars)) {
@@ -54,7 +54,7 @@ export class VariablesNode extends Node {
       }
       if (!this.isObject(vars)) return null;
       // A literal map is written in order, so a later value can read an earlier one.
-      const data = !!def.data;
+      const data = this.toBoolean(dataRaw);
       const keys = Object.keys(vars);
       let i = 0;
       const next = (): unknown => {

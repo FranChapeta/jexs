@@ -776,7 +776,7 @@ export class PhysicsNode extends Node {
       ([gravityRaw, dampingRaw, boundsRaw, startRaw, hzRaw]) => {
         const config: PhysicsConfig = {
           gravity: gravityRaw ? gravityRaw as [number, number] : [0, 980],
-          damping: dampingRaw !== null ? Number(dampingRaw) : 0.01,
+          damping: dampingRaw != null ? Number(dampingRaw) : 0.01,
           bounds: boundsRaw ? boundsRaw as PhysicsConfig["bounds"] : null,
         };
 
@@ -854,7 +854,7 @@ export class PhysicsNode extends Node {
     if (!world) return null;
 
     return resolve(def.dt ?? null, context, dtRaw => {
-      const dt = dtRaw !== null ? Number(dtRaw) : 1 / 60;
+      const dt = dtRaw != null ? Number(dtRaw) : 1 / 60;
       const contacts = physicsStep(world.store, world.config, dt, world.constraints);
       // Read now: `contacts` is a shared scratch array that another world's step
       // may refill before async handlers finish.
@@ -948,7 +948,7 @@ export class CollisionNode extends Node {
       const groups: [string, string] = Array.isArray(groupsRaw)
         ? [String(groupsRaw[0]), String(groupsRaw[1])]
         : ["", ""];
-      const id = idRaw !== null ? String(idRaw) : `h${w.handlers.length}`;
+      const id = idRaw != null ? String(idRaw) : `h${w.handlers.length}`;
       if (def.do === undefined) throw new Error("collision-on needs `do` steps");
       const thread = def.thread === "main" ? "main" : "physics";
       w.handlers.push({ id, groups, do: def.do, thread });
@@ -1076,7 +1076,7 @@ export class JointNode extends Node {
       context,
       ([idRaw, typeRaw, aRaw, bRaw, restRaw, anchorARaw, anchorBRaw, stiffRaw, dampRaw, minAngleRaw, maxAngleRaw]) => {
         const id = String(idRaw);
-        const type = (typeRaw !== null ? String(typeRaw) : "distance") as ConstraintType;
+        const type = (typeRaw != null ? String(typeRaw) : "distance") as ConstraintType;
         const entityA = String(aRaw);
         const entityB = String(bRaw);
         const slotA = w.store.slot(entityA);
@@ -1084,7 +1084,7 @@ export class JointNode extends Node {
         if (slotA === -1 || slotB === -1) return null;
 
         let restLength: number;
-        if (restRaw !== null) {
+        if (restRaw != null) {
           restLength = Number(restRaw);
         } else {
           const d = w.store.data;
@@ -1103,12 +1103,12 @@ export class JointNode extends Node {
           entityA,
           entityB,
           restLength,
-          stiffness: stiffRaw !== null ? Number(stiffRaw) : 0.5,
-          damping: dampRaw !== null ? Number(dampRaw) : 0.1,
+          stiffness: stiffRaw != null ? Number(stiffRaw) : 0.5,
+          damping: dampRaw != null ? Number(dampRaw) : 0.1,
           anchorA,
           anchorB,
-          minAngle: minAngleRaw !== null ? Number(minAngleRaw) : NaN,
-          maxAngle: maxAngleRaw !== null ? Number(maxAngleRaw) : NaN,
+          minAngle: minAngleRaw != null ? Number(minAngleRaw) : NaN,
+          maxAngle: maxAngleRaw != null ? Number(maxAngleRaw) : NaN,
         };
 
         const idx = w.constraints.findIndex(c => c.id === id);

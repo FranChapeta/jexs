@@ -504,8 +504,8 @@ export class StringNode extends Node {
   }
 
   join(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.$join, def.separator ?? ","], c, ([items, separator]) =>
-      this.toArray(items).map(v => this.toString(v)).join(this.toString(separator)),
+    return resolveAll([def.$join, def.separator], c, ([items, separator]) =>
+      this.toArray(items).map(v => this.toString(v)).join(this.toString(separator ?? ",")),
     );
   }
 

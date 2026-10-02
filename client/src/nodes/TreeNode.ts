@@ -50,6 +50,11 @@ function setRuntime(context: Context, path: string, rt: TreeRuntime): void {
 // Note: tree ops are expected to run against the context that owns the tree
 // (the client's single shared context). A derived context (e.g. inside a map)
 // would not find the runtime — tree mutation belongs in event steps, not loops.
+/** A tree's context path, `"default"` when none is given or it resolves to nothing. */
+function treePath(raw: unknown): string {
+  return String(raw ?? "default");
+}
+
 function getRuntime(context: Context, path: string): TreeRuntime | undefined {
   return stores.get(context)?.get(path);
 }
@@ -265,7 +270,7 @@ export class TreeNode extends Node {
       const targetEl = document.querySelector(String(target)) as HTMLElement;
       if (!targetEl) return null;
 
-      const path = String(pathRaw ?? "default");
+      const path = treePath(pathRaw);
 
       // Resolve the data array: use `data` if given, else adopt what's already at
       // the context path, else start empty. Then write it into the context so it
@@ -305,7 +310,7 @@ export class TreeNode extends Node {
 
   ["tree-render"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll([def["$tree-render"], def.path ?? null], context, async ([pathRaw, path]) => {
-      const rt = getRuntime(context, String(pathRaw));
+      const rt = getRuntime(context, treePath(pathRaw));
       if (!rt) return null;
       const p = path != null ? String(path) : "";
       if (!p) {
@@ -327,7 +332,7 @@ export class TreeNode extends Node {
     const rawValue = def.value;
 
     return resolveAll([def["$tree-insert"], def.path ?? null], context, ([pathRaw, path]) => {
-      const rt = getRuntime(context, String(pathRaw));
+      const rt = getRuntime(context, treePath(pathRaw));
       if (!rt) return null;
 
       const doInsert = async (valueResolved: unknown) => {
@@ -373,7 +378,7 @@ export class TreeNode extends Node {
 
   ["tree-remove"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["$tree-remove"], context, async pathRaw => {
-      const rt = getRuntime(context, String(pathRaw));
+      const rt = getRuntime(context, treePath(pathRaw));
       if (!rt || !rt.selectedPath) return null;
 
       const parts = rt.selectedPath.split(".");
@@ -399,7 +404,7 @@ export class TreeNode extends Node {
 
   ["tree-update"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll([def["$tree-update"], def.key, def.value ?? null], context, async ([pathRaw, key, value]) => {
-      const rt = getRuntime(context, String(pathRaw));
+      const rt = getRuntime(context, treePath(pathRaw));
       if (!rt || !rt.selectedPath) return null;
 
       const node = resolvePath(getData(rt), rt.selectedPath);
@@ -426,7 +431,7 @@ export class TreeNode extends Node {
       [def["$tree-move"], def.direction ?? null, def.to ?? null, def.index ?? null, def.from ?? null],
       context,
       async ([pathRaw, direction, to, index, from]) => {
-        const rt = getRuntime(context, String(pathRaw));
+        const rt = getRuntime(context, treePath(pathRaw));
         if (!rt) return null;
 
         // Relocation: move a node to any parent-list path (+ index; default append).
@@ -471,7 +476,7 @@ export class TreeNode extends Node {
 
   ["tree-select"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll([def["$tree-select"], def.path ?? null], context, async ([pathRaw, path]) => {
-      const rt = getRuntime(context, String(pathRaw));
+      const rt = getRuntime(context, treePath(pathRaw));
       if (!rt) return null;
 
       const oldPath = rt.selectedPath;
@@ -494,7 +499,7 @@ export class TreeNode extends Node {
 
   ["tree-toggle"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll([def["$tree-toggle"], def.path], context, async ([pathRaw, path]) => {
-      const rt = getRuntime(context, String(pathRaw));
+      const rt = getRuntime(context, treePath(pathRaw));
       if (!rt) return null;
 
       const p = String(path);
@@ -511,7 +516,7 @@ export class TreeNode extends Node {
 
   ["tree-apply"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll([def["$tree-apply"], def.delta], context, async ([pathRaw, delta]) => {
-      const rt = getRuntime(context, String(pathRaw));
+      const rt = getRuntime(context, treePath(pathRaw));
       if (!rt) return null;
 
       const d = delta as TreeDelta;

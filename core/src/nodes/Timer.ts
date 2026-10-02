@@ -231,9 +231,9 @@ function resume(
 function startTick(
   def: Record<string, unknown>, context: Context, registry: Map<string, TimerState>,
 ): unknown {
-  return resolveAll([def.id, def.rate ?? 60, def.detach ?? false], context, ([idRaw, rateRaw, detachRaw]: unknown[]) => {
+  return resolveAll([def.id, def.rate, def.detach ?? false], context, ([idRaw, rateRaw, detachRaw]: unknown[]) => {
     const id = String(idRaw);
-    const rate = Number(rateRaw);
+    const rate = Number(rateRaw ?? 60);
     // No steps means a timer that ticks forever doing nothing, which looks like a
     // hung app rather than a mistake, so it is an error rather than a no-op.
     if (def.do === undefined) throw new Error("timer needs `do` steps");

@@ -231,14 +231,14 @@ export class AudioNode extends Node {
   ["audio-play"](def: Record<string, unknown>, context: Context): NodeValue {
     const { ctx } = audioGraph(this);
     return resolveAll(
-      [def["$audio-play"], def["volume"] ?? 1, def["loop"] ?? false, def["restart"] ?? false],
+      [def["$audio-play"], def["volume"], def["loop"] ?? false, def["restart"] ?? false],
       context,
       ([nameRaw, volumeRaw, loopRaw, restartRaw]: unknown[]) => {
         const name = String(nameRaw);
         const buffer = this.buffers.get(name);
         if (!buffer) { console.warn("[Audio] Buffer not loaded:", name); return null; }
 
-        const volume = Number(volumeRaw);
+        const volume = Number(volumeRaw ?? 1);
         const loop = this.toBoolean(loopRaw);
 
         if (this.toBoolean(restartRaw)) stopSounds(this, name);

@@ -186,12 +186,12 @@ export class FetchNode extends Node {
     const opts: Record<string, unknown> = {
       url: def.$fetch,
       headers: def.headers ?? null,
-      method: def.method ?? "GET",
+      method: def.method,
       body: def.body ?? null,
       type: def.type ?? null,
-      full: def.full ?? false,
-      throw: def.throw ?? true,
-      timeout: def.timeout ?? 0,
+      full: def.full,
+      throw: def.throw,
+      timeout: def.timeout,
     };
     for (const [key] of PASSTHROUGH) opts[key] = def[key] ?? null;
     return resolveFields(opts, context, async o => {
@@ -228,7 +228,7 @@ export class FetchNode extends Node {
       const timeout = this.toNumber(o.timeout);
       if (timeout > 0) options.signal = AbortSignal.timeout(timeout);
 
-      const shouldThrow = this.toBoolean(o.throw);
+      const shouldThrow = this.toBoolean(o.throw ?? true);
       let response: Response;
       try {
         response = await fetch(url, options);
