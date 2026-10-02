@@ -57,7 +57,7 @@ function receiveServiceWorkerMessages(el: HTMLElement): void {
  * default; callers that own a scoped context (a tree/list runtime, a template
  * loaded with params) pass theirs so the inserted content's handlers see it.
  */
-export function hydrate(root: HTMLElement | Document = document, context: Context = pageContext): void {
+export function hydrate(root: Element | Document = document, context: Context = pageContext): void {
   root.querySelectorAll<HTMLElement>("[data-jexs-events]").forEach((el) => {
     const raw = el.getAttribute("data-jexs-events");
     if (!raw || el.hasAttribute("data-jexs-events-bound")) return;

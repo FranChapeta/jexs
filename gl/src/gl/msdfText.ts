@@ -11,6 +11,8 @@
  * (textRendering.ts): one shared atlas, crisp at any scale, recolorable.
  */
 
+import { isObject } from "@jexs/core";
+
 /** One glyph's atlas rectangle + placement metrics (atlas pixel units). */
 export interface MsdfChar {
   id: number;
@@ -49,12 +51,9 @@ function kernKey(first: number, second: number): number {
  * string or an already-parsed object.
  */
 /** Type guard: a plain object (not array/null). Narrows without a cast. */
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return v !== null && typeof v === "object" && !Array.isArray(v);
-}
 /** Plain-object accessor: the value if it's an object, else an empty record. */
 function asObj(v: unknown): Record<string, unknown> {
-  return isRecord(v) ? v : {};
+  return isObject(v) ? v : {};
 }
 
 export function parseMsdfFont(src: string | Record<string, unknown>): MsdfFont {

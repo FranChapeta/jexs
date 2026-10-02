@@ -96,7 +96,7 @@ async function main(): Promise<void> {
       // no file and gets no link, and one that builds a stylesheet next to its
       // bundle needs no wiring to have it linked.
       const stylesheets = existsSync(path.join(browserDir, "styles.css")) ? ["/styles.css"] : [];
-      const html = await Promise.resolve(resolver(shellTemplate(stylesheets), ctx));
+      const html = await resolver(shellTemplate(stylesheets), ctx);
       return new Response(String(html), { headers: { "content-type": "text/html; charset=utf-8" } });
     }
     // Without the guard `..%2f..%2f..%2fetc/passwd` reads an arbitrary file —
@@ -148,7 +148,7 @@ async function main(): Promise<void> {
   // not a page: nothing serves it, because `app://` only answers for a template
   // openWindow minted a token for.
   if (existsSync(path.join(templatesDir, MAIN_TEMPLATE))) {
-    await Promise.resolve(resolver({ $file: MAIN_TEMPLATE }, mainContext()));
+    await resolver({ $file: MAIN_TEMPLATE }, mainContext());
   } else {
     await openWindow({ title: app.getName() });
   }

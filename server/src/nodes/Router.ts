@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, isStep, resolve, runSteps, createHttpError } from "@jexs/core";
+import { Node, Context, NodeValue, isStep, resolve, runSteps, createHttpError, isObject } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { validate } from "../validate.js";
 
@@ -27,10 +27,6 @@ interface RouteNode {
   paramRegex?: string;
   methods?: Record<string, RouteHandler>;
   children?: Record<string, RouteNode>;
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 /**
@@ -377,7 +373,6 @@ function isHandlerShape(value: unknown): value is RouteHandler {
 /**
  * Check if result is a response object
  */
-function isResponse(value: unknown): boolean {
-  if (!isObject(value)) return false;
-  return "response" in (value as Record<string, unknown>);
+export function isResponse(value: unknown): value is Record<string, unknown> {
+  return isObject(value) && "response" in value;
 }

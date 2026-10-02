@@ -12,6 +12,7 @@
  * Draw order is tracked in a separate index array.
  */
 
+import type { Context } from "@jexs/core";
 import type { MeshEntry } from "./Mesh.js";
 
 // ─── Field offsets within the stride ─────────────────────────────────────────
@@ -905,3 +906,11 @@ export class EntityStore {
 }
 
 const _identityWT = new Float64Array([0,0,0, 1,1,1, 0,0,0,1]);
+
+/** The store of the GL instance a context's steps run in, as `$gl-init` / `$entity-init` record it. */
+export function getStore(context: Context): EntityStore | null {
+  const selector = context._glSelector as string | undefined;
+  if (!selector) return null;
+  const stores = context._entityStores as Record<string, EntityStore> | undefined;
+  return stores?.[selector] ?? null;
+}

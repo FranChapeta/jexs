@@ -20,7 +20,7 @@
 
 import { Node, Context, NodeValue, resolve, resolveFields, isOwnedKey } from "@jexs/core";
 import {
-  EntityStore, EntityMeta, FIELD_OFFSETS,
+  EntityStore, EntityMeta, FIELD_OFFSETS, getStore,
   ENTITY_TYPES, BLEND_MODES,
   STRIDE,
   F_TX, F_TY, F_TZ,
@@ -156,13 +156,6 @@ function resolveRotation(r: Record<string, unknown>): [number, number, number, n
   if (r["rx"] !== undefined) return rxToQuat(Number(r["rx"]));
   if (r["ry"] !== undefined) return ryToQuat(Number(r["ry"]));
   return undefined;
-}
-
-function getStore(context: Context): EntityStore | null {
-  const selector = context._glSelector as string | undefined;
-  if (!selector) return null;
-  const stores = context._entityStores as Record<string, EntityStore> | undefined;
-  return stores?.[selector] ?? null;
 }
 
 /** Build a plain object from entity slot (shared by entity-list, entity-nearest, entity-get). */

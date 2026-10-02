@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue, childContext, runStepsDetached } from "@jexs/core";
-import { resolve, resolveAll } from "@jexs/core";
+import { resolve, resolveAll, isObject } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
 const FAST_BUFFERED_AMOUNT_LIMIT = 128 * 1024;
@@ -296,10 +296,6 @@ export class WebRTCNode extends Node {
 // on a Node registers as a dispatch key, so only the ops and `dispose` can be
 // methods.
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /**
  * Read the `iceServers` sibling. Anything that is not a list of `{ urls }`
  * entries throws rather than falling back to the default: a mistyped TURN entry
@@ -312,7 +308,7 @@ function iceServersFrom(value: unknown): readonly RTCIceServer[] {
     throw new Error("rtc iceServers must be an array of { urls, username, credential } entries");
   }
   return value.map(entry => {
-    const urls = isPlainObject(entry) ? entry.urls : undefined;
+    const urls = isObject(entry) ? entry.urls : undefined;
     if (typeof urls !== "string" && !Array.isArray(urls)) {
       throw new Error("rtc iceServers entries need a `urls` string, or an array of them");
     }
@@ -491,7 +487,7 @@ type SignalPayload =
   | { kind: "ice"; candidate: RTCIceCandidateInit };
 
 function signalPayload(data: unknown): SignalPayload {
-  if (!isPlainObject(data)) {
+  if (!isObject(data)) {
     throw new Error(
       `rtc-signal data must be a session description or an ICE candidate, got ${data === null ? "null" : typeof data}`,
     );
@@ -664,7 +660,7 @@ function setupChannel(node: WebRTCNode, channel: RTCDataChannel, peerId: string,
 }
 
 function getFastCoalesceKey(peerId: string, data: unknown): string | null {
-  if (!isPlainObject(data)) return null;
+  if (!isObject(data)) return null;
   if (data.__coalesce !== true) return null;
 
   const customKey = typeof data.__coalesceKey === "string" ? data.__coalesceKey.trim() : "";

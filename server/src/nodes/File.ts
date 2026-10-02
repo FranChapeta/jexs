@@ -1,6 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
-import { Node, Context, NodeValue, resolve, resolveAll, runSteps, childContext } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll, runSteps, childContext, isObject } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
 function toBoolean(value: unknown): boolean {
@@ -8,10 +8,6 @@ function toBoolean(value: unknown): boolean {
   if (typeof value === "number") return value !== 0;
   if (typeof value === "string") return value !== "" && value !== "0" && value.toLowerCase() !== "false";
   return value !== null && value !== undefined;
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 // The directory of the file currently being resolved. Tracked under a private

@@ -2,6 +2,7 @@ import { Node, Context, NodeValue } from "@jexs/core";
 import { resolve, resolveAll } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { hydrate } from "../events.js";
+import { getElement, isHtmlOrSvg } from "../dom.js";
 
 // Live DOM properties addressable by getProp/setProp, used to constrain the
 // property slot of each tuple. Read-only metrics are gettable only, so they're
@@ -409,21 +410,21 @@ export class DomNode extends Node {
   show(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$show, context, v => {
       const el = getElement(v);
-      if (el) el.style.display = "";
+      if (isHtmlOrSvg(el)) el.style.display = "";
       return el;
     });
   }
   hide(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$hide, context, v => {
       const el = getElement(v);
-      if (el) el.style.display = "none";
+      if (isHtmlOrSvg(el)) el.style.display = "none";
       return el;
     });
   }
   toggle(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$toggle, context, v => {
       const el = getElement(v);
-      if (el) el.style.display = el.style.display === "none" ? "" : "none";
+      if (isHtmlOrSvg(el)) el.style.display = el.style.display === "none" ? "" : "none";
       return el;
     });
   }
@@ -444,14 +445,14 @@ export class DomNode extends Node {
   enable(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$enable, context, v => {
       const el = getElement(v);
-      if (el) (el as HTMLInputElement).disabled = false;
+      if (el && "disabled" in el) el.disabled = false;
       return el;
     });
   }
   disable(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$disable, context, v => {
       const el = getElement(v);
-      if (el) (el as HTMLInputElement).disabled = true;
+      if (el && "disabled" in el) el.disabled = true;
       return el;
     });
   }
@@ -526,14 +527,14 @@ export class DomNode extends Node {
   focus(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$focus, context, v => {
       const el = getElement(v);
-      if (el) el.focus();
+      if (isHtmlOrSvg(el)) el.focus();
       return el;
     });
   }
   blur(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$blur, context, v => {
       const el = getElement(v);
-      if (el) el.blur();
+      if (isHtmlOrSvg(el)) el.blur();
       return el;
     });
   }
@@ -594,7 +595,7 @@ export class DomNode extends Node {
   click(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$click, context, v => {
       const el = getElement(v);
-      if (el) el.click();
+      if (el instanceof HTMLElement) el.click();
       return el;
     });
   }
@@ -693,22 +694,21 @@ export class DomNode extends Node {
   closest(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$closest, context, args => {
       if (!Array.isArray(args) || args.length < 2) return null;
-      const [ref, selector] = args;
-      const el = typeof ref === "string" ? document.querySelector(ref) : ref;
-      return el instanceof Element ? el.closest(String(selector)) : null;
+      return getElement(args[0])?.closest(String(args[1])) ?? null;
     });
   }
   getValue(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$getValue, context, v => {
       const el = getElement(v);
-      return el ? (el as HTMLInputElement).value ?? "" : null;
+      if (!el) return null;
+      return "value" in el ? el.value ?? "" : "";
     });
   }
   setValue(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$setValue, context, args => {
       if (Array.isArray(args) && args.length >= 2) {
         const el = getElement(args[0]);
-        if (el) (el as HTMLInputElement).value = String(args[1] ?? "");
+        if (el && "value" in el) el.value = String(args[1] ?? "");
         return el;
       }
       return null;
@@ -789,12 +789,6 @@ export class DomNode extends Node {
   pointerLocked(_def: Record<string, unknown>, _context: Context): NodeValue {
     return !!document.pointerLockElement;
   }
-}
-
-function getElement(ref: unknown): HTMLElement | null {
-  if (ref instanceof HTMLElement) return ref;
-  if (typeof ref === "string") return document.querySelector(ref);
-  return null;
 }
 
 function isTraversable(v: unknown): v is object {

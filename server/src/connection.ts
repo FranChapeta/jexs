@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ConnectionOptions, SecureVersion } from "node:tls";
-import { Node } from "@jexs/core";
+import { Node, isObject } from "@jexs/core";
 
 /**
  * Connection strings and TLS material, shared by DatabaseNode and the cache
@@ -10,10 +10,6 @@ import { Node } from "@jexs/core";
  */
 
 export type TlsConfig = ConnectionOptions;
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
 
 /** Strip the password out of a url so it can go in an error message or a log. */
 export function redactUrl(raw: string): string {

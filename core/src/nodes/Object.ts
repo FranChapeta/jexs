@@ -1,5 +1,6 @@
-import { Node, Context, childContext } from "./Node.js";
+import { Node, Context, loopScope } from "./Node.js";
 import { resolve } from "../Resolver.js";
+import { isObject } from "../helpers.js";
 import type { JexsNodeSchema } from "../schema.js";
 
 export class ObjectNode extends Node {
@@ -131,11 +132,7 @@ export class ObjectNode extends Node {
         const idx = i++;
         const key = keys[idx];
         const item = record[key];
-        const itemCtx: Context = childContext(context, {
-          [itemName]: item,
-          key,
-          loop: { item, index: idx, key, first: idx === 0, last: idx === keys.length - 1, length: keys.length },
-        });
+        const itemCtx = loopScope(context, { [itemName]: item, key }, item, idx, keys.length, key);
         return resolve(template, itemCtx, v => { result[key] = v; return next(); });
       }
       return next();
@@ -146,15 +143,11 @@ export class ObjectNode extends Node {
     return resolve(def.$deepMerge, c, args => {
       const result: Record<string, unknown> = {};
       for (const obj of this.toArray(args)) {
-        if (isPlainObject(obj)) mergeInto(result, obj);
+        if (isObject(obj)) mergeInto(result, obj);
       }
       return result;
     });
   }
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 /** Recursively merge `source` into `target`, cloning before recursing so the
@@ -163,7 +156,7 @@ function mergeInto(target: Record<string, unknown>, source: Record<string, unkno
   for (const key of Object.keys(source)) {
     const sv = source[key];
     const tv = target[key];
-    if (isPlainObject(tv) && isPlainObject(sv)) {
+    if (isObject(tv) && isObject(sv)) {
       const merged = { ...tv };
       mergeInto(merged, sv);
       target[key] = merged;

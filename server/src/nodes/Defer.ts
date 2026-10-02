@@ -48,16 +48,17 @@ export class DeferNode extends Node {
       const delayMs = typeof def.delay === "number" ? def.delay : 0;
 
       const expr = def.$defer;
-      const promise = delayMs > 0
-        ? new Promise<unknown>((r) => setTimeout(r, delayMs)).then(() => resolve(expr, deferredContext))
-        : Promise.resolve(resolve(expr, deferredContext));
+      // Started from a promise either way, so a synchronous throw rejects the
+      // deferred content instead of escaping into the page render.
+      const start = delayMs > 0 ? new Promise<void>(r => setTimeout(r, delayMs)) : Promise.resolve();
+      const promise = start.then(() => resolve(expr, deferredContext));
 
       if (!Array.isArray(context._deferred)) {
         context._deferred = [];
       }
       (context._deferred as { id: string; promise: Promise<unknown> }[]).push({
         id,
-        promise: promise as Promise<unknown>,
+        promise,
       });
 
       return `<div id="${id}">${loaderHtml}</div>`;

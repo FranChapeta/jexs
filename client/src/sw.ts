@@ -1,4 +1,4 @@
-import { createResolver, coreNodes } from "@jexs/core";
+import { createResolver, coreNodes, isObject } from "@jexs/core";
 import { ServiceWorkerNode, swScope } from "./nodes/ServiceWorkerNode.js";
 
 export interface ServiceWorkerOptions {
@@ -116,7 +116,7 @@ export function startServiceWorker(input: unknown, options: ServiceWorkerOptions
 /** The config with defaults filled in and route paths compiled, refusing what
  *  the runtime cannot honor. */
 function readConfig(input: unknown): Required<Omit<ServiceWorkerConfig, "routes">> & { routes: CompiledRoute[] } {
-  if (!isRecord(input)) fail("the config must be an object.");
+  if (!isObject(input)) fail("the config must be an object.");
 
   const precacheIn = input.precache ?? [];
   const precache = Array.isArray(precacheIn) ? precacheIn.filter(u => typeof u === "string") : [];
@@ -137,7 +137,7 @@ function readConfig(input: unknown): Required<Omit<ServiceWorkerConfig, "routes"
   }));
 
   const events = input.events ?? {};
-  if (!isRecord(events)) fail("`events` must map event names to steps.");
+  if (!isObject(events)) fail("`events` must map event names to steps.");
   if ("fetch" in events) fail("`events.fetch` is not supported: answer requests with `routes`.");
 
   return { precache, routes, skipWaiting: input.skipWaiting === true, claim: input.claim === true, events };
@@ -147,12 +147,8 @@ function fail(msg: string): never {
   throw new Error(`[jexs sw] ${msg}`);
 }
 
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
 function isRoute(v: unknown): v is Route {
-  if (!isRecord(v) || typeof v.strategy !== "string" || !STRATEGIES.includes(v.strategy)) return false;
+  if (!isObject(v) || typeof v.strategy !== "string" || !STRATEGIES.includes(v.strategy)) return false;
   const p = v.path;
   const pathOk = (typeof p === "string" && p !== "")
     || (Array.isArray(p) && p.length > 0 && p.every(x => typeof x === "string" && x !== ""));

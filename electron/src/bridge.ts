@@ -238,7 +238,7 @@ export async function installBridge(hooks: BridgeHooks): Promise<void> {
       const denied = deniedKey(call, allow, (key) => resolver.keys.has(key));
       if (denied) throw deniedError(denied, String(hooks.contextFor(sender).windowName ?? "?"));
     }
-    return Promise.resolve(resolver(call, hooks.contextFor(sender)));
+    return resolver(call, hooks.contextFor(sender));
   });
 
   // --- main -> renderer ----------------------------------------------------

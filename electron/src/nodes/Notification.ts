@@ -50,7 +50,7 @@ export class NotificationNode extends Node {
       if (def.do !== undefined) {
         const steps = def.do;
         notification.on("click", () => {
-          void runStepsDetached(steps, childContext(context, {}), def, "[NotificationNode] click handler failed:");
+          void runStepsDetached(steps, childContext(context), def, "[NotificationNode] click handler failed:");
         });
       }
       notification.show();

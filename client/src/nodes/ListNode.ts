@@ -2,6 +2,7 @@ import { Node, Context, NodeValue } from "@jexs/core";
 import { resolve, resolveFields } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { hydrate } from "../events.js";
+import { getElement } from "../dom.js";
 
 /**
  * ListNode — Client-side list management.
@@ -278,8 +279,3 @@ export class ListNode extends Node {
   }
 }
 
-function getElement(ref: unknown): HTMLElement | null {
-  if (ref instanceof HTMLElement) return ref;
-  if (typeof ref === "string") return document.querySelector(ref);
-  return null;
-}

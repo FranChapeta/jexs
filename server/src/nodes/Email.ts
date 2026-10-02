@@ -1,7 +1,7 @@
 import nodemailer from "nodemailer";
 import type { Transporter, SendMailOptions } from "nodemailer";
 import type SMTPTransport from "nodemailer/lib/smtp-transport/index.js";
-import { Node, Context, NodeValue, resolveFields, createHttpError } from "@jexs/core";
+import { Node, Context, NodeValue, resolveFields, createHttpError, isObject } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { parseTls, redactUrl, TLS_STRINGS } from "../connection.js";
 
@@ -9,10 +9,6 @@ export type SmtpOptions = SMTPTransport.Options;
 
 /** One entry of nodemailer's `attachments` */
 type EmailAttachment = NonNullable<SendMailOptions["attachments"]>[number];
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
 
 
 const SMTP_SCHEMES = new Set(["smtp", "smtps"]);

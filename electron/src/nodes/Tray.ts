@@ -78,7 +78,7 @@ export class TrayNode extends Node {
         const steps = def.do;
         tray.removeAllListeners("click");
         tray.on("click", () => {
-          void runStepsDetached(steps, childContext(context, {}), def, "[TrayNode] click handler failed:");
+          void runStepsDetached(steps, childContext(context), def, "[TrayNode] click handler failed:");
         });
       }
 

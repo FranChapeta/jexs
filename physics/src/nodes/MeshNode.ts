@@ -16,7 +16,7 @@
  */
 
 import { Node, Context, NodeValue, resolveAll, resolveFields } from "@jexs/core";
-import { EntityStore } from "../EntityStore.js";
+import { EntityStore, getStore } from "../EntityStore.js";
 import { computeBounds } from "../Bvh.js";
 import type {
   MeshData, MeshEntry, MeshMaterial, NodeData, Scene, Bounds,
@@ -621,13 +621,6 @@ function parseGltfJson(
 }
 
 // ─── Node ────────────────────────────────────────────────────────────────────
-
-function getStore(context: Context): EntityStore | null {
-  const selector = context._glSelector as string | undefined;
-  if (!selector) return null;
-  const stores = context._entityStores as Record<string, EntityStore> | undefined;
-  return stores?.[selector] ?? null;
-}
 
 function randomName(): string {
   return `mesh_${Math.random().toString(36).slice(2, 8)}`;

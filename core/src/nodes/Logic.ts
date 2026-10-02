@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, childContext } from "./Node.js";
+import { Node, Context, NodeValue, childContext, loopScope } from "./Node.js";
 import { resolve, resolveAll, isStep, runSteps } from "../Resolver.js";
 import { hasAnyKey, isObject } from "../helpers.js";
 import type { JexsNodeSchema } from "../schema.js";
@@ -282,14 +282,8 @@ export class LogicNode extends Node {
       // result (e.g. rendering N elements from a collection).
       if (arr.length === 0) return null;
 
-      const buildContext = (item: unknown, i: number): Context => childContext(context, {
-        [itemName]: item,
-        ...(keyName ? { [keyName]: i } : {}),
-        loop: {
-          item, index: i, key: i,
-          first: i === 0, last: i === arr.length - 1, length: arr.length,
-        },
-      });
+      const buildContext = (item: unknown, i: number): Context =>
+        loopScope(context, keyName ? { [itemName]: item, [keyName]: i } : { [itemName]: item }, item, i, arr.length);
 
 
       if (this.toBoolean(parallel)) {

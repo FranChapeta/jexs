@@ -125,7 +125,7 @@ async function run(args: string[]): Promise<void> {
   if (nodes.length === 0) nodes = [...coreNodes(), ...serverNodes({ root: root ?? "." })];
   const resolve = createResolver(nodes);
   const context: Context = { ...entryContext(path.dirname(abs)), env: process.env as Record<string, string>, args: parseArgs(appArgs) };
-  await Promise.resolve(resolve({ $file: path.basename(abs) }, context));
+  await resolve({ $file: path.basename(abs) }, context);
 }
 
 // Resolve a `run` target to an entry file path: a local file/dir is used as-is; anything else is

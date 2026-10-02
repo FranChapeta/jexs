@@ -5,9 +5,10 @@ import path from "node:path";
 import { URL } from "node:url";
 import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
-import { Context, Node, NodeValue, isHttpError, isStep, resolve, resolveAll, resolveFields } from "@jexs/core";
+import { Context, Node, NodeValue, isHttpError, isObject, isStep, resolve, resolveAll, resolveFields } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { safeRelative } from "./File.js";
+import { isResponse } from "./Router.js";
 import { serviceWorkerScript } from "../sw.js";
 
 /**
@@ -255,7 +256,7 @@ async function handleRequest(
     for (const step of listener.steps) {
       result = await resolve(step, context);
       if (isReturn(result)) {
-        result = (result as Record<string, unknown>).$return ?? null;
+        result = result.$return ?? null;
         break;
       }
       if (isResponse(result)) break;
@@ -280,7 +281,7 @@ async function handleRequest(
     if (
       deferred?.length &&
       isResponse(result) &&
-      isHtmlResponse(result as Record<string, unknown>)
+      isHtmlResponse(result)
     ) {
       await sendStreamingResponse(
         res,
@@ -322,14 +323,8 @@ async function handleRequest(
   }
 }
 
-function isResponse(value: unknown): boolean {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  return "response" in (value as Record<string, unknown>);
-}
-
-function isReturn(value: unknown): boolean {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  return "$return" in (value as Record<string, unknown>);
+function isReturn(value: unknown): value is { $return: unknown } {
+  return isObject(value) && "$return" in value;
 }
 
 /** Whether the response body is HTML (explicit or inferred from string content). */

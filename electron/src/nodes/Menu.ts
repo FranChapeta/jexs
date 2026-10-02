@@ -1,5 +1,5 @@
 import {
-  Node, Context, NodeValue, childContext, resolve, resolveFields, runStepsDetached,
+  Node, Context, NodeValue, childContext, resolve, resolveFields, runStepsDetached, isObject,
 } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { targetWindow, windowNameOf } from "./Window.js";
@@ -20,10 +20,6 @@ const ITEM_TYPES = ["normal", "separator", "submenu", "checkbox", "radio"] as co
 
 /** Fields resolved per item. `do` and `submenu` are deliberately absent. */
 const SCALAR_FIELDS = ["label", "accelerator", "role", "type", "checked", "enabled", "visible", "id"];
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
 
 /** Per-window menus, so macOS can swap the app menu as focus moves. */
 const menuByWindow = new Map<string, Electron.Menu>();

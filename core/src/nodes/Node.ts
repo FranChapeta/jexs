@@ -69,6 +69,21 @@ export function childContext(parent: Context, extra?: Record<PropertyKey, unknow
   return child;
 }
 
+/**
+ * The scope one loop iteration runs in: `vars` (the item and its position, under
+ * the names the step chose) plus `loop`, with the item, its index and key,
+ * whether it is first or last, and the count.
+ */
+export function loopScope(
+  parent: Context, vars: Record<string, unknown>,
+  item: unknown, index: number, length: number, key: string | number = index,
+): Context {
+  return childContext(parent, {
+    ...vars,
+    loop: { item, index, key, first: index === 0, last: index === length - 1, length },
+  });
+}
+
 export abstract class Node {
   /**
    * JSON schema describing this Node's handler methods. Subclasses override with

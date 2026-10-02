@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, resolveFields } from "@jexs/core";
+import { Node, Context, NodeValue, resolveFields, isObject } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
 /** Element type of OpenDialogOptions.properties (the string-literal union). */
@@ -6,10 +6,6 @@ type OpenProp = NonNullable<Electron.OpenDialogOptions["properties"]>[number];
 
 const MESSAGE_TYPES = ["none", "info", "error", "question", "warning"] as const;
 type MessageType = (typeof MESSAGE_TYPES)[number];
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
 
 /** Build OpenDialogOptions from resolved siblings. Pure — no electron runtime. */
 export function openDialogOptions(r: Record<string, unknown>): Electron.OpenDialogOptions {

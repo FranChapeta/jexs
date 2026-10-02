@@ -1,4 +1,4 @@
-import { Node, Context, childContext } from "./Node.js";
+import { Node, Context, loopScope } from "./Node.js";
 import { resolve, resolveAll } from "../Resolver.js";
 import { getNestedValue } from "../helpers.js";
 import { nextRandom } from "./Math.js";
@@ -399,63 +399,53 @@ export class ArrayNode extends Node {
   }
 
   reverse(def: Record<string, unknown>, c: Context) {
-    return resolve(def.clone, c, cl =>
-      resolve(def.$reverse, c, v => mutArr(v, this.toBoolean(cl)).reverse()));
+    return resolveAll([def.$reverse, def.clone], c, ([v, cl]) => mutArr(v, this.toBoolean(cl)).reverse());
   }
 
   unique(def: Record<string, unknown>, c: Context) {
-    return resolve(def.clone, c, cl => {
+    return resolveAll([def.$unique, def.clone], c, ([v, cl]) => {
       const clone = this.toBoolean(cl);
-      return resolve(def.$unique, c, v => {
-        const u = [...new Set(this.toArray(v))];
-        if (clone || !Array.isArray(v)) return u;
-        v.splice(0, v.length, ...u);
-        return v;
-      });
+      const u = [...new Set(this.toArray(v))];
+      if (clone || !Array.isArray(v)) return u;
+      v.splice(0, v.length, ...u);
+      return v;
     });
   }
 
   flatten(def: Record<string, unknown>, c: Context) {
-    return resolve(def.clone, c, cl => {
+    return resolveAll([def.$flatten, def.clone], c, ([v, cl]) => {
       const clone = this.toBoolean(cl);
-      return resolve(def.$flatten, c, v => {
-        const f = this.toArray(v).flat(Infinity);
-        if (clone || !Array.isArray(v)) return f;
-        v.splice(0, v.length, ...f);
-        return v;
-      });
+      const f = this.toArray(v).flat(Infinity);
+      if (clone || !Array.isArray(v)) return f;
+      v.splice(0, v.length, ...f);
+      return v;
     });
   }
 
   sort(def: Record<string, unknown>, c: Context) {
-    return resolve(def.clone, c, cl =>
-      resolve(def.$sort, c, v => sortInPlace(mutArr(v, this.toBoolean(cl)), false)));
+    return resolveAll([def.$sort, def.clone], c, ([v, cl]) => sortInPlace(mutArr(v, this.toBoolean(cl)), false));
   }
 
   sortDesc(def: Record<string, unknown>, c: Context) {
-    return resolve(def.clone, c, cl =>
-      resolve(def.$sortDesc, c, v => sortInPlace(mutArr(v, this.toBoolean(cl)), true)));
+    return resolveAll([def.$sortDesc, def.clone], c, ([v, cl]) => sortInPlace(mutArr(v, this.toBoolean(cl)), true));
   }
 
   shuffle(def: Record<string, unknown>, c: Context) {
-    return resolve(def.clone, c, cl =>
-      resolve(def.$shuffle, c, v => shuffleInPlace(mutArr(v, this.toBoolean(cl)), c)));
+    return resolveAll([def.$shuffle, def.clone], c, ([v, cl]) => shuffleInPlace(mutArr(v, this.toBoolean(cl)), c));
   }
 
   sortBy(def: Record<string, unknown>, c: Context) {
-    return resolve(def.clone, c, cl => {
+    return resolveAll([def.$sortBy, def.clone], c, ([args, cl]) => {
       const clone = this.toBoolean(cl);
-      return resolve(def.$sortBy, c, args => {
-        const a = this.toArray(args);
-        const arr = mutArr(a[0], clone);
-        const key = this.toString(a[1]);
-        const direction = a.length > 2 && a[2] === "desc" ? -1 : 1;
-        return arr.sort((x, y) => {
-          const xVal = this.isObject(x) ? (x as Record<string, unknown>)[key] : undefined;
-          const yVal = this.isObject(y) ? (y as Record<string, unknown>)[key] : undefined;
-          if (typeof xVal === "number" && typeof yVal === "number") return (xVal - yVal) * direction;
-          return this.toString(xVal).localeCompare(this.toString(yVal)) * direction;
-        });
+      const a = this.toArray(args);
+      const arr = mutArr(a[0], clone);
+      const key = this.toString(a[1]);
+      const direction = a.length > 2 && a[2] === "desc" ? -1 : 1;
+      return arr.sort((x, y) => {
+        const xVal = this.isObject(x) ? (x as Record<string, unknown>)[key] : undefined;
+        const yVal = this.isObject(y) ? (y as Record<string, unknown>)[key] : undefined;
+        if (typeof xVal === "number" && typeof yVal === "number") return (xVal - yVal) * direction;
+        return this.toString(xVal).localeCompare(this.toString(yVal)) * direction;
       });
     });
   }
@@ -480,95 +470,81 @@ export class ArrayNode extends Node {
   }
 
   push(def: Record<string, unknown>, c: Context) {
-    return resolve(def.clone, c, cl => {
+    return resolveAll([def.$push, def.clone], c, ([args, cl]) => {
       const clone = this.toBoolean(cl);
-      return resolve(def.$push, c, args => {
-        const a = this.toArray(args);
-        const item = a.length > 1 ? a[1] : undefined;
-        if (!Array.isArray(a[0])) return [item];
-        const arr = clone ? [...a[0]] : a[0];
-        arr.push(item);
-        return arr;
-      });
+      const a = this.toArray(args);
+      const item = a.length > 1 ? a[1] : undefined;
+      if (!Array.isArray(a[0])) return [item];
+      const arr = clone ? [...a[0]] : a[0];
+      arr.push(item);
+      return arr;
     });
   }
 
   unshift(def: Record<string, unknown>, c: Context) {
-    return resolve(def.clone, c, cl => {
+    return resolveAll([def.$unshift, def.clone], c, ([args, cl]) => {
       const clone = this.toBoolean(cl);
-      return resolve(def.$unshift, c, args => {
-        const a = this.toArray(args);
-        const item = a.length > 1 ? a[1] : undefined;
-        if (!Array.isArray(a[0])) return [item];
-        const arr = clone ? [...a[0]] : a[0];
-        arr.unshift(item);
-        return arr;
-      });
+      const a = this.toArray(args);
+      const item = a.length > 1 ? a[1] : undefined;
+      if (!Array.isArray(a[0])) return [item];
+      const arr = clone ? [...a[0]] : a[0];
+      arr.unshift(item);
+      return arr;
     });
   }
 
   pop(def: Record<string, unknown>, c: Context) {
-    return resolve(def.clone, c, cl => {
+    return resolveAll([def.$pop, def.clone], c, ([v, cl]) => {
       const clone = this.toBoolean(cl);
-      return resolve(def.$pop, c, v => {
-        if (!Array.isArray(v)) return undefined;
-        return clone ? v[v.length - 1] : v.pop();
-      });
+      if (!Array.isArray(v)) return undefined;
+      return clone ? v[v.length - 1] : v.pop();
     });
   }
 
   shift(def: Record<string, unknown>, c: Context) {
-    return resolve(def.clone, c, cl => {
+    return resolveAll([def.$shift, def.clone], c, ([v, cl]) => {
       const clone = this.toBoolean(cl);
-      return resolve(def.$shift, c, v => {
-        if (!Array.isArray(v)) return undefined;
-        return clone ? v[0] : v.shift();
-      });
+      if (!Array.isArray(v)) return undefined;
+      return clone ? v[0] : v.shift();
     });
   }
 
   remove(def: Record<string, unknown>, c: Context) {
-    return resolve(def.clone, c, cl => {
+    return resolveAll([def.$remove, def.clone], c, ([args, cl]) => {
       const clone = this.toBoolean(cl);
-      return resolve(def.$remove, c, args => {
-        const a = this.toArray(args);
-        const arr = a[0];
-        if (!Array.isArray(arr)) return undefined;
-        const i = this.toNumber(a[1]);
-        if (i < 0 || i >= arr.length) return undefined;
-        return clone ? arr[i] : arr.splice(i, 1)[0];
-      });
+      const a = this.toArray(args);
+      const arr = a[0];
+      if (!Array.isArray(arr)) return undefined;
+      const i = this.toNumber(a[1]);
+      if (i < 0 || i >= arr.length) return undefined;
+      return clone ? arr[i] : arr.splice(i, 1)[0];
     });
   }
 
   insert(def: Record<string, unknown>, c: Context) {
-    return resolve(def.clone, c, cl => {
+    return resolveAll([def.$insert, def.clone], c, ([args, cl]) => {
       const clone = this.toBoolean(cl);
-      return resolve(def.$insert, c, args => {
-        const a = this.toArray(args);
-        if (!Array.isArray(a[0])) return a[0];
-        const arr = clone ? [...a[0]] : a[0];
-        const i = Math.max(0, Math.min(this.toNumber(a[1]), arr.length));
-        arr.splice(i, 0, a[2]);
-        return arr;
-      });
+      const a = this.toArray(args);
+      if (!Array.isArray(a[0])) return a[0];
+      const arr = clone ? [...a[0]] : a[0];
+      const i = Math.max(0, Math.min(this.toNumber(a[1]), arr.length));
+      arr.splice(i, 0, a[2]);
+      return arr;
     });
   }
 
   move(def: Record<string, unknown>, c: Context) {
-    return resolve(def.clone, c, cl => {
+    return resolveAll([def.$move, def.clone], c, ([args, cl]) => {
       const clone = this.toBoolean(cl);
-      return resolve(def.$move, c, args => {
-        const a = this.toArray(args);
-        if (!Array.isArray(a[0])) return a[0];
-        const arr = clone ? [...a[0]] : a[0];
-        const from = this.toNumber(a[1]);
-        if (from < 0 || from >= arr.length) return arr;
-        const to = Math.max(0, Math.min(this.toNumber(a[2]), arr.length - 1));
-        const [item] = arr.splice(from, 1);
-        arr.splice(to, 0, item);
-        return arr;
-      });
+      const a = this.toArray(args);
+      if (!Array.isArray(a[0])) return a[0];
+      const arr = clone ? [...a[0]] : a[0];
+      const from = this.toNumber(a[1]);
+      if (from < 0 || from >= arr.length) return arr;
+      const to = Math.max(0, Math.min(this.toNumber(a[2]), arr.length - 1));
+      const [item] = arr.splice(from, 1);
+      arr.splice(to, 0, item);
+      return arr;
     });
   }
 
@@ -599,10 +575,7 @@ export class ArrayNode extends Node {
           if (i >= items.length) return results;
           const idx = i++;
           const item = items[idx];
-          const itemCtx: Context = childContext(context, {
-            [itemName]: item, [indexName]: idx,
-            loop: { item, index: idx, key: idx, first: idx === 0, last: idx === items.length - 1, length: items.length },
-          });
+          const itemCtx = loopScope(context, { [itemName]: item, [indexName]: idx }, item, idx, items.length);
           return resolve(condition, itemCtx, v => {
             if (self.toBoolean(v)) results.push(item);
             return next();
@@ -627,10 +600,7 @@ export class ArrayNode extends Node {
           if (i >= items.length) return undefined;
           const idx = i++;
           const item = items[idx];
-          const itemCtx: Context = childContext(context, {
-            [itemName]: item, [indexName]: idx,
-            loop: { item, index: idx, key: idx, first: idx === 0, last: idx === items.length - 1, length: items.length },
-          });
+          const itemCtx = loopScope(context, { [itemName]: item, [indexName]: idx }, item, idx, items.length);
           return resolve(condition, itemCtx, v => {
             if (self.toBoolean(v)) return item;
             return next();
@@ -657,10 +627,7 @@ export class ArrayNode extends Node {
           if (i >= items.length) return results;
           const idx = i++;
           const item = items[idx];
-          const itemCtx: Context = childContext(context, {
-            [itemName]: item, [indexName]: idx,
-            loop: { item, index: idx, key: idx, first: idx === 0, last: idx === items.length - 1, length: items.length },
-          });
+          const itemCtx = loopScope(context, { [itemName]: item, [indexName]: idx }, item, idx, items.length);
           return resolve(template, itemCtx, v => { results.push(v); return next(); });
         }
         return next();
@@ -683,10 +650,7 @@ export class ArrayNode extends Node {
             if (i >= items.length) return accumulator;
             const idx = i++;
             const item = items[idx];
-            const itemCtx: Context = childContext(context, {
-              [itemName]: item, [indexName]: idx, accumulator,
-              loop: { item, index: idx, key: idx, first: idx === 0, last: idx === items.length - 1, length: items.length },
-            });
+            const itemCtx = loopScope(context, { [itemName]: item, [indexName]: idx, accumulator }, item, idx, items.length);
             return resolve(reducer, itemCtx, v => { accumulator = v; return next(); });
           }
           return next();
