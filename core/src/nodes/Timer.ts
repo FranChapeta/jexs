@@ -18,7 +18,7 @@
  */
 
 import { Node, Context, NodeValue } from "./Node.js";
-import { resolve, resolveAll, runSteps, runStepsDetached } from "../Resolver.js";
+import { resolve, resolveAll, runStepsDetached } from "../Resolver.js";
 import type { JexsNodeSchema, JexsMethodSchema } from "../schema.js";
 
 // Lifecycle ops shared by `tick` and `cron`. `start` differs per timer kind (its
@@ -328,7 +328,7 @@ function startCron(
       paused: false, pausedAt: null, pausedTotal: 0, registry,
     };
 
-    state.timerId = setInterval(async () => {
+    state.timerId = setInterval(() => {
       if (!state.registry.has(state.id) || state.paused) return;
 
       const now = Date.now();
@@ -341,11 +341,7 @@ function startCron(
         elapsed: (now - state.startTime - state.pausedTotal) / 1000,
       };
 
-      try {
-        await runSteps(state.steps, state.context);
-      } catch (err) {
-        console.error(`[cron] Error in "${state.id}":`, err);
-      }
+      void runStepsDetached(state.steps, state.context, state.def, `[cron] Error in "${state.id}":`);
     }, intervalMs);
 
     registry.set(state.id, state);

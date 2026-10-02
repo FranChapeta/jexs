@@ -463,6 +463,18 @@ const cases: Case[] = [
     expr: { $tag: "div", "data-x": "1", "hx-get": "/y" } },
   { label: "element if-on-tag is gated, not LogicNode if (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $tag: "div", if: { $var: "show" }, content: ["x"] } },
+  { label: "element events from a step (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $tag: "button", events: { $var: "handlers" } } },
+  { label: "element events from a string-output step (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $tag: "button", events: { $upper: "click" } } },
+  { label: "element events map still checks its handlers (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $tag: "button", events: { click: { do: [{ $concta: 1 }] } } } },
+  { label: "element events from a step (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $tag: "button", events: { $var: "handlers" } } },
+  { label: "element events from a string-output step (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $tag: "button", events: { $upper: "click" } } },
+  { label: "element events map still checks its handlers (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $tag: "button", events: { click: { do: [{ $concta: 1 }] } } } },
 
   // Map slots (`map: true`). The KEYS are names the node keeps verbatim; a key
   // without `$` is never an op, so one spelled like an op is just a name. Only

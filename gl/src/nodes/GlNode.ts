@@ -1719,19 +1719,18 @@ export class GlNode extends Node {
   ["gl-ssao"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
-    return resolve(def["$gl-ssao"], context, enabled => {
+    return resolveFields(def, context, r => {
+      const enabled = r["$gl-ssao"];
       if (!enabled || enabled === "false") { inst.ssao = null; return null; }
-      return resolveFields(def, context, r => {
-        inst.ssao = {
-          radius: Number(r["radius"] ?? 0.5),
-          bias: Number(r["bias"] ?? 0.025),
-          intensity: Number(r["intensity"] ?? 1.5),
-        };
-        if (!inst.ssaoProg) initSsao(inst, GlNode.createProgram);
-        inst.dirty = true;
-        GlNode.scheduleRender(inst);
-        return null;
-      });
+      inst.ssao = {
+        radius: Number(r["radius"] ?? 0.5),
+        bias: Number(r["bias"] ?? 0.025),
+        intensity: Number(r["intensity"] ?? 1.5),
+      };
+      if (!inst.ssaoProg) initSsao(inst, GlNode.createProgram);
+      inst.dirty = true;
+      GlNode.scheduleRender(inst);
+      return null;
     });
   }
 

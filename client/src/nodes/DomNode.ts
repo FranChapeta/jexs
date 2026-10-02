@@ -692,11 +692,10 @@ export class DomNode extends Node {
   }
   closest(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$closest, context, args => {
-      if (Array.isArray(args) && args.length >= 2) {
-        const el = args[0] as HTMLElement;
-        if (el && typeof el.closest === "function") return el.closest(String(args[1]));
-      }
-      return null;
+      if (!Array.isArray(args) || args.length < 2) return null;
+      const [ref, selector] = args;
+      const el = typeof ref === "string" ? document.querySelector(ref) : ref;
+      return el instanceof Element ? el.closest(String(selector)) : null;
     });
   }
   getValue(def: Record<string, unknown>, context: Context): NodeValue {

@@ -236,7 +236,7 @@ export class ArrayNode extends Node {
       output: "array",
       markdownDescription: "Transforms each item by resolving a template.\nEach iteration exposes the current element as `item` and its position as `index` (rename via the `item`/`index` siblings), plus `loop` (`item`, `index`, `key`, `first`, `last`, `length`).\nWhen `do` is an array it is resolved as a literal (all elements), not as sequential steps.",
       examples: [
-        "{ \"$map\": { \"$var\": \"nums\" }, \"$as\": \"num\", \"do\": { \"$multiply\": [{ \"$var\": \"num\" }, 2] } }",
+        "{ \"$map\": { \"$var\": \"nums\" }, \"item\": \"num\", \"do\": { \"$multiply\": [{ \"$var\": \"num\" }, 2] } }",
       ],
       siblings: {
         item: {

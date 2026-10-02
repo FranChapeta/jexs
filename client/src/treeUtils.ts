@@ -108,7 +108,7 @@ export function describeNode(node: unknown): { type: string; summary: string; co
   }
 
   if (op === "if") return { type: "if/then/else", summary: "", color: "#a855f7" };
-  if (op === "foreach") return { type: "foreach", summary: obj.$as ? `$${obj.$as}` : "", color: "#a855f7" };
+  if (op === "foreach") return { type: "foreach", summary: typeof obj.item === "string" ? obj.item : "", color: "#a855f7" };
   if (op === "switch") return { type: "switch", summary: "", color: "#a855f7" };
 
   if (op === "var") return { type: "var", summary: String(value), color: "#f97316" };

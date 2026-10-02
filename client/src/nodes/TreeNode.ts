@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue } from "@jexs/core";
-import { resolve, resolveAll, runSteps, runStepsDetached } from "@jexs/core";
+import { resolve, resolveAll, runSteps, runStepsDetached, isStep } from "@jexs/core";
 import {
   resolvePath, adjustPathAfterRemoval, getChildArrayKey,
   getChildGroups, describeNode, getEditMode, getTextContent, getPotentialChildKeys,
@@ -322,9 +322,9 @@ export class TreeNode extends Node {
   }
 
   ["tree-insert"](def: Record<string, unknown>, context: Context): NodeValue {
-    // Extract value before resolution to prevent ElementNode from rendering
+    // A literal value is inserted as written, so a node holding element
+    // templates is not rendered; only a step (a `$var`, say) is resolved first.
     const rawValue = def.value;
-    const isVarRef = this.isObject(rawValue) && "var" in rawValue;
 
     return resolveAll([def["$tree-insert"], def.path ?? null], context, ([pathRaw, path]) => {
       const rt = getRuntime(context, String(pathRaw));
@@ -367,7 +367,7 @@ export class TreeNode extends Node {
         return delta;
       };
 
-      return isVarRef ? resolve(rawValue, context, doInsert) : doInsert(rawValue);
+      return isStep(rawValue) ? resolve(rawValue, context, doInsert) : doInsert(rawValue);
     });
   }
 

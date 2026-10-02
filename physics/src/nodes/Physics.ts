@@ -856,12 +856,15 @@ export class PhysicsNode extends Node {
     return resolve(def.dt ?? null, context, dtRaw => {
       const dt = dtRaw !== null ? Number(dtRaw) : 1 / 60;
       const contacts = physicsStep(world.store, world.config, dt, world.constraints);
+      // Read now: `contacts` is a shared scratch array that another world's step
+      // may refill before async handlers finish.
+      const count = contacts.length;
       world.store.deferringRemovals = true;
       const fired = fireCollisionHandlers(world, contacts);
       const finish = (): number => {
         world.store.flushRemovals();
         if (world.onStep) world.onStep();
-        return contacts.length;
+        return count;
       };
       return fired instanceof Promise ? fired.then(finish) : finish();
     });

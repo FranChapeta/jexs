@@ -51,9 +51,6 @@ export interface RayHit {
   point: { x: number; y: number; z: number };
 }
 
-// Pre-allocated hits array to reduce GC pressure on frequent raycasts
-const _hits: RayHit[] = [];
-
 /**
  * Cast a ray against all visible entities in an EntityStore.
  * Returns hits sorted by distance (nearest first).
@@ -66,7 +63,9 @@ export function raycastStore(
   dx: number, dy: number, dz: number,
   maskGroups?: Set<string> | null,
 ): RayHit[] {
-  _hits.length = 0;
+  // A new array per call: the hits are handed to the template, which may store
+  // them, so the next raycast must not reuse the same array.
+  const hits: RayHit[] = [];
   const d = store.data;
 
   for (let i = 0; i < store.count; i++) {
@@ -99,7 +98,7 @@ export function raycastStore(
           localOx, localOy, localOz, dx, dy, dz, Infinity, out,
         );
         if (triHit < 0) continue;
-        _hits.push({
+        hits.push({
           id: meta.id, slot: i, distance: out.t,
           point: { x: ox + dx * out.t, y: oy + dy * out.t, z: oz + dz * out.t },
         });
@@ -107,7 +106,7 @@ export function raycastStore(
       }
     }
 
-    _hits.push({
+    hits.push({
       id: meta.id,
       slot: i,
       distance: t,
@@ -115,6 +114,6 @@ export function raycastStore(
     });
   }
 
-  _hits.sort((a, b) => a.distance - b.distance);
-  return _hits;
+  hits.sort((a, b) => a.distance - b.distance);
+  return hits;
 }

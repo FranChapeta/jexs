@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue } from "./Node.js";
-import { resolve, resolveAll, translate, isOwnedKey } from "../Resolver.js";
+import { resolve, resolveAll, translate, isOwnedKey, isStep } from "../Resolver.js";
 import { hasVariables, interpolate } from "./Variables.js";
 import { escapeHtml, escapeScriptJson, isObject } from "../helpers.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
@@ -23,7 +23,7 @@ const tag = (siblings: Record<string, A>) => ({ siblings });
 // (not per-variant). `class`/`style` accept their special shapes.
 const GLOBAL: Record<string, A> = {
   content: { description: "Children of the element: a string or mixed array of strings and expressions." },
-  events:  { $ref: "#/$defs/_eventMap", description: "DOM event handlers, keyed by event name: `{ \"$tag\": \"button\", \"events\": { \"click\": { \"do\": [...] } } }`. Two names are not DOM events: `load` runs once when the element is hydrated, and `sw-message` runs for each message the service worker posts (`$sw-post`), with the message as `value`." },
+  events:  { $ref: "#/$defs/_eventMap", description: "DOM event handlers, keyed by event name: `{ \"$tag\": \"button\", \"events\": { \"click\": { \"do\": [...] } } }`, or a step that resolves to such a map, read as data. Two names are not DOM events: `load` runs once when the element is hydrated, and `sw-message` runs for each message the service worker posts (`$sw-post`), with the message as `value`." },
   class:   { type: ["string", "array", "object"], description: "Class list: a string, array, or `{ className: bool }` map." },
   id:      str("Element id."),
   style:   { type: ["object", "string"], description: "Inline style: a camel/kebab-case object, or a string." },
@@ -47,12 +47,6 @@ const SELF_CLOSING = new Set([
   "link", "meta", "source", "track", "wbr",
 ]);
 
-let elementIdCounter = 0;
-
-export function resetElementIdCounter(): void {
-  elementIdCounter = 0;
-}
-
 /**
  * ElementNode - Renders JSON tag definitions to HTML strings.
  *
@@ -69,20 +63,22 @@ export class ElementNode extends Node {
   // An `events` value is a MAP of event-name → handler, so each handler's shape
   // (`do` steps, `preventDefault`, `stopPropagation`) is documented via
   // additionalProperties rather than mis-routed through exprFlat (event names
-  // aren't handler keys, so the generic map helper gives no completion).
+  // aren't handler keys, so the generic map helper gives no completion). A step
+  // in its place resolves to the map, so it is checked as one with an object output.
   static schemaDefs: Record<string, Record<string, unknown>> = {
     _eventMap: {
-      type: "object",
-      additionalProperties: { $ref: "#/$defs/_eventHandler" },
+      if: { type: "object", propertyNames: { not: { pattern: "^\\$" } } },
+      then: { type: "object", additionalProperties: { $ref: "#/$defs/_eventHandler" } },
+      else: { $ref: "#/$defs/exprFlat_object" },
     },
     _eventHandler: {
       if: { type: "object" },
       then: {
         properties: {
-          // `do` is an array of steps, or a single expression the runtime
-          // (`buildEventsAttr`) wraps into a one-step array. Both branches require
-          // an expression object: a bare primitive step is a no-op, so it's
-          // rejected here (unlike `anyVal`, whose trailing `else` would allow it).
+          // `do` is an array of steps or a single one, both run as they are. Both
+          // branches require an expression object: a bare primitive step is a
+          // no-op, so it's rejected here (unlike `anyVal`, whose trailing `else`
+          // would allow it).
           do: {
             if: { type: "array" },
             then: { items: { $ref: "#/$defs/exprFlat" } },
@@ -161,7 +157,11 @@ function renderElement(def: Record<string, unknown>, context: Context): unknown 
   return resolve(def.$tag, context, tagRaw => {
     const tag = String(tagRaw);
     const isSelfClosing = SELF_CLOSING.has(tag);
-    const eventsAttr = buildEventsAttr(def);
+    // A step resolves to the map; a literal map is read as written, so its
+    // handlers' steps stay steps for the client to run.
+    const eventsResult = isStep(def.events)
+      ? resolve(def.events, context, buildEventsAttr)
+      : buildEventsAttr(def.events);
     // Self-closing tags can't have children — for them, `content` is the real
     // HTML attribute (e.g. `<meta name="description" content="...">`), not a
     // reserved children key. Pass that hint to renderAttrs.
@@ -172,7 +172,8 @@ function renderElement(def: Record<string, unknown>, context: Context): unknown 
     const prefix = tag === "html" ? "<!DOCTYPE html>" : "";
 
     if (isSelfClosing) {
-      return resolve(attrsResult, context, attrs => `${prefix}<${tag}${attrs as string}${eventsAttr}>`);
+      return resolveAll([attrsResult, eventsResult], context, ([attrs, events]) =>
+        `${prefix}<${tag}${attrs as string}${events as string}>`);
     }
 
     const injected = buildInjections(tag, def, context);
@@ -211,48 +212,41 @@ function renderElement(def: Record<string, unknown>, context: Context): unknown 
       contentResult = renderContent(def.content, context);
     }
 
-    return resolveAll([attrsResult, contentResult], context, parts => {
-      const [attrs, content] = parts as [string, string];
-      return `${prefix}<${tag}${attrs}${eventsAttr}>${injected}${content}</${tag}>`;
+    return resolveAll([attrsResult, eventsResult, contentResult], context, parts => {
+      const [attrs, events, content] = parts as [string, string, string];
+      return `${prefix}<${tag}${attrs}${events}>${injected}${content}</${tag}>`;
     });
   });
 }
 
 interface EventHandler {
   type: string;
-  do: unknown[];
+  /** One step or an array of them. */
+  do: unknown;
   preventDefault?: boolean;
   stopPropagation?: boolean;
   /** Steps run with `error` bound if `do` fails, as on any step. */
   $catch?: unknown;
 }
 
-function buildEventsAttr(def: Record<string, unknown>): string {
-  if (!def.events || typeof def.events !== "object" || Array.isArray(def.events)) return "";
+function buildEventsAttr(events: unknown): string {
+  if (!isObject(events)) return "";
 
   const eventsArr: EventHandler[] = [];
-  for (const [type, handler] of Object.entries(def.events as Record<string, unknown>)) {
-    if (handler && typeof handler === "object" && !Array.isArray(handler) && "do" in handler) {
-      const h = handler as Record<string, unknown>;
-      const evt: EventHandler = {
-        type,
-        do: Array.isArray(h.do) ? (h.do as unknown[]) : [h.do],
-      };
+  for (const [type, handler] of Object.entries(events)) {
+    if (isObject(handler) && "do" in handler) {
+      const h = handler;
+      const evt: EventHandler = { type, do: h.do };
       if (h.preventDefault) evt.preventDefault = true;
       if (h.stopPropagation) evt.stopPropagation = true;
       if (h.$catch !== undefined) evt.$catch = h.$catch;
       eventsArr.push(evt);
     } else {
-      eventsArr.push({ type, do: Array.isArray(handler) ? (handler as unknown[]) : [handler] });
+      eventsArr.push({ type, do: handler });
     }
   }
 
   if (eventsArr.length === 0) return "";
-
-  if (!def.id) {
-    def.id = `_jexs_${++elementIdCounter}`;
-  }
-
   return ` data-jexs-events="${escapeHtml(JSON.stringify(eventsArr))}"`;
 }
 

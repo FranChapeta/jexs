@@ -6,7 +6,8 @@ export const pageContext: Context = {};
 
 interface EventDef {
   type: string;
-  do: unknown[];
+  /** One step or an array of them. */
+  do: unknown;
   preventDefault?: boolean;
   stopPropagation?: boolean;
   $catch?: unknown;
