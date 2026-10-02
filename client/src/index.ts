@@ -1,6 +1,6 @@
 import {
-  WorkerNode, ProxyNode, createResolver, childContext,
-  coreNodes, Node, type Resolver,
+  WorkerNode, ProxyNode, createResolver, childContext, stepFields,
+  coreNodes, Node, type Resolver, type StepFields,
 } from "@jexs/core";
 import { DomNode } from "./nodes/DomNode.js";
 import { AudioNode } from "./nodes/AudioNode.js";
@@ -34,12 +34,14 @@ type HostMessage = HostCall | HostSteps;
 interface JexsHost {
   /** Handler keys the host owns, read synchronously before any step runs. */
   keys?: string[];
+  /** The fields of the host's ops that hold steps, forwarded unresolved. */
+  steps?: StepFields;
   /** Forward a locally-resolved call to the host. */
   invoke?: (call: unknown) => Promise<unknown>;
-  /** Report which keys live here, so the host can proxy them back. */
-  announce?: (keys: string[]) => void;
-  /** Keys the host registered after this page loaded. */
-  onKeys?: (cb: (added: string[]) => void) => void;
+  /** Report which keys live here, and their step fields, so the host can proxy them back. */
+  announce?: (keys: string[], steps: StepFields) => void;
+  /** Keys the host registered after this page loaded, with their step fields. */
+  onKeys?: (cb: (added: string[], steps?: StepFields) => void) => void;
   /**
    * Receive work pushed from the host. Either a single node call, or a step
    * array with optional scoped params — never both.
@@ -118,14 +120,14 @@ if (typeof window !== "undefined") {
   const host = (window as unknown as { jexsHost?: JexsHost }).jexsHost;
   if (host?.keys && host.invoke) {
     const invoke = host.invoke.bind(host);
-    const toHost = new ProxyNode(host.keys, (call) => invoke(call));
+    const toHost = new ProxyNode(host.keys, (call) => invoke(call), host.steps);
     resolver.registerNode(toHost);
 
     // The host can register nodes after this page loaded, so its key set is not
     // frozen at preload time. Re-registering installs the new keys; only ones
     // the resolver lacks are added, so local handlers still win.
-    host.onKeys?.((added) => {
-      if (toHost.addKeys(added).length > 0) resolver.registerNode(toHost);
+    host.onKeys?.((added, steps) => {
+      if (toHost.addKeys(added, steps).length > 0) resolver.registerNode(toHost);
     });
 
     // The mirror direction: tell the host which keys live here, so it can proxy
@@ -135,12 +137,15 @@ if (typeof window !== "undefined") {
     if (host.announce) {
       const announce = host.announce.bind(host);
       const own = (ks: Iterable<string>) => [...ks].filter((k) => !toHost.claims(k));
-      announce(own(resolver.keys));
+      const steps = (ks: string[]) =>
+        stepFields(ks.map((k) => resolver.nodeFor(k)).filter((n): n is Node => n !== undefined));
+      const ownKeys = own(resolver.keys);
+      announce(ownKeys, steps(ownKeys));
       // registerNode can run at any time (a lazy module loading, a plugin), so
       // the host is kept current rather than handed a boot-time snapshot.
       resolver.onKeysChange((added) => {
         const fresh = own(added);
-        if (fresh.length > 0) announce(fresh);
+        if (fresh.length > 0) announce(fresh, steps(fresh));
       });
     }
 

@@ -1,5 +1,5 @@
-import { createHttpError, GLOBAL_KEYS, ProxyNode, ownedKey } from "@jexs/core";
-import type { Context, Resolver } from "@jexs/core";
+import { createHttpError, GLOBAL_KEYS, ProxyNode, isObject, ownedKey, stepFields } from "@jexs/core";
+import type { Context, Node, Resolver, StepField, StepFields } from "@jexs/core";
 
 /**
  * The process boundary, both directions.
@@ -191,6 +191,20 @@ function deniedError(op: string, windowName: string): Error {
   );
 }
 
+/** A renderer's announced step fields, keeping only well-formed entries: it is
+ *  page-controlled input reaching the main process. */
+function readStepFields(value: unknown): StepFields {
+  const out: StepFields = {};
+  if (!isObject(value)) return out;
+  for (const [op, fields] of Object.entries(value)) {
+    if (!isObject(fields)) continue;
+    const kept: Record<string, StepField> = {};
+    for (const [name, kind] of Object.entries(fields)) if (kind === "steps" || kind === "nested") kept[name] = kind;
+    out[op] = kept;
+  }
+  return out;
+}
+
 /**
  * Install every IPC handler. Call once, after the resolver exists.
  *
@@ -214,6 +228,13 @@ export async function installBridge(hooks: BridgeHooks): Promise<void> {
   const localKeys = (): string[] =>
     [...resolver.keys].filter((key) => !rendererProxy?.claims(key));
 
+  /** Keys with the fields of theirs that hold steps, which the other side
+   *  forwards unresolved so the steps run here. */
+  const announcement = (keys: string[]): { keys: string[]; steps: StepFields } => ({
+    keys,
+    steps: stepFields(keys.map((key) => resolver.nodeFor(key)).filter((node): node is Node => node !== undefined)),
+  });
+
   function forwardToRenderer(call: Record<string, unknown>, context: Context): unknown {
     // No `window` sibling: DOM ops are declared by @jexs/client, and one package
     // cannot add a sibling to another package's op. Explicit targeting is
@@ -227,7 +248,7 @@ export async function installBridge(hooks: BridgeHooks): Promise<void> {
 
   // Read synchronously at preload time, before any step runs, so the renderer
   // can register its proxy for main's keys before the page resolves anything.
-  ipcMain.on("jexs:keys", (event) => { event.returnValue = localKeys(); });
+  ipcMain.on("jexs:keys", (event) => { event.returnValue = announcement(localKeys()); });
 
   // The sender's window becomes the implicit target, so a page can say
   // { "$window-close": true } and mean its own window.
@@ -246,18 +267,22 @@ export async function installBridge(hooks: BridgeHooks): Promise<void> {
   // Sent synchronously: a main-process sequence that opens a window and then
   // touches the DOM must not outrun this. `event.returnValue` MUST be set on
   // every path — a `sendSync` with no reply blocks the renderer forever.
-  ipcMain.on("jexs:renderer-keys", (event, announced: unknown) => {
+  ipcMain.on("jexs:renderer-keys", (event, announced: { keys?: unknown; steps?: unknown } | undefined) => {
     event.returnValue = true;
-    if (!Array.isArray(announced)) return;
+    if (!Array.isArray(announced?.keys)) return;
     // Adopt only what main lacks. After the first round the proxy's keys are in
     // the resolver too, so re-announcements filter down to genuinely new ones.
-    const fresh = announced.filter(
+    // Their step fields are kept either way: a page announces an op it loads
+    // lazily before the module is in, so its step fields arrive only when the
+    // page announces it again on load.
+    const steps = readStepFields(announced.steps);
+    const fresh = announced.keys.filter(
       (key): key is string => typeof key === "string" && !resolver.keys.has(key),
     );
-    if (fresh.length === 0) return;
+    if (fresh.length === 0) { rendererProxy?.addKeys([], steps); return; }
 
     rendererProxy ??= new ProxyNode([], forwardToRenderer);
-    rendererProxy.addKeys(fresh);
+    rendererProxy.addKeys(fresh, steps);
     // The resolver COPIES a node's keys into its dispatch map at registration,
     // so growing the proxy's own set is not enough — without re-registering the
     // new keys would never dispatch. Only absent keys are added, so first-wins
@@ -276,8 +301,9 @@ export async function installBridge(hooks: BridgeHooks): Promise<void> {
   resolver.onKeysChange((added) => {
     const fresh = added.filter((key) => !rendererProxy?.claims(key));
     if (fresh.length === 0) return;
+    const message = announcement(fresh);
     for (const win of BrowserWindow.getAllWindows()) {
-      win.webContents.send("jexs:keys-added", fresh);
+      win.webContents.send("jexs:keys-added", message);
     }
   });
 }

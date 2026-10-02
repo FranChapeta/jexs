@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import Ajv2020 from "ajv/dist/2020.js";
-import { buildPackageSchema, mergePackageSchemas, coreNodes } from "@jexs/core";
+import { buildPackageSchema, mergePackageSchemas, coreNodes, stepFields } from "@jexs/core";
 import { clientNodes } from "@jexs/client";
 import { serverNodes } from "@jexs/server";
 import {
@@ -186,4 +186,18 @@ test("no electron key collides with a core key", () => {
       assert.ok(!coreKeys.has(op), `electron op "${op}" shadows a core key`);
     }
   }
+});
+
+// A page that calls one of these ops goes through a ProxyNode, which forwards the
+// fields holding steps unresolved so the steps run in main, when main runs them.
+test("the step fields main announces to pages are the handler slots", () => {
+  const nodes = electronNodeClasses.map(C => Object.create(C.prototype));
+  assert.deepEqual(stepFields(nodes), {
+    "app-on": { do: "steps" },
+    menu: { $menu: "nested" },
+    notify: { do: "steps" },
+    shortcut: { do: "steps" },
+    tray: { menu: "nested", do: "steps" },
+    "window-run": { "$window-run": "steps" },
+  });
 });

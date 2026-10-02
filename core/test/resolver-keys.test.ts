@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  Node, ProxyNode, createResolver, coreNodes,
+  Node, ProxyNode, createResolver, coreNodes, stepFields,
 } from "../src/index.js";
-import type { Context, JexsNodeSchema } from "../src/index.js";
+import type { Context, JexsNodeSchema, NodeValue } from "../src/index.js";
 
 class LateNode extends Node {
   static schema: JexsNodeSchema = { lateop: { output: "string" } };
@@ -201,4 +201,66 @@ test("ProxyNode forwards resolved siblings and receives the context", () => {
     assert.deepEqual(seen[0].call, { $remotecall: "x", arg: "main" });
     assert.equal(seen[0].context.windowName, "editor");
   });
+});
+
+// Fields holding steps the remote op runs go over unresolved, so the steps run
+// on the side that owns the op, when it runs them, not in the caller at call time.
+test("a proxied op's steps field is forwarded unresolved, a single step included", async () => {
+  const resolver = createResolver(coreNodes());
+  const sent: Record<string, unknown>[] = [];
+  resolver.registerNode(new ProxyNode(["shortcut"], call => { sent.push(call); return true; }, { shortcut: { do: "steps" } }));
+  const ctx: Context = { key: "Ctrl+S" };
+
+  await resolver({ $shortcut: { $var: "key" }, do: [{ $setVars: { ran: true } }] }, ctx);
+  await resolver({ $shortcut: "Ctrl+O", do: { $setVars: { ran: true } } }, ctx);
+
+  assert.equal(ctx.ran, undefined, "the steps did not run in the caller");
+  assert.deepEqual(sent[0], { $shortcut: "Ctrl+S", do: [{ $setVars: { ran: true } }] });
+  assert.deepEqual(sent[1], { $shortcut: "Ctrl+O", do: { $setVars: { ran: true } } });
+});
+
+test("a field with nested steps is forwarded as written, unless a step produces it", async () => {
+  const resolver = createResolver(coreNodes());
+  const sent: Record<string, unknown>[] = [];
+  resolver.registerNode(new ProxyNode(["menu"], call => { sent.push(call); return true; }, { menu: { $menu: "nested" } }));
+  const items = [{ label: "Open", do: [{ $setVars: { opened: true } }] }];
+  const ctx: Context = { items };
+
+  await resolver({ $menu: [{ label: "Open", do: [{ $setVars: { opened: true } }] }] }, ctx);
+  await resolver({ $menu: { $var: "items" } }, ctx);
+
+  assert.equal(ctx.opened, undefined);
+  assert.deepEqual(sent[0], { $menu: items });
+  assert.deepEqual(sent[1], { $menu: items }, "a step producing the items resolves here, to the items as data");
+});
+
+test("addKeys adopts a key's step fields with it", async () => {
+  const resolver = createResolver(coreNodes());
+  const sent: Record<string, unknown>[] = [];
+  const proxy = new ProxyNode([], call => { sent.push(call); return true; });
+  proxy.addKeys(["notify"], { notify: { do: "steps" } });
+  resolver.registerNode(proxy);
+  const ctx: Context = {};
+  await resolver({ $notify: "Hi", do: [{ $setVars: { clicked: true } }] }, ctx);
+  assert.equal(ctx.clicked, undefined);
+  assert.deepEqual(sent[0], { $notify: "Hi", do: [{ $setVars: { clicked: true } }] });
+});
+
+// A page announces an op it loads lazily before the module is in, so the op's
+// step fields reach the host only when loading it reports the key as added.
+test("loading a lazy module reports its keys, whose step fields are then readable", async () => {
+  class Lazy extends Node {
+    static schema: JexsNodeSchema = { later: { siblings: { do: { steps: true } } } };
+    later(): NodeValue { return "loaded"; }
+  }
+  const resolver = createResolver(coreNodes());
+  resolver.registerLazy(["later"], r => r.registerNode(new Lazy()));
+  assert.deepEqual(stepFields([resolver.nodeFor("later")].filter((n): n is Node => n !== undefined)), {});
+
+  const added: string[][] = [];
+  resolver.onKeysChange(keys => added.push([...keys]));
+  assert.equal(await resolver({ $later: true }, {}), "loaded");
+
+  assert.deepEqual(added, [["later"]]);
+  assert.deepEqual(stepFields([resolver.nodeFor("later")!]), { later: { do: "steps" } });
 });
