@@ -76,8 +76,8 @@ const PROVIDERS: Record<
   },
 };
 
-// Module-level state
-const providers: Map<string, OAuthProvider> = new Map();
+/** Configured providers, credentials included, by name. */
+type Providers = Map<string, OAuthProvider>;
 
 // Shared sibling definitions, declared before the class so the static schema
 // initializer can read them (a `const` is not hoisted).
@@ -158,23 +158,27 @@ export class OAuthNode extends Node {
     },
   };
 
+  /** This resolver's providers. An instance field, so one resolver's client
+   *  secrets are never visible to, or replaced by, another's. */
+  private readonly providers: Providers = new Map();
+
   oauth(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$oauth, context, operation => {
       switch (String(operation)) {
         case "configure":
-          return doConfigure(def, context);
+          return doConfigure(this.providers, def, context);
         case "authUrl":
-          return doAuthUrl(def, context);
+          return doAuthUrl(this.providers, def, context);
         case "exchange":
-          return doExchange(def, context);
+          return doExchange(this.providers, def, context);
         case "refresh":
-          return doRefresh(def, context);
+          return doRefresh(this.providers, def, context);
         case "userInfo":
-          return doUserInfo(def, context);
+          return doUserInfo(this.providers, def, context);
         case "state":
           return doGenerateState(def, context);
         case "providers":
-          return doListProviders(def, context);
+          return doListProviders(this.providers, def, context);
         default:
           console.error(`[OAuth] Unknown operation: ${operation}`);
           return null;
@@ -183,7 +187,7 @@ export class OAuthNode extends Node {
   }
 }
 
-function doConfigure(def: Record<string, unknown>, context: Context): unknown {
+function doConfigure(providers: Providers, def: Record<string, unknown>, context: Context): unknown {
   return resolveFields(def, context, r => {
     const name = String(r.provider);
     // Required: a credential that resolves to nothing must not become "undefined".
@@ -233,7 +237,7 @@ function doConfigure(def: Record<string, unknown>, context: Context): unknown {
   });
 }
 
-function doAuthUrl(def: Record<string, unknown>, context: Context): unknown {
+function doAuthUrl(providers: Providers, def: Record<string, unknown>, context: Context): unknown {
   return resolveAll(
     [def.provider, def.redirectUri, def.scopes ?? null, def.state ?? null, def.prompt ?? null, def.accessType ?? null],
     context,
@@ -264,7 +268,7 @@ function doAuthUrl(def: Record<string, unknown>, context: Context): unknown {
   );
 }
 
-function doExchange(def: Record<string, unknown>, context: Context): unknown {
+function doExchange(providers: Providers, def: Record<string, unknown>, context: Context): unknown {
   return resolveAll([def.provider, def.code, def.redirectUri], context, async ([providerRaw, codeRaw, redirectUriRaw]) => {
     const provider = String(providerRaw);
     const code = String(codeRaw);
@@ -315,7 +319,7 @@ function doExchange(def: Record<string, unknown>, context: Context): unknown {
   });
 }
 
-function doRefresh(def: Record<string, unknown>, context: Context): unknown {
+function doRefresh(providers: Providers, def: Record<string, unknown>, context: Context): unknown {
   return resolveAll([def.provider, def.refreshToken], context, async ([providerRaw, refreshTokenRaw]) => {
     const provider = String(providerRaw);
     const refreshToken = String(refreshTokenRaw);
@@ -361,7 +365,7 @@ function doRefresh(def: Record<string, unknown>, context: Context): unknown {
   });
 }
 
-function doUserInfo(def: Record<string, unknown>, context: Context): unknown {
+function doUserInfo(providers: Providers, def: Record<string, unknown>, context: Context): unknown {
   return resolveAll([def.provider, def.accessToken], context, async ([providerRaw, accessTokenRaw]) => {
     const provider = String(providerRaw);
     const accessToken = String(accessTokenRaw);
@@ -432,7 +436,7 @@ function doGenerateState(def: Record<string, unknown>, context: Context): unknow
   return resolve(def.length, context, lengthRaw => doGenerate(lengthRaw == null ? 32 : Number(lengthRaw)));
 }
 
-function doListProviders(def: Record<string, unknown>, context: Context): unknown {
+function doListProviders(providers: Providers, def: Record<string, unknown>, context: Context): unknown {
   return resolve(def.builtin ?? null, context, builtinRaw => {
     if (builtinRaw) return Object.keys(PROVIDERS);
     return [...providers.keys()];
