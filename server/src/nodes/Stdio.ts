@@ -100,8 +100,8 @@ export class StdioNode extends Node {
   };
 
   ["stdio-listen"](def: Record<string, unknown>, context: Context): NodeValue {
-    if (!Array.isArray(def["on-message"])) {
-      console.error('[StdioNode] "on-message" must be an array of steps');
+    if (def["on-message"] === undefined) {
+      console.error('[StdioNode] "on-message" needs steps');
       return null;
     }
 
@@ -111,8 +111,8 @@ export class StdioNode extends Node {
     }
     stdinAttached = true;
 
-    const steps = def["on-message"] as unknown[];
-    const closeSteps = Array.isArray(def["on-close"]) ? def["on-close"] as unknown[] : null;
+    const steps = def["on-message"];
+    const closeSteps = def["on-close"] ?? null;
 
     console.log = (...args: unknown[]) => {
       process.stderr.write(args.map(String).join(" ") + "\n");

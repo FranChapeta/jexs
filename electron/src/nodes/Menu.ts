@@ -49,7 +49,7 @@ export async function buildMenuTemplate(
   onClick: (
     /** The raw JSON item, so a per-item `$catch` can be honored. */
     raw: Record<string, unknown>,
-    steps: unknown[],
+    steps: unknown,
     item: Electron.MenuItem,
     win?: Electron.BaseWindow,
   ) => void,
@@ -67,7 +67,7 @@ export async function buildMenuTemplate(
   for (const raw of list) {
     if (!isObject(raw)) continue;
 
-    const steps = Array.isArray(raw.do) ? raw.do : null;
+    const steps = raw.do ?? null;
     const submenu = raw.submenu;
 
     const scalars: Record<string, unknown> = {};

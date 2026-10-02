@@ -136,9 +136,9 @@ export class WebSocketNode extends Node {
     if (upgrade.accepted) return null;
     upgrade.accepted = true;
 
-    const onConnect = Array.isArray(def["on-connect"]) ? def["on-connect"] as unknown[] : null;
-    const onMessage = Array.isArray(def["on-message"]) ? def["on-message"] as unknown[] : null;
-    const onClose   = Array.isArray(def["on-close"])   ? def["on-close"]   as unknown[] : null;
+    const onConnect = def["on-connect"] ?? null;
+    const onMessage = def["on-message"] ?? null;
+    const onClose   = def["on-close"]   ?? null;
 
     upgrade.wss.handleUpgrade(upgrade.req, upgrade.socket, upgrade.head, (ws) => {
       const path = (context.request as Record<string, unknown>)?.path as string || "/";

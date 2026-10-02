@@ -4,7 +4,7 @@ import {
 import type { JexsNodeSchema } from "@jexs/core";
 
 /** Accelerator -> the steps it runs, so a re-registration replaces cleanly. */
-const registered = new Map<string, { steps: unknown[]; context: Context; def: Record<string, unknown> }>();
+const registered = new Map<string, { steps: unknown; context: Context; def: Record<string, unknown> }>();
 
 /** Test seam. */
 export function resetShortcuts(): void {
@@ -38,7 +38,7 @@ export class ShortcutNode extends Node {
   shortcut(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$shortcut, context, async (value) => {
       const accelerator = typeof value === "string" ? value : "";
-      if (!accelerator || !Array.isArray(def.do)) return false;
+      if (!accelerator || def.do === undefined) return false;
       const steps = def.do;
 
       const { globalShortcut } = await import("electron");

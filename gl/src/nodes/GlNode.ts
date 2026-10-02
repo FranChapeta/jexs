@@ -177,7 +177,7 @@ export class GlNode extends Node {
           description: "Enable depth testing for 3D rendering.",
         },
         "on-frame": {
-          type: "array",
+          steps: true,
           description: "Steps to run each animation frame (`dt`, `time` available).",
         },
         virtualWidth:  { type: "number", description: "Width of the coordinate space entities are placed in, scaled to the canvas by `fit` (default: the canvas width)." },
@@ -669,7 +669,7 @@ export class GlNode extends Node {
 
   ["gl-init"](def: Record<string, unknown>, context: Context): NodeValue {
     // "on-frame" is a lazy step template — exclude from resolution
-    const onFrame = Array.isArray(def["on-frame"]) ? def["on-frame"] as unknown[] : null;
+    const onFrame = def["on-frame"] ?? null;
     const resolvable: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(def)) { if (k !== "on-frame") resolvable[k] = v; }
 

@@ -107,6 +107,24 @@ test("events from a step resolve to the map; a literal map's steps are left alon
   }
 });
 
+test("sw from a step resolves to the config, which is data: nothing in it resolves again", async () => {
+  const other = createResolver([...coreNodes(), new ServerNode()]);
+  try {
+    const swConfig = {
+      precache: [{ $concat: ["/offline", ".html"] }],
+      skipWaiting: true,
+      events: { push: { "$sw-notify": { $var: "data.title" } } },
+    };
+    await other({ $listen: PORT + 5, client: true, sw: { $var: "swConfig" }, do: [] }, { swConfig });
+    const script = await (await fetch(`http://127.0.0.1:${PORT + 5}/jexs/sw.js`)).text();
+    const call = /startServiceWorker\((.*),\{"version"/.exec(script);
+    assert.ok(call, script);
+    assert.deepEqual(JSON.parse(call[1]), swConfig);
+  } finally {
+    other.destroy();
+  }
+});
+
 test("an empty sw, or one without client, warns and registers nothing", async () => {
   const other = createResolver([...coreNodes(), new ServerNode()]);
   try {

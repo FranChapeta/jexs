@@ -195,7 +195,7 @@ export class SchemaNode extends Node {
   };
 
   private static schemas: Map<string, TableJsonSchema> = new Map();
-  static globalValidator: unknown[] | null = null;
+  static globalValidator: unknown = null;
 
   /** Cache of `required`-stripped clones used to validate partial updates. */
   private static updateSchemas: WeakMap<TableJsonSchema, object> = new WeakMap();
@@ -232,7 +232,7 @@ export class SchemaNode extends Node {
         return Array.from(SchemaNode.schemas.values());
       }
       if (op === "validator") {
-        if (Array.isArray(def.run)) {
+        if (def.run !== undefined) {
           SchemaNode.globalValidator = def.run;
         }
         return null;

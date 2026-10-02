@@ -316,6 +316,25 @@ function stripPathDollar(v: Val): void {
 }
 
 /**
+ * A `setVars` map key could carry the same leading `$` as a `var` path, and the
+ * write stripped it. A `$` key is a step now, so the key loses its `$` the way
+ * the path does. A key that names an op or a global is left for review: it
+ * could be a step written in place of the map.
+ */
+function stripMapKeyDollars(v: Val): void {
+  if (v.k !== "obj") return;
+  for (const p of v.props) {
+    const name = p.key.slice(1);
+    if (!p.key.startsWith("$") || name === "") continue;
+    if (HANDLERS.has(name) || GLOBALS.has(name)) {
+      reviews.push({ at: p.keyStart, message: `\`setVars\` key "${p.key}" names an op, so it now runs as a step; rename the variable if it was one` });
+      continue;
+    }
+    add({ start: p.keyStart, end: p.keyEnd, text: name });
+  }
+}
+
+/**
  * A listener's `sw` used to map event names to steps; its keys are event names,
  * never ops (a `fetch` event is not the `fetch` op), so only the steps under them
  * are migrated. The config itself changed shape, which is left for review:
@@ -364,6 +383,7 @@ function walkExpr(v: Val): void {
         reviews.push({ at: p.keyStart, message: "`$join` takes the array itself now; `[array, separator]` becomes `array` with a `separator` sibling" });
       }
       if (op === "var" || op.startsWith("tree-")) stripPathDollar(p.value);
+      if (op === "setVars") stripMapKeyDollars(p.value);
       if (!rawValues) walk(C.vp[op] ?? siblingSchema(op, op), p.value);
       continue;
     }

@@ -78,7 +78,7 @@ export interface GlInstance {
   uTexture: WebGLUniformLocation;
   aPosition: number;
   resizeObserver: ResizeObserver | null;
-  onFrame: unknown[] | null;
+  onFrame: unknown;
   frameContext: Context | null;
   frameLoopContext: Context | null;  // pre-allocated context for onFrame (avoids spread per frame)
   onFrameRunning: boolean;

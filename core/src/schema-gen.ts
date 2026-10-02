@@ -89,6 +89,7 @@ export const sharedDefs = {
 
 const REF = {
   anyVal:      { $ref: "#/$defs/anyVal"      },
+  dataVal:     { $ref: "#/$defs/dataVal"     },
   objOrExpr:   { $ref: "#/$defs/objOrExpr"   },
   strOrExpr:   { $ref: "#/$defs/strOrExpr"   },
   numOrExpr:   { $ref: "#/$defs/numOrExpr"   },
@@ -152,7 +153,9 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
   // Nested object with a declared inner shape (e.g. a file filter's `{ name, extensions }`). One
   // level of `properties` + `additionalProperties` (default false to catch
   // typos). Values recurse via expandProperty; `additionalProperties: false`
-  // carries no recursive catch-all, so this is safe for the depth budget.
+  // carries no recursive catch-all, so this is safe for the depth budget. A step
+  // in its place resolves to the object, so it is checked as one with an object
+  // output instead.
   if (prop.properties) {
     const props: Record<string, EmittedSchema> = {};
     const required: string[] = [];
@@ -160,12 +163,17 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
       props[k] = expandNested(v, `nested property "${k}"`);
       if (v.required) required.push(k);
     }
-    const out: EmittedSchema = {
+    const shape: EmittedSchema = {
       type: "object",
       properties: props,
       additionalProperties: prop.additionalProperties ?? false,
     };
-    if (required.length > 0) out.required = required;
+    if (required.length > 0) shape.required = required;
+    const out: EmittedSchema = {
+      if: { type: "object", ...IS_DATA },
+      then: shape,
+      else: { $ref: "#/$defs/exprFlat_object" },
+    };
     liftMetadata(prop, out);
     return out;
   }
@@ -227,6 +235,8 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
 
   // Multi-type (e.g. ["string", "boolean"]): accept any of those literal types
   // OR a nested expression. If `enum` is set, it constrains only the string type.
+  // A listed `object` or `array` has its contents checked: a data object's values
+  // and an array's items as values, and an object with a `$` key as the step it is.
   if (Array.isArray(prop.type)) {
     const types = [...prop.type];
     if (prop.literal) {
@@ -237,15 +247,15 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
     }
     // type-or-expr: literal type accepted; else fall back to unfiltered exprFlat
     // (a multi-type slot's output-type filter is ambiguous, so no narrowing).
-    const acceptsString = types.includes("string");
-    const literalBranch: EmittedSchema = prop.enum && acceptsString
+    const scalars = types.filter(t => t !== "object" && t !== "array");
+    const literalBranch: EmittedSchema = prop.enum && scalars.includes("string")
       ? { if: { type: "string" }, then: { enum: [...prop.enum] }, else: {} }
       : {};
-    const out: EmittedSchema = {
-      if: { type: types },
-      then: literalBranch,
-      else: { ...REF.exprFlat },
-    };
+    let out: EmittedSchema = scalars.length > 0
+      ? { if: { type: scalars }, then: literalBranch, else: { ...REF.exprFlat } }
+      : { ...REF.exprFlat };
+    if (types.includes("array")) out = { if: { type: "array" }, then: { items: { ...REF.anyVal } }, else: out };
+    if (types.includes("object")) out = { if: { type: "object", ...IS_DATA }, then: { ...REF.dataVal }, else: out };
     liftMetadata(prop, out);
     return out;
   }

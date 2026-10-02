@@ -47,7 +47,7 @@ export class NotificationNode extends Node {
       if (!Notification.isSupported()) return null;
 
       const notification = new Notification(notificationOptions(r));
-      if (Array.isArray(def.do)) {
+      if (def.do !== undefined) {
         const steps = def.do;
         notification.on("click", () => {
           void runStepsDetached(steps, childContext(context, {}), def, "[NotificationNode] click handler failed:");

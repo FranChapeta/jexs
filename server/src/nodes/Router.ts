@@ -14,7 +14,7 @@ import { validate } from "../validate.js";
  *  as its own fields), or a `run` step list. */
 interface RouteHandler {
   $file?: unknown;
-  run?: unknown[];
+  run?: unknown;
   queryParams?: Record<string, unknown>;
   body?: Record<string, unknown>;
 }
@@ -308,8 +308,8 @@ async function executeHandler(
 ): Promise<unknown> {
   checkRequest(handler, context);
 
-  if (Array.isArray(handler.run)) {
-    const result = await Promise.resolve(runSteps(handler.run, context));
+  if (handler.run !== undefined) {
+    const result = await runSteps(handler.run, context);
     return isResponse(result) ? result : asBody(result ?? null);
   }
   // A `$file` step, then, since `isHandlerShape` admits nothing else. Resolved through
@@ -371,7 +371,7 @@ function validateAgainstSchema(
  * them and the resolve below never reaches this function twice.
  */
 function isHandlerShape(value: unknown): value is RouteHandler {
-  return isObject(value) && (Array.isArray(value.run) || !!value.$file);
+  return isObject(value) && (value.run !== undefined || !!value.$file);
 }
 
 /**

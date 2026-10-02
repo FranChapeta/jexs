@@ -178,7 +178,7 @@ export interface TableJsonSchema {
   };
   /** Steps QueryNode runs before each query on this table, after the global
    *  validator (see `runValidators`). Not run for the table's own `create`. */
-  validator?: unknown[];
+  validator?: unknown;
   "x-entity"?: TableEntityMeta;
   [key: string]: unknown;
 }
@@ -359,7 +359,7 @@ async function runValidators(query: QueryDefinition, context: Context): Promise<
     const own = query.type === "create" ? undefined : schema.validator;
     const validatorContext: Context & { [VALIDATING]: true } = { ...context, [VALIDATING]: true, schema, query, operation };
     for (const steps of [SchemaNode.globalValidator, own]) {
-      if (Array.isArray(steps)) await Promise.resolve(runSteps(steps, validatorContext));
+      if (steps != null) await runSteps(steps, validatorContext);
     }
   }
 }

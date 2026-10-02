@@ -876,17 +876,20 @@ export class ServerNode extends Node {
       // Service worker: its runtime ships in the browser bundle, and the client
       // script registers it, so it needs `client`. The settings resolve here,
       // once. `events` is a map of steps for the worker, so a literal map passes
-      // through untouched; a step producing one resolves to it.
+      // through untouched; a step producing one resolves to it. A step in place of
+      // the whole config resolves to it, and that config is data: nothing in it
+      // is resolved again.
       if (def.sw !== undefined) {
-        const sw = def.sw;
+        const fromStep = isStep(def.sw);
+        const sw = fromStep ? await resolve(def.sw, context) : def.sw;
         if (!this.isObject(sw) || Object.keys(sw).length === 0) {
           console.warn('[ServerNode] "sw" takes a config, e.g. { "precache": ["/offline.html"], "routes": [...], "events": {...} }; no service worker is registered');
         } else if (!def.client) {
           console.warn('[ServerNode] "sw" needs "client": the service worker runtime ships in the browser bundle; no service worker is registered');
         } else if (browserDir) {
           const { events, ...settings } = sw;
-          const resolved = await resolveFields(settings, context, r => r);
-          const eventMap = isStep(events) ? await resolve(events, context) : events;
+          const resolved = fromStep ? settings : await resolveFields(settings, context, r => r);
+          const eventMap = !fromStep && isStep(events) ? await resolve(events, context) : events;
           if (eventMap != null && (!this.isObject(eventMap) || isStep(eventMap))) {
             console.warn('[ServerNode] "sw.events" must be, or resolve to, a map of event names to steps; no service worker is registered');
           } else {

@@ -35,8 +35,8 @@ interface TreeRuntime {
   row: unknown;                 // JSON row template — resolved per node via the resolver
   selectedPath: string | null;
   collapsed: Set<string>;
-  onChangeSteps: unknown[] | null;
-  onSelectSteps: unknown[] | null;
+  onChangeSteps: unknown;
+  onSelectSteps: unknown;
 }
 
 const stores = new WeakMap<Context, Map<string, TreeRuntime>>();
@@ -292,8 +292,8 @@ export class TreeNode extends Node {
         row: rawRow,
         selectedPath: null,
         collapsed: new Set(),
-        onChangeSteps: Array.isArray(def["on-change"]) ? def["on-change"] : null,
-        onSelectSteps: Array.isArray(def["on-select"]) ? def["on-select"] : null,
+        onChangeSteps: def["on-change"] ?? null,
+        onSelectSteps: def["on-select"] ?? null,
       };
 
       setRuntime(context, path, rt);

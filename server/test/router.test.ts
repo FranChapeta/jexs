@@ -46,6 +46,11 @@ test("a run handler yields its last step", async () => {
   assert.deepEqual(await get(routes), { response: "ab" });
 });
 
+test("a run handler may be a single step", async () => {
+  const routes = { methods: { GET: { run: { $concat: ["one ", "step"] } } } };
+  assert.deepEqual(await get(routes), { response: "one step" });
+});
+
 test("an expression resolving to a file handler takes the file path", async () => {
   const routes = { methods: { GET: { $var: "handler" } } };
   const ctx = { handler: { $file: "/page.json" }, greeting: "indirect" };

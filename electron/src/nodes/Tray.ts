@@ -74,7 +74,7 @@ export class TrayNode extends Node {
         tray.setContextMenu(Menu.buildFromTemplate(template));
       }
 
-      if (Array.isArray(def.do)) {
+      if (def.do !== undefined) {
         const steps = def.do;
         tray.removeAllListeners("click");
         tray.on("click", () => {

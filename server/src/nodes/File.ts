@@ -324,18 +324,11 @@ function loadFile(
     }
 
     // From here, anything that throws is application code — let it propagate.
-    // Array -> execute steps in sequence
-    if (Array.isArray(parsed)) {
-      const result = await Promise.resolve(runSteps(parsed, fileContext));
-      return result ?? null;
-    }
-
-    // Single object: always resolve (with file context if params were provided,
-    // else the caller's context). Use `data: true` to short-circuit resolution
-    // and get the raw parsed JSON back — that's the explicit knob for pure data
-    // and for definition trees (e.g. routes) that should be walked, not eagerly
-    // evaluated by the resolver.
-    return resolve(parsed, fileContext);
+    // An array runs as steps and anything else resolves as one expression, in
+    // the file's own scope. `data: true` short-circuits this and returns the
+    // parsed JSON as is: the knob for pure data and for definition trees (e.g.
+    // routes) that should be walked, not eagerly evaluated by the resolver.
+    return (await runSteps(parsed, fileContext)) ?? null;
   });
 }
 
