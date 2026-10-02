@@ -5,13 +5,6 @@ import type { IncomingMessage } from "node:http";
 import WebSocket, { WebSocketServer } from "ws";
 import type { JexsNodeSchema } from "@jexs/core";
 
-const rooms: Map<string, Set<WebSocket>> = new Map();
-const clients: Map<WebSocket, Set<string>> = new Map();
-const paths: Map<string, Set<WebSocket>> = new Map();
-const ids: Map<string, WebSocket> = new Map();
-const wsToId: Map<WebSocket, string> = new Map();
-const meta: WeakMap<WebSocket, Record<string, unknown>> = new WeakMap();
-
 interface UpgradeContext {
   req: IncomingMessage;
   socket: Duplex;
@@ -41,6 +34,16 @@ function encodePayload(data: unknown): string {
 }
 
 export class WebSocketNode extends Node {
+  // This resolver's connections. Each socket's `close` handler removes it, and
+  // ServerNode's `dispose` closes the sockets its listeners upgraded, so
+  // another resolver in the process never sees these rooms, ids or counts.
+  private readonly rooms = new Map<string, Set<WebSocket>>();
+  private readonly clients = new Map<WebSocket, Set<string>>();
+  private readonly paths = new Map<string, Set<WebSocket>>();
+  private readonly ids = new Map<string, WebSocket>();
+  private readonly wsToId = new Map<WebSocket, string>();
+  private readonly meta = new WeakMap<WebSocket, Record<string, unknown>>();
+
   static schema: JexsNodeSchema = {
     "socket-accept": {
       type: "boolean",
@@ -144,13 +147,13 @@ export class WebSocketNode extends Node {
       const path = (context.request as Record<string, unknown>)?.path as string || "/";
       const id = crypto.randomUUID();
 
-      if (!paths.has(path)) paths.set(path, new Set());
-      paths.get(path)!.add(ws);
-      clients.set(ws, new Set());
-      ids.set(id, ws);
-      wsToId.set(ws, id);
+      if (!this.paths.has(path)) this.paths.set(path, new Set());
+      this.paths.get(path)!.add(ws);
+      this.clients.set(ws, new Set());
+      this.ids.set(id, ws);
+      this.wsToId.set(ws, id);
       const session = context.session as Record<string, unknown> | undefined;
-      meta.set(ws, { name: session?.user_name ?? "Anonymous" });
+      this.meta.set(ws, { name: session?.user_name ?? "Anonymous" });
 
       const wsContext: Context = {
         ...context,
@@ -194,21 +197,21 @@ export class WebSocketNode extends Node {
           void runStepsDetached(onClose, { ...wsContext }, def, "[WebSocket] on-close error:");
         }
 
-        paths.get(path)?.delete(ws);
-        if (paths.get(path)?.size === 0) paths.delete(path);
+        this.paths.get(path)?.delete(ws);
+        if (this.paths.get(path)?.size === 0) this.paths.delete(path);
 
-        const memberRooms = clients.get(ws);
+        const memberRooms = this.clients.get(ws);
         if (memberRooms) {
           for (const room of memberRooms) {
-            rooms.get(room)?.delete(ws);
-            if (rooms.get(room)?.size === 0) rooms.delete(room);
+            this.rooms.get(room)?.delete(ws);
+            if (this.rooms.get(room)?.size === 0) this.rooms.delete(room);
           }
         }
-        clients.delete(ws);
+        this.clients.delete(ws);
 
-        const wsId = wsToId.get(ws);
-        if (wsId) ids.delete(wsId);
-        wsToId.delete(ws);
+        const wsId = this.wsToId.get(ws);
+        if (wsId) this.ids.delete(wsId);
+        this.wsToId.delete(ws);
       });
     });
 
@@ -226,7 +229,7 @@ export class WebSocketNode extends Node {
 
   ["socket-send-to"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll([def["$socket-send-to"], def.data], context, ([idRaw, data]) => {
-      const target = ids.get(String(idRaw));
+      const target = this.ids.get(String(idRaw));
       if (!target || target.readyState !== WebSocket.OPEN) return null;
       target.send(encodePayload(data));
       return null;
@@ -239,8 +242,8 @@ export class WebSocketNode extends Node {
       const sender = currentSocket(context);
 
       const recipients: Set<WebSocket> | undefined = def.room && roomRaw != null
-        ? rooms.get(String(roomRaw))
-        : paths.get(currentPath(context));
+        ? this.rooms.get(String(roomRaw))
+        : this.paths.get(currentPath(context));
 
       if (!recipients) return null;
       for (const peer of recipients) {
@@ -257,9 +260,9 @@ export class WebSocketNode extends Node {
       const ws = currentSocket(context);
       if (!ws) return null;
       const room = String(roomRaw);
-      if (!rooms.has(room)) rooms.set(room, new Set());
-      rooms.get(room)!.add(ws);
-      clients.get(ws)?.add(room);
+      if (!this.rooms.has(room)) this.rooms.set(room, new Set());
+      this.rooms.get(room)!.add(ws);
+      this.clients.get(ws)?.add(room);
       return null;
     });
   }
@@ -269,9 +272,9 @@ export class WebSocketNode extends Node {
       const ws = currentSocket(context);
       if (!ws) return null;
       const room = String(roomRaw);
-      rooms.get(room)?.delete(ws);
-      if (rooms.get(room)?.size === 0) rooms.delete(room);
-      clients.get(ws)?.delete(room);
+      this.rooms.get(room)?.delete(ws);
+      if (this.rooms.get(room)?.size === 0) this.rooms.delete(room);
+      this.clients.get(ws)?.delete(room);
       return null;
     });
   }
@@ -284,35 +287,22 @@ export class WebSocketNode extends Node {
 
   ["socket-count"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["$socket-count"], context, target => {
-      if (target === true) return paths.get(currentPath(context))?.size ?? 0;
-      return rooms.get(String(target))?.size ?? 0;
+      if (target === true) return this.paths.get(currentPath(context))?.size ?? 0;
+      return this.rooms.get(String(target))?.size ?? 0;
     });
   }
 
   ["socket-list"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["$socket-list"], context, roomRaw => {
       const room = String(roomRaw);
-      const roomClients = rooms.get(room);
+      const roomClients = this.rooms.get(room);
       if (!roomClients) return [];
       const result: Record<string, unknown>[] = [];
       for (const ws of roomClients) {
-        const id = wsToId.get(ws);
-        if (id) result.push({ id, ...meta.get(ws) });
+        const id = this.wsToId.get(ws);
+        if (id) result.push({ id, ...this.meta.get(ws) });
       }
       return result;
     });
-  }
-
-  static closeAll(): void {
-    for (const pathClients of paths.values()) {
-      for (const ws of pathClients) {
-        ws.close(1001, "Server shutting down");
-      }
-    }
-    paths.clear();
-    rooms.clear();
-    clients.clear();
-    ids.clear();
-    wsToId.clear();
   }
 }
