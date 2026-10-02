@@ -1,6 +1,6 @@
 import { randomUUID, randomBytes } from "crypto";
 import { Node, Context, NodeValue, resolve } from "@jexs/core";
-import { Cache } from "../cache/Cache.js";
+import { cacheFor } from "./Cache.js";
 import type { JexsNodeSchema } from "@jexs/core";
 
 /**
@@ -114,7 +114,7 @@ async function initSession(
   context: Context,
   data: Record<string, unknown> = {},
 ): Promise<SessionResult> {
-  const cache = Cache.getInstance();
+  const cache = cacheFor(context);
   const id = randomUUID();
 
   // Ensure CSRF token exists
@@ -146,7 +146,7 @@ async function destroySession(context: Context): Promise<SessionResult> {
   const sessionId = getSessionId(context);
 
   if (sessionId) {
-    const cache = Cache.getInstance();
+    const cache = cacheFor(context);
     await cache.delete(PREFIX + sessionId);
   }
 
@@ -166,7 +166,7 @@ async function setSessionValues(
   values: Record<string, unknown>,
   context: Context,
 ): Promise<SessionResult> {
-  const cache = Cache.getInstance();
+  const cache = cacheFor(context);
   let sessionId = getSessionId(context);
   let isNew = false;
 
@@ -208,7 +208,7 @@ async function setSessionValues(
 }
 
 async function regenerateSession(context: Context): Promise<SessionResult> {
-  const cache = Cache.getInstance();
+  const cache = cacheFor(context);
   const oldId = getSessionId(context);
 
   let data: Record<string, unknown> = {};
@@ -236,7 +236,7 @@ async function loadSession(context: Context): Promise<null> {
     return null;
   }
 
-  const cache = Cache.getInstance();
+  const cache = cacheFor(context);
   const sessionData = await cache.get<SessionData>(PREFIX + sessionId);
 
   if (!sessionData) {

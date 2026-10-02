@@ -1,6 +1,6 @@
 import { Node, Context, NodeValue, resolve, resolveFields } from "@jexs/core";
 import { DatabaseNode } from "./Database.js";
-import { Cache } from "../cache/Cache.js";
+import { cacheFor } from "./Cache.js";
 import { sha256 } from "./Crypto.js";
 import type { JexsNodeSchema } from "@jexs/core";
 
@@ -45,7 +45,7 @@ export class TranslationNode extends Node {
     const cacheKey = `t:${to}:${hash}`;
 
     // Check cache first
-    const cache = Cache.getInstance();
+    const cache = cacheFor(context);
     const cached = await cache.get(cacheKey);
     if (cached !== undefined && cached !== null) {
       return cached === text ? text : String(cached);

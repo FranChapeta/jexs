@@ -8,7 +8,6 @@ import type { Context } from "@jexs/core";
 import { mergeTls, parseDbUrl, parseTls, redactUrl } from "../src/connection.js";
 import { DatabaseNode } from "../src/nodes/Database.js";
 import { CacheNode } from "../src/nodes/Cache.js";
-import { Cache } from "../src/cache/Cache.js";
 // Redis is the only cache driver with a url; its dialect lives with its adapter.
 import { parseRedisUrl } from "../src/cache/RedisCache.js";
 
@@ -336,7 +335,7 @@ test("cache-connect refuses a url alongside the discrete endpoint", async () => 
     await run({ "$cache-connect": "memcached", servers: ["h:11211"], username: "u" }),
     "memcached",
   );
-  await Cache.close();
+  cacheResolve.destroy();
 });
 
 // `createAdapter` falls through to memory on `default`, so an unrecognized
@@ -352,7 +351,7 @@ test("cache-connect refuses an unknown driver instead of falling back to memory"
     /Unknown cache driver "redys" \(expected memory, redis, memcached\)/,
   );
   assert.equal(await run({ "$cache-connect": "memory" }), "memory");
-  await Cache.close();
+  cacheResolve.destroy();
 });
 
 // Connection strings reach error messages and logs; the password must not.

@@ -1,9 +1,53 @@
-import { Node, Context, NodeValue, resolve, resolveAll, resolveFields, createHttpError } from "@jexs/core";
-import { Cache, CacheConfig } from "../cache/Cache.js";
+import { Node, Context, NodeValue, resolve, resolveAll, resolveFields, resolverFor, createHttpError } from "@jexs/core";
+import type { CacheAdapter, CacheConfig } from "../cache/CacheAdapter.js";
+import { MemoryCache } from "../cache/MemoryCache.js";
+import { RedisCache } from "../cache/RedisCache.js";
+import { MemcachedCache } from "../cache/MemcachedCache.js";
 import { parseTls, TLS_STRINGS } from "../connection.js";
 import type { JexsNodeSchema } from "@jexs/core";
 
+/** The resolver's own cache, which its sessions and translations use too. */
+export function cacheFor(context: Context): CacheAdapter {
+  const node = resolverFor(context).nodeFor("cache");
+  if (!(node instanceof CacheNode)) {
+    throw new Error("No CacheNode in this resolver; build it with serverNodes().");
+  }
+  return CacheNode.adapterOf(node);
+}
+
+/** The adapter a `$cache-connect` config asks for. */
+function createAdapter(config: CacheConfig): CacheAdapter {
+  switch (config.type) {
+    case "redis":
+      return new RedisCache({ ...config.redis, prefix: config.prefix });
+    case "memcached":
+      return new MemcachedCache({ ...config.memcached, prefix: config.prefix });
+    case "memory":
+    default:
+      return new MemoryCache({ prefix: config.prefix, ...config.memory });
+  }
+}
+
 export class CacheNode extends Node {
+  /** This resolver's cache. An instance field, so one resolver's `$cache-connect`,
+   *  `close` or `clear` never touches another's; `dispose` closes it. */
+  private adapter: CacheAdapter | null = null;
+
+  /** A node's adapter, an in-memory one until `$cache-connect` opens another.
+   *  Static, since every method on a Node registers as an op. */
+  static adapterOf(node: CacheNode): CacheAdapter {
+    if (!node.adapter) {
+      console.warn("[Cache] Not connected, using memory cache");
+      node.adapter = new MemoryCache();
+    }
+    return node.adapter;
+  }
+
+  dispose(): void {
+    void this.adapter?.close().catch(() => {});
+    this.adapter = null;
+  }
+
   static schema: JexsNodeSchema = {
     "cache-connect": {
       type: "string",
@@ -190,7 +234,9 @@ export class CacheNode extends Node {
         if (r.checkPeriod) config.memory.checkPeriod = Number(r.checkPeriod);
       }
 
-      Cache.init(config);
+      // Replacing this resolver's cache closes the one it had.
+      void this.adapter?.close().catch(() => {});
+      this.adapter = createAdapter(config);
       console.log(`[CacheNode] Connected to cache (${type})`);
       return type;
     });
@@ -199,11 +245,15 @@ export class CacheNode extends Node {
   ["cache"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$cache, context, op => {
       switch (op) {
-        case "close": return Cache.close();
-        case "clear": return Cache.getInstance().clear();
-        case "stats": return Cache.getInstance().stats();
+        case "close": {
+          const adapter = this.adapter;
+          this.adapter = null;
+          return adapter?.close() ?? null;
+        }
+        case "clear": return CacheNode.adapterOf(this).clear();
+        case "stats": return CacheNode.adapterOf(this).stats();
         case "dump": {
-          const instance = Cache.getInstance() as unknown as Record<string, unknown>;
+          const instance = CacheNode.adapterOf(this) as unknown as Record<string, unknown>;
           if (typeof instance.dump === "function") return instance.dump();
           throw createHttpError(501, "cache dump is only supported by the memory driver");
         }
@@ -214,23 +264,23 @@ export class CacheNode extends Node {
   }
 
   ["cache-get"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$cache-get"], context, async key => Cache.getInstance().get(String(key)));
+    return resolve(def["$cache-get"], context, async key => CacheNode.adapterOf(this).get(String(key)));
   }
 
   ["cache-set"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll([def["$cache-set"], def.value ?? null, def.ttl ?? null], context, async ([keyRaw, value, ttlRaw]) => {
       const key = String(keyRaw);
       const ttl = ttlRaw != null ? Number(ttlRaw) : undefined;
-      return Cache.getInstance().set(key, value, ttl);
+      return CacheNode.adapterOf(this).set(key, value, ttl);
     });
   }
 
   ["cache-delete"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$cache-delete"], context, async keyRaw => Cache.getInstance().delete(String(keyRaw)));
+    return resolve(def["$cache-delete"], context, async keyRaw => CacheNode.adapterOf(this).delete(String(keyRaw)));
   }
 
   ["cache-has"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$cache-has"], context, async keyRaw => Cache.getInstance().has(String(keyRaw)));
+    return resolve(def["$cache-has"], context, async keyRaw => CacheNode.adapterOf(this).has(String(keyRaw)));
   }
 }
 

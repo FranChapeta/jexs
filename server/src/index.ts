@@ -86,7 +86,6 @@ export { TailwindNode } from "./nodes/Tailwind.js";
 export { DeferNode } from "./nodes/Defer.js";
 export { CacheNode } from "./nodes/Cache.js";
 export { StdioNode } from "./nodes/Stdio.js";
-export { Cache } from "./cache/Cache.js";
 
 // ── Discovery + schema tooling (shared by the CLI, the electron runner, and any
 //    host that builds its own resolver from installed packages) ──
