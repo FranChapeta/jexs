@@ -207,7 +207,7 @@ export class SchemaNode extends Node {
     created_at: { type: "string", sqlType: "timestamp", sqlDefault: "CURRENT_TIMESTAMP" },
   };
 
-  static injectCommonColumns(schema: TableJsonSchema): void {
+  private static injectCommonColumns(schema: TableJsonSchema): void {
     if (!schema.properties) return;
     for (const [name, col] of Object.entries(this.COMMON_COLUMNS)) {
       if (!(name in schema.properties)) {
@@ -225,11 +225,13 @@ export class SchemaNode extends Node {
 
   schema(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$schema, context, op => {
+      // Copies: a step that changes what it reads must not change the registry.
       if (op === "get") {
-        return SchemaNode.get(this.toString(def.table)) ?? null;
+        const found = SchemaNode.get(this.toString(def.table));
+        return found ? structuredClone(found) : null;
       }
       if (op === "list") {
-        return Array.from(SchemaNode.schemas.values());
+        return Array.from(SchemaNode.schemas.values(), schema => structuredClone(schema));
       }
       if (op === "validator") {
         if (def.run !== undefined) {
@@ -248,14 +250,23 @@ export class SchemaNode extends Node {
   // Static API (used by QueryNode)
   // ============================================
 
-  static register(schema: TableJsonSchema): void {
+  /**
+   * Register a table document. The registry keeps its own copy, since the
+   * document is usually a template's literal or a value from context that later
+   * steps may change, and returns it. `withCommonColumns` adds the columns every
+   * table gets (`system`, `created_at`) to that copy.
+   */
+  static register(schema: TableJsonSchema, withCommonColumns = false): TableJsonSchema {
     if (typeof schema.table !== "string" || schema.properties === null || typeof schema.properties !== "object") {
       throw new Error("A table document needs a `table` name and `properties`.");
     }
+    const own = structuredClone(schema);
+    if (withCommonColumns) this.injectCommonColumns(own);
     // Compile eagerly so a malformed schema throws at registration, not on the
     // first insert.
-    getValidator(schema);
-    this.schemas.set(schema.table, schema);
+    getValidator(own);
+    this.schemas.set(own.table, own);
+    return own;
   }
 
   static getAll(): TableJsonSchema[] {
@@ -476,9 +487,7 @@ function doValidate(def: Record<string, unknown>, context: Context): NodeValue {
 async function doRegister(def: Record<string, unknown>, root: string): Promise<unknown> {
   // Inline schema document
   if (def.table && typeof def.table === "object") {
-    const schema = def.table as TableJsonSchema;
-    SchemaNode.injectCommonColumns(schema);
-    SchemaNode.register(schema);
+    const schema = SchemaNode.register(def.table as TableJsonSchema, true);
     return { registered: [schema.table] };
   }
 
@@ -498,9 +507,7 @@ async function doRegister(def: Record<string, unknown>, root: string): Promise<u
         const schema = JSON.parse(content) as TableJsonSchema;
         // The same keys that make the editor treat a file as a table document.
         if ("properties" in schema && "table" in schema) {
-          SchemaNode.injectCommonColumns(schema);
-          SchemaNode.register(schema);
-          registered.push(schema.table);
+          registered.push(SchemaNode.register(schema, true).table);
         }
       }
     } catch (error) {

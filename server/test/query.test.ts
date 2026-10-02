@@ -107,3 +107,29 @@ test("a column's SQL default is `sqlDefault`, apart from JSON Schema's `default`
   const row = await resolve({ $query: "select", ...conn, system: true, table: "stamps", first: true }, {}) as { made: unknown };
   assert.match(String(row.made), /^\d{4}-\d{2}-\d{2}/);
 });
+
+// The registry keeps its own copy of a table document: the one a template
+// wrote is a literal of that template, and steps may change what they read.
+test("registering a table leaves the written document unchanged", async () => {
+  const step = { $schema: "register", table: { table: "kept", properties: { name: { type: "string" } } } };
+  await resolve(step, {});
+  assert.deepEqual(step.table, { table: "kept", properties: { name: { type: "string" } } });
+  assert.ok(SchemaNode.get("kept")?.properties?.created_at, "the registry's copy has the common columns");
+});
+
+test("$schema get hands out a copy, so changing it leaves the registry alone", async () => {
+  await resolve({ $schema: "register", table: { table: "copied", properties: { name: { type: "string" } } } }, {});
+  const got = await resolve({ $schema: "get", table: "copied" }, {}) as { properties: Record<string, unknown> };
+  got.properties.extra = { type: "string" };
+  assert.equal(SchemaNode.get("copied")?.properties?.extra, undefined);
+});
+
+test("a validator that changes `schema` does not change the registered table", async () => {
+  await resolve({ $query: "create", ...conn, system: true, schema: {
+    table: "guarded",
+    properties: { id: { type: "integer", sqlType: "increments" }, name: { type: "string" } },
+    validator: [{ $setVars: { "schema.properties.injected": { type: "string" } } }],
+  } }, {});
+  await resolve({ $query: "select", ...conn, table: "guarded" }, {});
+  assert.equal(SchemaNode.get("guarded")?.properties?.injected, undefined);
+});

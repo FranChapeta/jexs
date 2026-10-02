@@ -357,7 +357,12 @@ async function runValidators(query: QueryDefinition, context: Context): Promise<
     // A table being created cannot approve its own creation: its document is
     // the caller's, so only the global validator judges it.
     const own = query.type === "create" ? undefined : schema.validator;
-    const validatorContext: Context & { [VALIDATING]: true } = { ...context, [VALIDATING]: true, schema, query, operation };
+    if (SchemaNode.globalValidator == null && own == null) continue;
+    // A copy: a validator may narrow the query, but the registered document
+    // stays as registered.
+    const validatorContext: Context & { [VALIDATING]: true } = {
+      ...context, [VALIDATING]: true, schema: structuredClone(schema), query, operation,
+    };
     for (const steps of [SchemaNode.globalValidator, own]) {
       if (steps != null) await runSteps(steps, validatorContext);
     }
