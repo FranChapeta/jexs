@@ -1,7 +1,7 @@
 import { Node, Context, NodeValue } from "./Node.js";
 import { resolve, resolverFor } from "../Resolver.js";
 import { collectTransferables } from "../helpers.js";
-import { acquireWorker, releaseWorker, type TaskWorkerLike } from "../workerPool.js";
+import { WorkerPool, type TaskWorkerLike } from "../workerPool.js";
 import type { JexsNodeSchema } from "../schema.js";
 
 /** One request/response over a thread, matched by `rid`. The worker entry posts
@@ -62,9 +62,20 @@ export class WorkerNode extends Node {
 
   private readonly makeWorker: (() => TaskWorkerLike) | null;
 
+  /** This resolver's threads, by name. Its own pool, so a thread name never
+   *  meets another resolver's or the physics worker's key; `dispose` ends them. */
+  private readonly pool = new WorkerPool();
+
   constructor(makeWorker: (() => TaskWorkerLike) | null) {
     super();
     this.makeWorker = makeWorker;
+  }
+
+  dispose(): void {
+    this.pool.terminateAll<ThreadState>(state => {
+      for (const p of state.pending.values()) p.reject(new Error("thread terminated: its resolver was destroyed"));
+      state.pending.clear();
+    });
   }
 
   thread(def: Record<string, unknown>, context: Context): NodeValue {
@@ -85,7 +96,7 @@ export class WorkerNode extends Node {
       // `$then` (which the resolver applies to this result).
       // A copy, so attaching it to the resolver leaves the caller's object alone.
       if (!this.makeWorker) return resolverFor(context)(steps, { ...params });
-      return dispatchThread(this.makeWorker, name, steps, params, idleMs);
+      return dispatchThread(this.pool, this.makeWorker, name, steps, params, idleMs);
     });
   }
 }
@@ -93,13 +104,14 @@ export class WorkerNode extends Node {
 /** Post one request to the named thread and return a Promise for its result.
  *  Owns the rid-matching directly over the pool (no separate task layer). */
 function dispatchThread(
+  pool: WorkerPool,
   makeWorker: () => TaskWorkerLike,
   name: string,
   steps: unknown,
   params: Record<string, unknown>,
   idleMs: number,
 ): Promise<unknown> {
-  const { worker, state } = acquireWorker<TaskWorkerLike, ThreadState>(name, makeWorker, (w) => {
+  const { worker, state } = pool.acquire<TaskWorkerLike, ThreadState>(name, makeWorker, (w) => {
     const st: ThreadState = { pending: new Map(), nextRid: 1 };
     w.onmessage = (ev) => {
       const { rid, result, error } = ev.data as ThreadResponse;
@@ -124,5 +136,5 @@ function dispatchThread(
   return new Promise<unknown>((resolve, reject) => {
     state.pending.set(rid, { resolve, reject });
     worker.postMessage({ rid, steps, params }, collectTransferables(params));
-  }).finally(() => releaseWorker(name, idleMs));
+  }).finally(() => pool.release(name, idleMs));
 }

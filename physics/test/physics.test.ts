@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createResolver, coreNodes, type Context } from "@jexs/core";
-import { EntityNode, PhysicsNode, CollisionNode, JointNode } from "../src/index.js";
+import { EntityNode, PhysicsNode, CollisionNode, JointNode, EntityStore, offloadWorld, type PhysicsConfig } from "../src/index.js";
 
 const physicsResolver = () =>
   createResolver([...coreNodes(), new EntityNode(), new PhysicsNode(), new CollisionNode(), new JointNode()]);
@@ -34,6 +34,26 @@ test("two resolvers keep separate worlds on the same selector", async () => {
     a.destroy();
     b.destroy();
   }
+});
+
+// Every offloaded world in the realm shares one physics worker, so two worlds
+// on one selector need separate jobs on it.
+test("two offloaded worlds on one selector get separate jobs on the shared worker", (t) => {
+  const store = () => new EntityStore(undefined, true);
+  if (!store().getSharedBuffers()) return t.skip("growable SharedArrayBuffer is unavailable");
+  const sent: Array<{ type: string; id?: string }> = [];
+  const makeWorker = () => ({ postMessage: (msg: { type: string; id?: string }) => { sent.push(msg); }, terminate() {} });
+  const config: PhysicsConfig = { gravity: [0, 980], damping: 0.01, bounds: null };
+
+  const first = offloadWorld(makeWorker, "#game", store(), config);
+  const second = offloadWorld(makeWorker, "#game", store(), config);
+  const registered = sent.filter(m => m.type === "register").map(m => m.id);
+  assert.equal(registered.length, 2);
+  assert.notEqual(registered[0], registered[1]);
+
+  first!.worker.stop();
+  assert.deepEqual(sent.filter(m => m.type === "unregister").map(m => m.id), [registered[0]]);
+  second!.worker.stop();
 });
 
 test("destroying the resolver stops its worlds' loops", async () => {

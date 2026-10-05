@@ -24,7 +24,12 @@
  *
  * `makeWorker` is the only env-specific seam (worker_threads vs Web Worker).
  */
-import { acquireWorker, releaseWorker } from "./workerPool.js";
+import { WorkerPool } from "./workerPool.js";
+
+/** One pool for every `runOnWorker` job, so jobs sharing a key (every physics
+ *  world, say) share one worker, whichever resolver started them. Each job is
+ *  stopped by whoever started it. */
+const pool = new WorkerPool();
 
 // `Atomics.waitAsync` is ES2024; declare the one signature we use rather than
 // raise the lib. Available in Node 16+ and modern browsers (where the loop runs).
@@ -109,7 +114,7 @@ export function runOnWorker(
   // Per-bucket state for this transport: the shared wake signal. Created once,
   // when the worker is first spawned for this key (the `init` message hands the
   // wake SAB to the worker's poll loop).
-  const { worker, state: wakeView } = acquireWorker(workerKey, makeWorker, (w) => {
+  const { worker, state: wakeView } = pool.acquire(workerKey, makeWorker, (w) => {
     const wakeSab = new SharedArrayBuffer(4);
     w.postMessage({ type: "init", wakeSab });
     return new Int32Array(wakeSab);
@@ -133,7 +138,7 @@ export function runOnWorker(
       Atomics.store(ctrl, IDX_QUIT, 1);
       wake(wakeView); // wake the loop so it observes QUIT and drops the unit
       worker.postMessage({ type: "unregister", id });
-      releaseWorker(workerKey, idleMs); // reap when last unit stops (after idleMs)
+      pool.release(workerKey, idleMs); // reap when last unit stops (after idleMs)
     },
   };
 }

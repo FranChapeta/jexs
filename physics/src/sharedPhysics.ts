@@ -71,11 +71,18 @@ export interface WorldOffload {
   contactsView: Float64Array; // worker writes thread:"main" contacts; host reads
 }
 
+/** Numbers each world's job on the shared worker. */
+let nextJob = 0;
+
 /**
  * Register a shared `store` as a physics world on the shared worker (via core's
  * `runOnWorker`, keyed so all worlds share one physics worker). `makeWorker` is
  * the env's worker constructor. Returns null for a non-shared store (the world
  * then steps on the main thread).
+ *
+ * Every world in the realm shares that worker, from whichever resolver, so its
+ * job is named by its selector plus a number: two worlds on one selector never
+ * replace or unregister each other's job.
  */
 export function offloadWorld(
   makeWorker: () => WorkerLike,
@@ -91,7 +98,7 @@ export function offloadWorld(
   const { sab: contactsSab, view: contactsView } = makeContactsBuffer(MAX_CONTACTS);
 
   const bufs: PhysicsJobBufs = { shared, countSab, contactsSab, config, dt: FIXED_DT };
-  const worker = runOnWorker(makeWorker, PHYSICS_WORKER_KEY, selector, bufs);
+  const worker = runOnWorker(makeWorker, PHYSICS_WORKER_KEY, `${selector}#${++nextJob}`, bufs);
   return { worker, countView, contactsView };
 }
 
