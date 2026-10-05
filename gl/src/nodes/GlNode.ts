@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue } from "@jexs/core";
-import { resolve, resolveAll, resolveFields, runSteps } from "@jexs/core";
+import { resolve, resolveAll, resolveFields, resolverFor, runSteps } from "@jexs/core";
 import {
   EntityStore,
   STRIDE,
@@ -663,7 +663,15 @@ export class GlNode extends Node {
     },
   };
 
-  static instances = new Map<string, GlInstance>();
+  /** This resolver's GL instances, by canvas selector. An instance field, so
+   *  another resolver drawing into the same selector never replaces them;
+   *  `dispose` stops their render loops and releases their WebGL contexts. */
+  private readonly instances = new Map<string, GlInstance>();
+
+  dispose(): void {
+    for (const inst of this.instances.values()) GlNode.destroyInstance(inst);
+    this.instances.clear();
+  }
 
   // ── gl-init ─────────────────────────────────────────────────────────────
 
@@ -676,8 +684,11 @@ export class GlNode extends Node {
     return resolveFields(resolvable, context, r => {
       const selector = String(r["$gl-init"]);
 
-      const prev = GlNode.instances.get(selector);
-      if (prev) GlNode.destroyInstance(prev, selector);
+      const prev = this.instances.get(selector);
+      if (prev) {
+        GlNode.destroyInstance(prev);
+        this.instances.delete(selector);
+      }
 
       const canvas = GlNode.resolveCanvas(selector);
       if (!canvas) { console.error("[GL] No element found for selector:", selector); return null; }
@@ -906,7 +917,7 @@ export class GlNode extends Node {
         inst.resizeObserver = ro;
       }
 
-      GlNode.instances.set(selector, inst);
+      this.instances.set(selector, inst);
 
       if (inst.metrics) {
         const el = document.createElement("div");
@@ -929,7 +940,7 @@ export class GlNode extends Node {
       };
 
 (context as Record<string, unknown>)._onPhysicsStep = (sel: string) => {
-        const i = GlNode.instances.get(sel);
+        const i = this.instances.get(sel);
         if (i) { i.dirty = true; GlNode.scheduleRender(i); }
       };
 
@@ -943,8 +954,11 @@ export class GlNode extends Node {
   ["gl-destroy"](_def: Record<string, unknown>, context: Context): NodeValue {
     const selector = context._glSelector as string;
     if (!selector) return null;
-    const inst = GlNode.instances.get(selector);
-    if (inst) GlNode.destroyInstance(inst, selector);
+    const inst = this.instances.get(selector);
+    if (inst) {
+      GlNode.destroyInstance(inst);
+      this.instances.delete(selector);
+    }
     if (context._entityStores) {
       delete (context._entityStores as Record<string, EntityStore>)[selector];
     }
@@ -1831,9 +1845,11 @@ export class GlNode extends Node {
 
   // ── Internal helpers ────────────────────────────────────────────────────
 
+  /** The instance a context's steps draw into, from the resolver's own GlNode. */
   private static getInst(context: Context): GlInstance | null {
     const selector = context._glSelector as string | undefined;
-    return selector ? GlNode.instances.get(selector) ?? null : null;
+    const node = resolverFor(context).nodeFor("gl-init");
+    return selector && node instanceof GlNode ? node.instances.get(selector) ?? null : null;
   }
 
   private static resolveCanvas(selector: string): HTMLCanvasElement | null {
@@ -1849,7 +1865,7 @@ export class GlNode extends Node {
     return canvas;
   }
 
-  private static destroyInstance(inst: GlInstance, selector: string): void {
+  private static destroyInstance(inst: GlInstance): void {
     settleTweens(inst.tweens);
     if (inst.rafId !== null) { cancelAnimationFrame(inst.rafId); inst.rafId = null; }
     if (inst.resizeObserver) inst.resizeObserver.disconnect();
@@ -1884,7 +1900,6 @@ export class GlNode extends Node {
     for (const { buf } of inst.geoVBOs.values()) gl.deleteBuffer(buf);
     if (inst.metricsEl) inst.metricsEl.remove();
     gl.getExtension("WEBGL_lose_context")?.loseContext();
-    GlNode.instances.delete(selector);
   }
 
   // ── 3D program init ───────────────────────────────────────────────────

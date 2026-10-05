@@ -6,7 +6,7 @@
  * Works on both client (RAF) and server (setTimeout).
  */
 
-import { Node, Context, NodeValue, resolve, resolveAll, runSteps } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll, resolverFor, runSteps } from "@jexs/core";
 import {
   EntityStore,
   STRIDE,
@@ -120,9 +120,11 @@ interface PhysicsWorld {
 }
 
 
-// ─── Shared state ────────────────────────────────────────────────────────────
-
-const worlds = new Map<string, PhysicsWorld>();
+/** Stop a world's step loop and its off-thread job. */
+function stopWorld(w: PhysicsWorld): void {
+  if (w.loopId != null) cancelFrame(w.loopId, w.tickMs);
+  w.offload?.worker.stop();
+}
 
 /** Enable verbose physics logging (timing + collision stats). */
 export let _physicsDebug = false;
@@ -635,9 +637,26 @@ export class PhysicsNode extends Node {
    */
   private readonly makeWorker: (() => WorkerLike) | null;
 
+  /** This resolver's worlds, by GL selector. An instance field, so another
+   *  resolver drawing into the same selector never replaces them; `dispose`
+   *  stops their loops. */
+  private readonly worlds = new Map<string, PhysicsWorld>();
+
   constructor(makeWorker: (() => WorkerLike) | null = null) {
     super();
     this.makeWorker = makeWorker;
+  }
+
+  /** The world a context's steps run in, from the resolver's own PhysicsNode.
+   *  Static, since every method on a Node registers as an op. */
+  static world(context: Context): PhysicsWorld | undefined {
+    const node = resolverFor(context).nodeFor("physics-init");
+    return node instanceof PhysicsNode ? node.worlds.get(PhysicsNode.sel(context)) : undefined;
+  }
+
+  dispose(): void {
+    for (const w of this.worlds.values()) stopWorld(w);
+    this.worlds.clear();
   }
 
   static schema: JexsNodeSchema = {
@@ -758,9 +777,8 @@ export class PhysicsNode extends Node {
     const selector = PhysicsNode.sel(context);
     if (!selector) { console.error("[Physics] No _glSelector on context"); return null; }
 
-    const prev = worlds.get(selector);
-    if (prev?.loopId != null) cancelFrame(prev.loopId, prev.tickMs);
-    prev?.offload?.worker.stop();
+    const prev = this.worlds.get(selector);
+    if (prev) stopWorld(prev);
 
     const stores = context._entityStores as Record<string, EntityStore> | undefined;
     const store = stores?.[selector];
@@ -800,7 +818,7 @@ export class PhysicsNode extends Node {
           offload: makeWorker && store.shared ? offloadWorld(makeWorker, selector, store, config) : null,
         };
 
-        worlds.set(selector, world);
+        this.worlds.set(selector, world);
         // `start: false` creates the world without the auto-loop, so the author
         // drives it with `physics-step` (e.g. a server authoritative tick) — no
         // double-stepping. Defaults to true (auto-loop) for backward compat.
@@ -811,23 +829,22 @@ export class PhysicsNode extends Node {
   }
 
   ["physics-pause"](_def: Record<string, unknown>, context: Context): NodeValue {
-    const w = worlds.get(PhysicsNode.sel(context));
+    const w = PhysicsNode.world(context);
     if (w) w.paused = true;
     return null;
   }
 
   ["physics-resume"](_def: Record<string, unknown>, context: Context): NodeValue {
-    const w = worlds.get(PhysicsNode.sel(context));
+    const w = PhysicsNode.world(context);
     if (w) { w.paused = false; w.lastTime = 0; }
     return null;
   }
 
   ["physics-destroy"](_def: Record<string, unknown>, context: Context): NodeValue {
     const selector = PhysicsNode.sel(context);
-    const w = worlds.get(selector);
-    if (w?.loopId != null) cancelFrame(w.loopId, w.tickMs);
-    w?.offload?.worker.stop();
-    worlds.delete(selector);
+    const w = this.worlds.get(selector);
+    if (w) stopWorld(w);
+    this.worlds.delete(selector);
     return null;
   }
 
@@ -850,7 +867,7 @@ export class PhysicsNode extends Node {
 
   ["physics-step"](def: Record<string, unknown>, context: Context): NodeValue {
     const selector = PhysicsNode.sel(context);
-    const world = worlds.get(selector);
+    const world = this.worlds.get(selector);
     if (!world) return null;
 
     return resolve(def.dt ?? null, context, dtRaw => {
@@ -941,7 +958,7 @@ export class CollisionNode extends Node {
 
 
   ["collision-on"](def: Record<string, unknown>, context: Context): NodeValue {
-    const w = worlds.get(PhysicsNode.sel(context));
+    const w = PhysicsNode.world(context);
     if (!w) return null;
 
     return resolveAll([def.groups, def.id ?? null], context, ([groupsRaw, idRaw]) => {
@@ -957,7 +974,7 @@ export class CollisionNode extends Node {
   }
 
   ["collision-off"](def: Record<string, unknown>, context: Context): NodeValue {
-    const w = worlds.get(PhysicsNode.sel(context));
+    const w = PhysicsNode.world(context);
     if (!w) return null;
     return resolve(def["$collision-off"], context, idRaw => {
       const id = String(idRaw);
@@ -1056,7 +1073,7 @@ export class JointNode extends Node {
 
 
   ["joint-add"](def: Record<string, unknown>, context: Context): NodeValue {
-    const w = worlds.get(PhysicsNode.sel(context));
+    const w = PhysicsNode.world(context);
     if (!w) return null;
 
     return resolveAll(
@@ -1121,7 +1138,7 @@ export class JointNode extends Node {
   }
 
   ["joint-remove"](def: Record<string, unknown>, context: Context): NodeValue {
-    const w = worlds.get(PhysicsNode.sel(context));
+    const w = PhysicsNode.world(context);
     if (!w) return null;
     return resolve(def["$joint-remove"], context, idRaw => {
       const id = String(idRaw);
