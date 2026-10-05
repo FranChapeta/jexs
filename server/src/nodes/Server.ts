@@ -9,6 +9,7 @@ import { Context, Node, NodeValue, isHttpError, isObject, isStep, resolve, resol
 import type { JexsNodeSchema } from "@jexs/core";
 import { safeRelative } from "./File.js";
 import { isResponse } from "./Router.js";
+import { SAFE_METHODS } from "./Session.js";
 import { serviceWorkerScript } from "../sw.js";
 
 /**
@@ -99,6 +100,34 @@ interface Listener {
    *  the browser bundle it starts the runtime from. */
   sw: { path: string; config: string; dir: string } | null;
   publicDir: string;
+  /** Other origins allowed to send unsafe requests; `"*"` allows any. */
+  trustedOrigins: string[];
+}
+
+/**
+ * Whether a browser sent this state-changing request (or WebSocket upgrade)
+ * from another site, carrying the user's cookies with it. Browsers mark where a
+ * request came from with `Sec-Fetch-Site`, and older ones with `Origin`; a
+ * request with neither is not from a browser page, so it passes.
+ */
+function isCrossSite(req: http.IncomingMessage, method: string, listener: Listener): boolean {
+  if (SAFE_METHODS.includes(method.toUpperCase())) return false;
+  const { trustedOrigins } = listener;
+  const origin = req.headers.origin;
+  if (trustedOrigins.includes("*") || (origin && trustedOrigins.includes(origin))) return false;
+
+  const site = req.headers["sec-fetch-site"];
+  if (typeof site === "string") return site !== "same-origin" && site !== "none";
+  if (!origin) return false;
+  let host: string;
+  try {
+    host = new URL(origin).host;
+  } catch {
+    return true;
+  }
+  const own = [req.headers.host, req.headers["x-forwarded-host"]];
+  if (process.env.BASE_URL) own.push(new URL(process.env.BASE_URL).host);
+  return !own.includes(host);
 }
 
 /**
@@ -132,6 +161,11 @@ async function handleUpgrade(
   head: Buffer,
   listener: Listener,
 ): Promise<void> {
+  // Browsers let any page open a WebSocket to any host, cookies included.
+  if (isCrossSite(req, "WS", listener)) {
+    socket.destroy();
+    return;
+  }
   // One `noServer` WebSocketServer per node, made on the first upgrade. It binds
   // nothing and only completes handshakes, so one covers every port this node
   // listens on (it is decoupled from any single http.Server), and its `clients`
@@ -176,6 +210,12 @@ async function handleRequest(
   listener: Listener,
 ): Promise<void> {
   try {
+    // Refused before the body is read. A form's `_method` override only turns a
+    // POST into another unsafe method, so the raw method decides.
+    if (isCrossSite(req, req.method || "GET", listener)) {
+      sendResponse(res, { response: "Cross-site request refused", responseStatus: 403 });
+      return;
+    }
     const url = new URL(
       req.url || "/",
       `http://${req.headers.host || "localhost"}`,
@@ -733,7 +773,7 @@ export class ServerNode extends Node {
     listen: {
       type: "number",
       output: "null",
-      markdownDescription: "Starts an HTTP listener on the given port. Pass per-request steps in `\"do\"`.\nSet `\"client\": true` (or a path string) to auto-serve the `@jexs/client` browser bundle\nand inject the script tag into rendered `<head>` elements.\nSet `\"sw\"` (with `\"client\"`) to run a service worker: what it precaches, how it answers requests (`routes`), and the steps it resolves per event (`events`).\n\n**Multiple ports.** Bind more ports by adding more `{ \"$listen\": ..., \"do\": [...] }` steps. Each is an independent listener with its own `do` pipeline, `client`, `sw`, and `maxBodySize`.\n\n**Per-request `do` execution.** The steps run in order against a fresh per-request context. The universal `\"as\"` key is honored (stored into the context for later steps), as is `setVars`. Two stop-signals halt the loop early: a step that resolves to `{ \"$return\": X }` (yields `X`) or to a **response object** (a value with a `response` key).\n\n**Response object.** The final value becomes the HTTP response. A bare string is sent as `text/html`; any other bare value is sent as JSON. For full control return an object:\n- `response`: the body (string, or any JSON value for `responseType: \"json\"`). For `responseType: \"redirect\"` it is the `Location` URL.\n- `responseStatus`: HTTP status code (default `200`).\n- `responseType`: `\"html\"` | `\"json\"` | `\"text\"` | `\"redirect\"` | a literal MIME string (e.g. `\"image/png\"`). When omitted it is inferred: string → `html`, otherwise `json`.\n- `responseHeaders` / `responseHeader`: extra response headers (singular overrides plural on collision).",
+      markdownDescription: "Starts an HTTP listener on the given port. Pass per-request steps in `\"do\"`.\nSet `\"client\": true` (or a path string) to auto-serve the `@jexs/client` browser bundle\nand inject the script tag into rendered `<head>` elements.\nSet `\"sw\"` (with `\"client\"`) to run a service worker: what it precaches, how it answers requests (`routes`), and the steps it resolves per event (`events`).\n\n**Multiple ports.** Bind more ports by adding more `{ \"$listen\": ..., \"do\": [...] }` steps. Each is an independent listener with its own `do` pipeline, `client`, `sw`, and `maxBodySize`.\n\n**Cross-site requests.** A POST, PUT, PATCH or DELETE, or a WebSocket upgrade, that a browser sends from another site's page is refused with 403 before any step runs, since it would carry the user's cookies. Requests from outside a browser (webhooks, scripts) are not affected. Allow other origins with `trustedOrigins`.\n\n**Per-request `do` execution.** The steps run in order against a fresh per-request context. The universal `\"as\"` key is honored (stored into the context for later steps), as is `setVars`. Two stop-signals halt the loop early: a step that resolves to `{ \"$return\": X }` (yields `X`) or to a **response object** (a value with a `response` key).\n\n**Response object.** The final value becomes the HTTP response. A bare string is sent as `text/html`; any other bare value is sent as JSON. For full control return an object:\n- `response`: the body (string, or any JSON value for `responseType: \"json\"`). For `responseType: \"redirect\"` it is the `Location` URL.\n- `responseStatus`: HTTP status code (default `200`).\n- `responseType`: `\"html\"` | `\"json\"` | `\"text\"` | `\"redirect\"` | a literal MIME string (e.g. `\"image/png\"`). When omitted it is inferred: string → `html`, otherwise `json`.\n- `responseHeaders` / `responseHeader`: extra response headers (singular overrides plural on collision).",
       examples: [
         "{ \"$listen\": 3000, \"client\": true, \"do\": [{ \"$session\": \"load\" }, { \"$routes\": { \"$var\": \"routes\" } }] }",
         "{ \"response\": \"{\\\"ok\\\":true}\", \"responseType\": \"json\", \"responseStatus\": 201 }",
@@ -750,6 +790,11 @@ export class ServerNode extends Node {
         maxBodySize: {
           type: "number",
           description: "Maximum request body size in bytes.",
+        },
+        trustedOrigins: {
+          type: "array",
+          items: { type: "string" },
+          description: "Other origins whose pages may send POST, PUT, PATCH and DELETE requests and open WebSockets here, e.g. `\"https://admin.example.com\"`. `\"*\"` allows every origin, for an API that authenticates without cookies.",
         },
         sw: {
           type: "object",
@@ -835,7 +880,7 @@ export class ServerNode extends Node {
       return null;
     }
 
-    return resolveAll([def.$listen, def.maxBodySize ?? null], context, async ([portRaw, maxBodyRaw]) => {
+    return resolveAll([def.$listen, def.maxBodySize ?? null, def.trustedOrigins ?? null], context, async ([portRaw, maxBodyRaw, originsRaw]) => {
       const port = Number(portRaw) || 3000;
 
       const listener: Listener = {
@@ -848,6 +893,7 @@ export class ServerNode extends Node {
         staticDirs: new Map(),
         sw: null,
         publicDir: path.resolve(process.cwd(), "public"),
+        trustedOrigins: Array.isArray(originsRaw) ? originsRaw.filter(o => typeof o === "string") : [],
       };
 
       if (def.maxBodySize && maxBodyRaw != null) {

@@ -314,23 +314,11 @@ async function executeHandler(
 }
 
 /**
- * The request checks a handler declares: a CSRF token on a state-changing
- * method, then its query/body schemas. Read from the handler that runs, so an
- * expression handler's come from whatever it resolved to.
+ * The request checks a handler declares: its query/body schemas. Read from the
+ * handler that runs, so an expression handler's come from whatever it resolved
+ * to.
  */
 function checkRequest(handler: RouteHandler, context: Context): void {
-  const CSRF_SAFE_METHODS = ["GET", "HEAD", "OPTIONS", "WS"];
-  const reqMethod = context.request?.method?.toUpperCase() ?? "GET";
-  const sessionToken = (context.session as Record<string, unknown> | undefined)?._csrf;
-  if (!CSRF_SAFE_METHODS.includes(reqMethod) && sessionToken) {
-    const submittedToken =
-      (context.request?.body as Record<string, unknown> | undefined)?._csrf ??
-      (context.request?.headers as Record<string, string | undefined> | undefined)?.["x-csrf-token"];
-    if (!submittedToken || sessionToken !== submittedToken) {
-      throw createHttpError(403, "CSRF token mismatch");
-    }
-  }
-
   if (handler.queryParams) {
     validateAgainstSchema(handler.queryParams, context.request?.query as Record<string, unknown> ?? {}, "query");
   }
