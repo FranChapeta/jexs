@@ -17,6 +17,18 @@ type AppEvent = (typeof APP_EVENTS)[number];
 
 /** App lifecycle + well-known paths. */
 export class AppNode extends Node {
+  /** The `app` listeners this resolver added, removed by `dispose`: the app
+   *  outlives the resolver, and its listeners would keep running the steps. */
+  private readonly listeners: Array<{ app: Electron.App; event: string; listener: () => void }> = [];
+
+  dispose(): void {
+    for (const { app, event, listener } of this.listeners) {
+      // `removeListener` is declared per event name, like `on`; see `app-on`.
+      (app.removeListener.bind(app) as (e: string, cb: () => void) => unknown)(event, listener);
+    }
+    this.listeners.length = 0;
+  }
+
   static schema: JexsNodeSchema = {
     "app-quit": {
       output: "null",
@@ -105,13 +117,15 @@ export class AppNode extends Node {
       // checked against APP_EVENTS above and this listener ignores every event
       // argument, so erasing to a plain string handler loses nothing real.
       const on = app.on.bind(app) as (e: string, cb: () => void) => unknown;
-      on(event, () => {
+      const listener = () => {
         // The event fires long after this step returned, so the resolver is no
         // longer wrapped around the call. runStepsDetached keeps the step's own
         // `$catch` working and stops a synchronous throw escaping the handler.
         const ctx = childContext(context, { appEvent: event });
         void runStepsDetached(steps, ctx, def, `[AppNode] "${event}" handler failed:`);
-      });
+      };
+      on(event, listener);
+      this.listeners.push({ app, event, listener });
       return null;
     });
   }

@@ -3,8 +3,11 @@ import {
 } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
-/** Accelerator -> the steps it runs, so a re-registration replaces cleanly. */
-const registered = new Map<string, { steps: unknown; context: Context; def: Record<string, unknown> }>();
+interface Registration { steps: unknown; context: Context; def: Record<string, unknown> }
+
+/** Accelerator -> the steps it runs, so a re-registration replaces cleanly.
+ *  Process-wide, like the OS shortcuts themselves. */
+const registered = new Map<string, Registration>();
 
 /** Test seam. */
 export function resetShortcuts(): void {
@@ -12,6 +15,21 @@ export function resetShortcuts(): void {
 }
 
 export class ShortcutNode extends Node {
+  /** The shortcuts this resolver registered. `dispose` unregisters each one
+   *  still bound to its registration, leaving any another resolver has since
+   *  taken over. */
+  private readonly own = new Map<string, Registration>();
+  private shortcuts: Electron.GlobalShortcut | null = null;
+
+  dispose(): void {
+    for (const [accelerator, registration] of this.own) {
+      if (registered.get(accelerator) !== registration) continue;
+      this.shortcuts?.unregister(accelerator);
+      registered.delete(accelerator);
+    }
+    this.own.clear();
+  }
+
   static schema: JexsNodeSchema = {
     shortcut: {
       type: "string",
@@ -55,8 +73,12 @@ export class ShortcutNode extends Node {
         void runStepsDetached(entry.steps, ctx, entry.def, `[ShortcutNode] "${accelerator}" failed:`);
       });
 
-      if (ok) registered.set(accelerator, { steps, context, def });
-      else console.warn(`[ShortcutNode] the OS refused "${accelerator}" — another app likely owns it`);
+      if (ok) {
+        const registration = { steps, context, def };
+        registered.set(accelerator, registration);
+        this.own.set(accelerator, registration);
+        this.shortcuts = globalShortcut;
+      } else console.warn(`[ShortcutNode] the OS refused "${accelerator}" — another app likely owns it`);
       return ok;
     });
   }
@@ -67,9 +89,11 @@ export class ShortcutNode extends Node {
       if (typeof value === "string" && value !== "") {
         globalShortcut.unregister(value);
         registered.delete(value);
+        this.own.delete(value);
       } else {
         globalShortcut.unregisterAll();
         registered.clear();
+        this.own.clear();
       }
       return null;
     });
