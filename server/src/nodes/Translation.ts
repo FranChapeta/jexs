@@ -1,6 +1,6 @@
 import { Node, Context, NodeValue, resolve, resolveFields } from "@jexs/core";
 import { DatabaseNode } from "./Database.js";
-import { cacheFor } from "./Cache.js";
+import { cacheFor, optionalName } from "./Cache.js";
 import { sha256 } from "./Crypto.js";
 import type { JexsNodeSchema } from "@jexs/core";
 
@@ -19,6 +19,14 @@ export class TranslationNode extends Node {
           type: "string",
           description: "DB table name for translations (default `\"translations\"`).",
         },
+        cache: {
+          type: "string",
+          description: "Named cache that holds looked-up translations (default cache if omitted).",
+        },
+        database: {
+          type: "string",
+          description: "Named database connection holding the table (default if omitted).",
+        },
       },
     },
   };
@@ -28,6 +36,8 @@ export class TranslationNode extends Node {
       (context as Record<string, unknown>)._translate = {
         to: r.$translate ? String(r.$translate) : undefined,
         table: r.table ? String(r.table) : "translations",
+        cache: optionalName(r.cache),
+        database: optionalName(r.database),
       };
       return null;
     });
@@ -35,7 +45,7 @@ export class TranslationNode extends Node {
 
   static async translateText(text: string, context: Context): Promise<string> {
     const config = (context as Record<string, unknown>)._translate as
-      | { to?: string; table?: string }
+      | { to?: string; table?: string; cache?: string; database?: string }
       | undefined;
 
     if (!config?.to) return text;
@@ -45,7 +55,7 @@ export class TranslationNode extends Node {
     const cacheKey = `t:${to}:${hash}`;
 
     // Check cache first
-    const cache = cacheFor(context);
+    const cache = cacheFor(context, config.cache);
     const cached = await cache.get(cacheKey);
     if (cached !== undefined && cached !== null) {
       return cached === text ? text : String(cached);
@@ -53,7 +63,7 @@ export class TranslationNode extends Node {
 
     // Cache miss — query DB
     try {
-      const knex = DatabaseNode.getKnex(context);
+      const knex = DatabaseNode.getKnex(context, config.database);
       const row = await knex(table)
         .select("translated_text")
         .where({ text_hash: hash, language_code: to })

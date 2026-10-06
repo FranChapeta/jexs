@@ -1,6 +1,6 @@
 import { randomUUID, randomBytes, timingSafeEqual } from "crypto";
-import { Node, Context, NodeValue, resolve, createHttpError, isObject } from "@jexs/core";
-import { cacheFor } from "./Cache.js";
+import { Node, Context, NodeValue, resolveAll, createHttpError, isObject } from "@jexs/core";
+import { cacheFor, optionalName } from "./Cache.js";
 import type { CacheAdapter } from "../cache/CacheAdapter.js";
 import type { JexsNodeSchema } from "@jexs/core";
 
@@ -23,6 +23,9 @@ export const SAFE_METHODS = ["GET", "HEAD", "OPTIONS"];
  *  session ops in the same request don't check again (`regenerate` rotates the
  *  token the request was sent with). */
 const trusted = new WeakSet<object>();
+
+/** The cache each request's session ops chose, so later ops in it use the same one. */
+const chosenCache = new WeakMap<object, string>();
 
 /**
  * SessionNode - Handles session operations with cache persistence.
@@ -53,22 +56,38 @@ export class SessionNode extends Node {
       outputDescription: "`load` returns `null`; it populates `$session` for reading. `create`/`regenerate`/`destroy`/setting values return a small status object (`{ type: \"session\", action, sessionId?, cookie }`). The `sid` cookie is queued onto the response for you; you don't return it yourself.",
       examples: [
         "{ \"$session\": { \"user_id\": { \"$var\": \"user.id\" }, \"role\": { \"$var\": \"user.role\" } } }",
+        "{ \"$session\": \"load\", \"cache\": \"sessions\" }",
       ],
+      siblings: {
+        cache: {
+          type: "string",
+          description: "Named cache that stores sessions, remembered for the rest of the request; the default cache if omitted.",
+        },
+      },
     },
   };
 
   session(def: Record<string, unknown>, context: Context): NodeValue {
     // A literal map has its values resolved; a step may resolve to an action
     // name or to a map of values.
-    return resolve(def.$session, context, op => {
-      if (op === "load") return loadSession(context);
-      if (op === "destroy") return destroySession(context);
-      if (op === "create") return createSession(context);
-      if (op === "regenerate") return regenerateSession(context);
-      if (this.isObject(op)) return setSessionValues(op, context);
+    return resolveAll([def.$session, def.cache ?? null], context, ([op, cacheName]) => {
+      const cache = sessionCache(context, optionalName(cacheName));
+      if (op === "load") return loadSession(context, cache);
+      if (op === "destroy") return destroySession(context, cache);
+      if (op === "create") return initSession(context, cache);
+      if (op === "regenerate") return regenerateSession(context, cache);
+      if (this.isObject(op)) return setSessionValues(op, context, cache);
       return null;
     });
   }
+}
+
+/** The cache holding this request's session: the op's own `cache`, else the one
+ *  an earlier op in the request chose, else the default. */
+function sessionCache(context: Context, name?: string): CacheAdapter {
+  const request = context.request;
+  if (name !== undefined && request) chosenCache.set(request, name);
+  return cacheFor(context, name ?? (request ? chosenCache.get(request) : undefined));
 }
 
 function getSessionId(context: Context): string | null {
@@ -151,9 +170,9 @@ function buildCookie(context: Context, value: string, maxAge?: number): string {
  */
 async function initSession(
   context: Context,
+  cache: CacheAdapter,
   data: Record<string, unknown> = {},
 ): Promise<SessionResult> {
-  const cache = cacheFor(context);
   const id = randomUUID();
 
   // Ensure CSRF token exists
@@ -178,15 +197,10 @@ async function initSession(
   return { type: "session", action: "create", sessionId: id, cookie };
 }
 
-async function createSession(context: Context): Promise<SessionResult> {
-  return initSession(context);
-}
-
-async function destroySession(context: Context): Promise<SessionResult> {
+async function destroySession(context: Context, cache: CacheAdapter): Promise<SessionResult> {
   const sessionId = getSessionId(context);
 
   if (sessionId) {
-    const cache = cacheFor(context);
     await readSession(context, cache, sessionId);
     await cache.delete(PREFIX + sessionId);
   }
@@ -206,13 +220,13 @@ async function destroySession(context: Context): Promise<SessionResult> {
 async function setSessionValues(
   values: Record<string, unknown>,
   context: Context,
+  cache: CacheAdapter,
 ): Promise<SessionResult> {
-  const cache = cacheFor(context);
   const id = getSessionId(context);
   const sessionData = id ? await readSession(context, cache, id) : null;
 
   if (!sessionData) {
-    const { sessionId, cookie } = await initSession(context, { ...values });
+    const { sessionId, cookie } = await initSession(context, cache, { ...values });
     return { type: "session", action: "set", data: context.session, sessionId, cookie };
   }
 
@@ -222,8 +236,7 @@ async function setSessionValues(
   return { type: "session", action: "set", data: sessionData.data };
 }
 
-async function regenerateSession(context: Context): Promise<SessionResult> {
-  const cache = cacheFor(context);
+async function regenerateSession(context: Context, cache: CacheAdapter): Promise<SessionResult> {
   const oldId = getSessionId(context);
 
   let data: Record<string, unknown> = {};
@@ -236,18 +249,17 @@ async function regenerateSession(context: Context): Promise<SessionResult> {
   // Rotate CSRF token on regeneration
   data._csrf = newToken();
 
-  return initSession(context, data);
+  return initSession(context, cache, data);
 }
 
-async function loadSession(context: Context): Promise<null> {
-  const cache = cacheFor(context);
+async function loadSession(context: Context, cache: CacheAdapter): Promise<null> {
   const id = getSessionId(context);
   const sessionData = id ? await readSession(context, cache, id) : null;
 
   if (!sessionData) {
     const method = context.request?.method?.toUpperCase() ?? "GET";
     if (SAFE_METHODS.includes(method)) {
-      await initSession(context, {});
+      await initSession(context, cache);
     } else {
       context.session = {};
     }

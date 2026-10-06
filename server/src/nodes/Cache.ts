@@ -1,18 +1,19 @@
-import { Node, Context, NodeValue, resolve, resolveAll, resolveFields, resolverFor, createHttpError } from "@jexs/core";
+import { Node, Context, NodeValue, resolveAll, resolveFields, resolverFor, createHttpError } from "@jexs/core";
 import type { CacheAdapter, CacheConfig } from "../cache/CacheAdapter.js";
 import { MemoryCache } from "../cache/MemoryCache.js";
 import { RedisCache } from "../cache/RedisCache.js";
 import { MemcachedCache } from "../cache/MemcachedCache.js";
 import { parseTls, TLS_STRINGS } from "../connection.js";
-import type { JexsNodeSchema } from "@jexs/core";
+import type { JexsNodeSchema, JexsPropertySchema } from "@jexs/core";
 
-/** The resolver's own cache, which its sessions and translations use too. */
-export function cacheFor(context: Context): CacheAdapter {
+/** One of the resolver's caches, which its sessions and translations use too.
+ *  Omit `name` for the default: whichever connected first. */
+export function cacheFor(context: Context, name?: string): CacheAdapter {
   const node = resolverFor(context).nodeFor("cache");
   if (!(node instanceof CacheNode)) {
     throw new Error("No CacheNode in this resolver; build it with serverNodes().");
   }
-  return CacheNode.adapterOf(node);
+  return CacheNode.adapterOf(node, name);
 }
 
 /** The adapter a `$cache-connect` config asks for. */
@@ -29,23 +30,35 @@ function createAdapter(config: CacheConfig): CacheAdapter {
 }
 
 export class CacheNode extends Node {
-  /** This resolver's cache. An instance field, so one resolver's `$cache-connect`,
-   *  `close` or `clear` never touches another's; `dispose` closes it. */
-  private adapter: CacheAdapter | null = null;
+  /** This resolver's caches by name, and whichever connected first. Instance
+   *  fields, so one resolver's `$cache-connect`, `close` or `clear` never touches
+   *  another's; `dispose` closes them. */
+  private readonly adapters = new Map<string, CacheAdapter>();
+  private defaultName: string | null = null;
 
-  /** A node's adapter, an in-memory one until `$cache-connect` opens another.
-   *  Static, since every method on a Node registers as an op. */
-  static adapterOf(node: CacheNode): CacheAdapter {
-    if (!node.adapter) {
-      console.warn("[Cache] Not connected, using memory cache");
-      node.adapter = new MemoryCache();
+  /**
+   * The cache under `name`, or the default without one. The default is an
+   * in-memory cache until `$cache-connect` opens another; a named cache must have
+   * been connected. Static, since every method on a Node registers as an op.
+   */
+  static adapterOf(node: CacheNode, name?: string): CacheAdapter {
+    const key = name ?? node.defaultName ?? "default";
+    const adapter = node.adapters.get(key);
+    if (adapter) return adapter;
+    if (name !== undefined) {
+      throw new Error(`Cache "${name}" is not connected. Open it with { "$cache-connect": "memory", "connection": "${name}" }`);
     }
-    return node.adapter;
+    console.warn("[Cache] Not connected, using memory cache");
+    const fallback = new MemoryCache();
+    node.adapters.set(key, fallback);
+    node.defaultName ??= key;
+    return fallback;
   }
 
   dispose(): void {
-    void this.adapter?.close().catch(() => {});
-    this.adapter = null;
+    for (const adapter of this.adapters.values()) void adapter.close().catch(() => {});
+    this.adapters.clear();
+    this.defaultName = null;
   }
 
   static schema: JexsNodeSchema = {
@@ -53,13 +66,14 @@ export class CacheNode extends Node {
       type: "string",
       enum: ["redis", "memory", "memcached"],
       output: "string",
-      markdownDescription: "Initializes the cache singleton. The value selects the driver; connection details vary by driver. Redis also accepts a `url` connection string in place of the discrete host/port properties — memcached does not, because its connection format is the server list itself.",
+      markdownDescription: "Opens a named cache, replacing any already open under that name. The first one opened is the default, which the other `cache-*` ops, sessions and translations use unless told otherwise. The value selects the driver; connection details vary by driver. Redis also accepts a `url` connection string in place of the discrete host/port properties — memcached does not, because its connection format is the server list itself.",
       outputDescription: "The connected driver name (`\"memory\"`, `\"redis\"`, or `\"memcached\"`).",
       examples: [
         "{ \"$cache-connect\": \"memory\" }",
         "{ \"$cache-connect\": \"redis\", \"host\": \"localhost\", \"port\": 6379 }",
         "{ \"$cache-connect\": \"redis\", \"url\": { \"$var\": \"env.REDIS_URL\" } }",
         "{ \"$cache-connect\": \"memcached\", \"servers\": [\"localhost:11211\"] }",
+        "{ \"$cache-connect\": \"redis\", \"connection\": \"sessions\", \"url\": { \"$var\": \"env.REDIS_URL\" } }",
       ],
       siblings: {
         prefix:     { type: "string", description: "Key prefix applied to every operation." },
@@ -179,11 +193,18 @@ export class CacheNode extends Node {
         "{ \"$cache\": \"clear\" }",
       ],
       variants: {
-        close: { output: "null", markdownDescription: "Closes the cache connection." },
+        close: { output: "null", markdownDescription: "Closes a cache. Closing the default leaves an in-memory default until another cache is opened." },
         clear: { output: "null", markdownDescription: "Removes every entry.", outputDescription: "Always `null`." },
         stats: { output: "object", markdownDescription: "Reports driver statistics.", outputDescription: "A stats object (hit/miss counts, entry count/size, etc.); exact fields depend on the driver." },
         dump:  { output: "object", markdownDescription: "Snapshots the cache contents (memory driver only).", outputDescription: "An object snapshot of all entries. Memory driver only; other drivers return an error object." },
       },
+    },
+  };
+
+  static commonSiblings: Record<string, JexsPropertySchema> = {
+    connection: {
+      type: "string",
+      description: "Name of the cache connection (default `\"default\"`, or whichever cache connected first).",
     },
   };
 
@@ -234,26 +255,31 @@ export class CacheNode extends Node {
         if (r.checkPeriod) config.memory.checkPeriod = Number(r.checkPeriod);
       }
 
-      // Replacing this resolver's cache closes the one it had.
-      void this.adapter?.close().catch(() => {});
-      this.adapter = createAdapter(config);
-      console.log(`[CacheNode] Connected to cache (${type})`);
+      // Replacing a name closes the cache it had.
+      const name = optionalName(r.connection) ?? "default";
+      void this.adapters.get(name)?.close().catch(() => {});
+      this.adapters.set(name, createAdapter(config));
+      this.defaultName ??= name;
+      console.log(`[CacheNode] Connected to cache "${name}" (${type})`);
       return type;
     });
   }
 
   ["cache"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$cache, context, op => {
+    return resolveAll([def.$cache, def.connection ?? null], context, ([op, nameRaw]) => {
+      const name = optionalName(nameRaw);
       switch (op) {
         case "close": {
-          const adapter = this.adapter;
-          this.adapter = null;
+          const key = name ?? this.defaultName ?? "default";
+          const adapter = this.adapters.get(key);
+          this.adapters.delete(key);
+          if (this.defaultName === key) this.defaultName = null;
           return adapter?.close() ?? null;
         }
-        case "clear": return CacheNode.adapterOf(this).clear();
-        case "stats": return CacheNode.adapterOf(this).stats();
+        case "clear": return CacheNode.adapterOf(this, name).clear();
+        case "stats": return CacheNode.adapterOf(this, name).stats();
         case "dump": {
-          const instance = CacheNode.adapterOf(this) as unknown as Record<string, unknown>;
+          const instance = CacheNode.adapterOf(this, name) as unknown as Record<string, unknown>;
           if (typeof instance.dump === "function") return instance.dump();
           throw createHttpError(501, "cache dump is only supported by the memory driver");
         }
@@ -264,24 +290,32 @@ export class CacheNode extends Node {
   }
 
   ["cache-get"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$cache-get"], context, async key => CacheNode.adapterOf(this).get(String(key)));
+    return resolveAll([def["$cache-get"], def.connection ?? null], context, async ([key, connection]) =>
+      CacheNode.adapterOf(this, optionalName(connection)).get(String(key)));
   }
 
   ["cache-set"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["$cache-set"], def.value ?? null, def.ttl ?? null], context, async ([keyRaw, value, ttlRaw]) => {
+    return resolveAll([def["$cache-set"], def.value ?? null, def.ttl ?? null, def.connection ?? null], context, async ([keyRaw, value, ttlRaw, connection]) => {
       const key = String(keyRaw);
       const ttl = ttlRaw != null ? Number(ttlRaw) : undefined;
-      return CacheNode.adapterOf(this).set(key, value, ttl);
+      return CacheNode.adapterOf(this, optionalName(connection)).set(key, value, ttl);
     });
   }
 
   ["cache-delete"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$cache-delete"], context, async keyRaw => CacheNode.adapterOf(this).delete(String(keyRaw)));
+    return resolveAll([def["$cache-delete"], def.connection ?? null], context, async ([keyRaw, connection]) =>
+      CacheNode.adapterOf(this, optionalName(connection)).delete(String(keyRaw)));
   }
 
   ["cache-has"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$cache-has"], context, async keyRaw => CacheNode.adapterOf(this).has(String(keyRaw)));
+    return resolveAll([def["$cache-has"], def.connection ?? null], context, async ([keyRaw, connection]) =>
+      CacheNode.adapterOf(this, optionalName(connection)).has(String(keyRaw)));
   }
+}
+
+/** A resolved cache-name sibling: absent (or resolving to nothing) means the default. */
+export function optionalName(value: unknown): string | undefined {
+  return value == null ? undefined : String(value);
 }
 
 const CACHE_DRIVERS = ["memory", "redis", "memcached"] as const;
