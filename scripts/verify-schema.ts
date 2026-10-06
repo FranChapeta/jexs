@@ -404,7 +404,13 @@ const cases: Case[] = [
   // endpoint (url / host / filename), so port/user/password/db are scoped to
   // `host` rather than sitting flat alongside the others.
   { label: "database connect via url alone (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $database: "connect", name: "main", url: "postgres://h:5432/app" } },
+    expr: { $database: "connect", connection: "main", url: "postgres://h:5432/app" } },
+  // `connection` picks the connection on every `$database` op; `$query`, in
+  // another node, picks it with `database`.
+  { label: "database close by connection (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $database: "close", connection: "main" } },
+  { label: "query picks its database (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $query: "select", table: "users", database: "main" } },
   { label: "database connect via host + its own siblings (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $database: "connect", type: "pg", host: "h", port: 5432, user: "u", db: "app" } },
   { label: "database connect via filename (valid)", schemaRef: "$defs/exprFlat", expectValid: true,

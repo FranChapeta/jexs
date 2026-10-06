@@ -12,16 +12,16 @@ const registry = {};
 const resolve = createResolver([...coreNodes(), ...serverNodes()], { context: registry });
 // A file, not `:memory:`: each pooled connection would open its own empty in-memory database.
 const dir = await fs.mkdtemp(path.join(os.tmpdir(), "jexs-query-"));
-const conn = { connection: "query-test" };
+const conn = { database: "query-test" };
 
 after(async () => {
-  await resolve({ $database: "close", name: "query-test" }, {});
+  await resolve({ $database: "close", connection: "query-test" }, {});
   await fs.rm(dir, { recursive: true, force: true });
 });
 
 test("a query step runs end to end against sqlite", async () => {
   const context = {};
-  await resolve({ $database: "connect", name: "query-test", type: "sqlite", filename: path.join(dir, "test.db") }, context);
+  await resolve({ $database: "connect", connection: "query-test", type: "sqlite", filename: path.join(dir, "test.db") }, context);
   await resolve({ $query: "create", ...conn, schema: {
     table: "people",
     properties: {

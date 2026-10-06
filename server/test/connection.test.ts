@@ -246,11 +246,11 @@ after(async () => { await DatabaseNode.closeAll(dbCtx); });
 
 test("url and the discrete endpoint properties are alternatives, not layers", async () => {
   await assert.rejects(
-    async () => connect({ $database: "connect", name: "c1", url: "postgres://h/d", host: "elsewhere" }),
+    async () => connect({ $database: "connect", connection: "c1", url: "postgres://h/d", host: "elsewhere" }),
     /already carries the endpoint/,
   );
   await assert.rejects(
-    async () => connect({ $database: "connect", name: "c2", url: "sqlite:a.db", filename: "b.db" }),
+    async () => connect({ $database: "connect", connection: "c2", url: "sqlite:a.db", filename: "b.db" }),
     /already carries the endpoint/,
   );
 });
@@ -261,7 +261,7 @@ test("url and the discrete endpoint properties are alternatives, not layers", as
 // since the field takes PEM content it is the ONLY channel for loaded material.
 test("ssl layers over a url instead of colliding with it", async () => {
   const r = await connect({
-    $database: "connect", name: "c3",
+    $database: "connect", connection: "c3",
     url: "postgres://h/d?sslmode=no-verify",
     ssl: { ca: CA_PEM },
   });
@@ -276,7 +276,7 @@ test("ssl layers over a url instead of colliding with it", async () => {
 // binding — so a statement with no placeholders failed with "Expected 1
 // bindings, saw 0". A real guard turns it back into the no-bindings call.
 test("raw works with bindings omitted, present, or wrong", async () => {
-  await connect({ $database: "connect", name: "mem", url: "sqlite::memory:" });
+  await connect({ $database: "connect", connection: "mem", url: "sqlite::memory:" });
   const run = (step: Record<string, unknown>) =>
     connect({ ...step, $database: "raw", connection: "mem" });
 
@@ -304,9 +304,20 @@ test("using an unopened connection names it and lists the drivers", async () => 
   );
 });
 
+// Every `$database` op picks its connection with the same `connection` key.
+test("info and close act on the connection they name", async () => {
+  await connect({ $database: "connect", connection: "left", url: "sqlite::memory:" });
+  await connect({ $database: "connect", connection: "right", url: "sqlite::memory:" });
+  assert.equal((await connect({ $database: "info", connection: "right" }))?.location, ":memory:");
+
+  await connect({ $database: "close", connection: "right" });
+  assert.equal(await connect({ $database: "info", connection: "right" }), null);
+  assert.ok(await connect({ $database: "info", connection: "left" }));
+});
+
 test("a type contradicting the url scheme is refused", async () => {
   await assert.rejects(
-    async () => connect({ $database: "connect", name: "c4", type: "mysql", url: "postgres://h/d" }),
+    async () => connect({ $database: "connect", connection: "c4", type: "mysql", url: "postgres://h/d" }),
     /contradicts the url scheme/,
   );
 });

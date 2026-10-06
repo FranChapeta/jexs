@@ -274,9 +274,9 @@ export class QueryNode extends Node {
         "{ \"$query\": \"select\", \"table\": \"users\", \"where\": { \"id\": { \"$var\": \"id\" } }, \"first\": true }",
       ],
       siblings: {
-        table:      { type: "string",  description: "Target table." },
-        connection: { type: "string",  description: "Named DB connection (default if omitted)." },
-        system:     { type: "boolean", description: "Skip the validators: for the app's own queries, such as creating tables at startup, which have no request to authorize." },
+        table:    { type: "string",  description: "Target table." },
+        database: { type: "string",  description: "Named database connection (default if omitted)." },
+        system:   { type: "boolean", description: "Skip the validators: for the app's own queries, such as creating tables at startup, which have no request to authorize." },
       },
       variants: {
         select: op("any", "Reads rows. Returns an array (or the single row / `null` with `first`).",
@@ -314,9 +314,9 @@ async function execQuery(def: Record<string, unknown>, context: Context): Promis
   const r = await resolveFields(clauses, context, r => r);
   if (schema !== undefined) r.schema = isStep(schema) ? await resolve(schema, context) : schema;
   const query = toQuery(r);
-  // Omitted `connection` falls back to whichever opened first; getKnex owns
+  // Omitted `database` falls back to whichever opened first; getKnex owns
   // that chain, so this does not repeat it.
-  const knex = DatabaseNode.getKnex(context, r.connection == null ? undefined : String(r.connection));
+  const knex = DatabaseNode.getKnex(context, r.database == null ? undefined : String(r.database));
 
   if (!r.system) await runValidators(query, context);
 
@@ -370,7 +370,7 @@ async function runValidators(query: QueryDefinition, context: Context): Promise<
   }
 }
 
-/** The resolved step as the QueryDefinition the execute* helpers consume: its clauses, without the resolver's `$` keys or the connection settings. */
+/** The resolved step as the QueryDefinition the execute* helpers consume: its clauses, without the resolver's `$` keys or the `database` and `system` settings. */
 function toQuery(r: Record<string, unknown>): QueryDefinition {
   const type = r.$query;
   if (typeof type !== "string" || !VALID_QUERY_TYPES.has(type)) {
@@ -381,7 +381,7 @@ function toQuery(r: Record<string, unknown>): QueryDefinition {
   }
   const query: Record<string, unknown> = { type };
   for (const [k, v] of Object.entries(r)) {
-    if (!isOwnedKey(k) && k !== "connection" && k !== "system") query[k] = v;
+    if (!isOwnedKey(k) && k !== "database" && k !== "system") query[k] = v;
   }
   return query as unknown as QueryDefinition;
 }

@@ -289,12 +289,18 @@ const suspicious: Array<{ first: string; op: string; at: number }> = [];
 /** Other spots the codemod cannot rewrite on its own, reported for review. */
 const reviews: Array<{ at: number; message: string }> = [];
 
-/** Siblings that were named to avoid an op's name and now take their natural one, by op. */
+/**
+ * Siblings renamed since the prefix, by op: names that avoided an op's name
+ * and now take their natural one, and the key that picks a named backend
+ * (`connection` within the node that owns it, the resource's name outside it).
+ */
 const SIBLING_RENAMES: Record<string, Record<string, string>> = {
   mapRange: { clampToRange: "clamp" },
   file: { copyTo: "copy", moveTo: "move" },
   tray: { items: "menu" },
   setVars: { raw: "data" },
+  database: { name: "connection" },
+  query: { connection: "database" },
 };
 
 /**

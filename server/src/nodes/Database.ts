@@ -2,7 +2,7 @@ import Knex, { Knex as KnexType } from "knex";
 import fs from "node:fs";
 import path from "node:path";
 import { Node, Context, NodeValue, resolve, resolveAll, resolveFields, resolverFor } from "@jexs/core";
-import type { JexsNodeSchema } from "@jexs/core";
+import type { JexsNodeSchema, JexsPropertySchema } from "@jexs/core";
 import {
   mergeTls, parseDbUrl, parseTls, TLS_STRINGS,
   DATABASE_TYPES, HOSTED_DATABASE_TYPES, isDatabaseType,
@@ -52,10 +52,10 @@ function describe(config: DatabaseConfig): ConnectionInfo {
  * DatabaseNode - Handles database connections and queries in JSON.
  *
  * Connect:
- * { "$database": "connect", "name": "main", "type": "sqlite", "filename": "data.db" }
+ * { "$database": "connect", "connection": "main", "type": "sqlite", "filename": "data.db" }
  *
  * Close:
- * { "$database": "close", "name": "main" }
+ * { "$database": "close", "connection": "main" }
  *
  * Raw query:
  * { "$database": "raw", "sql": "SELECT * FROM users WHERE id = ?", "bindings": [1] }
@@ -112,14 +112,14 @@ export class DatabaseNode extends Node {
       ],
       markdownDescription: "Manages database connections. Supports SQLite (`better-sqlite3`), MySQL (`mysql2`), and PostgreSQL (`pg`) via Knex. The operation is the primary value; each carries its own properties.",
       examples: [
-        "{ \"$database\": \"connect\", \"name\": \"main\", \"type\": \"sqlite\", \"filename\": \"app/data.db\" }",
+        "{ \"$database\": \"connect\", \"connection\": \"main\", \"type\": \"sqlite\", \"filename\": \"app/data.db\" }",
       ],
       variants: {
         connect: {
           output: "object",
           markdownDescription: "Opens (and registers) a connection, from a `url` connection string or from discrete `host`/`port`/`user` properties. Returns a status object.",
           examples: [
-            "{ \"$database\": \"connect\", \"name\": \"main\", \"url\": { \"$var\": \"env.DATABASE_URL\" } }",
+            "{ \"$database\": \"connect\", \"connection\": \"main\", \"url\": { \"$var\": \"env.DATABASE_URL\" } }",
             "{ \"$database\": \"connect\", \"type\": \"pg\", \"host\": \"db.example.com\", \"db\": \"app\", \"ssl\": { \"ca\": \"certs/root.pem\" } }",
           ],
           // Only the properties common to every way of connecting. Each of the
@@ -127,7 +127,6 @@ export class DatabaseNode extends Node {
           // that belong to one of them are scoped to it rather than sitting
           // flat here alongside the others.
           siblings: {
-            name: { type: "string", description: "Connection name (default `\"default\"`)." },
             ssl: {
               type: ["boolean", "string", "object"],
               enum: TLS_STRINGS,
@@ -176,9 +175,6 @@ export class DatabaseNode extends Node {
           output: "object",
           outputDescription: "A status object, or `null` if closing failed.",
           markdownDescription: "Closes a named connection.",
-          siblings: {
-            name: { type: "string", description: "Connection name to close." },
-          },
         },
         raw: {
           markdownDescription: "Runs a raw SQL string with positional bindings.",
@@ -186,7 +182,6 @@ export class DatabaseNode extends Node {
           siblings: {
             sql: { type: "string", description: "Raw SQL string." },
             bindings: { type: "array", description: "Positional bindings for the SQL." },
-            connection: { type: "string", description: "Named connection (default if omitted)." },
           },
         },
         tableExists: {
@@ -194,7 +189,6 @@ export class DatabaseNode extends Node {
           markdownDescription: "Returns whether a table exists.",
           siblings: {
             table: { type: "string", description: "Table name." },
-            connection: { type: "string", description: "Named connection (default if omitted)." },
           },
         },
         dropTable: {
@@ -202,18 +196,21 @@ export class DatabaseNode extends Node {
           markdownDescription: "Drops a table if it exists. Returns a status object.",
           siblings: {
             table: { type: "string", description: "Table name." },
-            connection: { type: "string", description: "Named connection (default if omitted)." },
           },
         },
         info: {
           output: "object",
           outputDescription: "A connection-info object, or `null` if unknown. Carries no credentials.",
           markdownDescription: "Reports connection info (type, location, whether TLS is on, size, table count).",
-          siblings: {
-            name: { type: "string", description: "Connection name." },
-          },
         },
       },
+    },
+  };
+
+  static commonSiblings: Record<string, JexsPropertySchema> = {
+    connection: {
+      type: "string",
+      description: "Name of the database connection (default `\"default\"`, or whichever connected first).",
     },
   };
 
@@ -491,7 +488,7 @@ const ENDPOINT_SIBLINGS = ["host", "port", "user", "password", "db", "filename"]
 
 function doConnect(self: DatabaseNode, def: Record<string, unknown>, context: Context): unknown {
   return resolveFields(def, context, r => {
-    const name = String(r.name ?? "default");
+    const name = String(r.connection ?? "default");
     // A `url` supplies the whole endpoint and picks the driver via its scheme.
     const fromUrl = r.url ? parseDbUrl(String(r.url)) : null;
     if (fromUrl) {
@@ -559,7 +556,7 @@ function doConnect(self: DatabaseNode, def: Record<string, unknown>, context: Co
 }
 
 function doClose(self: DatabaseNode, def: Record<string, unknown>, context: Context): unknown {
-  return resolve(def.name ?? null, context, async nameRaw => {
+  return resolve(def.connection ?? null, context, async nameRaw => {
     const name = connectionName(self, nameRaw);
 
     try {
@@ -607,7 +604,7 @@ function doDropTable(self: DatabaseNode, def: Record<string, unknown>, context: 
 }
 
 function doInfo(self: DatabaseNode, def: Record<string, unknown>, context: Context): unknown {
-  return resolve(def.name ?? null, context, async nameRaw => {
+  return resolve(def.connection ?? null, context, async nameRaw => {
     // `info` reports on an unknown connection with `null` rather than throwing,
     // so it resolves the name but does not go through `requireConnection`.
     const conn = self.connections.get(connectionName(self, nameRaw));
