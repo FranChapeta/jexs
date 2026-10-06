@@ -388,6 +388,13 @@ function walkExpr(v: Val): void {
       if (!migrated && op === "join" && p.value.k === "arr") {
         reviews.push({ at: p.keyStart, message: "`$join` takes the array itself now; `[array, separator]` becomes `array` with a `separator` sibling" });
       }
+      // Rotating the session is a sibling of setting values now, so a login is one step.
+      if (op === "session" && p.value.k === "str" && p.value.value === "regenerate") {
+        add({ start: p.value.start, end: p.value.end, text: "{}, \"regenerate\": true" });
+      }
+      if (op === "session" && p.value.k === "str" && p.value.value === "create") {
+        reviews.push({ at: p.keyStart, message: "`$session: \"create\"` is gone: `load` starts a session on a page view and setting values starts one when needed; for a fresh id use `{ \"$session\": {}, \"regenerate\": true }`" });
+      }
       if (op === "oauth" && p.value.k === "str" && p.value.value === "state") {
         reviews.push({ at: p.keyStart, message: "`$oauth: \"state\"` is gone: `authUrl` makes its own state and keeps it in the session for `exchange`; drop the step, or use `$randomHex` for a random string" });
       }

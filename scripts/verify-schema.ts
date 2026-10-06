@@ -411,6 +411,8 @@ const cases: Case[] = [
     expr: { $database: "close", connection: "main" } },
   { label: "query picks its database (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $query: "select", table: "users", database: "main" } },
+  { label: "session login sets values on a new id in one step (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $session: { user_id: { $var: "user.id" } }, regenerate: true } },
   { label: "database connect via host + its own siblings (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $database: "connect", type: "pg", host: "h", port: 5432, user: "u", db: "app" } },
   { label: "database connect via filename (valid)", schemaRef: "$defs/exprFlat", expectValid: true,

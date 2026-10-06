@@ -76,17 +76,32 @@ test("the right token in the body or the header loads the session", async () => 
   }
 });
 
-// Regenerating rotates the token the request was sent with, so the ops after
-// it in the same request must not check again.
-test("a login regenerates and then sets values in one POST", async () => {
+test("a login moves the session to a new id and token, keeping its data, in one step", async () => {
   const { resolver, context, sid, token } = await started();
   try {
     const login = request("POST", { sid }, { body: { _csrf: token } });
-    await resolver([{ $session: "regenerate" }, { $session: { user_id: 7 } }], login);
+    await resolver({ $session: { user_id: 7 }, regenerate: true }, login);
     const newSid = (login.request?.cookies ?? {}).sid;
     assert.notEqual(newSid, sid);
-    assert.equal((await stored(context, newSid))?.user_id, 7);
+    const data = await stored(context, newSid);
+    assert.equal(data?.user_id, 7);
+    assert.equal(data?.user, "ada", "data from before the login is kept");
+    assert.notEqual(data?._csrf, token);
     assert.equal(await stored(context, sid), undefined);
+  } finally {
+    resolver.destroy();
+  }
+});
+
+// Regenerating rotates the token the request was sent with, so the ops after
+// it in the same request must not check again.
+test("ops after a rotation in the same POST are not checked again", async () => {
+  const { resolver, context, sid, token } = await started();
+  try {
+    const login = request("POST", { sid }, { body: { _csrf: token } });
+    await resolver([{ $session: {}, regenerate: true }, { $session: { user_id: 7 } }], login);
+    const newSid = (login.request?.cookies ?? {}).sid;
+    assert.equal((await stored(context, newSid))?.user_id, 7);
   } finally {
     resolver.destroy();
   }
@@ -97,8 +112,44 @@ test("a POST without a session cookie is not checked", async () => {
   try {
     const anonymous = request("POST", {});
     const result = await resolver({ $session: { user: "grace" } }, anonymous);
-    assert.equal((result as { action: string }).action, "set");
     assert.equal(anonymous.session?.user, "grace");
+    assert.equal(result, anonymous.session);
+  } finally {
+    resolver.destroy();
+  }
+});
+
+test("a request that loaded its session writes to it without reading the cache again", async t => {
+  const { resolver, context, sid, token } = await started();
+  try {
+    const get = t.mock.method(cacheFor(context), "get");
+    const ctx = request("POST", { sid }, { body: { _csrf: token } });
+    await resolver([{ $session: "load" }, { $session: { a: 1 } }, { $session: { b: 2 } }], ctx);
+    assert.equal(get.mock.callCount(), 1);
+    const data = await stored(context, sid);
+    assert.equal(data?.a, 1);
+    assert.equal(data?.b, 2);
+  } finally {
+    resolver.destroy();
+  }
+});
+
+// The id stays in its HttpOnly cookie: no op hands it to the template, where it
+// could end up in a page or a log.
+test("session ops return the session's data, and destroy returns null", async () => {
+  const { resolver, sid, token } = await started();
+  try {
+    const ctx = request("POST", { sid }, { body: { _csrf: token } });
+    const loaded = await resolver({ $session: "load" }, ctx);
+    assert.equal(loaded, ctx.session);
+    assert.equal(ctx.session?.user, "ada");
+
+    const login = await resolver({ $session: { role: "admin" }, regenerate: true }, ctx);
+    assert.equal(login, ctx.session);
+    assert.equal(ctx.session?.role, "admin");
+    assert.ok(!JSON.stringify(login).includes(ctx.request?.cookies?.sid ?? "no sid"), "the session id is not returned");
+
+    assert.equal(await resolver({ $session: "destroy" }, ctx), null);
   } finally {
     resolver.destroy();
   }
@@ -109,7 +160,7 @@ test("a POST with a session cookie the cache doesn't know is not checked", async
   const { resolver } = await started();
   try {
     const stale = request("POST", { sid: "gone" });
-    await resolver([{ $session: "load" }, { $session: "regenerate" }], stale);
+    await resolver([{ $session: "load" }, { $session: {}, regenerate: true }], stale);
     assert.ok(stale.session?._csrf);
     assert.notEqual(stale.request?.cookies?.sid, "gone");
   } finally {
@@ -195,7 +246,7 @@ test("the CSRF token is handed to page scripts in a readable cookie", async () =
 
     // A rotation sends the new one; logging out clears it.
     const login = request("POST", { sid, csrf: token }, { body: { _csrf: token } });
-    await resolver({ $session: "regenerate" }, login);
+    await resolver({ $session: {}, regenerate: true }, login);
     assert.ok(csrfCookie(login)?.startsWith(`csrf=${login.session?._csrf};`));
     assert.notEqual(login.session?._csrf, token);
 

@@ -10,6 +10,10 @@ import { tokensEqual } from "./Crypto.js";
 type TokenAuth = "body" | "basic";
 const TOKEN_AUTH: readonly TokenAuth[] = ["body", "basic"];
 
+function isTokenAuth(value: unknown): value is TokenAuth {
+  return TOKEN_AUTH.some(t => t === value);
+}
+
 // Types
 interface OAuthProvider {
   clientId: string;
@@ -225,10 +229,10 @@ function doConfigure(providers: Providers, def: Record<string, unknown>, context
     }
     const clientId = String(r.clientId);
     const clientSecret = String(r.clientSecret);
-    if (r.tokenAuth != null && !TOKEN_AUTH.includes(r.tokenAuth as TokenAuth)) {
+    if (r.tokenAuth != null && !isTokenAuth(r.tokenAuth)) {
       throw new Error(`OAuth provider "${name}": tokenAuth must be ${TOKEN_AUTH.map(t => `"${t}"`).join(" or ")}`);
     }
-    const tokenAuth = r.tokenAuth as TokenAuth | undefined;
+    const tokenAuth = isTokenAuth(r.tokenAuth) ? r.tokenAuth : undefined;
 
     const builtin = PROVIDERS[name.toLowerCase()];
 
