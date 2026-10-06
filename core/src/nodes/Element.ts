@@ -262,7 +262,10 @@ function buildInjections(tag: string, def: Record<string, unknown>, context: Con
     }
   }
 
-  if (tag === "form") {
+  // A page that loads the client script gets the token from the `csrf` cookie
+  // when a form is submitted, so its HTML carries nothing per-visitor and can
+  // be cached. Only a page without the client needs the token rendered in.
+  if (tag === "form" && !context._clientScript) {
     const method = (def.method || "GET").toString().toUpperCase();
     if (method !== "GET") {
       const session = (context as Record<string, unknown>).session as Record<string, unknown> | undefined;

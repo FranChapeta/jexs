@@ -8,6 +8,7 @@ import { StorageNode } from "./nodes/StorageNode.js";
 import { registerComputeLazy, registerDomLazy } from "./registerNodes.js";
 import { makeModuleWorker } from "./makeWorker.js";
 import { hydrate, pageContext } from "./events.js";
+import { addCsrfField } from "./csrf.js";
 import { serializable } from "./serializable.js";
 
 /**
@@ -107,6 +108,9 @@ if (typeof window !== "undefined") {
   // (the same blocks), so there are no duplicated node lists.
   registerComputeLazy(resolver);
   registerDomLazy(resolver);
+
+  // Captured on the document, so every form's submission gets the token.
+  document.addEventListener("formdata", addCsrfField, true);
 
   // `thread` node — runs `do` steps on a resolver Web Worker. The leaf bundle is
   // only FETCHED when the first `thread` step runs (URL resolved, not loaded).

@@ -33,6 +33,22 @@ const BODY: JexsPropertySchema = {
   markdownDescription: "Request body. Strings, ArrayBuffers, typed arrays, `Blob`, `FormData` and `URLSearchParams` are sent verbatim; any other value is JSON-serialized and defaults `Content-Type` to `application/json`.",
 };
 
+/** Methods that change nothing on the server, so they carry no CSRF token. */
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/**
+ * In a page, the CSRF token a Jexs server keeps in the `csrf` cookie, for a
+ * state-changing request to the page's own origin; null in a worker, on the
+ * server, or for any other request. Sending it is what lets the page's own
+ * `$fetch` and form posts through the server's session check.
+ */
+export function pageCsrfToken(url: string, method: string): string | null {
+  if (typeof document === "undefined" || typeof location === "undefined" || SAFE_METHODS.has(method)) return null;
+  if (new URL(url, location.href).origin !== location.origin) return null;
+  const match = /(?:^|;\s*)csrf=([^;]*)/.exec(document.cookie);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 /** Classify URL by file extension. Returns "json" | "text" | "binary" | "unknown". */
 function classifyUrlExt(url: string): "json" | "text" | "binary" | "unknown" {
   const q = url.indexOf("?");
@@ -103,7 +119,7 @@ export class FetchNode extends Node {
     fetch: {
       type: "string",
       output: "any",
-      markdownDescription: "Makes an HTTP request to the URL in `fetch`. Defaults to GET; pass `method` and `body` for writes, and `headers` for auth or content negotiation.\n\nResponse decoding takes the first of these that applies:\n1. The `type` sibling, when set.\n2. URL extension: `.json`/`.gltf` → JSON, text-like extensions → string,\n   known binary extensions (`.glb`, `.bin`, `.png`, etc.) → ArrayBuffer.\n3. Response Content-Type: `application/json` (or a `+json` suffix) → JSON, `text/*` → string,\n   everything else → ArrayBuffer.\n\nA non-2xx status throws an HTTP error carrying that status. An enclosing `$catch` gets the usual `$error` (`{ status, message }`) plus `response`, the failing response in the same shape `full` returns, so `{ \"$var\": \"response.body.message\" }` reads the server's error body. Pass `throw: false` for a step that never interrupts the sequence (no failure throws, a timeout included), and `full` to get the headers and status alongside the body.",
+      markdownDescription: "Makes an HTTP request to the URL in `fetch`. Defaults to GET; pass `method` and `body` for writes, and `headers` for auth or content negotiation.\n\nResponse decoding takes the first of these that applies:\n1. The `type` sibling, when set.\n2. URL extension: `.json`/`.gltf` → JSON, text-like extensions → string,\n   known binary extensions (`.glb`, `.bin`, `.png`, etc.) → ArrayBuffer.\n3. Response Content-Type: `application/json` (or a `+json` suffix) → JSON, `text/*` → string,\n   everything else → ArrayBuffer.\n\nA non-2xx status throws an HTTP error carrying that status. An enclosing `$catch` gets the usual `$error` (`{ status, message }`) plus `response`, the failing response in the same shape `full` returns, so `{ \"$var\": \"response.body.message\" }` reads the server's error body. Pass `throw: false` for a step that never interrupts the sequence (no failure throws, a timeout included), and `full` to get the headers and status alongside the body.\n\nIn a page served by a Jexs server, a POST, PUT, PATCH or DELETE to the page's own origin carries the session's CSRF token (`x-csrf-token`, from the `csrf` cookie) on its own.",
       outputDescription: "The decoded response body: a parsed value for JSON, a string for text, an ArrayBuffer (or a Blob with `type: \"blob\"`) for binary. A `204`/`205` response and any HEAD request resolve to `null`.",
       examples: [
         "{ \"$fetch\": \"/api/users\", \"method\": \"POST\", \"body\": { \"name\": { \"$var\": \"name\" } } }\n{ \"$fetch\": \"/api/me\", \"headers\": { \"Authorization\": { \"$concat\": [\"Bearer \", { \"$var\": \"token\" }] } } }\n{ \"$fetch\": \"/api/flaky\", \"timeout\": 5000, \"$catch\": [{ \"$concat\": [\"failed: \", { \"$var\": \"error.status\" }] }] }\n{ \"$fetch\": \"/models/Duck.glb\", \"$as\": \"buf\" }",
@@ -211,6 +227,8 @@ export class FetchNode extends Node {
           options.body = JSON.stringify(o.body);
         }
       }
+      const csrf = pageCsrfToken(url, method);
+      if (csrf) headers.set("x-csrf-token", csrf);
       // Applied last, and `set` is case-insensitive, so an author's Content-Type
       // replaces the default rather than appending a second value to it.
       for (const [name, value] of Object.entries(this.isObject(o.headers) ? o.headers : {})) {

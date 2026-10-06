@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createResolver, coreNodes, type Context } from "@jexs/core";
 import { CacheNode, cacheFor } from "../src/nodes/Cache.js";
 import { SessionNode } from "../src/nodes/Session.js";
+import { ServerNode } from "../src/nodes/Server.js";
 
 // No router here: the session itself checks the token, so an app that handles
 // requests without `$routes`, or loads the session late, is still covered.
@@ -164,6 +165,71 @@ test("steps that load the session late are still refused without a token", async
     );
     assert.equal(ctx.seen, "before");
     assert.equal(ctx.reached, undefined);
+  } finally {
+    resolver.destroy();
+  }
+});
+
+/** The `csrf` cookie a response queued, as its raw Set-Cookie line. */
+const csrfCookie = (ctx: Context) => (ctx._cookies as string[]).find(c => c.startsWith("csrf="));
+
+// The token reaches page scripts in a cookie, not in the HTML, so `$fetch` can
+// send it back while the page itself stays cacheable.
+test("the CSRF token is handed to page scripts in a readable cookie", async () => {
+  const context: Context = {};
+  const resolver = createResolver([...coreNodes(), new CacheNode(), new SessionNode()], { context });
+  try {
+    const first = request("GET", {});
+    await resolver({ $session: "load" }, first);
+    const token = String(first.session?._csrf);
+    const cookie = csrfCookie(first) ?? "";
+    assert.ok(cookie.startsWith(`csrf=${token};`), "the cookie carries the session's token");
+    assert.ok(!/HttpOnly/i.test(cookie), "page scripts can read it");
+    assert.match((first._cookies as string[]).find(c => c.startsWith("sid=")) ?? "", /HttpOnly/, "the session id stays out of reach");
+
+    // A browser already holding the current token isn't sent it again.
+    const sid = first.request?.cookies?.sid ?? "";
+    const again = request("GET", { sid, csrf: token });
+    await resolver({ $session: "load" }, again);
+    assert.equal(csrfCookie(again), undefined);
+
+    // A rotation sends the new one; logging out clears it.
+    const login = request("POST", { sid, csrf: token }, { body: { _csrf: token } });
+    await resolver({ $session: "regenerate" }, login);
+    assert.ok(csrfCookie(login)?.startsWith(`csrf=${login.session?._csrf};`));
+    assert.notEqual(login.session?._csrf, token);
+
+    const logout = request("POST", { sid: login.request?.cookies?.sid ?? "" }, { body: { _csrf: login.session?._csrf } });
+    await resolver({ $session: "destroy" }, logout);
+    assert.match(csrfCookie(logout) ?? "", /^csrf=;.*Max-Age=0/);
+  } finally {
+    resolver.destroy();
+  }
+});
+
+test("a response that sets a cookie keeps it from shared caches, unless the app says otherwise", async () => {
+  const PORT = 45214;
+  const resolver = createResolver([...coreNodes(), new CacheNode(), new SessionNode(), new ServerNode()]);
+  try {
+    await resolver({
+      $listen: PORT,
+      do: [
+        { $session: "load" },
+        { $if: { $eq: [{ $var: "request.path" }, "/public"] }, then: { response: "page", responseHeaders: { "Cache-Control": "public, max-age=60" } } },
+        { response: "page" },
+      ],
+    }, {});
+    const first = await fetch(`http://127.0.0.1:${PORT}/`);
+    assert.equal(first.headers.get("cache-control"), 'private="Set-Cookie"');
+
+    // The browser now holds the session and its token, so nothing is set.
+    const cookie = first.headers.getSetCookie().map(c => c.split(";")[0]).join("; ");
+    const second = await fetch(`http://127.0.0.1:${PORT}/`, { headers: { cookie } });
+    assert.equal(second.headers.getSetCookie().length, 0);
+    assert.equal(second.headers.get("cache-control"), null);
+
+    const own = await fetch(`http://127.0.0.1:${PORT}/public`);
+    assert.equal(own.headers.get("cache-control"), "public, max-age=60");
   } finally {
     resolver.destroy();
   }

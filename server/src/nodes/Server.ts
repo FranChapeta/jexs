@@ -312,6 +312,11 @@ async function handleRequest(
       for (const cookie of context._cookies as string[]) {
         res.appendHeader("Set-Cookie", cookie);
       }
+      // A shared cache must never replay one visitor's cookies to another, but
+      // it may keep the page without them (RFC 9111 §5.2.2.7); a cache that
+      // doesn't know this form treats it as plain `private`. A `Cache-Control`
+      // the response sets itself wins, since `writeHead` headers override this one.
+      if (context._cookies.length > 0) res.setHeader("Cache-Control", 'private="Set-Cookie"');
     }
 
     // Check for deferred content that needs streaming

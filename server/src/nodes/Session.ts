@@ -17,6 +17,8 @@ interface SessionData {
 const PREFIX = "session:";
 const TTL = 86400; // 24 hours in seconds
 const COOKIE_NAME = "sid";
+/** Read by the client's `$fetch`, which sends it back as `x-csrf-token`. */
+const CSRF_COOKIE = "csrf";
 /** Methods that must not change state, so they carry no CSRF token. */
 export const SAFE_METHODS = ["GET", "HEAD", "OPTIONS"];
 
@@ -53,7 +55,7 @@ export class SessionNode extends Node {
         "regenerate",
         "object",
       ],
-      markdownDescription: "Manages request sessions stored in cache. Pass an object to set session values. Read values with `{ \"$var\": \"session.key\" }`.\r\nSession ID is stored in a `sid` HTTP-only cookie with a 24-hour TTL.\r\nOn a request other than GET, HEAD or OPTIONS that carries a session cookie, every operation first checks the session's CSRF token, sent as the `_csrf` body field or the `x-csrf-token` header, and fails with 403 without it. A non-GET `form` rendered with the session loaded includes the field.",
+      markdownDescription: "Manages request sessions stored in cache. Pass an object to set session values. Read values with `{ \"$var\": \"session.key\" }`.\r\nSession ID is stored in a `sid` HTTP-only cookie with a 24-hour TTL.\r\nOn a request other than GET, HEAD or OPTIONS that carries a session cookie, every operation first checks the session's CSRF token, sent as the `_csrf` body field or the `x-csrf-token` header, and fails with 403 without it. The client runtime sends it on its own, read from the `csrf` cookie the session sets: as the header on the page's `$fetch`, and as the field on its form posts. A page served without the client gets the field rendered into its non-GET forms instead.",
       outputDescription: "`load` returns `null`; it populates `$session` for reading. `create`/`regenerate`/`destroy`/setting values return a small status object (`{ type: \"session\", action, sessionId?, cookie }`). The `sid` cookie is queued onto the response for you; you don't return it yourself.",
       examples: [
         "{ \"$session\": { \"user_id\": { \"$var\": \"user.id\" }, \"role\": { \"$var\": \"user.role\" } } }",
@@ -154,11 +156,13 @@ function shouldUseSecureCookie(context: Context): boolean {
   return false;
 }
 
-function buildCookie(context: Context, value: string, maxAge?: number): string {
+function buildCookie(context: Context, value: string, maxAge?: number, name = COOKIE_NAME): string {
   const parts = [
-    `${COOKIE_NAME}=${value}`,
+    `${name}=${value}`,
     "Path=/",
-    "HttpOnly",
+    // The session id stays out of reach of page scripts; the CSRF token is
+    // meant for them, so `$fetch` can send it back.
+    ...(name === COOKIE_NAME ? ["HttpOnly"] : []),
     "SameSite=Lax",
   ];
 
@@ -173,6 +177,20 @@ function buildCookie(context: Context, value: string, maxAge?: number): string {
   }
 
   return parts.join("; ");
+}
+
+/**
+ * Hand the page the session's CSRF token in a cookie its scripts can read,
+ * whenever the browser's copy is missing or stale (a new session, a rotation,
+ * a session from before the cookie existed). Keeping it out of the HTML is
+ * what lets pages be cached while `$fetch` still sends the token.
+ */
+function syncCsrfCookie(context: Context, data: Record<string, unknown>): void {
+  const token = data._csrf;
+  const cookies = context.request?.cookies;
+  if (typeof token !== "string" || cookies?.[CSRF_COOKIE] === token) return;
+  if (cookies) cookies[CSRF_COOKIE] = token;
+  pushCookie(context, buildCookie(context, token, undefined, CSRF_COOKIE));
 }
 
 /**
@@ -205,6 +223,7 @@ async function initSession(
 
   const cookie = buildCookie(context, id);
   pushCookie(context, cookie);
+  syncCsrfCookie(context, data);
 
   return { type: "session", action: "create", sessionId: id, cookie };
 }
@@ -221,6 +240,7 @@ async function destroySession(context: Context, cache: CacheAdapter): Promise<Se
 
   const cookie = buildCookie(context, "", 0);
   pushCookie(context, cookie);
+  pushCookie(context, buildCookie(context, "", 0, CSRF_COOKIE));
 
   return {
     type: "session",
@@ -245,6 +265,7 @@ async function setSessionValues(
   Object.assign(sessionData.data, values);
   await cache.set(PREFIX + sessionData.id, sessionData, TTL);
   context.session = sessionData.data;
+  syncCsrfCookie(context, sessionData.data);
   return { type: "session", action: "set", data: sessionData.data };
 }
 
@@ -288,6 +309,7 @@ async function loadSession(context: Context, cache: CacheAdapter): Promise<null>
   }
 
   context.session = data;
+  syncCsrfCookie(context, data);
   return null;
 }
 

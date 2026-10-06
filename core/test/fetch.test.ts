@@ -347,3 +347,32 @@ test("fetch: an enum value outside its list says so instead of being dropped", a
   // Rejected before the request is made, so a typo costs no round trip.
   assert.equal(calls.length, 0);
 });
+
+// In a page, a Jexs server keeps the session's CSRF token in a `csrf` cookie;
+// `$fetch` sends it back on the page's own state-changing requests.
+test("fetch: in a page, sends the csrf cookie on its own state-changing requests only", async t => {
+  Object.assign(globalThis, {
+    document: { cookie: "theme=dark; csrf=tok%2Ben" },
+    location: { href: "https://app.test/admin", origin: "https://app.test" },
+  });
+  t.after(() => {
+    Reflect.deleteProperty(globalThis, "document");
+    Reflect.deleteProperty(globalThis, "location");
+  });
+  const { calls } = stubFetch();
+
+  await resolve({ $fetch: "/api/items", method: "POST", body: { a: 1 } }, {});
+  await resolve({ $fetch: "https://app.test/api/items/1", method: "DELETE" }, {});
+  await resolve({ $fetch: "/api/items" }, {});
+  await resolve({ $fetch: "https://other.test/api", method: "POST" }, {});
+  await resolve({ $fetch: "/api/items", method: "PUT", headers: { "x-csrf-token": "mine" } }, {});
+
+  const tokens = calls.map(c => sentHeaders(c.init)["x-csrf-token"]);
+  assert.deepEqual(tokens, ["tok+en", "tok+en", undefined, undefined, "mine"]);
+});
+
+test("fetch: outside a page, no csrf header is added", async () => {
+  const { calls } = stubFetch();
+  await resolve({ $fetch: "https://app.test/api", method: "POST" }, {});
+  assert.equal(sentHeaders(calls[0].init)["x-csrf-token"], undefined);
+});

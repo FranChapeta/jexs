@@ -33,7 +33,7 @@ export type { HttpError, ErrorBindings, ErrorResponse } from "./errors.js";
 
 // ── Core nodes ──
 export { TimerNode } from "./nodes/Timer.js";
-export { FetchNode } from "./nodes/FetchNode.js";
+export { FetchNode, pageCsrfToken } from "./nodes/FetchNode.js";
 
 // Dynamic forwarder — construct with (keys, forwardFn) and registerNode() it to
 // proxy those keys to a remote resolver (e.g. Electron main over IPC). Not a
