@@ -388,6 +388,9 @@ function walkExpr(v: Val): void {
       if (!migrated && op === "join" && p.value.k === "arr") {
         reviews.push({ at: p.keyStart, message: "`$join` takes the array itself now; `[array, separator]` becomes `array` with a `separator` sibling" });
       }
+      if (op === "oauth" && p.value.k === "str" && p.value.value === "state") {
+        reviews.push({ at: p.keyStart, message: "`$oauth: \"state\"` is gone: `authUrl` makes its own state and keeps it in the session for `exchange`; drop the step, or use `$randomHex` for a random string" });
+      }
       if (op === "var" || op.startsWith("tree-")) stripPathDollar(p.value);
       if (op === "setVars") stripMapKeyDollars(p.value);
       if (!rawValues) walk(C.vp[op] ?? siblingSchema(op, op), p.value);

@@ -1,6 +1,7 @@
-import { randomUUID, randomBytes, timingSafeEqual } from "crypto";
+import { randomUUID, randomBytes } from "crypto";
 import { Node, Context, NodeValue, resolveAll, createHttpError, isObject } from "@jexs/core";
 import { cacheFor, optionalName } from "./Cache.js";
+import { tokensEqual } from "./Crypto.js";
 import type { CacheAdapter } from "../cache/CacheAdapter.js";
 import type { JexsNodeSchema } from "@jexs/core";
 
@@ -82,6 +83,19 @@ export class SessionNode extends Node {
   }
 }
 
+/** The request's session data for another node, loading it first when no
+ *  `$session` op has (a page view starts one, as `load` does). */
+export async function sessionData(context: Context): Promise<Record<string, unknown>> {
+  if (!context.session) await loadSession(context, sessionCache(context));
+  return context.session ?? {};
+}
+
+/** Merge values into the request's session for another node, starting one if
+ *  the request has none. */
+export async function setSessionData(context: Context, values: Record<string, unknown>): Promise<void> {
+  await setSessionValues(values, context, sessionCache(context));
+}
+
 /** The cache holding this request's session: the op's own `cache`, else the one
  *  an earlier op in the request chose, else the default. */
 function sessionCache(context: Context, name?: string): CacheAdapter {
@@ -116,9 +130,7 @@ function checkCsrf(context: Context, stored: unknown): void {
   if (method === "WS" || SAFE_METHODS.includes(method)) return;
   const header = request.headers?.["x-csrf-token"];
   const submitted = (isObject(request.body) ? request.body._csrf : undefined) ?? header;
-  const a = Buffer.from(typeof stored === "string" ? stored : "");
-  const b = Buffer.from(typeof submitted === "string" ? submitted : "");
-  if (a.length === 0 || a.length !== b.length || !timingSafeEqual(a, b)) {
+  if (typeof stored !== "string" || stored === "" || typeof submitted !== "string" || !tokensEqual(stored, submitted)) {
     throw createHttpError(403, "CSRF token mismatch");
   }
   trusted.add(request);

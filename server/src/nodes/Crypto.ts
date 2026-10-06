@@ -9,6 +9,17 @@ import { Node, Context, resolve, resolveAll } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
 /** Reusable SHA-256 helper (used by SchemaNode and QueryNode) */
+/**
+ * Compare two secrets in constant time. Digested first so the two buffers are
+ * always the same length: the raw comparison throws on a mismatch, and
+ * returning early for one would leak the length of the secret.
+ */
+export function tokensEqual(a: string, b: string): boolean {
+  const left = createHash("sha256").update(a).digest();
+  const right = createHash("sha256").update(b).digest();
+  return timingSafeEqualBytes(left, right);
+}
+
 export function sha256(input: string): string {
   return createHash("sha256").update(input).digest("hex");
 }
@@ -262,12 +273,7 @@ export class CryptoNode extends Node {
   timingSafeEqual(def: Record<string, unknown>, context: Context) {
     return resolve(def.$timingSafeEqual, context, args => {
       const [a, b] = pair(args, "timingSafeEqual", "[value, value]");
-      // Digested first so the two buffers are always the same length: the raw
-      // comparison throws on a mismatch, and returning early for one would leak
-      // the length of the secret.
-      const left = createHash("sha256").update(this.toString(a)).digest();
-      const right = createHash("sha256").update(this.toString(b)).digest();
-      return timingSafeEqualBytes(left, right);
+      return tokensEqual(this.toString(a), this.toString(b));
     });
   }
 

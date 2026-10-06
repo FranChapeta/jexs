@@ -1,5 +1,14 @@
-import { Node, Context, NodeValue, resolve, resolveAll, resolveFields, randomString } from "@jexs/core";
+import { createHash, randomBytes } from "crypto";
+import { Node, Context, NodeValue, resolve, resolveAll, resolveFields, randomString, isObject, createHttpError } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
+import { sessionData, setSessionData } from "./Session.js";
+import { tokensEqual } from "./Crypto.js";
+
+/** How the client credentials reach the token endpoint: as form fields, or as
+ *  an HTTP Basic `Authorization` header (RFC 6749 §2.3.1), which some
+ *  providers require. */
+type TokenAuth = "body" | "basic";
+const TOKEN_AUTH: readonly TokenAuth[] = ["body", "basic"];
 
 // Types
 interface OAuthProvider {
@@ -9,9 +18,18 @@ interface OAuthProvider {
   tokenUrl: string;
   userInfoUrl?: string;
   scopes: string[];
+  tokenAuth?: TokenAuth;
   userIdField?: string;
   userEmailField?: string;
   userNameField?: string;
+}
+
+/** A login `authUrl` started, kept in the session until `exchange` uses it. */
+interface PendingLogin {
+  state: string;
+  redirectUri: string;
+  /** PKCE (RFC 7636): sent as its S256 challenge, proven at the token endpoint. */
+  verifier: string;
 }
 
 // Built-in provider configurations
@@ -60,6 +78,7 @@ const PROVIDERS: Record<
     tokenUrl: "https://api.twitter.com/2/oauth2/token",
     userInfoUrl: "https://api.twitter.com/2/users/me",
     scopes: ["users.read", "tweet.read"],
+    tokenAuth: "basic",
     userIdField: "data.id",
     userEmailField: "data.email",
     userNameField: "data.name",
@@ -87,17 +106,16 @@ const OAUTH_PROVIDER = {
 };
 const OAUTH_CLIENT_ID = { type: "string" as const, description: "OAuth client ID." };
 const OAUTH_CLIENT_SECRET = { type: "string" as const, description: "OAuth client secret." };
-const OAUTH_REDIRECT_URI = { type: "string" as const, description: "OAuth redirect URI." };
+const OAUTH_REDIRECT_URI = { type: "string" as const, description: "Where the provider sends the user back (your callback route); `exchange` reuses it." };
 
 /**
  * OAuthNode - Handles OAuth authentication flows in JSON.
  *
  * { "$oauth": "configure", "provider": "google", "clientId": "...", "clientSecret": "..." }
  * { "$oauth": "authUrl", "provider": "google", "redirectUri": "http://...", "state": "..." }
- * { "$oauth": "exchange", "provider": "google", "code": "...", "redirectUri": "..." }
+ * { "$oauth": "exchange" }
  * { "$oauth": "refresh", "provider": "google", "refreshToken": "..." }
  * { "$oauth": "userInfo", "provider": "google", "accessToken": "..." }
- * { "$oauth": "state" }
  * { "$oauth": "providers" }
  */
 export class OAuthNode extends Node {
@@ -110,7 +128,6 @@ export class OAuthNode extends Node {
         "exchange",
         "refresh",
         "userInfo",
-        "state",
         "providers",
       ],
       markdownDescription: "OAuth 2.0 flow helpers. The operation is the primary value.\nBuilt-in providers: `google`, `github`, `facebook`, `discord`, `twitter`, `microsoft`.",
@@ -121,18 +138,36 @@ export class OAuthNode extends Node {
         configure: {
           output: "object",
           markdownDescription: "Registers provider credentials. Returns a status object.",
-          siblings: { provider: OAUTH_PROVIDER, clientId: OAUTH_CLIENT_ID, clientSecret: OAUTH_CLIENT_SECRET },
+          siblings: {
+            provider: OAUTH_PROVIDER,
+            clientId: OAUTH_CLIENT_ID,
+            clientSecret: OAUTH_CLIENT_SECRET,
+            tokenAuth: {
+              type: "string",
+              enum: [...TOKEN_AUTH],
+              description: "How the client credentials reach the token endpoint: `\"body\"` (form fields, the default) or `\"basic\"` (an HTTP Basic header, which X/Twitter requires and the built-in `twitter` uses).",
+            },
+          },
         },
         authUrl: {
           output: "string",
-          markdownDescription: "Builds the provider authorization URL.",
-          siblings: { provider: OAUTH_PROVIDER, redirectUri: OAUTH_REDIRECT_URI },
+          markdownDescription: "Builds the provider authorization URL, with a `state` and a PKCE (S256) challenge. The login is kept in the user's session, starting one if needed, so `exchange` can finish it when the provider redirects back.",
+          siblings: {
+            provider: OAUTH_PROVIDER,
+            redirectUri: OAUTH_REDIRECT_URI,
+            state: { type: "string", description: "State to send instead of a random one." },
+          },
         },
         exchange: {
           output: "object",
           outputDescription: "A token object (`access_token`, etc.).",
-          markdownDescription: "Exchanges an authorization `code` for tokens.",
-          siblings: { provider: OAUTH_PROVIDER, code: { type: "string", description: "Authorization code from redirect." }, redirectUri: OAUTH_REDIRECT_URI },
+          markdownDescription: "Finishes the login `authUrl` started in this browser's session: checks the callback's `state` (once: a missing, wrong or reused state fails with 403 before the code is spent), then exchanges the `code` for tokens with the same redirect URI and the PKCE verifier. In a callback route it needs no siblings.",
+          examples: ["{ \"$oauth\": \"exchange\", \"$as\": \"tokens\" }"],
+          siblings: {
+            provider: { ...OAUTH_PROVIDER, description: `${OAUTH_PROVIDER.description} Only needed when this session has more than one login in progress.` },
+            code: { type: "string", description: "Authorization code (default: the request's `code` query parameter)." },
+            state: { type: "string", description: "State from the redirect (default: the request's `state` query parameter)." },
+          },
         },
         refresh: {
           output: "object",
@@ -145,10 +180,6 @@ export class OAuthNode extends Node {
           outputDescription: "The normalized user-profile object.",
           markdownDescription: "Fetches the user profile for a bearer `accessToken`.",
           siblings: { provider: OAUTH_PROVIDER, accessToken: { type: "string", description: "Bearer token." } },
-        },
-        state: {
-          output: "string",
-          markdownDescription: "Returns a random CSRF state string.",
         },
         providers: {
           output: "array",
@@ -175,8 +206,6 @@ export class OAuthNode extends Node {
           return doRefresh(this.providers, def, context);
         case "userInfo":
           return doUserInfo(this.providers, def, context);
-        case "state":
-          return doGenerateState(def, context);
         case "providers":
           return doListProviders(this.providers, def, context);
         default:
@@ -196,6 +225,10 @@ function doConfigure(providers: Providers, def: Record<string, unknown>, context
     }
     const clientId = String(r.clientId);
     const clientSecret = String(r.clientSecret);
+    if (r.tokenAuth != null && !TOKEN_AUTH.includes(r.tokenAuth as TokenAuth)) {
+      throw new Error(`OAuth provider "${name}": tokenAuth must be ${TOKEN_AUTH.map(t => `"${t}"`).join(" or ")}`);
+    }
+    const tokenAuth = r.tokenAuth as TokenAuth | undefined;
 
     const builtin = PROVIDERS[name.toLowerCase()];
 
@@ -212,6 +245,7 @@ function doConfigure(providers: Providers, def: Record<string, unknown>, context
         authorizeUrl: r.authorizeUrl ? String(r.authorizeUrl) : builtin.authorizeUrl,
         tokenUrl: r.tokenUrl ? String(r.tokenUrl) : builtin.tokenUrl,
         userInfoUrl: r.userInfoUrl ? String(r.userInfoUrl) : builtin.userInfoUrl,
+        tokenAuth: tokenAuth ?? builtin.tokenAuth,
       });
     } else {
       const authorizeUrl = r.authorizeUrl ? String(r.authorizeUrl) : "";
@@ -229,6 +263,7 @@ function doConfigure(providers: Providers, def: Record<string, unknown>, context
         tokenUrl,
         userInfoUrl: r.userInfoUrl ? String(r.userInfoUrl) : undefined,
         scopes: Array.isArray(scopes) ? scopes.map(String) : [String(scopes)],
+        tokenAuth,
       });
     }
 
@@ -241,7 +276,7 @@ function doAuthUrl(providers: Providers, def: Record<string, unknown>, context: 
   return resolveAll(
     [def.provider, def.redirectUri, def.scopes ?? null, def.state ?? null, def.prompt ?? null, def.accessType ?? null],
     context,
-    ([providerRaw, redirectUriRaw, scopesRaw, stateRaw, promptRaw, accessTypeRaw]) => {
+    async ([providerRaw, redirectUriRaw, scopesRaw, stateRaw, promptRaw, accessTypeRaw]) => {
       const provider = String(providerRaw);
       const redirectUri = String(redirectUriRaw);
       const config = providers.get(provider);
@@ -258,10 +293,20 @@ function doAuthUrl(providers: Providers, def: Record<string, unknown>, context: 
         ).join(" "),
       });
 
-      const state = stateRaw != null ? String(stateRaw) : randomString(32);
-      params.set("state", state);
+      const login: PendingLogin = {
+        state: stateRaw != null ? String(stateRaw) : randomString(32),
+        redirectUri,
+        verifier: randomBytes(32).toString("base64url"),
+      };
+      params.set("state", login.state);
+      params.set("code_challenge", createHash("sha256").update(login.verifier).digest("base64url"));
+      params.set("code_challenge_method", "S256");
       if (promptRaw != null) params.set("prompt", String(promptRaw));
       if (accessTypeRaw != null) params.set("access_type", String(accessTypeRaw));
+
+      // The callback must come back to the browser that started the login, so
+      // the login waits in its session, per provider, for `exchange` to finish.
+      await setSessionData(context, { _oauth: { ...(await pendingLogins(context)), [provider]: login } });
 
       return `${config.authorizeUrl}?${params.toString()}`;
     },
@@ -269,36 +314,25 @@ function doAuthUrl(providers: Providers, def: Record<string, unknown>, context: 
 }
 
 function doExchange(providers: Providers, def: Record<string, unknown>, context: Context): unknown {
-  return resolveAll([def.provider, def.code, def.redirectUri], context, async ([providerRaw, codeRaw, redirectUriRaw]) => {
-    const provider = String(providerRaw);
-    const code = String(codeRaw);
-    const redirectUri = String(redirectUriRaw);
-    const config = providers.get(provider);
+  return resolveAll([def.provider ?? null, def.code ?? null, def.state ?? null], context, async ([providerRaw, codeRaw, stateRaw]) => {
+    const query = context.request?.query;
+    const login = await takeLogin(context, providerRaw, stateRaw ?? query?.state);
+    const config = providers.get(login.provider);
+    if (!config) throw new Error(`Provider "${login.provider}" not configured`);
 
-    if (!config) throw new Error(`Provider "${provider}" not configured`);
+    // A provider redirects with `error` instead of a code when the user declines.
+    const code = codeRaw ?? query?.code;
+    if (code == null || code === "") {
+      throw createHttpError(400, `OAuth login failed: ${String(query?.error ?? "the callback has no code")}`);
+    }
 
     try {
-      const body = new URLSearchParams({
-        client_id: config.clientId,
-        client_secret: config.clientSecret,
-        code,
-        redirect_uri: redirectUri,
+      const data = await tokenRequest(config, "exchange", {
         grant_type: "authorization_code",
+        code: String(code),
+        redirect_uri: login.redirectUri,
+        code_verifier: login.verifier,
       });
-
-      const response = await fetch(config.tokenUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Accept: "application/json",
-        },
-        body: body.toString(),
-      });
-
-      if (!response.ok)
-        throw new Error(`Token exchange failed: ${await response.text()}`);
-
-      const data = (await response.json()) as Record<string, unknown>;
       return {
         success: true,
         accessToken: String(data.access_token),
@@ -319,6 +353,64 @@ function doExchange(providers: Providers, def: Record<string, unknown>, context:
   });
 }
 
+/** The logins `authUrl` started in this browser's session, by provider. */
+async function pendingLogins(context: Context): Promise<Record<string, unknown>> {
+  const pending = (await sessionData(context))._oauth;
+  return isObject(pending) ? pending : {};
+}
+
+function isPendingLogin(value: unknown): value is PendingLogin {
+  return isObject(value) && typeof value.state === "string"
+    && typeof value.redirectUri === "string" && typeof value.verifier === "string";
+}
+
+/**
+ * The login `authUrl` started in this browser's session, checked against the
+ * callback's state and removed either way. A callback this browser never
+ * started (a login CSRF: someone else's code, completed in the victim's
+ * browser) or a replayed one is refused before the code is spent. Without a
+ * `provider`, the one login in progress names its own.
+ */
+async function takeLogin(context: Context, providerRaw: unknown, submitted: unknown): Promise<PendingLogin & { provider: string }> {
+  const logins = await pendingLogins(context);
+  const names = Object.keys(logins);
+  if (providerRaw == null && names.length > 1) {
+    throw createHttpError(400, `More than one OAuth login is in progress (${names.join(", ")}); give "exchange" its "provider"`);
+  }
+  const provider = providerRaw != null ? String(providerRaw) : names[0];
+  const login = provider !== undefined ? logins[provider] : undefined;
+  if (provider !== undefined && login !== undefined) {
+    const { [provider]: _used, ...rest } = logins;
+    await setSessionData(context, { _oauth: rest });
+  }
+  if (provider === undefined || !isPendingLogin(login) || typeof submitted !== "string" || !tokensEqual(login.state, submitted)) {
+    throw createHttpError(403, "OAuth state mismatch");
+  }
+  return { ...login, provider };
+}
+
+/**
+ * POST to the provider's token endpoint with the client credentials, as form
+ * fields or as a Basic header, and decode the response.
+ */
+async function tokenRequest(config: OAuthProvider, what: string, params: Record<string, string>): Promise<Record<string, unknown>> {
+  const body = new URLSearchParams({ client_id: config.clientId, ...params });
+  const headers: Record<string, string> = {
+    "Content-Type": "application/x-www-form-urlencoded",
+    Accept: "application/json",
+  };
+  if (config.tokenAuth === "basic") {
+    // RFC 6749 §2.3.1: each half is form-encoded before the pair is base64'd.
+    const form = (s: string) => new URLSearchParams({ v: s }).toString().slice(2);
+    headers.Authorization = `Basic ${Buffer.from(`${form(config.clientId)}:${form(config.clientSecret)}`).toString("base64")}`;
+  } else {
+    body.set("client_secret", config.clientSecret);
+  }
+  const response = await fetch(config.tokenUrl, { method: "POST", headers, body: body.toString() });
+  if (!response.ok) throw new Error(`Token ${what} failed: ${await response.text()}`);
+  return (await response.json()) as Record<string, unknown>;
+}
+
 function doRefresh(providers: Providers, def: Record<string, unknown>, context: Context): unknown {
   return resolveAll([def.provider, def.refreshToken], context, async ([providerRaw, refreshTokenRaw]) => {
     const provider = String(providerRaw);
@@ -328,26 +420,10 @@ function doRefresh(providers: Providers, def: Record<string, unknown>, context: 
     if (!config) throw new Error(`Provider "${provider}" not configured`);
 
     try {
-      const body = new URLSearchParams({
-        client_id: config.clientId,
-        client_secret: config.clientSecret,
-        refresh_token: refreshToken,
+      const data = await tokenRequest(config, "refresh", {
         grant_type: "refresh_token",
+        refresh_token: refreshToken,
       });
-
-      const response = await fetch(config.tokenUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Accept: "application/json",
-        },
-        body: body.toString(),
-      });
-
-      if (!response.ok)
-        throw new Error(`Token refresh failed: ${await response.text()}`);
-
-      const data = (await response.json()) as Record<string, unknown>;
       return {
         success: true,
         accessToken: String(data.access_token),
@@ -418,22 +494,6 @@ function doUserInfo(providers: Providers, def: Record<string, unknown>, context:
       return { success: false, error: e.message };
     }
   });
-}
-
-function doGenerateState(def: Record<string, unknown>, context: Context): unknown {
-  const doGenerate = (length: number) => {
-    const chars =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    let result = "";
-    const bytes = new Uint8Array(length);
-    crypto.getRandomValues(bytes);
-    for (let i = 0; i < length; i++) {
-      result += chars[bytes[i] % chars.length];
-    }
-    return result;
-  };
-
-  return resolve(def.length, context, lengthRaw => doGenerate(lengthRaw == null ? 32 : Number(lengthRaw)));
 }
 
 function doListProviders(providers: Providers, def: Record<string, unknown>, context: Context): unknown {
