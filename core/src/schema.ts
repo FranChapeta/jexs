@@ -8,7 +8,14 @@
  */
 
 export type JexsType = "string" | "number" | "boolean" | "array" | "object" | "null";
-export type JexsOutput = JexsType | "any";
+/**
+ * What a method resolves to: a type name, or a schema describing the value's
+ * shape, inline or as a `$ref` to one of the Node's `schemaDefs`
+ * (`{ $ref: "#/$defs/_dbConnection" }`). A schema routes by its `type` (a
+ * `$ref`'s by the def's `type`), exactly as the bare name would, and is shown
+ * to readers as the shape.
+ */
+export type JexsOutput = JexsType | "any" | JexsPropertySchema;
 
 /**
  * Schema for a single property. Used for sibling properties under a method, and

@@ -350,6 +350,9 @@ export interface PackageSchema {
 export interface EmittedMethodSchema {
   properties: Record<string, EmittedSchema>;
   output?: string;
+  /** The shape the method resolves to, when it declares one: documentation only
+   *  (`output` holds its type, which is what routing reads). Stripped on merge. */
+  outputSchema?: JexsPropertySchema;
   outputDescription?: string;
   /** Build-only: the output as ordered rules, the first whose condition holds
    *  deciding, used by the filtered-variant loop for output narrowing. Absent when
@@ -387,6 +390,8 @@ export interface VariantOutput {
 export interface ValueDoc {
   value: unknown;
   output?: string;
+  /** The shape it resolves to, when the operation declares one. */
+  outputSchema?: JexsPropertySchema;
   outputDescription?: string;
   description?: string;
 }
@@ -471,6 +476,60 @@ function variantMode(spec: { variantBy?: JexsPropertySchema["variantBy"]; enum?:
 
 function normalizeMethod(methodKey: string, method: JexsMethodSchema): Scope {
   return scopeOf(methodKey, method, KEY_PREFIX + methodKey, [], null, false, methodKey);
+}
+
+const JEXS_TYPES: readonly JexsType[] = ["string", "number", "boolean", "array", "object", "null"];
+
+/** Outputs declared as a schema, by the (copied) method or variant that declared them. */
+const outputShapes = new WeakMap<JexsMethodSchema, JexsPropertySchema>();
+
+/**
+ * Copy a method with every `output` given as a schema replaced by its type name,
+ * keeping the schema in `outputShapes` for the docs. Expressions route into
+ * typed slots by type name only, so everything after this reads names. A `$ref`
+ * resolves against the Node's own `schemaDefs`.
+ */
+function withOutputTypes(method: JexsMethodSchema, defs: Record<string, Record<string, unknown>>, where: string): JexsMethodSchema {
+  const copy: JexsMethodSchema = { ...method };
+  if (typeof method.output === "object") {
+    copy.output = outputType(method.output, defs, where);
+    outputShapes.set(copy, method.output);
+  }
+  if (method.variants) copy.variants = variantsWithOutputTypes(method.variants, defs, where);
+  if (method.siblings) {
+    copy.siblings = Object.fromEntries(Object.entries(method.siblings).map(([k, p]) =>
+      [k, p.variants ? { ...p, variants: variantsWithOutputTypes(p.variants, defs, `${where}.${k}`) } : p]));
+  }
+  return copy;
+}
+
+function variantsWithOutputTypes(
+  variants: Record<string, JexsMethodSchema>,
+  defs: Record<string, Record<string, unknown>>,
+  where: string,
+): Record<string, JexsMethodSchema> {
+  return Object.fromEntries(Object.entries(variants).map(([k, v]) => [k, withOutputTypes(v, defs, `${where}.${k}`)]));
+}
+
+/** The type an output schema routes by: its own `type`, or its `$ref`'s def's. */
+function outputType(schema: JexsPropertySchema, defs: Record<string, Record<string, unknown>>, where: string): JexsType {
+  const ref = shapeName(schema);
+  const type = ref !== undefined ? defs[ref]?.type : schema.type;
+  const found = JEXS_TYPES.find(t => t === type);
+  if (found) return found;
+  throw new Error(ref !== undefined
+    ? `${where}: output $ref "${schema.$ref}" must name one of this Node's schemaDefs, with a single \`type\`.`
+    : `${where}: an output schema needs a single \`type\`.`);
+}
+
+/** A scope's output as the type name `withOutputTypes` left there. */
+function outputName(schema: JexsMethodSchema): string | undefined {
+  return typeof schema.output === "object" ? undefined : schema.output;
+}
+
+/** The `$defs` name an output schema refers to, if it is a `$ref`. */
+function shapeName(shape: JexsPropertySchema | undefined): string | undefined {
+  return shape?.$ref?.match(/^#\/\$defs\/(.+)$/)?.[1];
 }
 
 /** `subject` is the property this scope's own variants test, or null when the
@@ -625,8 +684,11 @@ function emitMethod(methodKey: string, root: Scope, common: ReadonlySet<string>)
   allOf.push(...exclusions(root, new Set([methodKey, ...common])));
 
   const entry: EmittedMethodSchema = { properties };
-  const { output, outputDescription } = root.schema;
+  const output = outputName(root.schema);
+  const { outputDescription } = root.schema;
   if (output !== undefined) entry.output = output;
+  const shape = outputShapes.get(root.schema);
+  if (shape !== undefined) entry.outputSchema = shape;
   if (outputDescription !== undefined) entry.outputDescription = outputDescription;
   const rules = outputRules(root);
   // Nothing after an unconditional rule can decide (a covering primary key's
@@ -721,7 +783,7 @@ function outputRules(scope: Scope): VariantOutput[] {
     }
   }
   if (scope.cond === null || scope.schema.output !== undefined) {
-    rules.push({ cond: scope.cond ?? {}, when: scope.when, output: scope.schema.output });
+    rules.push({ cond: scope.cond ?? {}, when: scope.when, output: outputName(scope.schema) });
   }
   return rules;
 }
@@ -748,11 +810,13 @@ function disjoint(a: WhenTest[], b: WhenTest[]): boolean {
 function valueDocs(scopes: Scope[], inherited?: string): ValueDoc[] | undefined {
   if (scopes.length === 0 || scopes[0].trigger || !("value" in scopes[0].when[scopes[0].when.length - 1])) return undefined;
   return scopes.map(s => {
-    const output = s.schema.output ?? inherited;
+    const output = outputName(s.schema) ?? inherited;
+    const shape = outputShapes.get(s.schema);
     const description = s.schema.markdownDescription ?? s.schema.description;
     return {
       value: s.when[s.when.length - 1].value,
       ...(output !== undefined ? { output } : {}),
+      ...(shape !== undefined ? { outputSchema: shape } : {}),
       ...(s.schema.outputDescription !== undefined ? { outputDescription: s.schema.outputDescription } : {}),
       ...(description !== undefined ? { description } : {}),
     };
@@ -771,6 +835,8 @@ export interface SiblingDoc {
   when?: WhenTest[];
   /** Set on a sibling whose PRESENCE selects an operation: what it resolves to. */
   output?: string;
+  /** The shape it resolves to, when the operation declares one. */
+  outputSchema?: JexsPropertySchema;
   outputDescription?: string;
   /** Set on a sibling whose VALUE selects operations: one entry per value. */
   values?: ValueDoc[];
@@ -819,8 +885,11 @@ function siblingDocsOf(
       // applies wherever its own test (the last) is evaluated.
       if (v.trigger) {
         const values = valueDocs(v.variants.scopes);
+        const output = outputName(v.schema);
+        const shape = outputShapes.get(v.schema);
         add(v.name, v.schema, v.when.slice(0, -1), {
-          ...(v.schema.output !== undefined ? { output: v.schema.output } : {}),
+          ...(output !== undefined ? { output } : {}),
+          ...(shape !== undefined ? { outputSchema: shape } : {}),
           ...(v.schema.outputDescription !== undefined ? { outputDescription: v.schema.outputDescription } : {}),
           ...(values ? { values } : {}),
         });
@@ -923,7 +992,7 @@ export function buildPackageSchema(
         );
         continue;
       }
-      const root = normalizeMethod(methodKey, method);
+      const root = normalizeMethod(methodKey, withOutputTypes(method, cls.schemaDefs ?? {}, `${nodeClass}.${methodKey}`));
       const entry = emitMethod(methodKey, root, new Set(Object.keys(nodeCommonSiblings ?? {})));
       // 2020-12 evaluates $ref siblings, so the local `properties` (primary key)
       // applies in addition to the shared siblings block from the ref'd schema.
@@ -980,9 +1049,16 @@ function formatWhen(when: WhenTest[]): string {
   return when.map(t => "value" in t ? `\`${t.key}: ${JSON.stringify(t.value)}\`` : `\`${t.key}\``).join(" + ");
 }
 
+/** What an operation resolves to, for a hover line: `object`, or the shape it
+ *  names, `` `_dbConnection` ``. */
+function formatOutput(output: string | undefined, shape: JexsPropertySchema | undefined): string {
+  const ref = shapeName(shape);
+  return ref ? ` → \`${ref}\`` : output ? ` → ${output}` : "";
+}
+
 /** One operation line: `` - `connect` → object: Opens… ``. */
 function formatValue(v: ValueDoc, indent = ""): string {
-  const out = v.output ? ` → ${v.output}` : "";
+  const out = formatOutput(v.output, v.outputSchema);
   const text = v.description ?? v.outputDescription;
   return `${indent}- \`${String(v.value)}\`${out}${text ? `: ${text}` : ""}`;
 }
@@ -1012,7 +1088,7 @@ function buildRichMarkdown(methodKey: string, m: EmittedMethodSchema, docs: Sibl
   if (docs && docs.length > 0) {
     const lines = docs.flatMap(d => {
       const req = d.required ? " *(required)*" : "";
-      const out = d.output ? ` → ${d.output}` : "";
+      const out = formatOutput(d.output, d.outputSchema);
       const scope = d.when ? ` *(with ${formatWhen(d.when)})*` : "";
       const text = d.description ?? d.outputDescription;
       const head = `- \`${d.name}\`${req}${out}${scope}${text ? `: ${text}` : ""}`;
@@ -1021,8 +1097,10 @@ function buildRichMarkdown(methodKey: string, m: EmittedMethodSchema, docs: Sibl
     md = (md ? md + "\n\n" : "") + "**Properties:**\n" + lines.join("\n");
   }
 
-  if (m.outputDescription) {
-    md = (md ? md + "\n\n" : "") + "**Returns:** " + m.outputDescription;
+  const shape = formatOutput(undefined, m.outputSchema).replace(/^ → /, "");
+  if (m.outputDescription || shape) {
+    const returns = [shape, m.outputDescription].filter(Boolean).join(": ");
+    md = (md ? md + "\n\n" : "") + "**Returns:** " + returns;
   }
 
   // The example string is preserved on the emitted schema's `examples` array.
@@ -1332,6 +1410,7 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
   // runtime.
   for (const m of Object.values(byKey)) {
     delete m.output;
+    delete m.outputSchema;
     delete m.outputDescription;
     delete m.variantOutputs;
     delete m.variantDocs;
