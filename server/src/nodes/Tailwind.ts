@@ -2,13 +2,11 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
-import { Node, Context, NodeValue, resolve, resolveAll } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll, isObject } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
 const execAsync = promisify(exec);
 
-// Module-level state
-const classRegistry: Set<string> = new Set();
 const tempDir = "temp";
 const inputCss = "src/input.css";
 const outputCss = "public/styles.css";
@@ -39,18 +37,11 @@ const STANDALONE_CLASSES = [
   "inset", "top", "right", "bottom", "left",
 ];
 
-/**
- * TailwindNode - Process templates and compile Tailwind CSS.
- *
- * { "$tailwind": "extract", "data": {...} }
- * { "$tailwind": "add", "data": {...} }
- * { "$tailwind": "add", "classes": ["bg-red-500"] }
- * { "$tailwind": "compile" }
- * { "$tailwind": "build" }
- * { "$tailwind": "clear" }
- * { "$tailwind": "classes" }
- */
 export class TailwindNode extends Node {
+  /** The classes this resolver has registered. An instance field, so one
+   *  resolver's registry is never built into another's stylesheet. */
+  private readonly registry = new Set<string>();
+
   static schema: JexsNodeSchema = {
     tailwind: {
       type: "string",
@@ -88,7 +79,7 @@ export class TailwindNode extends Node {
         },
         compile: {
           output: "string",
-          markdownDescription: "Compiles the registered classes and returns the CSS.",
+          markdownDescription: "Compiles the registered classes and returns the CSS (`\"\"` when none are registered). A failed compile throws.",
         },
         build: {
           output: "null",
@@ -116,16 +107,16 @@ export class TailwindNode extends Node {
         case "extract":
           return doExtract(def, context);
         case "add":
-          return doAdd(def, context);
+          return doAdd(this.registry, def, context);
         case "compile":
-          return doCompile();
+          return compile([...this.registry]);
         case "build":
-          return doBuild(def, context);
+          return doBuild(this.registry, def, context);
         case "clear":
-          classRegistry.clear();
+          this.registry.clear();
           return null;
         case "classes":
-          return [...classRegistry];
+          return [...this.registry];
         default:
           console.error(`[Tailwind] Unknown operation: ${operation}`);
           return null;
@@ -133,56 +124,57 @@ export class TailwindNode extends Node {
     });
   }
 
-  // Public static API
+}
 
-  static extractClasses(json: unknown): string[] {
-    const classes = new Set<string>();
-    traverse(json, classes);
-    return [...classes];
+/** The Tailwind classes a template uses, from its `class` values. */
+function extractClasses(json: unknown): string[] {
+  const classes = new Set<string>();
+  traverse(json, classes);
+  return [...classes];
+}
+
+/** Write the stylesheet for `classes`, plus whatever `contentGlob` matches. */
+async function buildStylesheet(classes: string[], contentGlob?: string): Promise<void> {
+  console.log(`[Tailwind] Building CSS...`);
+
+  await fs.mkdir(tempDir, { recursive: true });
+
+  const contentParts: string[] = [];
+
+  if (classes.length > 0) {
+    const html = classes.map((c) => `<div class="${c}"></div>`).join("\n");
+    const contentFile = path.join(tempDir, "tw-content.html");
+    await fs.writeFile(contentFile, html);
+    contentParts.push(contentFile);
   }
 
-  static async build(classes: string[], contentGlob?: string): Promise<void> {
-    console.log(`[Tailwind] Building CSS...`);
+  if (contentGlob) {
+    contentParts.push(contentGlob);
+  }
 
-    await fs.mkdir(tempDir, { recursive: true });
+  if (contentParts.length === 0) {
+    console.log("[Tailwind] No content sources, skipping");
+    return;
+  }
 
-    const contentParts: string[] = [];
-
-    if (classes.length > 0) {
-      const html = classes.map((c) => `<div class="${c}"></div>`).join("\n");
-      const contentFile = path.join(tempDir, "tw-content.html");
-      await fs.writeFile(contentFile, html);
-      contentParts.push(contentFile);
-    }
-
-    if (contentGlob) {
-      contentParts.push(contentGlob);
-    }
-
-    if (contentParts.length === 0) {
-      console.log("[Tailwind] No content sources, skipping");
-      return;
-    }
-
-    try {
-      const contentArg = contentParts.map((p) => `"${p}"`).join(",");
-      await execAsync(
-        `npx @tailwindcss/cli -i ${inputCss} -o ${outputCss} --content ${contentArg}`,
-        { timeout: 60000 },
-      );
-      console.log(`[Tailwind] CSS written to ${outputCss}`);
-    } catch (error) {
-      console.error("[Tailwind] Build failed:", error);
-      throw error;
-    }
+  try {
+    const contentArg = contentParts.map((p) => `"${p}"`).join(",");
+    await execAsync(
+      `npx @tailwindcss/cli -i ${inputCss} -o ${outputCss} --content ${contentArg}`,
+      { timeout: 60000 },
+    );
+    console.log(`[Tailwind] CSS written to ${outputCss}`);
+  } catch (error) {
+    console.error("[Tailwind] Build failed:", error);
+    throw error;
   }
 }
 
 function doExtract(def: Record<string, unknown>, context: Context): unknown {
-  return resolve(def.data, context, data => (data ? TailwindNode.extractClasses(data) : []));
+  return resolve(def.data, context, data => (data ? extractClasses(data) : []));
 }
 
-function doAdd(def: Record<string, unknown>, context: Context): unknown {
+function doAdd(registry: Set<string>, def: Record<string, unknown>, context: Context): unknown {
   return resolveAll([def.classes ?? null, def.data ?? null], context, ([classesRaw, dataRaw]) => {
     let classes: string[] = [];
 
@@ -191,29 +183,25 @@ function doAdd(def: Record<string, unknown>, context: Context): unknown {
     }
 
     if (def.data && dataRaw) {
-      classes.push(...TailwindNode.extractClasses(dataRaw));
+      classes.push(...extractClasses(dataRaw));
     }
 
-    for (const cls of classes) classRegistry.add(cls);
+    for (const cls of classes) registry.add(cls);
     return null;
   });
 }
 
-function doCompile(): Promise<string> {
-  return compile([...classRegistry]);
-}
-
-function doBuild(def: Record<string, unknown>, context: Context): unknown {
+function doBuild(registry: Set<string>, def: Record<string, unknown>, context: Context): unknown {
   return resolveAll([def.data ?? null, def.content ?? null], context, async ([dataRaw, contentRaw]) => {
     if (def.data && dataRaw) {
-      for (const cls of TailwindNode.extractClasses(dataRaw)) {
-        classRegistry.add(cls);
+      for (const cls of extractClasses(dataRaw)) {
+        registry.add(cls);
       }
     }
 
     const contentGlob = def.content && contentRaw != null ? String(contentRaw) : undefined;
 
-    await TailwindNode.build([...classRegistry], contentGlob);
+    await buildStylesheet([...registry], contentGlob);
     return null;
   });
 }
@@ -229,16 +217,11 @@ async function compile(classes: string[]): Promise<string> {
 
   const outputFile = path.join(tempDir, "tw-output.css");
 
-  try {
-    await execAsync(
-      `npx tailwindcss -i ${inputCss} -o ${outputFile} --content ${contentFile} --minify`,
-      { timeout: 30000 },
-    );
-    return await fs.readFile(outputFile, "utf-8");
-  } catch (error) {
-    console.error("[Tailwind] Compilation failed:", error);
-    return "";
-  }
+  await execAsync(
+    `npx tailwindcss -i ${inputCss} -o ${outputFile} --content ${contentFile} --minify`,
+    { timeout: 30000 },
+  );
+  return fs.readFile(outputFile, "utf-8");
 }
 
 function traverse(value: unknown, classes: Set<string>): void {
@@ -252,17 +235,10 @@ function traverse(value: unknown, classes: Set<string>): void {
     return;
   }
 
-  if (typeof value === "object" && value !== null) {
-    const obj = value as Record<string, unknown>;
-
-    if ("class" in obj) extractFromClass(obj.class, classes);
-
-    if ("attrs" in obj && typeof obj.attrs === "object" && obj.attrs !== null) {
-      const attrs = obj.attrs as Record<string, unknown>;
-      if ("class" in attrs) extractFromClass(attrs.class, classes);
-    }
-
-    for (const v of Object.values(obj)) traverse(v, classes);
+  if (isObject(value)) {
+    if ("class" in value) extractFromClass(value.class, classes);
+    if (isObject(value.attrs) && "class" in value.attrs) extractFromClass(value.attrs.class, classes);
+    for (const v of Object.values(value)) traverse(v, classes);
   }
 }
 

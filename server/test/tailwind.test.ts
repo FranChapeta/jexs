@@ -17,3 +17,19 @@ test("extract returns the classes, and add, clear return nothing", async () => {
   assert.equal(await resolver({ $tailwind: "clear" }, {}), null);
   assert.deepEqual(await resolver({ $tailwind: "classes" }, {}), []);
 });
+
+// A resolver's registry is its own: another resolver in the process neither
+// sees its classes nor clears them.
+test("two resolvers keep separate class registries", async () => {
+  const a = createResolver([...coreNodes(), new TailwindNode()]);
+  const b = createResolver([...coreNodes(), new TailwindNode()]);
+  try {
+    await a({ $tailwind: "add", classes: ["only-in-a"] }, {});
+    assert.deepEqual(await b({ $tailwind: "classes" }, {}), []);
+    await b({ $tailwind: "clear" }, {});
+    assert.deepEqual(await a({ $tailwind: "classes" }, {}), ["only-in-a"]);
+  } finally {
+    a.destroy();
+    b.destroy();
+  }
+});
