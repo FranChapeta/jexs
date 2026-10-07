@@ -39,7 +39,9 @@ export interface JexsPropertySchema {
   description?: string;
   markdownDescription?: string;
   examples?: unknown[];
-  /** Direct JSON Pointer ref into the combined schema's $defs (e.g. `"#/$defs/_routeNode"`). */
+  /** Direct JSON Pointer ref into the combined schema's $defs (e.g. `"#/$defs/_routeNode"`).
+   *  A ref to a Node's def, like a `type`, takes the data it describes or a step
+   *  producing it (one whose output fits the def's `type`), unless `literal`. */
   $ref?: string;
   /**
    * The step is invalid without this property. Valid on a SIBLING (or a key inside
@@ -59,7 +61,8 @@ export interface JexsPropertySchema {
   required?: boolean;
 
   // Markers — resolved by the generator, never emitted verbatim.
-  /** Strict literal. Opt out of implicit type-or-expression wrapping. */
+  /** Strict literal. Opt out of implicit type-or-expression wrapping, for a
+   *  slot whose node does not resolve a step there. */
   literal?: boolean;
   /** Fixed-arity tuple. Items default to anyVal (any literal OR expression). */
   tuple?: number | readonly [number, number];

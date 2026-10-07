@@ -23,7 +23,7 @@
  */
 
 import type { Node } from "./nodes/Node.js";
-import { KEY_PREFIX } from "./Resolver.js";
+import { GLOBAL_KEYS, KEY_PREFIX } from "./Resolver.js";
 import type {
   JexsMethodSchema, JexsNodeSchema, JexsPropertySchema, JexsType,
 } from "./schema.js";
@@ -52,6 +52,14 @@ import type {
  * (variables, headers, case labels), which data keys already are.
  */
 const IS_DATA = { propertyNames: { not: { pattern: "^\\" + KEY_PREFIX } } };
+
+/** Data that may carry global keys beside its own, as a menu item carries a
+ *  `$catch` for its `do`: it names no op. A lone `$return` is still a step. */
+const NAMES_NO_OP = {
+  propertyNames: {
+    not: { pattern: `^\\${KEY_PREFIX}(?!(?:${[...GLOBAL_KEYS].filter(k => k !== "return").join("|")})$)` },
+  },
+};
 
 export const sharedDefs = {
   anyVal: {
@@ -86,6 +94,14 @@ export const sharedDefs = {
     else: { $ref: "#/$defs/exprFlat" },
   },
 } as const;
+
+/** The name of a Node-contributed def a `$ref` points at, or undefined for a
+ *  shared def or an `exprFlat` variant. */
+function nodeDefName(ref: string): string | undefined {
+  const name = ref.match(/^#\/\$defs\/(.+)$/)?.[1];
+  if (name === undefined || name in sharedDefs || name === "exprFlat" || name.startsWith("exprFlat_")) return undefined;
+  return name;
+}
 
 const REF = {
   anyVal:      { $ref: "#/$defs/anyVal"      },
@@ -143,9 +159,16 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
   }
 
   // Direct $ref: emit the ref with metadata. $ref siblings are evaluated in
-  // JSON Schema 2020-12, so markdownDescription stays accessible for hover.
+  // JSON Schema 2020-12, so markdownDescription stays accessible for hover. A
+  // Node's def describes data, so like any typed slot this one also takes a step
+  // producing it, unless `literal`; the merge points `exprFlat_<def>` at the
+  // expressions that fit (see mergePackageSchemas). The shared defs already
+  // tell steps from data themselves.
   if (prop.$ref) {
-    const out: EmittedSchema = { $ref: prop.$ref };
+    const def = nodeDefName(prop.$ref);
+    const out: EmittedSchema = def !== undefined && !prop.literal
+      ? { if: NAMES_NO_OP, then: { $ref: prop.$ref }, else: { $ref: `#/$defs/exprFlat_${def}` } }
+      : { $ref: prop.$ref };
     liftMetadata(prop, out);
     return out;
   }
@@ -1402,6 +1425,16 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
     filteredVariants[`exprFlat_${target}`] = {
       allOf: [{ $ref: "#/$defs/exprFlat" }, override],
     };
+  }
+
+  // The steps a slot typed by a Node's def takes (see expandProperty): those
+  // whose output fits the def's type, or, for a def with no single type, the def
+  // itself, which is how one that tells steps from data on its own keeps doing so.
+  const slots = JSON.stringify({ byKey, vp, extraDefs });
+  for (const [name, def] of Object.entries(extraDefs)) {
+    if (!slots.includes(`"#/$defs/exprFlat_${name}"`)) continue;
+    const type = OUTPUT_TYPES.find(t => t === def.type);
+    filteredVariants[`exprFlat_${name}`] = { $ref: type ? `#/$defs/exprFlat_${type}` : `#/$defs/${name}` };
   }
 
   // Strip build-only fields from emitted byKey entries: `output` drives the

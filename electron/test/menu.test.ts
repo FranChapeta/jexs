@@ -27,6 +27,23 @@ test("scalar fields resolve, including expressions", async () => {
   assert.equal(item.enabled, true);
 });
 
+// An item may itself be a step, and the item it resolves to keeps its `do`
+// steps raw, exactly as a literal item does.
+test("an item that is a step resolves to the item it holds", async () => {
+  const seen: unknown[] = [];
+  const steps = [{ $setText: ["#out", "Opened"] }];
+  const ctx = ctxIn({ fileMenu: { label: "Open", do: steps } });
+  const [item, quit] = await buildMenuTemplate(
+    [{ $var: "fileMenu" }, { label: "Quit", role: "quit" }],
+    ctx,
+    (_raw, s) => { seen.push(s); },
+  );
+  assert.equal(item.label, "Open");
+  assert.equal(quit.role, "quit");
+  (item.click as (i: unknown, w?: unknown) => void)({ label: "Open" }, undefined);
+  assert.deepEqual(seen, [steps]);
+});
+
 // The whole reason buildMenuTemplate exists rather than a blanket resolveFields:
 // resolving `do` in main would find no DOM handler for setText and quietly turn
 // the step into a plain object, destroying the handler instead of dispatching it.

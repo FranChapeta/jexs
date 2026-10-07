@@ -119,6 +119,15 @@ test("registering a table leaves the written document unchanged", async () => {
   assert.ok(SchemaNode.get(registry, "kept")?.properties?.created_at, "the registry's copy has the common columns");
 });
 
+// A step producing the document (`$var`, a `$file` with `data: true`) resolves
+// first; what it hands back is registered like a literal.
+test("register takes a table document from a step", async () => {
+  const doc = { table: "from_step", properties: { name: { type: "string" } } };
+  const out = await resolve({ $schema: "register", table: { $var: "doc" } }, { doc });
+  assert.deepEqual(out, { registered: ["from_step"] });
+  assert.ok(SchemaNode.get(registry, "from_step")?.properties?.name);
+});
+
 test("$schema get hands out a copy, so changing it leaves the registry alone", async () => {
   await resolve({ $schema: "register", table: { table: "copied", properties: { name: { type: "string" } } } }, {});
   const got = await resolve({ $schema: "get", table: "copied" }, {}) as { properties: Record<string, unknown> };

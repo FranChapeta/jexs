@@ -413,6 +413,23 @@ const cases: Case[] = [
     expr: { $query: "select", table: "users", database: "main" } },
   { label: "session login sets values on a new id in one step (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $session: { user_id: { $var: "user.id" } }, regenerate: true } },
+  // A slot typed by a Node's def takes its data or a step producing it, checked
+  // by the step's output type; data is still checked against the def.
+  { label: "menu item from a step (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $menu: [{ $var: "fileMenu" }, { label: "Quit", role: "quit" }] } },
+  { label: "menu item from a step returning a string (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $menu: [{ $concat: ["File"] }] } },
+  { label: "menu item data still checked against the def (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $menu: [{ label: 5 }] } },
+  // A `$catch` for the item's `do` names no op, so the item is still data.
+  { label: "menu item with its own $catch is data (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $menu: [{ label: "Boom", do: [{ $error: 500 }], $catch: [{ $log: "x" }] }] } },
+  { label: "menu item with its own $catch is still checked as an item (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $menu: [{ label: 5, $catch: [{ $log: "x" }] }] } },
+  { label: "email list headers from a step (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $email: "a@x.com", subject: "s", list: { $var: "listHeaders" } } },
+  { label: "schema register takes a table document from a step (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $schema: "register", table: { $file: "tables/users.json", data: true } } },
   { label: "database connect via host + its own siblings (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $database: "connect", type: "pg", host: "h", port: 5432, user: "u", db: "app" } },
   { label: "database connect via filename (valid)", schemaRef: "$defs/exprFlat", expectValid: true,

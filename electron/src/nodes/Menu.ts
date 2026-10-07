@@ -1,5 +1,5 @@
 import {
-  Node, Context, NodeValue, childContext, resolve, resolveFields, runStepsDetached, isObject,
+  Node, Context, NodeValue, childContext, GLOBAL_KEYS, isOwnedKey, resolve, resolveFields, runStepsDetached, isObject,
 } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { targetWindow, windowNameOf } from "./Window.js";
@@ -60,7 +60,13 @@ export async function buildMenuTemplate(
   if (!Array.isArray(list)) return [];
   const out: Electron.MenuItemConstructorOptions[] = [];
 
-  for (const raw of list) {
+  for (const entry of list) {
+    // An item may itself be a step (`{ "$var": "fileMenu" }`); `$var`, or a
+    // `$file` with `data: true`, hands back the stored item as data, `do` intact.
+    // A literal item may carry a `$catch` for its `do`, which names no op.
+    const names = isObject(entry) ? Object.keys(entry) : [];
+    const isItemStep = names.some(k => isOwnedKey(k) && !GLOBAL_KEYS.has(k.slice(1)));
+    const raw = isItemStep ? await resolve(entry, context) : entry;
     if (!isObject(raw)) continue;
 
     const steps = raw.do ?? null;
@@ -77,12 +83,10 @@ export async function buildMenuTemplate(
     if (typeof r.checked === "boolean") item.checked = r.checked;
     if (typeof r.enabled === "boolean") item.enabled = r.enabled;
     if (typeof r.visible === "boolean") item.visible = r.visible;
-    if (ROLES.includes(r.role as (typeof ROLES)[number])) {
-      item.role = r.role as Electron.MenuItemConstructorOptions["role"];
-    }
-    if (ITEM_TYPES.includes(r.type as (typeof ITEM_TYPES)[number])) {
-      item.type = r.type as Electron.MenuItemConstructorOptions["type"];
-    }
+    const role = ROLES.find(known => known === r.role);
+    if (role) item.role = role;
+    const type = ITEM_TYPES.find(known => known === r.type);
+    if (type) item.type = type;
 
     if (submenu !== undefined) {
       item.submenu = await buildMenuTemplate(submenu, context, onClick);

@@ -1,6 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
-import { Node, Context, NodeValue, resolve, resolveAll, resolverFor } from "@jexs/core";
+import { Node, Context, NodeValue, isObject, isStep, resolve, resolveAll, resolverFor } from "@jexs/core";
 import { TableJsonSchema, ColumnSchema } from "./Query.js";
 import { sha256 } from "./Crypto.js";
 import { validate, validateDetailed, getValidator } from "../validate.js";
@@ -270,8 +270,8 @@ export class SchemaNode extends Node {
    * steps may change, and returns it. `withCommonColumns` adds the columns every
    * table gets (`system`, `created_at`) to that copy.
    */
-  static register(context: Context, schema: TableJsonSchema, withCommonColumns = false): TableJsonSchema {
-    if (typeof schema.table !== "string" || schema.properties === null || typeof schema.properties !== "object") {
+  static register(context: Context, schema: unknown, withCommonColumns = false): TableJsonSchema {
+    if (!isTableDocument(schema)) {
       throw new Error("A table document needs a `table` name and `properties`.");
     }
     const own = structuredClone(schema);
@@ -504,10 +504,18 @@ function doValidate(def: Record<string, unknown>, context: Context): NodeValue {
   });
 }
 
+/** A table document: a `table` name and its column `properties`. */
+function isTableDocument(value: unknown): value is TableJsonSchema {
+  return isObject(value) && typeof value.table === "string" && isObject(value.properties);
+}
+
 async function doRegister(def: Record<string, unknown>, context: Context, root: string): Promise<unknown> {
-  // Inline schema document
-  if (def.table && typeof def.table === "object") {
-    const schema = SchemaNode.register(context, def.table as TableJsonSchema, true);
+  // A literal document registers as written, so its `validator` steps stay
+  // steps; a step producing one (`$var`, or a `$file` with `data: true`)
+  // resolves to it first.
+  const table = isStep(def.table) ? await resolve(def.table, context) : def.table;
+  if (isObject(table)) {
+    const schema = SchemaNode.register(context, table, true);
     return { registered: [schema.table] };
   }
 
@@ -524,9 +532,9 @@ async function doRegister(def: Record<string, unknown>, context: Context, root: 
         files.map(file => fs.readFile(path.join(dirPath, file), "utf-8")),
       );
       for (const content of contents) {
-        const schema = JSON.parse(content) as TableJsonSchema;
+        const schema: unknown = JSON.parse(content);
         // The same keys that make the editor treat a file as a table document.
-        if ("properties" in schema && "table" in schema) {
+        if (isTableDocument(schema)) {
           registered.push(SchemaNode.register(context, schema, true).table);
         }
       }
