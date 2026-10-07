@@ -18,16 +18,26 @@ export type { DatabaseConfig };
  * That config holds the password and the TLS private key, and nothing ever reads
  * them back: the driver takes them at dial time and keeps its own copy. Holding
  * a second one for the life of the process only widens what a stray log line, a
- * serialized error, or the public `getInstance` can expose. These three fields
- * are everything the rest of the node actually asks for, and all three are safe
- * to print.
+ * serialized error, or the public `getInstance` can expose. These fields say
+ * where it points, named as `connect` takes them, and all are safe to print.
+ * `connect` and `info` return it, as the `_dbConnection` shape.
  */
 interface ConnectionInfo {
   type: DatabaseType;
-  /** Where it points, with credentials stripped. For SQLite, the file path. */
-  location: string;
+  host?: string;
+  port?: number;
+  user?: string;
+  db?: string;
+  /** SQLite's file, in place of the four above. */
+  filename?: string;
   ssl: boolean;
 }
+
+// What a hosted connection dials when the step leaves a part out.
+const DEFAULT_HOST = "localhost";
+const DEFAULT_DB = "cms";
+const DEFAULT_PORT = { mysql: 3306, pg: 5432 } as const;
+const DEFAULT_USER = { mysql: "root", pg: "postgres" } as const;
 
 // Internal connection wrapper
 interface DatabaseConnection {
@@ -35,14 +45,15 @@ interface DatabaseConnection {
   info: ConnectionInfo;
 }
 
-/** Reduce a config to the parts that get read back, dropping the secrets. */
+/** Reduce a config to where it points, as dialled (defaults filled in), dropping the secrets. */
 function describe(config: DatabaseConfig): ConnectionInfo {
+  if (config.type === "sqlite") return { type: "sqlite", filename: config.filename || "data.db", ssl: false };
   return {
     type: config.type,
-    location:
-      config.type === "sqlite"
-        ? config.filename || "data.db"
-        : `${config.host}:${config.port}/${config.database}`,
+    host: config.host || DEFAULT_HOST,
+    port: config.port || DEFAULT_PORT[config.type],
+    user: config.user || DEFAULT_USER[config.type],
+    db: config.database || DEFAULT_DB,
     ssl: Boolean(config.ssl),
   };
 }
@@ -116,8 +127,9 @@ export class DatabaseNode extends Node {
       ],
       variants: {
         connect: {
-          output: "object",
-          markdownDescription: "Opens (and registers) a connection, from a `url` connection string or from discrete `host`/`port`/`user` properties. Returns a status object.",
+          output: { $ref: "#/$defs/_dbConnection" },
+          markdownDescription: "Opens (and registers) a connection, from a `url` connection string or from discrete `host`/`port`/`user` properties.",
+          outputDescription: "Where the connection points, under the names `connect` takes, defaults filled in. Carries no credentials.",
           examples: [
             "{ \"$database\": \"connect\", \"connection\": \"main\", \"url\": { \"$var\": \"env.DATABASE_URL\" } }",
             "{ \"$database\": \"connect\", \"type\": \"pg\", \"host\": \"db.example.com\", \"db\": \"app\", \"ssl\": { \"ca\": \"certs/root.pem\" } }",
@@ -172,8 +184,8 @@ export class DatabaseNode extends Node {
           },
         },
         close: {
-          output: "object",
-          outputDescription: "A status object, or `null` if closing failed.",
+          output: "null",
+          outputDescription: "`null`. A failure to close throws, so `$catch` can handle it.",
           markdownDescription: "Closes a named connection.",
         },
         raw: {
@@ -192,18 +204,37 @@ export class DatabaseNode extends Node {
           },
         },
         dropTable: {
-          output: "object",
-          markdownDescription: "Drops a table if it exists. Returns a status object.",
+          output: "null",
+          markdownDescription: "Drops a table if it exists.",
           siblings: {
             table: { type: "string", description: "Table name." },
           },
         },
         info: {
-          output: "object",
-          outputDescription: "A connection-info object, or `null` if unknown. Carries no credentials.",
-          markdownDescription: "Reports connection info (type, location, whether TLS is on, size, table count).",
+          output: { $ref: "#/$defs/_dbConnection" },
+          outputDescription: "The connection as `connect` returned it, plus `tables` (and `size` for SQLite), or `null` if no connection has that name. Carries no credentials.",
+          markdownDescription: "Reports where a connection points, whether TLS is on, and how many tables it has.",
         },
       },
+    },
+  };
+
+  static schemaDefs = {
+    _dbConnection: {
+      type: "object",
+      description: "A database connection as `connect` and `info` report it: where it points, under the names `connect` takes, never its credentials.",
+      properties: {
+        type: { enum: [...DATABASE_TYPES], description: "Database driver." },
+        host: { type: "string", description: "Server hostname (MySQL / PostgreSQL)." },
+        port: { type: "number", description: "Server port (MySQL / PostgreSQL)." },
+        user: { type: "string", description: "Username (MySQL / PostgreSQL)." },
+        db: { type: "string", description: "Database name (MySQL / PostgreSQL)." },
+        filename: { type: "string", description: "Database file (SQLite)." },
+        ssl: { type: "boolean", description: "Whether the connection uses TLS." },
+        tables: { type: "number", description: "`info` only: how many tables the database has." },
+        size: { type: "number", description: "`info` only, SQLite: the file's size in bytes." },
+      },
+      required: ["type", "ssl"],
     },
   };
 
@@ -447,11 +478,11 @@ function knexFor(config: DatabaseConfig): KnexType {
       return Knex({
         client: "mysql2",
         connection: {
-          host: config.host || "localhost",
-          port: config.port || 3306,
-          user: config.user || "root",
+          host: config.host || DEFAULT_HOST,
+          port: config.port || DEFAULT_PORT.mysql,
+          user: config.user || DEFAULT_USER.mysql,
           password: config.password || "",
-          database: config.database || "cms",
+          database: config.database || DEFAULT_DB,
           // mysql2 feeds `ssl` straight to tls.createSecureContext, so the bare
           // `true` shorthand has to become an options object; a falsy value is
           // dropped entirely rather than sent as `false`. Knex types the field
@@ -467,11 +498,11 @@ function knexFor(config: DatabaseConfig): KnexType {
       return Knex({
         client: "pg",
         connection: {
-          host: config.host || "localhost",
-          port: config.port || 5432,
-          user: config.user || "postgres",
+          host: config.host || DEFAULT_HOST,
+          port: config.port || DEFAULT_PORT.pg,
+          user: config.user || DEFAULT_USER.pg,
           password: config.password || "",
-          database: config.database || "cms",
+          database: config.database || DEFAULT_DB,
           // pg takes the boolean and the options object as-is.
           ...(config.ssl !== undefined ? { ssl: config.ssl } : {}),
         },
@@ -546,33 +577,17 @@ function doConnect(self: DatabaseNode, def: Record<string, unknown>, context: Co
       self.defaultConnectionName = name;
     }
 
-    return {
-      type: "database",
-      action: "connect",
-      name,
-      info: infoOf(self, name),
-    };
+    return infoOf(self, name);
   });
 }
 
 function doClose(self: DatabaseNode, def: Record<string, unknown>, context: Context): unknown {
   return resolve(def.connection ?? null, context, async nameRaw => {
     const name = connectionName(self, nameRaw);
-
-    try {
-      await closeConnection(self, name);
-
-      if (self.defaultConnectionName === name) {
-        self.defaultConnectionName = null;
-      }
-
-      console.log(`[DatabaseNode] Closed connection: ${name}`);
-
-      return { type: "database", action: "close", name };
-    } catch (error) {
-      console.error(`[DatabaseNode] Error closing ${name}:`, error);
-      return null;
-    }
+    await closeConnection(self, name);
+    if (self.defaultConnectionName === name) self.defaultConnectionName = null;
+    console.log(`[DatabaseNode] Closed connection: ${name}`);
+    return null;
   });
 }
 
@@ -599,7 +614,7 @@ function doDropTable(self: DatabaseNode, def: Record<string, unknown>, context: 
   return resolveAll([def.connection ?? null, def.table], context, async ([connectionRaw, tableRaw]) => {
     const table = String(tableRaw);
     await requireConnection(self, connectionRaw).knex.schema.dropTableIfExists(table);
-    return { type: "database", action: "dropTable", table };
+    return null;
   });
 }
 
@@ -612,11 +627,9 @@ function doInfo(self: DatabaseNode, def: Record<string, unknown>, context: Conte
 
     const result: Record<string, unknown> = { ...conn.info };
 
-    if (conn.info.type === "sqlite") {
+    if (conn.info.filename) {
       try {
-        // For SQLite the location IS the file path.
-        const stat = fs.statSync(conn.info.location);
-        result.size = stat.size;
+        result.size = fs.statSync(conn.info.filename).size;
       } catch { /* ignore */ }
     }
 

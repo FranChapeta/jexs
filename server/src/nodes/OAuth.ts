@@ -140,8 +140,8 @@ export class OAuthNode extends Node {
       ],
       variants: {
         configure: {
-          output: "object",
-          markdownDescription: "Registers provider credentials. Returns a status object.",
+          output: "null",
+          markdownDescription: "Registers provider credentials.",
           siblings: {
             provider: OAUTH_PROVIDER,
             clientId: OAUTH_CLIENT_ID,
@@ -272,7 +272,7 @@ function doConfigure(providers: Providers, def: Record<string, unknown>, context
     }
 
     console.log(`[OAuth] Configured provider: ${name}`);
-    return { type: "oauth", action: "configure", provider: name };
+    return null;
   });
 }
 

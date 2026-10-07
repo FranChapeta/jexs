@@ -195,6 +195,14 @@ describe("describe_op", () => {
     }
   });
 
+  test("names the shape an operation returns, when it declares one", async () => {
+    const { text } = await callTool("describe_op", { op: "database" });
+    assert.match(text, /`connect` -> #\/\$defs\/_dbConnection/);
+    const def = await callTool("describe_def", { name: "_dbConnection" });
+    assert.equal(def.isError, false);
+    assert.match(def.text, /filename/);
+  });
+
   test("suggests a near match for a typo", async () => {
     const { text, isError } = await callTool("describe_op", { op: "mpa" });
     assert.ok(isError);

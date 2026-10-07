@@ -265,8 +265,8 @@ test("ssl layers over a url instead of colliding with it", async () => {
     url: "postgres://h/d?sslmode=no-verify",
     ssl: { ca: CA_PEM },
   });
-  const info = r.info as Record<string, unknown>;
-  assert.equal(info.ssl, true);
+  // Where it points, under `connect`'s own names, with the defaults it dialled.
+  assert.deepEqual(r, { type: "pg", host: "h", port: 5432, user: "postgres", db: "d", ssl: true });
   const settings = DatabaseNode.getKnex(dbCtx, "c3").client.connectionSettings as Record<string, unknown>;
   // Merged key-wise. node-postgres would have the url REPLACE the ssl object.
   assert.deepEqual(settings.ssl, { rejectUnauthorized: false, ca: CA_PEM.trim() });
@@ -307,10 +307,14 @@ test("using an unopened connection names it and lists the drivers", async () => 
 // Every `$database` op picks its connection with the same `connection` key.
 test("info and close act on the connection they name", async () => {
   await connect({ $database: "connect", connection: "left", url: "sqlite::memory:" });
-  await connect({ $database: "connect", connection: "right", url: "sqlite::memory:" });
-  assert.equal((await connect({ $database: "info", connection: "right" }))?.location, ":memory:");
+  assert.deepEqual(
+    await connect({ $database: "connect", connection: "right", url: "sqlite::memory:" }),
+    { type: "sqlite", filename: ":memory:", ssl: false },
+    "connect returns the connection's info",
+  );
+  assert.equal((await connect({ $database: "info", connection: "right" }))?.filename, ":memory:");
 
-  await connect({ $database: "close", connection: "right" });
+  assert.equal(await connect({ $database: "close", connection: "right" }), null);
   assert.equal(await connect({ $database: "info", connection: "right" }), null);
   assert.ok(await connect({ $database: "info", connection: "left" }));
 });
