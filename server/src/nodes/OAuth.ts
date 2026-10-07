@@ -28,6 +28,15 @@ interface OAuthProvider {
   userNameField?: string;
 }
 
+/** The tokens `exchange` and `refresh` return: the `_oauthTokens` shape. */
+interface OAuthTokens {
+  accessToken: string;
+  refreshToken?: string;
+  tokenType: string;
+  expiresIn?: number;
+  expiresAt?: number;
+}
+
 /** A login `authUrl` started, kept in the session until `exchange` uses it. */
 interface PendingLogin {
   state: string;
@@ -123,6 +132,33 @@ const OAUTH_REDIRECT_URI = { type: "string" as const, description: "Where the pr
  * { "$oauth": "providers" }
  */
 export class OAuthNode extends Node {
+  static schemaDefs = {
+    _oauthTokens: {
+      type: "object",
+      description: "The tokens a provider granted, as `exchange` and `refresh` return them.",
+      properties: {
+        accessToken: { type: "string", description: "Bearer token for the provider's API, e.g. `userInfo`." },
+        refreshToken: { type: "string", description: "For `refresh`, when the provider issues one." },
+        tokenType: { type: "string", description: "Usually `\"Bearer\"`." },
+        expiresIn: { type: "number", description: "Seconds the access token lasts, when the provider says." },
+        expiresAt: { type: "number", description: "When it expires, in ms since the epoch." },
+      },
+      required: ["accessToken", "tokenType"],
+    },
+    _oauthUser: {
+      type: "object",
+      description: "A user's profile as `userInfo` returns it: the common fields named the same for every provider, and the provider's own reply.",
+      properties: {
+        id: { type: "string", description: "The user's id at the provider." },
+        email: { type: "string" },
+        name: { type: "string" },
+        picture: { type: "string", description: "Avatar URL, when the provider gives one." },
+        raw: { type: "object", description: "The provider's whole reply." },
+      },
+      required: ["id", "raw"],
+    },
+  };
+
   static schema: JexsNodeSchema = {
     oauth: {
       type: "string",
@@ -163,8 +199,8 @@ export class OAuthNode extends Node {
           },
         },
         exchange: {
-          output: "object",
-          outputDescription: "A token object (`access_token`, etc.).",
+          output: { $ref: "#/$defs/_oauthTokens" },
+          outputDescription: "The tokens the provider granted. A refusal throws a 502, for `$catch`.",
           markdownDescription: "Finishes the login `authUrl` started in this browser's session: checks the callback's `state` (once: a missing, wrong or reused state fails with 403 before the code is spent), then exchanges the `code` for tokens with the same redirect URI and the PKCE verifier. In a callback route it needs no siblings.",
           examples: ["{ \"$oauth\": \"exchange\", \"$as\": \"tokens\" }"],
           siblings: {
@@ -174,14 +210,14 @@ export class OAuthNode extends Node {
           },
         },
         refresh: {
-          output: "object",
-          outputDescription: "A refreshed token object.",
+          output: { $ref: "#/$defs/_oauthTokens" },
+          outputDescription: "The new tokens; `refreshToken` stays the one passed in when the provider issues no new one. A refusal throws a 502.",
           markdownDescription: "Refreshes tokens using a `refreshToken`.",
           siblings: { provider: OAUTH_PROVIDER, refreshToken: { type: "string", description: "Refresh token." } },
         },
         userInfo: {
-          output: "object",
-          outputDescription: "The normalized user-profile object.",
+          output: { $ref: "#/$defs/_oauthUser" },
+          outputDescription: "The user's profile, its common fields named the same for every provider. A refusal throws a 502.",
           markdownDescription: "Fetches the user profile for a bearer `accessToken`.",
           siblings: { provider: OAUTH_PROVIDER, accessToken: { type: "string", description: "Bearer token." } },
         },
@@ -330,30 +366,12 @@ function doExchange(providers: Providers, def: Record<string, unknown>, context:
       throw createHttpError(400, `OAuth login failed: ${String(query?.error ?? "the callback has no code")}`);
     }
 
-    try {
-      const data = await tokenRequest(config, "exchange", {
-        grant_type: "authorization_code",
-        code: String(code),
-        redirect_uri: login.redirectUri,
-        code_verifier: login.verifier,
-      });
-      return {
-        success: true,
-        accessToken: String(data.access_token),
-        refreshToken: data.refresh_token
-          ? String(data.refresh_token)
-          : undefined,
-        tokenType: String(data.token_type ?? "Bearer"),
-        expiresIn: data.expires_in ? Number(data.expires_in) : undefined,
-        expiresAt: data.expires_in
-          ? Date.now() + Number(data.expires_in) * 1000
-          : undefined,
-      };
-    } catch (error) {
-      const e = error as Error;
-      console.error(`[OAuth] Exchange failed:`, e.message);
-      return { success: false, error: e.message };
-    }
+    return tokenRequest(config, "exchange", {
+      grant_type: "authorization_code",
+      code: String(code),
+      redirect_uri: login.redirectUri,
+      code_verifier: login.verifier,
+    });
   });
 }
 
@@ -395,9 +413,15 @@ async function takeLogin(context: Context, providerRaw: unknown, submitted: unkn
 
 /**
  * POST to the provider's token endpoint with the client credentials, as form
- * fields or as a Basic header, and decode the response.
+ * fields or as a Basic header, and return the tokens it grants. A refusal
+ * throws a 502. `refreshToken` stands in when the response carries no new one.
  */
-async function tokenRequest(config: OAuthProvider, what: string, params: Record<string, string>): Promise<Record<string, unknown>> {
+async function tokenRequest(
+  config: OAuthProvider,
+  what: string,
+  params: Record<string, string>,
+  refreshToken?: string,
+): Promise<OAuthTokens> {
   const body = new URLSearchParams({ client_id: config.clientId, ...params });
   const headers: Record<string, string> = {
     "Content-Type": "application/x-www-form-urlencoded",
@@ -411,8 +435,31 @@ async function tokenRequest(config: OAuthProvider, what: string, params: Record<
     body.set("client_secret", config.clientSecret);
   }
   const response = await fetch(config.tokenUrl, { method: "POST", headers, body: body.toString() });
-  if (!response.ok) throw new Error(`Token ${what} failed: ${await response.text()}`);
-  return (await response.json()) as Record<string, unknown>;
+  const text = await response.text();
+  const data = parseJsonObject(text);
+  // Some providers (GitHub) answer a refused grant with a 200 and an `error`.
+  if (!response.ok || typeof data?.access_token !== "string") {
+    const reason = data?.error_description ?? data?.error ?? (text || response.statusText);
+    throw createHttpError(502, `OAuth token ${what} failed: ${String(reason)}`);
+  }
+  const expiresIn = data.expires_in != null ? Number(data.expires_in) : undefined;
+  return {
+    accessToken: data.access_token,
+    refreshToken: typeof data.refresh_token === "string" ? data.refresh_token : refreshToken,
+    tokenType: typeof data.token_type === "string" ? data.token_type : "Bearer",
+    expiresIn,
+    expiresAt: expiresIn !== undefined ? Date.now() + expiresIn * 1000 : undefined,
+  };
+}
+
+/** A JSON object body, or null when the text is not one. */
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  try {
+    const value: unknown = JSON.parse(text);
+    return isObject(value) ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 function doRefresh(providers: Providers, def: Record<string, unknown>, context: Context): unknown {
@@ -423,25 +470,7 @@ function doRefresh(providers: Providers, def: Record<string, unknown>, context: 
 
     if (!config) throw new Error(`Provider "${provider}" not configured`);
 
-    try {
-      const data = await tokenRequest(config, "refresh", {
-        grant_type: "refresh_token",
-        refresh_token: refreshToken,
-      });
-      return {
-        success: true,
-        accessToken: String(data.access_token),
-        refreshToken: data.refresh_token
-          ? String(data.refresh_token)
-          : refreshToken,
-        tokenType: String(data.token_type ?? "Bearer"),
-        expiresIn: data.expires_in ? Number(data.expires_in) : undefined,
-      };
-    } catch (error) {
-      const e = error as Error;
-      console.error(`[OAuth] Refresh failed:`, e.message);
-      return { success: false, error: e.message };
-    }
+    return tokenRequest(config, "refresh", { grant_type: "refresh_token", refresh_token: refreshToken }, refreshToken);
   });
 }
 
@@ -455,48 +484,28 @@ function doUserInfo(providers: Providers, def: Record<string, unknown>, context:
     if (!config.userInfoUrl)
       throw new Error(`Provider "${provider}" has no userInfoUrl`);
 
-    try {
-      const response = await fetch(config.userInfoUrl, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          Accept: "application/json",
-        },
-      });
-
-      if (!response.ok)
-        throw new Error(`Failed to get user info: ${await response.text()}`);
-
-      const data = (await response.json()) as Record<string, unknown>;
-      const getNested = (
-        obj: Record<string, unknown>,
-        dotPath: string,
-      ): unknown => {
-        return dotPath.split(".").reduce((curr: unknown, key) => {
-          if (curr && typeof curr === "object")
-            return (curr as Record<string, unknown>)[key];
-          return undefined;
-        }, obj);
-      };
-
-      return {
-        success: true,
-        id: String(getNested(data, config.userIdField ?? "id") ?? ""),
-        email: getNested(data, config.userEmailField ?? "email") as
-          | string
-          | undefined,
-        name: getNested(data, config.userNameField ?? "name") as
-          | string
-          | undefined,
-        picture: (data.picture ?? data.avatar_url ?? data.avatar) as
-          | string
-          | undefined,
-        raw: data,
-      };
-    } catch (error) {
-      const e = error as Error;
-      console.error(`[OAuth] getUserInfo failed:`, e.message);
-      return { success: false, error: e.message };
+    const response = await fetch(config.userInfoUrl, {
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+    });
+    const text = await response.text();
+    const data = parseJsonObject(text);
+    if (!response.ok || !data) {
+      throw createHttpError(502, `OAuth user info failed: ${text || response.statusText}`);
     }
+
+    // A dotted path into the profile, as the provider's field names give it.
+    const at = (dotPath: string): unknown =>
+      dotPath.split(".").reduce<unknown>((curr, key) => (isObject(curr) ? curr[key] : undefined), data);
+    const stringOf = (value: unknown): string | undefined => (typeof value === "string" ? value : undefined);
+    const id = at(config.userIdField ?? "id");
+
+    return {
+      id: id == null ? "" : String(id),
+      email: stringOf(at(config.userEmailField ?? "email")),
+      name: stringOf(at(config.userNameField ?? "name")),
+      picture: stringOf(data.picture ?? data.avatar_url ?? data.avatar),
+      raw: data,
+    };
   });
 }
 

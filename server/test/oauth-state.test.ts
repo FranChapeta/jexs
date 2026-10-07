@@ -107,7 +107,7 @@ test("an explicit state sibling is checked instead of the query", async t => {
     const { state, sid } = await startLogin(resolver);
     const ctx = request({ sid }, { state: "not this one" });
     const result = await resolver({ $oauth: "exchange", provider: "github", code: "c", state }, ctx);
-    assert.equal((result as { success: boolean }).success, true);
+    assert.equal((result as { accessToken: string }).accessToken, "tok");
   } finally {
     resolver.destroy();
   }
@@ -172,7 +172,7 @@ test("with two logins in progress, exchange needs its provider", async t => {
 
     await assert.rejects(async () => exchange(resolver, request({ sid }, { state, code: "c" })), /give "exchange" its "provider"/);
     const result = await resolver({ $oauth: "exchange", provider: "github" }, request({ sid }, { state, code: "c" }));
-    assert.equal((result as { success: boolean }).success, true);
+    assert.equal((result as { accessToken: string }).accessToken, "tok");
   } finally {
     resolver.destroy();
   }
@@ -188,6 +188,47 @@ test("a declined login reports the provider's error", async t => {
       /OAuth login failed: access_denied/,
     );
     assert.equal(fetch.mock.callCount(), 0);
+  } finally {
+    resolver.destroy();
+  }
+});
+
+// A refusal throws rather than handing back `{ success: false }`, including the
+// 200-with-`error` some providers (GitHub) answer a bad code with.
+test("a refused grant throws a 502 naming the provider's reason", async t => {
+  const replies = [
+    new Response(JSON.stringify({ error: "bad_verification_code", error_description: "The code is incorrect." }), { status: 200 }),
+    new Response("invalid_grant", { status: 400 }),
+  ];
+  t.mock.method(globalThis, "fetch", async () => replies.shift()!);
+  const resolver = await app();
+  try {
+    for (const reason of [/The code is incorrect/, /invalid_grant/]) {
+      const { state, sid } = await startLogin(resolver);
+      await assert.rejects(
+        async () => exchange(resolver, request({ sid }, { state, code: "c" })),
+        (e: Error & { status?: number }) => e.status === 502 && reason.test(e.message),
+      );
+    }
+  } finally {
+    resolver.destroy();
+  }
+});
+
+test("exchange returns the tokens, with when they expire", async t => {
+  t.mock.method(globalThis, "fetch", async () =>
+    new Response(JSON.stringify({ access_token: "a", refresh_token: "r", expires_in: 60 }), { status: 200 }));
+  const resolver = await app();
+  try {
+    const { state, sid } = await startLogin(resolver);
+    const before = Date.now();
+    const tokens = await exchange(resolver, request({ sid }, { state, code: "c" })) as Record<string, unknown>;
+    assert.equal(tokens.accessToken, "a");
+    assert.equal(tokens.refreshToken, "r");
+    assert.equal(tokens.tokenType, "Bearer");
+    assert.equal(tokens.expiresIn, 60);
+    assert.ok(Number(tokens.expiresAt) >= before + 60_000);
+    assert.equal("success" in tokens, false);
   } finally {
     resolver.destroy();
   }
