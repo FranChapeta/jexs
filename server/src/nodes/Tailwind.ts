@@ -68,15 +68,15 @@ export class TailwindNode extends Node {
       ],
       variants: {
         extract: {
-          output: "object",
-          markdownDescription: "Extracts Tailwind classes from `data` and returns `{ classes }`.",
+          output: { type: "array", items: { type: "string" } },
+          markdownDescription: "Returns the Tailwind classes found in `data`, without registering them.",
           siblings: {
             data: { description: "JSON template to extract classes from." },
           },
         },
         add: {
-          output: "object",
-          markdownDescription: "Registers classes from `data` and/or an explicit `classes` list; returns `{ added, total }`.",
+          output: "null",
+          markdownDescription: "Registers classes from `data` and/or an explicit `classes` list.",
           siblings: {
             data: { description: "JSON template to extract classes from." },
             classes: {
@@ -87,20 +87,20 @@ export class TailwindNode extends Node {
           },
         },
         compile: {
-          output: "object",
-          markdownDescription: "Compiles the registered classes; returns `{ css, classes }`.",
+          output: "string",
+          markdownDescription: "Compiles the registered classes and returns the CSS.",
         },
         build: {
-          output: "object",
-          markdownDescription: "Registers classes from `data` then builds the stylesheet; returns `{ built, classes }`.",
+          output: "null",
+          markdownDescription: "Registers classes from `data`, then writes the stylesheet. A failed build throws.",
           siblings: {
             data: { description: "JSON template to extract classes from." },
             content: { type: "string", description: "Glob pattern for additional content sources." },
           },
         },
         clear: {
-          output: "object",
-          markdownDescription: "Clears the class registry; returns `{ cleared: true }`.",
+          output: "null",
+          markdownDescription: "Clears the class registry.",
         },
         classes: {
           output: { type: "array", items: { type: "string" } },
@@ -123,7 +123,7 @@ export class TailwindNode extends Node {
           return doBuild(def, context);
         case "clear":
           classRegistry.clear();
-          return { cleared: true };
+          return null;
         case "classes":
           return [...classRegistry];
         default:
@@ -179,10 +179,7 @@ export class TailwindNode extends Node {
 }
 
 function doExtract(def: Record<string, unknown>, context: Context): unknown {
-  return resolve(def.data, context, data => {
-    if (!data) return { classes: [] };
-    return { classes: TailwindNode.extractClasses(data) };
-  });
+  return resolve(def.data, context, data => (data ? TailwindNode.extractClasses(data) : []));
 }
 
 function doAdd(def: Record<string, unknown>, context: Context): unknown {
@@ -197,18 +194,13 @@ function doAdd(def: Record<string, unknown>, context: Context): unknown {
       classes.push(...TailwindNode.extractClasses(dataRaw));
     }
 
-    const before = classRegistry.size;
     for (const cls of classes) classRegistry.add(cls);
-    const after = classRegistry.size;
-
-    return { added: after - before, total: after };
+    return null;
   });
 }
 
-async function doCompile(): Promise<unknown> {
-  const classes = [...classRegistry];
-  const css = await compile(classes);
-  return { css, classes: classes.length };
+function doCompile(): Promise<string> {
+  return compile([...classRegistry]);
 }
 
 function doBuild(def: Record<string, unknown>, context: Context): unknown {
@@ -222,7 +214,7 @@ function doBuild(def: Record<string, unknown>, context: Context): unknown {
     const contentGlob = def.content && contentRaw != null ? String(contentRaw) : undefined;
 
     await TailwindNode.build([...classRegistry], contentGlob);
-    return { built: true, classes: classRegistry.size };
+    return null;
   });
 }
 

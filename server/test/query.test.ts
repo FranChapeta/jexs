@@ -90,6 +90,27 @@ test("create applies a composite primary key, and MySQL-only options elsewhere a
   await resolve({ $query: "insert", ...conn, system: true, table: "memberships", data: { team: "b", person: "ada" } }, {});
 });
 
+// Schema changes return what they changed, not a status object, and a failure
+// throws instead of being recorded and passed over.
+test("create, alter and drop return what they changed, and a failure throws", async () => {
+  const table = { table: "gadgets", properties: { name: { type: "string" } } };
+  assert.deepEqual(await resolve({ $query: "create", ...conn, system: true, schema: table }, {}), ["gadgets"]);
+  assert.deepEqual(await resolve({ $query: "create", ...conn, system: true, schema: table }, {}), [], "already there");
+
+  const alter = { $query: "alter", ...conn, system: true, table: "gadgets", addColumns: { size: { type: "integer" } } };
+  assert.deepEqual(await resolve(alter, {}), ["size"]);
+  assert.deepEqual(await resolve(alter, {}), [], "already added");
+
+  assert.equal(await resolve({ $query: "drop", ...conn, system: true, table: "gadgets" }, {}), null);
+
+  await assert.rejects(
+    async () => resolve({ $query: "create", ...conn, system: true, schema: {
+      table: "broken", properties: { name: { type: "string" } }, indexes: { by_missing: { columns: ["nope"] } },
+    } }, {}),
+    /nope/,
+  );
+});
+
 test("a table document needs a name and columns to be registered", async () => {
   await assert.rejects(resolve({ $query: "create", ...conn, system: true, schema: { table: 5, properties: {} } }, {}), /needs a `table` name and `properties`/);
   await assert.rejects(resolve({ $schema: "register", table: { table: "halfway" } }, {}), /needs a `table` name and `properties`/);

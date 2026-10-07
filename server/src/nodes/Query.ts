@@ -291,10 +291,10 @@ export class QueryNode extends Node {
           ["where"], true),
         count:  op("number", "Counts matching rows; supports joins and `distinct` + `columns`.",
           ["where", "distinct", "columns", "innerJoin", "leftJoin", "rightJoin"]),
-        create: op("array", "Creates table(s) from a registered `schema` or inline document. Returns a per-table status array.",
+        create: op({ type: "array", items: { type: "string" } }, "Creates table(s) from a registered `schema` or inline document, and adds the columns an existing table is missing. Returns the names of the tables it created; a failure throws.",
           ["schema"]),
-        drop:   op("object", "Drops the table.", []),
-        alter:  op("object", "Alters the table: add columns via `addColumns`.",
+        drop:   op("null", "Drops the table if it exists; a failure throws.", []),
+        alter:  op({ type: "array", items: { type: "string" } }, "Alters the table: adds the columns in `addColumns` it lacks, and returns their names.",
           ["addColumns"]),
       },
     },
@@ -608,86 +608,55 @@ async function executeCount(
 }
 
 /**
- * Execute a CREATE TABLE query from schema
+ * Create each table the schema names, and add any columns an existing one is
+ * missing. Returns the names of the tables it created; a failure throws, so a
+ * startup that cannot build its tables stops there.
  */
 async function executeCreate(
   knex: KnexType,
   query: QueryDefinition,
   context: Context,
-): Promise<{ table: string; created: boolean }[]> {
-  const results: { table: string; created: boolean; error?: string }[] = [];
+): Promise<string[]> {
+  const created: string[] = [];
 
-  const schemas = resolveSchemas(query.schema, context);
-
-  for (const schema of schemas) {
+  for (const schema of resolveSchemas(query.schema, context)) {
     // Register schema for validation/computed columns
     SchemaNode.register(context, schema);
     const tableName = schema.table;
 
-    try {
-      // Check if table exists
-      const exists = await knex.schema.hasTable(tableName);
-      if (exists) {
-        // Auto-detect and add missing columns
-        const added = await syncMissingColumns(knex, schema);
-        if (added.length > 0) {
-          console.log(`[QueryNode] Table ${tableName}: added columns [${added.join(", ")}]`);
-        }
-        results.push({ table: tableName, created: false });
-        continue;
+    if (await knex.schema.hasTable(tableName)) {
+      const added = await syncMissingColumns(knex, schema);
+      if (added.length > 0) {
+        console.log(`[QueryNode] Table ${tableName}: added columns [${added.join(", ")}]`);
       }
-
-      // Create table
-      const required = new Set(schema.required ?? []);
-      await knex.schema.createTable(tableName, (table) => {
-        buildColumns(table, schema.properties, required, knex);
-        if (schema.primaryKey) table.primary(schema.primaryKey);
-        // MySQL table options; Knex refuses them on any other database.
-        if (schema.options && knex.client.dialect === "mysql") {
-          if (schema.options.engine) table.engine(schema.options.engine);
-          if (schema.options.charset) table.charset(schema.options.charset);
-          if (schema.options.collate) table.collate(schema.options.collate);
-        }
-        if (schema.indexes) buildIndexes(table, schema.indexes);
-        if (schema.foreignKeys) buildForeignKeys(table, schema.foreignKeys);
-      });
-
-      console.log(`[QueryNode] Created table: ${tableName}`);
-      results.push({ table: tableName, created: true });
-    } catch (error) {
-      const e = error as Error;
-      console.error(
-        `[QueryNode] Error creating table ${tableName}:`,
-        e.message,
-      );
-      results.push({ table: tableName, created: false, error: e.message });
+      continue;
     }
+
+    const required = new Set(schema.required ?? []);
+    await knex.schema.createTable(tableName, (table) => {
+      buildColumns(table, schema.properties, required, knex);
+      if (schema.primaryKey) table.primary(schema.primaryKey);
+      // MySQL table options; Knex refuses them on any other database.
+      if (schema.options && knex.client.dialect === "mysql") {
+        if (schema.options.engine) table.engine(schema.options.engine);
+        if (schema.options.charset) table.charset(schema.options.charset);
+        if (schema.options.collate) table.collate(schema.options.collate);
+      }
+      if (schema.indexes) buildIndexes(table, schema.indexes);
+      if (schema.foreignKeys) buildForeignKeys(table, schema.foreignKeys);
+    });
+    console.log(`[QueryNode] Created table: ${tableName}`);
+    created.push(tableName);
   }
 
-  return results;
+  return created;
 }
 
-/**
- * Execute a DROP TABLE query
- */
-async function executeDrop(
-  knex: KnexType,
-  query: QueryDefinition,
-): Promise<{ table: string; dropped: boolean }> {
-  const tableName = query.table!;
-
-  try {
-    await knex.schema.dropTableIfExists(tableName);
-    console.log(`[QueryNode] Dropped table: ${tableName}`);
-    return { table: tableName, dropped: true };
-  } catch (error) {
-    const e = error as Error;
-    console.error(
-      `[QueryNode] Error dropping table ${tableName}:`,
-      e.message,
-    );
-    return { table: tableName, dropped: false };
-  }
+/** Drop the table if it exists; a failure throws. */
+async function executeDrop(knex: KnexType, query: QueryDefinition): Promise<null> {
+  await knex.schema.dropTableIfExists(query.table!);
+  console.log(`[QueryNode] Dropped table: ${query.table}`);
+  return null;
 }
 
 /**
@@ -728,12 +697,13 @@ async function syncMissingColumns(
 }
 
 /**
- * Execute an ALTER TABLE query to add columns
+ * Add the given columns the table lacks. Returns the names of those it added;
+ * columns already there are skipped.
  */
 async function executeAlter(
   knex: KnexType,
   query: QueryDefinition,
-): Promise<{ table: string; added: string[] }> {
+): Promise<string[]> {
   const tableName = query.table!;
   const addColumns = query.addColumns;
 
@@ -754,7 +724,7 @@ async function executeAlter(
 
   if (Object.keys(toAdd).length === 0) {
     console.log(`[QueryNode] ALTER ${tableName}: all columns already exist`);
-    return { table: tableName, added: [] };
+    return [];
   }
 
   await knex.schema.alterTable(tableName, (table) => {
@@ -763,7 +733,7 @@ async function executeAlter(
 
   const added = Object.keys(toAdd);
   console.log(`[QueryNode] ALTER ${tableName}: added columns [${added.join(", ")}]`);
-  return { table: tableName, added };
+  return added;
 }
 
 /**
