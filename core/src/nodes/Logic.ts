@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, childContext, loopScope } from "./Node.js";
+import { Node, Context, NodeValue, loopScope } from "./Node.js";
 import { resolve, resolveAll, isStep, runSteps } from "../Resolver.js";
 import { hasAnyKey, isObject } from "../helpers.js";
 import type { JexsNodeSchema } from "../schema.js";
@@ -224,21 +224,6 @@ export class LogicNode extends Node {
         "{ \"$sleep\": 500 }",
       ],
     },
-
-    exec: {
-      markdownDescription: "Resolves its value to a step sequence, then runs it. The steps are supplied as an expression, typically a `var` holding a step array (that is how you feed a step sequence in). The resolved array is executed as steps, so each step's `$as` binding is visible to later steps.\nPass `\"params\"` to run the steps against a shallow copy of the context with those scoped variables merged in. The parent context is left untouched.",
-      outputDescription: "The LAST step's value when the resolved value is an array; otherwise the resolved value itself.",
-      examples: [
-        "{ \"$exec\": { \"$var\": \"steps\" } }",
-        "{ \"$exec\": { \"$var\": \"steps\" }, \"params\": { \"title\": \"Home\" } }",
-      ],
-      siblings: {
-        params: {
-          map: true,
-          description: "Scoped variables merged into a shallow copy of the context for the steps: a map of values, or a step resolving to one.",
-        },
-      },
-    },
   };
 
   if(def: Record<string, unknown>, context: Context): NodeValue {
@@ -442,16 +427,6 @@ export class LogicNode extends Node {
     });
   }
 
-  exec(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$exec, context, value => {
-      if (def.params === undefined) return runSteps(value, context);
-      // With `params` (a map, or a step resolving to one), run the steps against
-      // a shallow copy of the context with them merged in; the caller's context
-      // stays untouched.
-      return resolve(def.params, context, params =>
-        runSteps(value, this.isObject(params) ? childContext(context, params) : context));
-    });
-  }
 }
 
 // Jexs type name: arrays report "array" (not "object"), and null/undefined are

@@ -24,7 +24,7 @@ test("a literal is fresh on every loop iteration", () => {
     { $push: [{ $var: "list" }, { $var: "item" }] },
     { $var: "list" },
   ];
-  const out = resolver({ $map: [1, 2, 3], do: { $exec: { $var: "body" } } }, { body });
+  const out = resolver({ $map: [1, 2, 3], do: { $runVar: "body" } }, { body });
   assert.deepEqual(out, [[1], [2], [3]]);
 });
 
@@ -96,9 +96,9 @@ test("after a caught error the sequence carries on, sync or async", async () => 
   assert.equal(sync, "caught+next");
   const later = await resolver([
     { $sleep: 1 },
-    { $exec: [{ $sleep: 1 }, { $error: 500, message: "b" }], $as: "r", $catch: [{ $concat: ["caught"] }] },
+    { $runVar: "failing", $as: "r", $catch: [{ $concat: ["caught"] }] },
     { $concat: [{ $var: "r" }, "+next"] },
-  ], {});
+  ], { failing: [{ $sleep: 1 }, { $error: 500, message: "b" }] });
   assert.equal(later, "caught+next");
 });
 
@@ -153,10 +153,10 @@ test("$as stores the $catch value", () => {
 
 test("$as with an async $bubble writes before the next step", async () => {
   const out = await resolver([
-    { $exec: { $var: "inner" } },
+    { $runVar: "inner" },
     { $var: "got" },
   ], {
-    inner: [{ $concat: ["up"], $as: "got", $bubble: { $exec: { $var: "slowTrue" } } }],
+    inner: [{ $concat: ["up"], $as: "got", $bubble: { $runVar: "slowTrue" } }],
     slowTrue: [{ $sleep: 1 }, { $eq: [1, 1] }],
   });
   assert.equal(out, "up");
@@ -181,17 +181,17 @@ test("$return alone is still a value, not an error", () => {
 
 // ── map slots ───────────────────────────────────────────────────────────────
 
-test("exec params from a step", () => {
+test("runVar params from a step", () => {
   const out = resolver({
-    $exec: { $var: "steps" },
+    $runVar: "steps",
     params: { $var: "p" },
   }, { steps: [{ $concat: ["hi ", { $var: "who" }] }], p: { who: "there" } });
   assert.equal(out, "hi there");
 });
 
-test("exec params that resolve to a non-object are ignored", () => {
+test("runVar params that resolve to a non-object are ignored", () => {
   const steps = [{ $concat: ["x", { $var: "who" }] }];
-  const out = resolver({ $exec: { $var: "steps" }, params: { $upper: "a" } }, { steps, who: "!" });
+  const out = resolver({ $runVar: "steps", params: { $upper: "a" } }, { steps, who: "!" });
   assert.equal(out, "x!");
 });
 

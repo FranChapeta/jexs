@@ -90,6 +90,8 @@ A few rules govern how every expression is resolved. Worth internalizing — the
 
 **No `$` key, no dispatch.** An object without one is **data**: the resolver resolves each value and returns the object, so a row with a `count` or `file` column is never mistaken for an op. Files are the exception, since a whole file is resolved as a template: load data files with `"data": true` — `{ "$file": "data/posts.json", "data": true }` returns the parsed JSON untouched.
 
+**Values are data; they never run.** A slot may take an expression, which resolves once into what the slot needs. What it returns is data: a value read with `$var`, a request's body or a database row is not resolved again, even if it holds `$` keys, and its strings are not interpolated (only strings written in the template are). To run steps kept in a variable, ask for it with `{ "$runVar": "card" }`.
+
 **Arrays are step lists; the last value wins.** A top-level array (and an `if`/`switch` branch that is an array) runs its elements in order and yields the **last** one's value. The global step keys, usable on any step, are `$`-prefixed too:
 
 - `$as` — store a step's result in a named context variable: `{ "$var": "user.name", "$as": "name" }`, read later via `{ "$var": "name" }`.
@@ -108,7 +110,7 @@ A few rules govern how every expression is resolved. Worth internalizing — the
 | [`@jexs/physics`](physics) | `EntityStore`, collision, raycasting, vectors, GLB/GLTF loading | any | [![npm](https://img.shields.io/npm/v/@jexs/physics.svg)](https://www.npmjs.com/package/@jexs/physics) |
 | [`@jexs/client`](client) | Browser DOM nodes, fetch, audio, WebSocket, lazy-loaded entrypoint | browser | [![npm](https://img.shields.io/npm/v/@jexs/client.svg)](https://www.npmjs.com/package/@jexs/client) |
 | [`@jexs/gl`](gl) | WebGL rendering — lighting, shadows, SSAO, particles, text, post-processing | browser | [![npm](https://img.shields.io/npm/v/@jexs/gl.svg)](https://www.npmjs.com/package/@jexs/gl) |
-| [`@jexs/server`](server) | HTTP, routing, DB (SQLite / MySQL), sessions, OAuth, email, web-push | Node.js | [![npm](https://img.shields.io/npm/v/@jexs/server.svg)](https://www.npmjs.com/package/@jexs/server) |
+| [`@jexs/server`](server) | HTTP, routing, DB (SQLite / MySQL / PostgreSQL), sessions, OAuth, email, web-push | Node.js | [![npm](https://img.shields.io/npm/v/@jexs/server.svg)](https://www.npmjs.com/package/@jexs/server) |
 | [`@jexs/electron`](electron) | Desktop shell — windows, native dialogs, app paths, and a JSON-driven main process | Node.js + browser | [![npm](https://img.shields.io/npm/v/@jexs/electron.svg)](https://www.npmjs.com/package/@jexs/electron) |
 | [`@jexs/mcp`](mcp) | MCP server exposing node introspection to Claude Code / Claude Desktop | Node.js | [![npm](https://img.shields.io/npm/v/@jexs/mcp.svg)](https://www.npmjs.com/package/@jexs/mcp) |
 | [`@jexs/create`](create) | `npm create jexs` project scaffolder | Node.js | [![npm](https://img.shields.io/npm/v/@jexs/create.svg)](https://www.npmjs.com/package/@jexs/create) |

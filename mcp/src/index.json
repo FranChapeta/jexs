@@ -75,7 +75,7 @@
               "cases": {
                 "resolve_expression": [
                   {
-                    "$setVars": { "out": { "$exec": { "$var": "args.expression" }, "params": { "$var": "args.vars" } } },
+                    "$setVars": { "out": { "$runVar": "args.expression", "params": { "$var": "args.vars" } } },
                     "$catch":{ "$return": { "content": [{ "type": "text", "text": { "$concat": ["Error: ", { "$coalesce": [{ "$var": "error.message" }, { "$stringify": { "$var": "error" } }] }] } }], "isError": true } }
                   },
                   { "content": [{ "type": "text", "text": { "$stringify": { "$var": "out" }, "indent": 2 } }] }
@@ -350,7 +350,7 @@
                           ]
                         },
                         "else": [
-                          { "$as": "near", "$exec": { "$var": "suggest" }, "params": { "needle": { "$var": "op" }, "haystack": { "$var": "opNames" } } },
+                          { "$as": "near", "$runVar": "suggest", "params": { "needle": { "$var": "op" }, "haystack": { "$var": "opNames" } } },
                           {
                             "content": [
                               {
@@ -375,7 +375,7 @@
                     "then": { "content": [{ "type": "text", "text": { "$concat": [{ "$var": "banner" }, { "$var": "name" }, "\n\n", { "$stringify": { "$var": "def" }, "indent": 2 }] } }] },
                     "else": [
                       { "$as": "defNames", "$keys": { "$var": "extraDefs" } },
-                      { "$as": "near", "$exec": { "$var": "suggest" }, "params": { "needle": { "$var": "name" }, "haystack": { "$var": "defNames" } } },
+                      { "$as": "near", "$runVar": "suggest", "params": { "needle": { "$var": "name" }, "haystack": { "$var": "defNames" } } },
                       {
                         "content": [
                           {
@@ -402,10 +402,10 @@
                     "$if": { "$empty": { "$var": "box.node" } },
                     "then": { "content": [{ "type": "text", "text": { "$concat": [{ "$var": "banner" }, "Error: could not read or parse ", { "$var": "args.filePath" }, " (missing, empty, or not JSON)."] } }], "isError": true },
                     "else": [
-                      { "$as": "allKeys", "$unique": { "$flatten": { "$exec": { "$var": "walk" }, "params": { "node": { "$var": "box.node" } } } } },
+                      { "$as": "allKeys", "$unique": { "$flatten": { "$runVar": "walk", "params": { "node": { "$var": "box.node" } } } } },
                       { "$as": "usedKeys", "$sort": { "$filter": [{ "$var": "allKeys" }, { "$includes": [{ "$var": "opKeys" }, { "$var": "item" }] }] } },
-                      { "$as": "unknownKeys", "$exec": { "$var": "walkUnknown" }, "params": { "node": { "$var": "box.node" }, "path": "" } },
-                      { "$as": "warnings", "$exec": { "$var": "walkLint" }, "params": { "node": { "$var": "box.node" }, "path": "" } },
+                      { "$as": "unknownKeys", "$runVar": "walkUnknown", "params": { "node": { "$var": "box.node" }, "path": "" } },
+                      { "$as": "warnings", "$runVar": "walkLint", "params": { "node": { "$var": "box.node" }, "path": "" } },
                       { "$as": "lintText", "$if": { "$notEmpty": { "$var": "warnings" } }, "then": { "$join": { "$map": { "$var": "warnings" }, "item": "w", "do": { "$concat": ["  - ", { "$var": "w" }] } }, "separator": "\n" }, "else": "  none" },
                       { "$as": "unknownText", "$if": { "$notEmpty": { "$var": "unknownKeys" } }, "then": { "$join": { "$map": { "$sort": { "$unique": { "$var": "unknownKeys" } } }, "item": "k", "do": { "$concat": ["  - ", { "$var": "k" }] } }, "separator": "\n" }, "else": "  none" },
                       {

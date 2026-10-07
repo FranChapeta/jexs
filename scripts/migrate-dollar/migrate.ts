@@ -34,7 +34,7 @@ const ROOT: Schema = { anyOf: [{ $ref: "#/$defs/steps" }, { $ref: "#/$defs/exprF
 
 interface Edit { start: number; end: number; text: string }
 type Val =
-  | { k: "obj"; props: Prop[] }
+  | { k: "obj"; props: Prop[]; start: number; end: number }
   | { k: "arr"; items: Val[] }
   | { k: "str"; value: string; start: number; end: number; quote: string }
   | { k: "lit"; type: "number" | "boolean" | "null"; value: unknown }
@@ -112,11 +112,13 @@ class Parser {
     this.fail();
   }
   object(): Val {
+    const start = this.i;
     this.i++;
     const props: Prop[] = [];
+    const done = (): Val => { this.i++; return { k: "obj", props, start, end: this.i }; };
     for (;;) {
       this.ws();
-      if (this.s[this.i] === "}") { this.i++; return { k: "obj", props }; }
+      if (this.s[this.i] === "}") return done();
       if (this.s.startsWith("...", this.i)) {
         // `{...}`, a placeholder in docs, or a JS spread `...x`.
         this.i += 3; this.ws();
@@ -142,8 +144,8 @@ class Parser {
       }
       this.ws();
       if (this.s[this.i] === ",") { this.i++; continue; }
-      if (this.s[this.i] === "}") { this.i++; return { k: "obj", props }; }
-      if (this.js) { this.opaque(); this.ws(); if (this.s[this.i] === ",") { this.i++; continue; } if (this.s[this.i] === "}") { this.i++; return { k: "obj", props }; } }
+      if (this.s[this.i] === "}") return done();
+      if (this.js) { this.opaque(); this.ws(); if (this.s[this.i] === ",") { this.i++; continue; } if (this.s[this.i] === "}") return done(); }
       this.fail();
     }
   }
@@ -381,6 +383,18 @@ function walkExpr(v: Val): void {
     }
     if (op === undefined) { walk(ANY, p.value); continue; }
     if (key === op && (!migrated || p.key.startsWith("$"))) {
+      // `$exec` became `$runVar`, which takes the variable's path rather than a
+      // step reading it: `{ "$exec": { "$var": "x" } }` is `{ "$runVar": "x" }`.
+      if (op === "exec") {
+        const v = p.value;
+        const read = v.k === "obj" && v.props.length === 1 ? v.props[0] : undefined;
+        if (v.k === "obj" && read && (read.key === "var" || read.key === "$var") && read.value.k === "str" && !p.shorthand) {
+          add({ start: p.keyStart, end: p.keyEnd, text: "$runVar" });
+          add({ start: v.start, end: v.end, text: JSON.stringify(read.value.value.replace(/^\$/, "")) });
+          continue;
+        }
+        reviews.push({ at: p.keyStart, message: "`$exec` is now `$runVar`, which runs the steps a variable holds by its path: keep these steps in a variable (`$setVars` with `data: true`) and run `{ \"$runVar\": \"name\" }`" });
+      }
       if (!migrated) renameKey(p);
       if (!migrated && op === "stringify" && p.value.k === "arr") {
         reviews.push({ at: p.keyStart, message: "`$stringify` serializes its value as given now, arrays included; `[value, indent]` becomes `value` with an `indent` sibling" });

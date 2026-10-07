@@ -109,7 +109,7 @@ export class ElementNode extends Node {
       // (the variants only ADD known-attribute hints, never restrict).
       variantBy: "value",
       exclusive: false,
-      markdownDescription: "Renders an HTML element. Attributes are flat keys on the object; `content` holds children.\r\n`class` accepts a string, array, or `{ className: bool }` map. `style` accepts a camel- or kebab-case object.\r\nFor `<style>`/`<script>` the `content` is emitted as literal text (no escaping/translation); a `<style>` object `content` is compiled to CSS, and a `<script>` with a JSON `type` (`application/json` or a `+json` media type such as `application/ld+json`) has its `content` resolved and serialized to safely-escaped JSON.\r\nWire DOM events via an `\"events\"` object. To render conditionally, wrap the element in `$if`/`then`.",
+      markdownDescription: "Renders an HTML element. Attributes are flat keys on the object; `content` holds children.\r\n`class` accepts a string, array, or `{ className: bool }` map. `style` accepts a camel- or kebab-case object.\r\nFor `<style>`/`<script>` the `content` is emitted as literal text (no escaping/translation); a `<style>` object `content` is compiled to CSS, and a `<script>` with a JSON `type` (`application/json` or a `+json` media type such as `application/ld+json`) has its `content` resolved and serialized to safely-escaped JSON.\r\nWire DOM events via an `\"events\"` object. To render conditionally, wrap the element in `$if`/`then`.\r\nA step in `content` renders what it returns as a value: an object it returns is data and renders as nothing, so a template held in a variable renders only through `$runVar` (`{ \"$runVar\": \"card\" }`).",
       outputDescription: "An HTML **string**. String content has `$identifier` tokens interpolated, so wrap literal `$` content in `{ \"raw\": \"…\" }`.",
       examples: [
         "{ \"$tag\": \"button\", \"class\": \"btn\", \"events\": { \"click\": { \"do\": [...] } }, \"content\": [\"Submit\"] }",
@@ -184,8 +184,11 @@ function renderElement(def: Record<string, unknown>, context: Context): unknown 
     // other <script> (and any other raw-text tag) is emitted verbatim.
     let contentResult: string | Promise<string>;
     if (tag === "style") {
-      contentResult = resolve(def.content, context, val =>
-        isObject(val) ? compileCss(val, context) : String(val ?? ""),
+      // The template's own declaration values interpolate `$identifier` tokens
+      // before resolving, so a value a step returns is never interpolated.
+      const authored = isObject(def.content) && !isStep(def.content) ? interpolateValues(def.content, context) : def.content;
+      contentResult = resolve(authored, context, val =>
+        isObject(val) ? compileCss(val) : String(val ?? ""),
       ) as string | Promise<string>;
     } else if (tag === "script") {
       // Resolve `type` first (it may be an expression), then decide how to treat
@@ -337,20 +340,29 @@ function camelToKebab(key: string): string {
   return key.startsWith("--") ? key : key.replace(UPPER_CHAR, "-$1").toLowerCase();
 }
 
+/** A CSS-in-JSON object as written, with `$identifier` tokens in its string
+ *  values interpolated from context. Steps inside it are left for the resolver. */
+function interpolateValues(obj: Record<string, unknown>, context: Context): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(obj).map(([key, value]) => [
+    key,
+    typeof value === "string" && hasVariables(value) ? interpolate(value, context)
+      : isObject(value) && !isStep(value) ? interpolateValues(value, context)
+      : value,
+  ]));
+}
+
 // Compiles a CSS-in-JSON object to a stylesheet string. Object values are
 // nested rule blocks (selectors and at-rules recurse the same way); scalar
-// values are declarations. Property names may be camelCase or kebab-case, and
-// declaration values have `$identifier` tokens interpolated from context.
-function compileCss(obj: Record<string, unknown>, context: Context): string {
+// values are declarations. Property names may be camelCase or kebab-case.
+function compileCss(obj: Record<string, unknown>): string {
   const decls: string[] = [];
   const rules: string[] = [];
   for (const [key, value] of Object.entries(obj)) {
     if (value === null || value === undefined) continue;
     if (isObject(value)) {
-      rules.push(`${key} { ${compileCss(value, context)} }`);
+      rules.push(`${key} { ${compileCss(value)} }`);
     } else {
-      const v = String(value);
-      decls.push(`${camelToKebab(key)}: ${hasVariables(v) ? interpolate(v, context) : v};`);
+      decls.push(`${camelToKebab(key)}: ${String(value)};`);
     }
   }
   return [decls.join(" "), ...rules].filter(Boolean).join(" ");
@@ -402,20 +414,18 @@ function renderItem(item: unknown, context: Context, shouldTranslate: boolean): 
     return r as string | Promise<string>;
   }
 
-  const r = resolve(item, context, val => {
-    if (val === null || val === undefined) return "";
-    if (typeof val === "string" || typeof val === "number" || typeof val === "boolean") return String(val);
-    if (Array.isArray(val)) return renderItems(val, context, false);
-    if (isObject(val)) {
-      return resolve(val, context, s => {
-        if (s === null || s === undefined) return "";
-        if (typeof s === "string" || typeof s === "number" || typeof s === "boolean") return String(s);
-        if (Array.isArray(s)) return renderItems(s, context, false);
-        return "";
-      });
-    }
-    return "";
-  });
+  return resolve(item, context, renderValue) as string | Promise<string>;
+}
 
-  return r as string | Promise<string>;
+/**
+ * Render what a content step returned. It is a value, so it is not resolved
+ * again: an object (a template held in a variable, or a request's body) renders
+ * as nothing rather than running the steps inside it. Run a stored template
+ * explicitly with `$runVar`.
+ */
+function renderValue(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return value.map(renderValue).join("");
+  return "";
 }

@@ -320,7 +320,7 @@ describe("resolve_expression", () => {
 
   test("vars are data: a var holding steps is not run while it is seeded", async () => {
     const { text } = await callTool("resolve_expression", {
-      expression: { $exec: { $var: "steps" } },
+      expression: { $runVar: "steps" },
       vars: { steps: [{ $concat: ["hi ", { $var: "who" }] }], who: "there" },
     });
     assert.equal(text, '"hi there"');

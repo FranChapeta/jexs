@@ -99,7 +99,7 @@ The rest of `src/`:
   a global key, or a sibling of their step's op but are one character-shuffle from one;
   `walk-lint.json` flags the two dispatch foot-guns (a step naming more than one `$` op; an op name
   written without its `$`, which leaves the object as plain data). `suggest.json` is the shared
-  did-you-mean matcher. Each is preloaded once with `data: true` and recurses by `exec`-ing its own
+  did-you-mean matcher. Each is preloaded once with `data: true` and recurses by `$runVar`-ing its own
   var, so none is re-read per node.
 
 Errors are caught at two levels, because in a request/response protocol a dropped reply is worse
@@ -121,7 +121,7 @@ Building a non-trivial program in the JSON surfaced a few sharp edges worth know
   a walker whose fallthrough branch was a literal `[]` threw on the first scalar leaf of any file.
 - `map`'s `do` as an **array** resolves in parallel (a data array), it is *not* a step sequence. Use
   a single expression, and inline lookups instead of `$as`.
-- `exec`'s **`params` keys are literal names**, resolved per entry: you cannot spread a map that was
+- `$runVar`'s **`params` keys are literal names**, resolved per entry: you cannot spread a map that was
   computed at runtime through it. To seed context from dynamic data, build the step array instead and
   put a `setVars` step in front of the expression.
 - `params` **re-resolves** its values, so to walk a Jexs template as data you must load it with

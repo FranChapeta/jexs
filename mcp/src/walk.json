@@ -4,7 +4,7 @@
     "then": {
       "$return": {
         "$map": { "$var": "node" },
-        "do": { "$exec": { "$var": "walk" }, "params": { "node": { "$var": "item" } } }
+        "do": { "$runVar": "walk", "params": { "node": { "$var": "item" } } }
       }
     }
   },
@@ -16,7 +16,7 @@
           { "$keys": { "$var": "node" } },
           {
             "$map": { "$values": { "$var": "node" } },
-            "do": { "$exec": { "$var": "walk" }, "params": { "node": { "$var": "item" } } }
+            "do": { "$runVar": "walk", "params": { "node": { "$var": "item" } } }
           }
         ]
       }

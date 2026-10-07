@@ -120,6 +120,8 @@ Drop the bundle in a page and Jexs auto-initializes on `DOMContentLoaded`:
 
 Importing `@jexs/client` in the browser builds the resolver and auto-hydrates the page. It also exposes `window.jexs = { context, hydrate }` — `context` for inspecting/seeding shared state, `hydrate` for (re)binding events after you inject content.
 
+On a page served by a Jexs server with sessions, a POST, PUT, PATCH or DELETE to the page's own origin, by `$fetch` like the one above or by a form, carries the session's CSRF token on its own, read from the `csrf` cookie. Nothing in the template needs to send it.
+
 ## Usage from JS
 
 ```ts

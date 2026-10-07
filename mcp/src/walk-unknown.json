@@ -5,7 +5,7 @@
       "$return": {
         "$flatten": {
           "$map": { "$var": "node" },
-          "do": { "$exec": { "$var": "walkUnknown" }, "params": { "node": { "$var": "item" }, "path": { "$concat": [{ "$var": "path" }, "[", { "$var": "index" }, "]"] } } }
+          "do": { "$runVar": "walkUnknown", "params": { "node": { "$var": "item" }, "path": { "$concat": [{ "$var": "path" }, "[", { "$var": "index" }, "]"] } } }
         }
       }
     }
@@ -30,7 +30,7 @@
     },
     "item": "k",
     "do": [
-      { "$as": "near", "$exec": { "$var": "suggest" }, "params": { "needle": { "$var": "k" }, "haystack": { "$var": "resolverKeys" } } },
+      { "$as": "near", "$runVar": "suggest", "params": { "needle": { "$var": "k" }, "haystack": { "$var": "resolverKeys" } } },
       {
         "$concat": [
           { "$var": "where" }, ".", { "$var": "k" },
@@ -53,7 +53,7 @@
             "$and": [
               { "$not": { "$startsWith": [{ "$var": "item" }, "$"] } },
               { "$not": { "$includes": [{ "$var": "ownSiblings" }, { "$var": "item" }] } },
-              { "$notEmpty": { "$exec": { "$var": "suggest" }, "params": { "needle": { "$var": "item" }, "haystack": { "$var": "ownSiblings" } } } }
+              { "$notEmpty": { "$runVar": "suggest", "params": { "needle": { "$var": "item" }, "haystack": { "$var": "ownSiblings" } } } }
             ]
           }
         ]
@@ -63,7 +63,7 @@
         "$concat": [
           { "$var": "where" }, ".", { "$var": "k" },
           " is not a key of \"", { "$var": "dispatcher" }, "\", did you mean: ",
-          { "$join": { "$exec": { "$var": "suggest" }, "params": { "needle": { "$var": "k" }, "haystack": { "$var": "ownSiblings" } } }, "separator": ", " },
+          { "$join": { "$runVar": "suggest", "params": { "needle": { "$var": "k" }, "haystack": { "$var": "ownSiblings" } } }, "separator": ", " },
           "?"
         ]
       }
@@ -75,7 +75,7 @@
     "$flatten": {
       "$map": { "$entries": { "$var": "node" } },
       "item": "e",
-      "do": { "$exec": { "$var": "walkUnknown" }, "params": { "node": { "$var": "e.value" }, "path": { "$concat": [{ "$if": { "$empty": { "$var": "path" } }, "then": "", "else": { "$concat": [{ "$var": "path" }, "."] } }, { "$var": "e.key" }] } } }
+      "do": { "$runVar": "walkUnknown", "params": { "node": { "$var": "e.value" }, "path": { "$concat": [{ "$if": { "$empty": { "$var": "path" } }, "then": "", "else": { "$concat": [{ "$var": "path" }, "."] } }, { "$var": "e.key" }] } } }
     }
   },
 

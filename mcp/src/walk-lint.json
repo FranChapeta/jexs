@@ -5,7 +5,7 @@
       "$return": {
         "$flatten": {
           "$map": { "$var": "node" },
-          "do": { "$exec": { "$var": "walkLint" }, "params": { "node": { "$var": "item" }, "path": { "$concat": [{ "$var": "path" }, "[", { "$var": "index" }, "]"] } } }
+          "do": { "$runVar": "walkLint", "params": { "node": { "$var": "item" }, "path": { "$concat": [{ "$var": "path" }, "[", { "$var": "index" }, "]"] } } }
         }
       }
     }
@@ -42,7 +42,7 @@
     "$flatten": {
       "$map": { "$entries": { "$var": "node" } },
       "item": "e",
-      "do": { "$exec": { "$var": "walkLint" }, "params": { "node": { "$var": "e.value" }, "path": { "$concat": [{ "$if": { "$empty": { "$var": "path" } }, "then": "", "else": { "$concat": [{ "$var": "path" }, "."] } }, { "$var": "e.key" }] } } }
+      "do": { "$runVar": "walkLint", "params": { "node": { "$var": "e.value" }, "path": { "$concat": [{ "$if": { "$empty": { "$var": "path" } }, "then": "", "else": { "$concat": [{ "$var": "path" }, "."] } }, { "$var": "e.key" }] } } }
     }
   },
 

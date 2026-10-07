@@ -60,43 +60,40 @@ test("coalesce: short-circuits, leaving later expressions unresolved", () => {
   assert.equal(ctx.ran, undefined);
 });
 
-// exec resolves its value to a step sequence (typically a var holding steps),
-// then runs it — so each step's `as` binding flows to later steps.
+// runVar runs the steps a variable holds, read by dot-path as `$var` reads it,
+// so each step's `as` binding flows to later steps.
 
-test("exec: runs a var-held step array as steps, `as` visible to later steps", () => {
+test("runVar: runs a variable's step sequence, `as` visible to later steps", () => {
   const steps = [
     { $concat: ["Ada"], $as: "name" },
     { $concat: ["Hello, ", { $var: "name" }, "!"] },
   ];
-  assert.equal(resolve({ $exec: { $var: "steps" } }, { steps }), "Hello, Ada!");
+  assert.equal(resolve({ $runVar: "steps" }, { steps }), "Hello, Ada!");
 });
 
-test("exec: yields the last step's value, not the whole array", () => {
-  assert.equal(
-    resolve({ $exec: { $var: "steps" } }, { steps: [{ $var: "a" }, { $var: "b" }], a: 1, b: 3 }),
-    3,
-  );
+test("runVar: yields the last step's value, not the whole array", () => {
+  assert.equal(resolve({ $runVar: "steps" }, { steps: [{ $var: "a" }, { $var: "b" }], a: 1, b: 3 }), 3);
 });
 
-test("exec: a non-array resolved value is returned as-is", () => {
-  assert.equal(resolve({ $exec: { $concat: ["Hi ", { $var: "name" }] } }, { name: "Ada" }), "Hi Ada");
+test("runVar: a single step, at a dotted path", () => {
+  const ctx = { templates: { greet: { $concat: ["Hi ", { $var: "name" }] } }, name: "Ada" };
+  assert.equal(resolve({ $runVar: "templates.greet" }, ctx), "Hi Ada");
 });
 
-test("exec: params are merged into a shallow context copy for the steps", () => {
+test("runVar: params are merged into a shallow context copy for the steps", () => {
   const steps = [{ $concat: ["Hello, ", { $var: "title" }, "!"] }];
-  assert.equal(
-    resolve({ $exec: { $var: "steps" }, params: { title: "Home" } }, { steps }),
-    "Hello, Home!",
-  );
+  assert.equal(resolve({ $runVar: "steps", params: { title: "Home" } }, { steps }), "Hello, Home!");
 });
 
-test("exec: params are resolved before merging and don't mutate the caller's context", () => {
+test("runVar: params are resolved before merging and don't mutate the caller's context", () => {
   const ctx = { steps: [{ $var: "who" }], name: "Ada" };
-  assert.equal(
-    resolve({ $exec: { $var: "steps" }, params: { who: { $var: "name" } } }, ctx),
-    "Ada",
-  );
+  assert.equal(resolve({ $runVar: "steps", params: { who: { $var: "name" } } }, ctx), "Ada");
   assert.equal("who" in ctx, false);
+});
+
+test("runVar: an empty path or a missing variable is an error", () => {
+  assert.throws(() => resolve({ $runVar: "" }, {}), /takes the dot-path of a variable/);
+  assert.throws(() => resolve({ $runVar: "nowhere" }, {}), /no variable at "nowhere"/);
 });
 
 // typeof — Jexs type name; arrays are "array" (not "object"), null vs undefined distinct.
