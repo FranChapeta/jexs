@@ -777,8 +777,9 @@ export class ServerNode extends Node {
   static schema: JexsNodeSchema = {
     listen: {
       type: "number",
-      output: "null",
-      markdownDescription: "Starts an HTTP listener on the given port. Pass per-request steps in `\"do\"`.\nSet `\"client\": true` (or a path string) to auto-serve the `@jexs/client` browser bundle\nand inject the script tag into rendered `<head>` elements.\nSet `\"sw\"` (with `\"client\"`) to run a service worker: what it precaches, how it answers requests (`routes`), and the steps it resolves per event (`events`).\n\n**Multiple ports.** Bind more ports by adding more `{ \"$listen\": ..., \"do\": [...] }` steps. Each is an independent listener with its own `do` pipeline, `client`, `sw`, and `maxBodySize`.\n\n**Cross-site requests.** A POST, PUT, PATCH or DELETE, or a WebSocket upgrade, that a browser sends from another site's page is refused with 403 before any step runs, since it would carry the user's cookies. Requests from outside a browser (webhooks, scripts) are not affected. Allow other origins with `trustedOrigins`.\n\n**Per-request `do` execution.** The steps run in order against a fresh per-request context. The universal `\"as\"` key is honored (stored into the context for later steps), as is `setVars`. Two stop-signals halt the loop early: a step that resolves to `{ \"$return\": X }` (yields `X`) or to a **response object** (a value with a `response` key).\n\n**Response object.** The final value becomes the HTTP response. A bare string is sent as `text/html`; any other bare value is sent as JSON. For full control return an object:\n- `response`: the body (string, or any JSON value for `responseType: \"json\"`). For `responseType: \"redirect\"` it is the `Location` URL.\n- `responseStatus`: HTTP status code (default `200`).\n- `responseType`: `\"html\"` | `\"json\"` | `\"text\"` | `\"redirect\"` | a literal MIME string (e.g. `\"image/png\"`). When omitted it is inferred: string → `html`, otherwise `json`.\n- `responseHeaders` / `responseHeader`: extra response headers (singular overrides plural on collision).",
+      output: "number",
+      outputDescription: "The port it listens on: the one given, or the free port the OS picked for `0`.",
+      markdownDescription: "Starts an HTTP listener on the given port (default 3000; `0` picks any free port). Pass per-request steps in `\"do\"`.\nSet `\"client\": true` (or a path string) to auto-serve the `@jexs/client` browser bundle\nand inject the script tag into rendered `<head>` elements.\nSet `\"sw\"` (with `\"client\"`) to run a service worker: what it precaches, how it answers requests (`routes`), and the steps it resolves per event (`events`).\n\n**Multiple ports.** Bind more ports by adding more `{ \"$listen\": ..., \"do\": [...] }` steps. Each is an independent listener with its own `do` pipeline, `client`, `sw`, and `maxBodySize`.\n\n**Cross-site requests.** A POST, PUT, PATCH or DELETE, or a WebSocket upgrade, that a browser sends from another site's page is refused with 403 before any step runs, since it would carry the user's cookies. Requests from outside a browser (webhooks, scripts) are not affected. Allow other origins with `trustedOrigins`.\n\n**Per-request `do` execution.** The steps run in order against a fresh per-request context. The universal `\"as\"` key is honored (stored into the context for later steps), as is `setVars`. Two stop-signals halt the loop early: a step that resolves to `{ \"$return\": X }` (yields `X`) or to a **response object** (a value with a `response` key).\n\n**Response object.** The final value becomes the HTTP response. A bare string is sent as `text/html`; any other bare value is sent as JSON. For full control return an object:\n- `response`: the body (string, or any JSON value for `responseType: \"json\"`). For `responseType: \"redirect\"` it is the `Location` URL.\n- `responseStatus`: HTTP status code (default `200`).\n- `responseType`: `\"html\"` | `\"json\"` | `\"text\"` | `\"redirect\"` | a literal MIME string (e.g. `\"image/png\"`). When omitted it is inferred: string → `html`, otherwise `json`.\n- `responseHeaders` / `responseHeader`: extra response headers (singular overrides plural on collision).",
       examples: [
         "{ \"$listen\": 3000, \"client\": true, \"do\": [{ \"$session\": \"load\" }, { \"$routes\": { \"$var\": \"routes\" } }] }",
         "{ \"response\": \"{\\\"ok\\\":true}\", \"responseType\": \"json\", \"responseStatus\": 201 }",
@@ -886,12 +887,16 @@ export class ServerNode extends Node {
     }
 
     return resolveAll([def.$listen, def.maxBodySize ?? null, def.trustedOrigins ?? null], context, async ([portRaw, maxBodyRaw, originsRaw]) => {
-      const port = Number(portRaw) || 3000;
+      // `0` asks the OS for any free port; the step returns the one it got.
+      const requested = portRaw == null || portRaw === "" ? 3000 : Number(portRaw);
+      if (!Number.isInteger(requested) || requested < 0 || requested > 65535) {
+        throw new Error(`$listen: ${JSON.stringify(portRaw)} is not a port number`);
+      }
 
       const listener: Listener = {
         node: this,
         httpServer: null as unknown as http.Server, // assigned below
-        port,
+        port: requested, // the bound port once listening
         steps,
         startupContext: context,
         maxBodySize: 1_048_576, // 1 MB default
@@ -963,14 +968,17 @@ export class ServerNode extends Node {
         await new Promise<void>((res, rej) => {
           httpServer.once("listening", () => res());
           httpServer.once("error", rej);
-          httpServer.listen(port, "0.0.0.0");
+          httpServer.listen(requested, "0.0.0.0");
         });
       } catch (err) {
         const idx = this.listeners.indexOf(listener);
         if (idx !== -1) this.listeners.splice(idx, 1);
         const e = err as NodeJS.ErrnoException;
-        throw e.code === "EADDRINUSE" ? new Error(`Port ${port} is already in use.`) : e;
+        throw e.code === "EADDRINUSE" ? new Error(`Port ${requested} is already in use.`) : e;
       }
+      const address = httpServer.address();
+      const port = typeof address === "object" && address ? address.port : requested;
+      listener.port = port;
 
       // Bound. Anything from here is a runtime fault on a step that has already
       // returned, so it can only be logged — swap the bind's rejecting handler
@@ -990,9 +998,7 @@ export class ServerNode extends Node {
         fs.writeFileSync("install.txt", installUrl + "\n");
       }
 
-      // `output: "null"` in the schema: the step is started for its effect, and
-      // nothing downstream reads a handle to the listener.
-      return null;
+      return port;
     });
   }
 }

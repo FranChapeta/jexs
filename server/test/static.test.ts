@@ -8,9 +8,9 @@ import type { Resolver } from "@jexs/core";
 import { ServerNode } from "../src/nodes/Server.js";
 
 // A real listener on a real port: the behaviour under test is entirely in the
-// response headers, and only an actual HTTP round trip shows those.
-const PORT = 43117;
-const base = `http://127.0.0.1:${PORT}`;
+// response headers, and only an actual HTTP round trip shows those. It takes a
+// free port (`0`), which the step returns.
+let base = "";
 
 let root = "";
 let previousCwd = "";
@@ -41,10 +41,11 @@ before(async () => {
   resolver = createResolver([...coreNodes(), new ServerNode()]);
   // One route answering "routed", so a test can tell "fell through to the
   // routes" apart from "the static path handled it".
-  await resolver(
-    { $listen: PORT, client: true, do: [{ response: "routed" }] },
+  const port = await resolver(
+    { $listen: 0, client: true, do: [{ response: "routed" }] },
     {},
   );
+  base = `http://127.0.0.1:${port}`;
 });
 
 after(async () => {
@@ -236,4 +237,18 @@ test("a rewritten file invalidates the tag the client holds", async () => {
   const res = await fetch(`${base}/churn.css`, { headers: { "If-None-Match": etag } });
   assert.equal(res.status, 200);
   assert.equal(await res.text(), "a{color:blue}");
+});
+
+// `0` takes a free port and the step says which; a value that is no port is an
+// error rather than a silent fall back to 3000.
+test("listen returns the port it bound, and refuses a non-port", async () => {
+  const other = createResolver([...coreNodes(), new ServerNode()]);
+  try {
+    const port = await other({ $listen: 0, do: [{ response: "here" }] }, {});
+    assert.ok(typeof port === "number" && port > 0);
+    assert.equal(await (await fetch(`http://127.0.0.1:${port}/`)).text(), "here");
+    await assert.rejects(async () => other({ $listen: "eighty", do: [] }, {}), /"eighty" is not a port number/);
+  } finally {
+    other.destroy();
+  }
 });

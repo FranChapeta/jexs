@@ -6,18 +6,18 @@ import type { Resolver } from "@jexs/core";
 import { ServerNode } from "../src/nodes/Server.js";
 import { WebSocketNode } from "../src/nodes/WebSocket.js";
 
-// Real listeners: the check runs on the raw request before any step.
-const PORT = 45211;
-const TRUSTING_PORT = 45212;
-const SOCKET_PORT = 45213;
+// Real listeners, each on a free port: the check runs on the raw request before any step.
+let PORT = 0;
+let TRUSTING_PORT = 0;
+let SOCKET_PORT = 0;
 
 let resolver: Resolver;
 
 before(async () => {
   resolver = createResolver([...coreNodes(), new ServerNode(), new WebSocketNode()]);
-  await resolver({ $listen: PORT, do: [{ response: "ran" }] }, {});
-  await resolver({ $listen: TRUSTING_PORT, trustedOrigins: ["https://admin.example"], do: [{ response: "ran" }] }, {});
-  await resolver({ $listen: SOCKET_PORT, do: [{ "$socket-accept": true }] }, {});
+  PORT = Number(await resolver({ $listen: 0, do: [{ response: "ran" }] }, {}));
+  TRUSTING_PORT = Number(await resolver({ $listen: 0, trustedOrigins: ["https://admin.example"], do: [{ response: "ran" }] }, {}));
+  SOCKET_PORT = Number(await resolver({ $listen: 0, do: [{ "$socket-accept": true }] }, {}));
 });
 
 after(() => {

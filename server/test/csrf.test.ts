@@ -259,11 +259,10 @@ test("the CSRF token is handed to page scripts in a readable cookie", async () =
 });
 
 test("a response that sets a cookie keeps it from shared caches, unless the app says otherwise", async () => {
-  const PORT = 45214;
   const resolver = createResolver([...coreNodes(), new CacheNode(), new SessionNode(), new ServerNode()]);
   try {
-    await resolver({
-      $listen: PORT,
+    const PORT = await resolver({
+      $listen: 0,
       do: [
         { $session: "load" },
         { $if: { $eq: [{ $var: "request.path" }, "/public"] }, then: { response: "page", responseHeaders: { "Cache-Control": "public, max-age=60" } } },
