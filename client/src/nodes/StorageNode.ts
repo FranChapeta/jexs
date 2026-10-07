@@ -57,7 +57,7 @@ export class StorageNode extends Node {
       ],
       variants: {
         clear: { output: "boolean", markdownDescription: "Clears every entry in the selected store. Returns `true`." },
-        keys:  { output: "array", markdownDescription: "Returns all keys present in the selected store as a string array." },
+        keys:  { output: { type: "array", items: { type: "string" } }, markdownDescription: "Returns all keys present in the selected store as a string array." },
       },
     },
   };

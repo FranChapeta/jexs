@@ -195,8 +195,21 @@ export class CacheNode extends Node {
       variants: {
         close: { output: "null", markdownDescription: "Closes a cache. Closing the default leaves an in-memory default until another cache is opened." },
         clear: { output: "null", markdownDescription: "Removes every entry.", outputDescription: "Always `null`." },
-        stats: { output: "object", markdownDescription: "Reports driver statistics.", outputDescription: "A stats object (hit/miss counts, entry count/size, etc.); exact fields depend on the driver." },
-        dump:  { output: "object", markdownDescription: "Snapshots the cache contents (memory driver only).", outputDescription: "An object snapshot of all entries. Memory driver only; other drivers return an error object." },
+        stats: {
+          output: {
+            type: "object",
+            properties: {
+              type: { type: "string", description: "The driver: `memory`, `redis` or `memcached`." },
+              size: { type: "number", description: "How many entries it holds." },
+              maxSize: { type: "number", description: "Memory driver: its entry limit." },
+              bytes: { type: "number", description: "Redis and memcached: the memory in use." },
+              maxBytes: { type: "number", description: "The memory limit, where the driver reports one." },
+            },
+          },
+          markdownDescription: "Reports driver statistics.",
+          outputDescription: "The entry count and, where the driver knows them, its limits and memory use.",
+        },
+        dump:  { output: "object", markdownDescription: "Snapshots the cache contents (memory driver only).", outputDescription: "An object snapshot of all entries. Memory driver only; other drivers fail with a 501." },
       },
     },
   };

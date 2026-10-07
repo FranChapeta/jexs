@@ -162,8 +162,10 @@ export class SchemaNode extends Node {
       ],
       variants: {
         register: {
-          output: "object",
-          outputDescription: "`{ registered: [tableName, ...] }`.",
+          output: {
+            type: "object",
+            properties: { registered: { type: "array", items: { type: "string" }, description: "The names of the tables registered." } },
+          },
           markdownDescription: "Registers schemas from a directory `path` or an inline `table` document.",
           siblings: {
             path: { type: "string", description: "Directory of JSON schema files to load." },
@@ -171,7 +173,7 @@ export class SchemaNode extends Node {
           },
         },
         get: {
-          output: "object",
+          output: { $ref: "#/$defs/tableSchema" },
           outputDescription: "The table's JSON Schema document, or `null` if not registered.",
           markdownDescription: "Returns a registered table schema by name.",
           siblings: {
@@ -179,7 +181,7 @@ export class SchemaNode extends Node {
           },
         },
         list: {
-          output: "array",
+          output: { type: "array", items: { $ref: "#/$defs/tableSchema" } },
           markdownDescription: "Returns all registered table schemas.",
         },
         validator: {
@@ -190,8 +192,24 @@ export class SchemaNode extends Node {
           },
         },
         validate: {
-          output: "object",
-          outputDescription: "`{ valid, errors }`, where each error is `{ path, message, keyword }` and `path` is dotted (`\"\"` for the root).",
+          output: {
+            type: "object",
+            properties: {
+              valid: { type: "boolean" },
+              errors: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    path: { type: "string", description: "Where, dotted; `\"\"` for the root." },
+                    message: { type: "string" },
+                    keyword: { type: "string", description: "The JSON Schema keyword that failed." },
+                  },
+                },
+              },
+            },
+          },
+          outputDescription: "Whether the data is valid, and why not when it isn't.",
           markdownDescription: "Validates `data` against a JSON Schema (draft 2020-12): either a `document` handed in, or the schema registered for `table`. Returns the result rather than throwing, so the caller decides what a failure means.",
           siblings: {
             data: { description: "The value to check. Pass it through a `var` (loaded with `data: true`) when it is itself a Jexs template, otherwise it resolves as an expression before it can be checked." },

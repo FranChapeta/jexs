@@ -500,7 +500,8 @@ export class GlNode extends Node {
     },
     "gl-raycast": {
       type: "boolean",
-      output: "array",
+      output: { type: "array", items: { $ref: "#/$defs/_rayHit" } },
+      outputDescription: "The entities hit, nearest first; empty when nothing is hit.",
       markdownDescription: "Casts a ray from `from` in direction `dir` and returns all hit entities sorted by distance.\nPass `mask` (array of group names) to restrict which entities are tested.",
       examples: [
         "{ \"$gl-raycast\": true, \"from\": { \"x\": 0, \"y\": 0, \"z\": 0 }, \"dir\": { \"x\": 1, \"y\": 0, \"z\": 0 }, \"mask\": [\"enemies\"] }",

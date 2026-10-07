@@ -2,10 +2,26 @@ import { Node, Context, NodeValue, resolve } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
 export class PushNode extends Node {
+  static schemaDefs = {
+    _pushSubscription: {
+      type: "object",
+      description: "A Web Push subscription as the browser serializes it: what the server needs to send to this browser.",
+      properties: {
+        endpoint: { type: "string", description: "The push service URL for this subscription." },
+        expirationTime: { type: ["number", "null"], description: "When it expires, in ms since the epoch, or `null` if it doesn't." },
+        keys: {
+          type: "object",
+          properties: { p256dh: { type: "string" }, auth: { type: "string" } },
+          description: "The keys the server encrypts each message with.",
+        },
+      },
+    },
+  };
+
   static schema: JexsNodeSchema = {
     "push-subscribe": {
       type: "string",
-      output: "object",
+      output: { $ref: "#/$defs/_pushSubscription" },
       markdownDescription: "Requests notification permission and subscribes to Web Push using the given VAPID public key.\nReturns the `PushSubscription` JSON, which you send to your server to enable push delivery.\nRequires a registered service worker with `PushManager` support.",
       examples: [
         "{ \"$push-subscribe\": { \"$var\": \"vapidPublicKey\" } }",

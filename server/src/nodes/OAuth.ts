@@ -186,7 +186,7 @@ export class OAuthNode extends Node {
           siblings: { provider: OAUTH_PROVIDER, accessToken: { type: "string", description: "Bearer token." } },
         },
         providers: {
-          output: "array",
+          output: { type: "array", items: { type: "string" } },
           markdownDescription: "Returns the array of configured provider names.",
         },
       },

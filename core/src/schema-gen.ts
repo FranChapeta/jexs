@@ -1072,11 +1072,24 @@ function formatWhen(when: WhenTest[]): string {
   return when.map(t => "value" in t ? `\`${t.key}: ${JSON.stringify(t.value)}\`` : `\`${t.key}\``).join(" + ");
 }
 
-/** What an operation resolves to, for a hover line: `object`, or the shape it
- *  names, `` `_dbConnection` ``. */
+/** What an operation resolves to, for a hover line: `object`, or its shape,
+ *  `` `_dbConnection` ``, `` `_rayHit[]` ``, `` `string[]` ``, `` `{ x, y }` ``. */
 function formatOutput(output: string | undefined, shape: JexsPropertySchema | undefined): string {
+  const label = shape ? shapeLabel(shape) : undefined;
+  return label ? ` → \`${label}\`` : output ? ` → ${output}` : "";
+}
+
+/** A short name for an output shape: a def's name, an object's fields, or either
+ *  as array items. Undefined when the shape says no more than its type. */
+function shapeLabel(shape: JexsPropertySchema): string | undefined {
   const ref = shapeName(shape);
-  return ref ? ` → \`${ref}\`` : output ? ` → ${output}` : "";
+  if (ref) return ref;
+  if (shape.type === "array" && shape.items) {
+    const item = shapeLabel(shape.items) ?? (typeof shape.items.type === "string" ? shape.items.type : undefined);
+    return item ? `${item}[]` : undefined;
+  }
+  if (shape.properties) return `{ ${Object.keys(shape.properties).join(", ")} }`;
+  return undefined;
 }
 
 /** One operation line: `` - `connect` → object: Opens… ``. */

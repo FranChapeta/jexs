@@ -125,9 +125,12 @@ export class WebSocketNode extends Node {
     },
     "socket-list": {
       type: "string",
-      output: "array",
+      output: {
+        type: "array",
+        items: { type: "object", properties: { id: { type: "string", description: "The connection's id." } }, additionalProperties: true },
+      },
       markdownDescription: "Lists the connections in the named room.",
-      outputDescription: "An array of `{ id, ...meta }` objects, one per connection in the room.",
+      outputDescription: "One entry per connection in the room: its `id`, plus whatever meta the connection was given.",
       examples: [
         "{ \"$socket-list\": \"lobby\" }",
       ],

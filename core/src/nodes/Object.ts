@@ -6,7 +6,7 @@ import type { JexsNodeSchema } from "../schema.js";
 export class ObjectNode extends Node {
   static schema: JexsNodeSchema = {
     keys: {
-      output: "array",
+      output: { type: "array", items: { type: "string" } },
       markdownDescription: "Returns the keys of an object, or string indices of an array.",
       examples: [
         "{ \"$keys\": { \"$var\": \"obj\" } }",
@@ -20,7 +20,10 @@ export class ObjectNode extends Node {
       ],
     },
     entries: {
-      output: "array",
+      output: {
+        type: "array",
+        items: { type: "object", properties: { key: { type: "string" }, value: { description: "The value under `key`." } } },
+      },
       markdownDescription: "Returns `[{ key, value }]` pairs from an object or array. Inverse of `fromEntries` (in the array node).",
       examples: [
         "{ \"$entries\": { \"$var\": \"obj\" } }",

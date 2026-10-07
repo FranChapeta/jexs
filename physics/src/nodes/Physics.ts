@@ -659,6 +659,23 @@ export class PhysicsNode extends Node {
     this.worlds.clear();
   }
 
+  static schemaDefs = {
+    _rayHit: {
+      type: "object",
+      description: "An entity a ray hit, as `$physics-raycast` and `$gl-raycast` return it.",
+      properties: {
+        id: { type: "string", description: "The entity's id." },
+        slot: { type: "number", description: "The entity's slot in the store." },
+        distance: { type: "number", description: "How far along the ray it was hit." },
+        point: {
+          type: "object",
+          properties: { x: { type: "number" }, y: { type: "number" }, z: { type: "number" } },
+          description: "Where the ray hit it.",
+        },
+      },
+    },
+  };
+
   static schema: JexsNodeSchema = {
       "physics-init": {
       type: "boolean",
@@ -743,7 +760,7 @@ export class PhysicsNode extends Node {
     },
     "physics-raycast": {
       type: "boolean",
-      output: "array",
+      output: { type: "array", items: { $ref: "#/$defs/_rayHit" } },
       markdownDescription: "Casts a ray through the world and returns every entity it hits, nearest first. Works on both client and server.",
       outputDescription: "An array of hits ordered by distance, empty when nothing is hit or no world exists.",
       examples: [

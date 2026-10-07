@@ -25,13 +25,23 @@ export class ColorNode extends Node {
     },
   };
 
+  static schemaDefs = {
+    _color: {
+      type: "array",
+      items: { type: "number" },
+      minItems: 4,
+      maxItems: 4,
+      description: "A color as four numbers: rgb `[r, g, b, a]` with each 0..1, or hsl `[h, s, l, a]` with h 0-360, s and l 0-100, and alpha 0..1.",
+    },
+  };
+
   static schema: JexsNodeSchema = {
     toRgb: {
       type: [
         "string",
         "array",
       ],
-      output: "array",
+      output: { $ref: "#/$defs/_color" },
       markdownDescription: "Parses a color into an rgb array `[r, g, b, a]` (components 0..1). Accepts a hex string (`#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`) or an array interpreted per `format`.",
       examples: [
         "{ \"$toRgb\": \"#3366ff\" }",
@@ -43,7 +53,7 @@ export class ColorNode extends Node {
         "string",
         "array",
       ],
-      output: "array",
+      output: { $ref: "#/$defs/_color" },
       markdownDescription: "Converts a color to an hsl array `[h, s, l, a]` (h 0-360, s/l 0-100). Accepts a hex string or an array interpreted per `format`.",
       examples: [
         "{ \"$toHsl\": \"#3366ff\" }",
@@ -66,7 +76,7 @@ export class ColorNode extends Node {
         { type: ["string", "array"], description: "The color: a hex string or an array in the `format` space." },
         { type: "number", description: "Amount to lighten (0..1 fraction of the full range)." },
       ],
-      output: "array",
+      output: { $ref: "#/$defs/_color" },
       markdownDescription: "Raises a color's HSL lightness by `amount` (a 0..1 fraction of the full range; `0.1` adds 10 lightness points). Tuple form `[color, amount]`. Returns a color in the `format` space.",
       examples: [
         "{ \"$lighten\": [\"#3366ff\", 0.2] }",
@@ -78,7 +88,7 @@ export class ColorNode extends Node {
         { type: ["string", "array"], description: "The color: a hex string or an array in the `format` space." },
         { type: "number", description: "Amount to darken (0..1 fraction of the full range)." },
       ],
-      output: "array",
+      output: { $ref: "#/$defs/_color" },
       markdownDescription: "Lowers a color's HSL lightness by `amount` (a 0..1 fraction of the full range). Tuple form `[color, amount]`. Returns a color in the `format` space.",
       examples: [
         "{ \"$darken\": [\"#3366ff\", 0.2] }",
@@ -91,7 +101,7 @@ export class ColorNode extends Node {
         { type: ["string", "array"], description: "Second color `b` (returned when `t` is 1)." },
         { type: "number", description: "Blend fraction `t` (0..1)." },
       ],
-      output: "array",
+      output: { $ref: "#/$defs/_color" },
       markdownDescription: "Blends two colors component-wise by fraction `t` (0 = all `a`, 1 = all `b`). Tuple form `[a, b, t]`. The blend runs in the `format` space and returns a color there. In `hsl` the hue is interpolated naively (it does not take the shortest arc around the wheel), so `rgb` is the safer default.",
       examples: [
         "{ \"$mix\": [\"#ff0000\", \"#0000ff\", 0.5] }",

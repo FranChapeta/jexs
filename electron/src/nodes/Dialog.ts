@@ -61,7 +61,7 @@ export class DialogNode extends Node {
   static schema: JexsNodeSchema = {
     "dialog-open": {
       type: "string",
-      output: "array",
+      output: { type: "array", items: { type: "string" } },
       markdownDescription: "Show a native open dialog titled with the given string. Resolves to the array of selected paths (empty if cancelled).",
       examples: ["{ \"$dialog-open\": \"Open save\", \"properties\": [\"openFile\"] }"],
       siblings: {

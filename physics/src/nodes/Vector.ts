@@ -118,6 +118,15 @@ export const dot3 = dot;
  * - { "$v-dot": [a, b] }               -> dot product (scalar)
  */
 export class VectorNode extends Node {
+  static schemaDefs = {
+    _vec: {
+      type: "object",
+      description: "A vector: `x` and `y`, plus `z` in 3D.",
+      properties: { x: { type: "number" }, y: { type: "number" }, z: { type: "number" } },
+      required: ["x", "y"],
+    },
+  };
+
   static schema: JexsNodeSchema = {
     "v-distance": {
       tuple: 2,
@@ -138,7 +147,7 @@ export class VectorNode extends Node {
         { type: "object", description: "End vector `b` (`{ x, y, z? }`)." },
         { type: "number", description: "Interpolation fraction `t` (0-1)." },
       ],
-      output: "object",
+      output: { $ref: "#/$defs/_vec" },
       markdownDescription: "Linearly interpolates between two vectors. Pass `[a, b, t]` where `t` is 0–1.",
       examples: [
         "{ \"$v-lerp\": [{ \"$var\": \"from\" }, { \"$var\": \"to\" }, 0.1] }",
@@ -151,14 +160,14 @@ export class VectorNode extends Node {
         { type: "object", description: "The target vector `b` (`{ x, y, z? }`)." },
         { type: "number", description: "Maximum distance to move toward `b`." },
       ],
-      output: "object",
+      output: { $ref: "#/$defs/_vec" },
       markdownDescription: "Moves vector `a` toward `b` by at most `maxDist`. Returns `b` if already within range. Pass `[a, b, maxDist]`.",
       examples: [
         "{ \"$v-toward\": [{ \"$var\": \"pos\" }, { \"$var\": \"target\" }, 5] }",
       ],
     },
     "v-normalize": {
-      output: "object",
+      output: { $ref: "#/$defs/_vec" },
       markdownDescription: "Returns the unit vector (length 1) in the same direction. Works in 2D and 3D.",
     },
     "v-scale": {
@@ -167,7 +176,7 @@ export class VectorNode extends Node {
         { type: "object", description: "The vector to scale (`{ x, y, z? }`)." },
         { type: "number", description: "The scalar multiplier." },
       ],
-      output: "object",
+      output: { $ref: "#/$defs/_vec" },
       markdownDescription: "Multiplies a vector by a scalar. Pass `[vector, scalar]`. Works in 2D and 3D.",
     },
     "v-add": {
@@ -176,7 +185,7 @@ export class VectorNode extends Node {
         { type: "object", description: "First vector `a` (`{ x, y, z? }`)." },
         { type: "object", description: "Second vector `b` (`{ x, y, z? }`)." },
       ],
-      output: "object",
+      output: { $ref: "#/$defs/_vec" },
       markdownDescription: "Adds two vectors component-wise. Pass `[a, b]`. Works in 2D and 3D.",
     },
     "v-sub": {
@@ -185,7 +194,7 @@ export class VectorNode extends Node {
         { type: "object", description: "The minuend vector `a` (`{ x, y, z? }`)." },
         { type: "object", description: "The subtrahend vector `b` (`{ x, y, z? }`)." },
       ],
-      output: "object",
+      output: { $ref: "#/$defs/_vec" },
       markdownDescription: "Subtracts vector `b` from `a`. Pass `[a, b]`. Works in 2D and 3D.",
     },
     "v-direction": {
@@ -194,7 +203,7 @@ export class VectorNode extends Node {
         { type: "object", description: "The `from` vector (`{ x, y, z? }`)." },
         { type: "object", description: "The `to` vector (`{ x, y, z? }`)." },
       ],
-      output: "object",
+      output: { $ref: "#/$defs/_vec" },
       markdownDescription: "Returns the unit vector from `a` pointing toward `b`. Pass `[from, to]`.",
     },
     "v-cross": {
@@ -203,7 +212,7 @@ export class VectorNode extends Node {
         { type: "object", description: "First vector `a` (`{ x, y, z? }`)." },
         { type: "object", description: "Second vector `b` (`{ x, y, z? }`)." },
       ],
-      output: "object",
+      output: { $ref: "#/$defs/_vec" },
       markdownDescription: "Returns the cross product of two vectors as a 3D vector. Pass `[a, b]`.",
     },
     "v-dot": {

@@ -102,9 +102,18 @@ export class FileNode extends Node {
         },
         stat: {
           type: "boolean",
-          output: "object",
+          output: {
+            type: "object",
+            properties: {
+              size: { type: "number", description: "In bytes." },
+              modified: { type: "string", description: "ISO date-time." },
+              created: { type: "string", description: "ISO date-time." },
+              isFile: { type: "boolean" },
+              isDirectory: { type: "boolean" },
+            },
+          },
           markdownDescription: "Reports file metadata without reading the contents.",
-          outputDescription: "`{ size, modified, created, isFile, isDirectory }`, with `size` in bytes and the times as ISO strings. `null` if the path cannot be read.",
+          outputDescription: "The file's metadata, or `null` if the path cannot be read.",
         },
         delete: {
           type: "boolean",
@@ -125,9 +134,20 @@ export class FileNode extends Node {
     },
     directory: {
       type: "string",
-      output: "array",
+      output: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            path: { type: "string" },
+            size: { type: "number", description: "In bytes." },
+            modified: { type: "string", description: "ISO date-time." },
+          },
+        },
+      },
       markdownDescription: "Lists directory contents. The path resolves relative to the file doing the loading; a leading `/` anchors at the resolver root. Lists files by default; pass `\"subdirectories\": true` to list the folders instead.",
-      outputDescription: "An array of `{ name, path, size, modified }` entries: files by default, or subdirectories when `subdirectories` is set (filtered by `extension` when given); `[]` if the directory can't be read.",
+      outputDescription: "One entry per file by default, or per subdirectory when `subdirectories` is set (filtered by `extension` when given); `[]` if the directory can't be read.",
       examples: [
         "{ \"$directory\": \"data/posts\", \"extension\": \"json\", \"recursive\": true }",
         "{ \"$directory\": \"node_modules/@jexs\", \"subdirectories\": true }",
@@ -155,9 +175,12 @@ export class FileNode extends Node {
     },
     disk: {
       type: ["string", "boolean"],
-      output: "object",
+      output: {
+        type: "object",
+        properties: { total: { type: "number" }, free: { type: "number" }, used: { type: "number" } },
+      },
       markdownDescription: "Reports disk usage for a path. Pass a path string or `true` to use the current working directory.",
-      outputDescription: "`{ total, free, used }` in bytes, or `null` on error.",
+      outputDescription: "Disk usage in bytes, or `null` on error.",
       examples: [
         "{ \"$disk\": true }",
       ],

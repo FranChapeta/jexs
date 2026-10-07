@@ -10,6 +10,8 @@ import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
  */
 const BASE64_CHUNK = 8192;
 
+const STRING_LIST: JexsPropertySchema = { type: "array", items: { type: "string" } };
+
 const FLAGS: JexsPropertySchema = {
   type: "string",
   pattern: "^(?!.*(.).*\\1)[imsuv]*$",
@@ -184,7 +186,7 @@ export class StringNode extends Node {
         { type: "string", description: "The string to split." },
         { type: "string", description: "The separator, matched literally unless `regex: true`." },
       ],
-      output: "array",
+      output: STRING_LIST,
       markdownDescription: "Splits a string into an array. Pass `regex: true` to split on a regular expression.",
       examples: [
         "{ \"$split\": [\"a,b,c\", \",\"] }",
@@ -295,8 +297,8 @@ export class StringNode extends Node {
         { type: "string", description: "The string to search." },
         { type: "string", description: "The regular expression source, without surrounding slashes." },
       ],
-      output: "object",
-      outputDescription: "The first match as `{ match, index, captures, groups }`, or `null` when nothing matches. `captures` lists the numbered groups and `groups` the named ones; a group that took no part in the match is `null`.",
+      output: { $ref: "#/$defs/_regexMatch" },
+      outputDescription: "The first match, or `null` when nothing matches.",
       markdownDescription: "Matches a regular expression against a string and returns the first match. Pass `all: true` for every match, and `capture` for one group's text instead of the whole match object.",
       examples: [
         "{ \"$match\": [\"2026-09-28\", \"(?<year>\\\\d{4})-(\\\\d{2})\"] }",
@@ -307,12 +309,12 @@ export class StringNode extends Node {
       variants: {
         all: {
           type: "boolean",
-          output: "array",
+          output: { type: "array", items: { $ref: "#/$defs/_regexMatch" } },
           markdownDescription: "Return every match, as an array of match objects (`[]` when there are none).",
           variants: {
             capture: {
               type: ["number", "string"],
-              output: "array",
+              output: { type: "array", items: { type: ["string", "null"] } },
               outputDescription: "The chosen group's text from every match, `null` where a match left it unset.",
             },
           },
@@ -352,7 +354,7 @@ export class StringNode extends Node {
       },
     },
     segment: {
-      output: "array",
+      output: STRING_LIST,
       markdownDescription: "Splits a string into Unicode-correct segments via `Intl.Segmenter`, unlike the code-unit `split`. `\"grapheme\"` (default) yields user-perceived characters, so emoji and combining marks stay whole, where `length` and index-based ops treat them as several UTF-16 units. `\"word\"` yields locale-aware word boundaries (works for scripts without spaces, e.g. Chinese/Japanese/Thai). `\"sentence\"` yields sentences.",
       outputDescription: "An array of segment strings. `\"word\"`/`\"sentence\"` granularity includes the whitespace and punctuation segments between words.",
       examples: [
@@ -374,6 +376,19 @@ export class StringNode extends Node {
           type: "string",
           description: "BCP-47 locale tag for word/sentence boundaries (default: the runtime locale).",
         },
+      },
+    },
+  };
+
+  static schemaDefs = {
+    _regexMatch: {
+      type: "object",
+      description: "One regular-expression match, as `$match` returns it.",
+      properties: {
+        match: { type: "string", description: "The whole matched text." },
+        index: { type: "number", description: "Where the match starts in the string." },
+        captures: { type: "array", items: { type: ["string", "null"] }, description: "The numbered groups' text, `null` for a group that took no part." },
+        groups: { type: "object", additionalProperties: { type: ["string", "null"] }, description: "The named groups' text, by name; empty when the pattern names none." },
       },
     },
   };

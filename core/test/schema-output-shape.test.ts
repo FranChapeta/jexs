@@ -62,6 +62,13 @@ test("the shape is kept for readers, and left out of the validating schema", () 
   assert.doesNotMatch(JSON.stringify(combined), /"outputSchema"/);
 });
 
+test("hovers name the shape: a def, a list of it, or an object's fields", () => {
+  const hover = (key: string) => String((combined.vp as Record<string, { markdownDescription?: string }>)[key]?.markdownDescription);
+  assert.match(hover("fakepoint"), /\*\*Returns:\*\* `_point`/);
+  assert.match(hover("fakelist"), /\*\*Returns:\*\* `number\[\]`/);
+  assert.match(hover("fakeop"), /`make` → `_point`/);
+});
+
 test("an output schema the build cannot type is rejected", () => {
   const build = (schema: JexsNodeSchema) => () => buildPackageSchema([class extends Node { static schema = schema; }]);
   assert.throws(build({ bad: { output: { $ref: "#/$defs/_missing" } } }), /must name one of this Node's schemaDefs/);

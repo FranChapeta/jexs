@@ -103,7 +103,7 @@ export class TailwindNode extends Node {
           markdownDescription: "Clears the class registry; returns `{ cleared: true }`.",
         },
         classes: {
-          output: "array",
+          output: { type: "array", items: { type: "string" } },
           markdownDescription: "Returns the registered class names as an array.",
         },
       },

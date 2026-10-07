@@ -418,9 +418,27 @@ export class WindowNode extends Node {
     },
 
     "window-list": {
-      output: "array",
+      output: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            id: { type: "number" },
+            title: { type: "string" },
+            visible: { type: "boolean" },
+            minimized: { type: "boolean" },
+            maximized: { type: "boolean" },
+            focused: { type: "boolean" },
+            bounds: {
+              type: "object",
+              properties: { x: { type: "number" }, y: { type: "number" }, width: { type: "number" }, height: { type: "number" } },
+            },
+          },
+        },
+      },
       markdownDescription: "List every open window with its name, id, title, state and bounds.",
-      outputDescription: "An array of `{ name, id, title, visible, minimized, maximized, focused, bounds }` objects, in the order the windows were opened.",
+      outputDescription: "One entry per open window, in the order they were opened.",
       examples: ["{ \"$window-list\": true }"],
     },
 

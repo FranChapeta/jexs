@@ -304,9 +304,18 @@ export class EmailNode extends Node {
   static schema: JexsNodeSchema = {
     email: {
       type: ["string", "array"],
-      output: "object",
+      output: {
+        type: "object",
+        properties: {
+          messageId: { type: "string" },
+          accepted: { type: "array", items: { type: "string" }, description: "The addresses the server accepted." },
+          rejected: { type: "array", items: { type: "string" }, description: "The addresses it refused." },
+          response: { type: "string", description: "The server's final reply." },
+          previewUrl: { type: "string", description: "Ethereal development transport only: where to view the message." },
+        },
+      },
       markdownDescription: "Sends an email via SMTP to one address or a list of them, over the transport `email-connect` opened. Requires `subject`; use `body` for plain text, `html` for an HTML body, or both.\n\nA delivery failure throws a `502` HTTP error, so an enclosing `$catch` gets `error.status` and `error.message`, plus `smtp` (`{ code, responseCode, command }`) telling apart an auth rejection from a refused connection. A send where every recipient was rejected throws the same way, so nothing is reported as sent that was not.",
-      outputDescription: "`{ messageId, accepted, rejected, response }`. `accepted` and `rejected` are address lists, so a send that reached some recipients but not all is visible rather than silent. Adds `previewUrl` on the Ethereal development transport.",
+      outputDescription: "What the server did with it. `accepted` and `rejected` are address lists, so a send that reached some recipients but not all is visible rather than silent.",
       examples: [
         "{ \"$email\": { \"$var\": \"user.email\" }, \"subject\": \"Welcome!\", \"html\": \"<p>Hi there</p>\" }",
         "{ \"$email\": [\"a@example.com\", \"b@example.com\"], \"cc\": { \"$var\": \"manager\" }, \"subject\": \"Report\", \"body\": \"Attached.\", \"attachments\": [{ \"filename\": \"report.pdf\", \"content\": { \"$var\": \"pdf\" } }] }",

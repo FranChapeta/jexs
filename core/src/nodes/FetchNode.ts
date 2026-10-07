@@ -187,13 +187,27 @@ export class FetchNode extends Node {
       variants: {
         full: {
           type: "boolean",
-          output: "object",
+          output: { $ref: "#/$defs/_fetchResponse" },
           markdownDescription: "Resolves to the whole response instead of the bare body: for a response header such as an `ETag`, or to tell a `201` from a `200`. Shape only: a non-2xx still throws unless you also pass `throw: false`, which is what reading a `redirect: \"manual\"` 3xx takes.",
-          outputDescription: "`{ status, ok, headers, body, url }`",
+          outputDescription: "The whole response: `status`, `ok`, `headers`, the decoded `body` and the final `url`.",
           examples: [
             "{ \"$fetch\": \"/api/thing\", \"full\": true, \"$as\": \"res\" }",
           ],
         },
+      },
+    },
+  };
+
+  static schemaDefs = {
+    _fetchResponse: {
+      type: "object",
+      description: "A response as `full` returns it, and as a failed `$fetch` hands `$catch` in `response`.",
+      properties: {
+        status: { type: "number", description: "HTTP status code; `0` when the request never got a response." },
+        ok: { type: "boolean", description: "Whether the status is 2xx." },
+        headers: { type: "object", additionalProperties: { type: "string" }, description: "Response headers, names lowercased." },
+        body: { description: "The decoded body: JSON, a string, or an ArrayBuffer, as `type` or the response decides." },
+        url: { type: "string", description: "The final URL, after any redirects." },
       },
     },
   };

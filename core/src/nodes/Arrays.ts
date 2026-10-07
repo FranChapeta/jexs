@@ -330,7 +330,7 @@ export class ArrayNode extends Node {
         { type: "number", description: "End of the sequence (inclusive)." },
         { type: "number", description: "Step between values (default 1)." },
       ],
-      output: "array",
+      output: { type: "array", items: { type: "number" } },
       markdownDescription: "Generates a numeric sequence. Inclusive on both ends.",
       examples: [
         "{ \"$range\": [1, 5] }",

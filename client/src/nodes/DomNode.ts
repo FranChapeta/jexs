@@ -257,8 +257,16 @@ export class DomNode extends Node {
     },
     getBoundingClientRect: {
       type: ["string", "object"],
-      output: "object",
-      outputDescription: "A plain `{ x, y, width, height, top, right, bottom, left }` object (numbers, CSS pixels relative to the viewport).",
+      output: {
+        type: "object",
+        properties: {
+          x: { type: "number" }, y: { type: "number" },
+          width: { type: "number" }, height: { type: "number" },
+          top: { type: "number" }, right: { type: "number" },
+          bottom: { type: "number" }, left: { type: "number" },
+        },
+      },
+      outputDescription: "A plain object of numbers, in CSS pixels relative to the viewport.",
       markdownDescription: "Returns the element's size and viewport position via `Element.getBoundingClientRect()`, as a plain serializable object. Accepts a CSS selector or HTMLElement.",
       examples: [
         "{ \"$getBoundingClientRect\": \"#box\" }",
@@ -270,8 +278,14 @@ export class DomNode extends Node {
         { type: "number", description: "The x coordinate, in CSS pixels relative to the viewport." },
         { type: "number", description: "The y coordinate, in CSS pixels relative to the viewport." },
       ],
-      output: "object",
-      outputDescription: "A plain `{ offsetNode, offset }` object holding the live DOM node under the point and the caret's character offset within it, or null if the point misses the document or no supporting API exists.",
+      output: {
+        type: "object",
+        properties: {
+          offsetNode: { description: "The live DOM node under the point." },
+          offset: { type: "number", description: "The caret's character offset within `offsetNode`." },
+        },
+      },
+      outputDescription: "Where the caret lands, or null if the point misses the document or no supporting API exists.",
       markdownDescription: "Finds the caret position at a viewport point, returning `{ offsetNode, offset }`. Uses the standards-track `Document.caretPositionFromPoint` (Firefox, modern Chromium) and falls back to the WebKit/Blink `Document.caretRangeFromPoint` (Safari, older Chromium), so it works across browsers. Pass `[x, y]`.",
       examples: [
         "{ \"$caretFromPoint\": [120, 40] }",
