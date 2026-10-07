@@ -120,10 +120,15 @@ interface PhysicsWorld {
 }
 
 
-/** Stop a world's step loop and its off-thread job. */
-function stopWorld(w: PhysicsWorld): void {
+/** How long the shared physics worker stays alive after its last world stops,
+ *  so a world started again soon (a restart, the next level) skips spawning it. */
+const WORKER_IDLE_MS = 10_000;
+
+/** Stop a world's step loop and its off-thread job. `idleMs` keeps the physics
+ *  worker warm that long if this was its last world. */
+function stopWorld(w: PhysicsWorld, idleMs: number): void {
   if (w.loopId != null) cancelFrame(w.loopId, w.tickMs);
-  w.offload?.worker.stop();
+  w.offload?.worker.stop(idleMs);
 }
 
 /** Enable verbose physics logging (timing + collision stats). */
@@ -655,7 +660,7 @@ export class PhysicsNode extends Node {
   }
 
   dispose(): void {
-    for (const w of this.worlds.values()) stopWorld(w);
+    for (const w of this.worlds.values()) stopWorld(w, 0);
     this.worlds.clear();
   }
 
@@ -739,7 +744,7 @@ export class PhysicsNode extends Node {
     "physics-destroy": {
       type: "boolean",
       output: "null",
-      markdownDescription: "Tears the world down: stops the loop, shuts down the physics worker when threaded, and drops the world. A no-op when no world exists.",
+      markdownDescription: "Tears the world down: stops the loop and drops the world. A threaded world's physics worker, when no other world uses it, stays alive for 10 seconds so a world started in that time reuses it. A no-op when no world exists.",
       examples: [
         "{ \"$physics-destroy\": true }",
       ],
@@ -795,7 +800,7 @@ export class PhysicsNode extends Node {
     if (!selector) { console.error("[Physics] No _glSelector on context"); return null; }
 
     const prev = this.worlds.get(selector);
-    if (prev) stopWorld(prev);
+    if (prev) stopWorld(prev, WORKER_IDLE_MS);
 
     const stores = context._entityStores as Record<string, EntityStore> | undefined;
     const store = stores?.[selector];
@@ -860,7 +865,7 @@ export class PhysicsNode extends Node {
   ["physics-destroy"](_def: Record<string, unknown>, context: Context): NodeValue {
     const selector = PhysicsNode.sel(context);
     const w = this.worlds.get(selector);
-    if (w) stopWorld(w);
+    if (w) stopWorld(w, WORKER_IDLE_MS);
     this.worlds.delete(selector);
     return null;
   }

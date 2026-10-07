@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createResolver, coreNodes, WorkerNode, type TaskWorkerLike } from "../src/index.js";
+import { createResolver, coreNodes, runOnWorker, WorkerNode, type TaskWorkerLike } from "../src/index.js";
 
 /** A stand-in worker: answers each request with `"ok"` unless told to hang. */
 function stubWorkers(hang = false) {
@@ -45,4 +45,26 @@ test("destroying the resolver ends its threads and fails their pending calls", a
   r.destroy();
   await assert.rejects(pending, /its resolver was destroyed/);
   assert.equal(workers.made[0].terminated, true);
+});
+
+test("a job's worker stays warm for the idle window its last stop asks for", async () => {
+  const made: Array<{ terminated: boolean }> = [];
+  const make = () => {
+    const w = { terminated: false, postMessage() {}, terminate() { w.terminated = true; } };
+    made.push(w);
+    return w;
+  };
+
+  runOnWorker(make, "idle-test", "a", null).stop(30);
+  const second = runOnWorker(make, "idle-test", "b", null);
+  assert.equal(made.length, 1, "a job started within the window reuses the worker");
+
+  second.stop(30);
+  await new Promise(done => setTimeout(done, 10));
+  assert.equal(made[0].terminated, false, "still warm inside the window");
+  await new Promise(done => setTimeout(done, 40));
+  assert.equal(made[0].terminated, true, "reaped once the window passed");
+
+  runOnWorker(make, "idle-test", "c", null).stop();
+  assert.equal(made[1].terminated, true, "no window: reaped at once");
 });

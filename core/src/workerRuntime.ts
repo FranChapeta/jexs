@@ -93,23 +93,22 @@ export interface WorkerStepper {
   /** Request up to `count` units; non-blocking. `committed` is `count` when the
    *  batch launched, 0 when the worker is still busy (caller keeps the work). */
   step(count: number): { committed: number };
-  /** Unregister this job; tears the worker down when its last job stops. */
-  stop(): void;
+  /** Unregister this job. When it was the worker's last, the worker is torn
+   *  down after `idleMs` (default 0, at once), and a job registered on the same
+   *  key within that window reuses it. */
+  stop(idleMs?: number): void;
 }
 
 /**
  * Register a unit of work `id` (with its `bufs`) on the worker bucketed under
  * `workerKey` (created lazily via `makeWorker`), and return a non-blocking
- * pipelined stepper. Reusing a key multiplexes ids onto one worker. `idleMs`
- * keeps the worker warm that long after its LAST unit stops (so a
- * destroy-then-recreate reuses it); default 0 = terminate immediately.
+ * pipelined stepper. Reusing a key multiplexes ids onto one worker.
  */
 export function runOnWorker(
   makeWorker: () => WorkerLike,
   workerKey: string,
   id: string,
   bufs: unknown,
-  idleMs = 0,
 ): WorkerStepper {
   // Per-bucket state for this transport: the shared wake signal. Created once,
   // when the worker is first spawned for this key (the `init` message hands the
@@ -134,7 +133,7 @@ export function runOnWorker(
       }
       return { committed: 0 }; // worker still busy — caller keeps the work
     },
-    stop(): void {
+    stop(idleMs = 0): void {
       Atomics.store(ctrl, IDX_QUIT, 1);
       wake(wakeView); // wake the loop so it observes QUIT and drops the unit
       worker.postMessage({ type: "unregister", id });

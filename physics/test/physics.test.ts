@@ -56,6 +56,31 @@ test("two offloaded worlds on one selector get separate jobs on the shared worke
   second!.worker.stop();
 });
 
+// Restarting or destroying a world keeps the shared worker warm for the next
+// one; destroying the resolver lets it go.
+test("a threaded world started again reuses the physics worker", async (t) => {
+  if (!new EntityStore(undefined, true).getSharedBuffers()) return t.skip("growable SharedArrayBuffer is unavailable");
+  const made: Array<{ terminated: boolean }> = [];
+  const makeWorker = () => {
+    const w = { terminated: false, postMessage() {}, terminate() { w.terminated = true; } };
+    made.push(w);
+    return w;
+  };
+  const r = createResolver([...coreNodes(), new EntityNode(), new PhysicsNode(makeWorker)]);
+  const context: Context = {};
+  await r({ "$entity-init": "#game", shared: true }, context);
+
+  await r({ "$physics-init": true, start: false }, context);
+  await r({ "$physics-init": true, start: false }, context);
+  await r({ "$physics-destroy": true }, context);
+  await r({ "$physics-init": true, start: false }, context);
+  assert.equal(made.length, 1);
+  assert.equal(made[0].terminated, false);
+
+  r.destroy();
+  assert.equal(made[0].terminated, true);
+});
+
 test("destroying the resolver stops its worlds' loops", async () => {
   const r = physicsResolver();
   const { y } = await world(r, true);
