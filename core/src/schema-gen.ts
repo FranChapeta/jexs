@@ -24,6 +24,7 @@
 
 import type { Node } from "./nodes/Node.js";
 import { GLOBAL_KEYS, KEY_PREFIX } from "./Resolver.js";
+import { isObject } from "./helpers.js";
 import type {
   JexsMethodSchema, JexsNodeSchema, JexsPropertySchema, JexsType,
 } from "./schema.js";
@@ -401,6 +402,7 @@ export interface EmittedMethodSchema {
 
 /** One output rule: while `cond` holds (and no earlier rule's does), the method
  *  resolves to `output`, or to one of them when it is a list (absent means any).
+ *  Each is a type name, with its declared shape after a colon (see routeName).
  *  `when` is `cond` before emitting, kept so rules that can never hold together
  *  are recognised. Build-only. */
 export interface VariantOutput {
@@ -421,13 +423,13 @@ export interface ValueDoc {
 
 /**
  * Compressed representation: the list of handler-key method names a Node class
- * owns. Consumers wanting a full dispatch JSON Schema can build it from byKey:
+ * owns. Consumers wanting a full dispatch JSON Schema can build it from a
+ * combined schema's byKey (the siblings) and vp (the primary value):
  *
  *   const nodeSchema = {
  *     type: "object",
- *     dependentSchemas: Object.fromEntries(
- *       byNode[name].map(k => [k, { $ref: `#/byKey/${k}` }])
- *     ),
+ *     properties: Object.fromEntries(byNode[name].map(k => [`$${k}`, { $ref: `#/vp/${k}` }])),
+ *     dependentSchemas: Object.fromEntries(byNode[name].map(k => [`$${k}`, { $ref: `#/byKey/${k}` }])),
  *   };
  */
 export type EmittedNodeSchema = string[];
@@ -553,6 +555,15 @@ function outputName(schema: JexsMethodSchema): string | undefined {
 /** The `$defs` name an output schema refers to, if it is a `$ref`. */
 function shapeName(shape: JexsPropertySchema | undefined): string | undefined {
   return shape?.$ref?.match(/^#\/\$defs\/(.+)$/)?.[1];
+}
+
+/** A scope's output as routing reads it: the type name, followed by the shape it
+ *  declares, `array:_color` for a def and `array:{}` for an inline schema, so a
+ *  slot typed by a def can refuse a step that declares another shape. */
+function routeName(schema: JexsMethodSchema): string | undefined {
+  const type = outputName(schema);
+  const shape = outputShapes.get(schema);
+  return type === undefined || shape === undefined ? type : `${type}:${shapeName(shape) ?? "{}"}`;
 }
 
 /** `subject` is the property this scope's own variants test, or null when the
@@ -806,7 +817,7 @@ function outputRules(scope: Scope): VariantOutput[] {
     }
   }
   if (scope.cond === null || scope.schema.output !== undefined) {
-    rules.push({ cond: scope.cond ?? {}, when: scope.when, output: outputName(scope.schema) });
+    rules.push({ cond: scope.cond ?? {}, when: scope.when, output: routeName(scope.schema) });
   }
   return rules;
 }
@@ -1304,11 +1315,15 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
 
   // Two canonical stores at the schema root:
   //   - byKey/<k> = method-dispatch schema (sibling constraints), used by
-  //     dependentSchemas refs across exprFlat, filtered variants, and runtime
-  //     consumers building per-Node validators from byNode.
+  //     dependentSchemas refs across exprFlat and filtered variants. A step is
+  //     validated through exprFlat, never through its byKey entry alone.
   //   - vp/<k>    = the primary key's VALUE schema (constraint + rich markdown).
   //     Hover/autocomplete refs in exprFlat.properties and filtered variants
   //     resolve here.
+  // exprFlat checks the primary value through `vp`, so byKey leaves it open: a
+  // second check there would validate every nested step twice per level, the
+  // O(2^depth) blow-up described below for siblings. It stays listed, as `{}`,
+  // so the catch-all for undeclared siblings doesn't take it instead.
   const vp: Record<string, EmittedSchema> = {};
   for (const [methodKey, m] of Object.entries(byKey)) {
     const primaryEntry = m.properties[KEY_PREFIX + methodKey];
@@ -1316,7 +1331,7 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
     const md = buildRichMarkdown(methodKey, m, siblingDocs[methodKey]);
     if (md) primaryEntry.markdownDescription = md;
     vp[methodKey] = primaryEntry;
-    m.properties[KEY_PREFIX + methodKey] = { $ref: `#/vp/${methodKey}` };
+    m.properties[KEY_PREFIX + methodKey] = {};
   }
 
   // Structural shape dedup runs as a whole-schema pass at the end (dedupeShapes),
@@ -1352,8 +1367,8 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
   // as `anyVal`: a step, data, or a primitive, each branch validating its contents
   // once.
   //
-  // CRUCIAL: this lives on each `byKey` entry, NOT on `exprFlat` (whose
-  // `additionalProperties` is `true`). A node's declared siblings, including its
+  // CRUCIAL: this lives on each `byKey` entry, NOT on `exprFlat` (which accepts
+  // every non-`$` key as `true`). A node's declared siblings, including its
   // big recursive ones (`content`, `cases`, step sequences), are validated by
   // that handler's `byKey.properties` via `dependentSchemas`. If `exprFlat` ALSO
   // had a recursive catch-all, every such sibling would be validated TWICE per
@@ -1371,26 +1386,25 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
 
   // A `$` key must be one the resolver knows: an op or a global. Anything else
   // (`$concta`) is a typo the runtime would refuse, so the editor flags it too.
-  // Other keys are siblings or data and stay free.
+  // Other keys are siblings or data and stay free. The known keys are the ones
+  // `properties` lists, so an unknown `$` key is simply an additional property:
+  // a lookup per key, where an `enum` of every op name is a scan per key.
   const exprFlat: EmittedSchema = {
     type: "object",
     properties: exprFlatProperties,
-    additionalProperties: true,
+    patternProperties: { [`^(?!\\${KEY_PREFIX})`]: true },
+    additionalProperties: false,
     dependentSchemas: exprFlatDependentSchemas,
-    propertyNames: {
-      if: { pattern: "^\\" + KEY_PREFIX },
-      then: { enum: Object.keys(exprFlatProperties) },
-    },
   };
 
   // Per-output-type filtered exprFlat variants. Slots declared `type: T` route
   // to `exprFlat_T` for the expression-object branch, catching output-type
   // mismatches at validation time.
   //
-  // Each variant is `allOf: [ {$ref: exprFlat}, override ]` — it INHERITS the
+  // Each variant is `allOf: [ override, {$ref: exprFlat} ]` — it INHERITS the
   // base `exprFlat` (all allowed keys' value+dependent schemas, the universal
   // keys, and `additionalProperties`) and only overrides the differences:
-  //   - keys whose output can't match T → `properties: { key: false }` (reject).
+  //   - keys whose output can't match T → one `patternProperties` regex, false.
   //   - keys that match only under some discriminators → `dependentSchemas:
   //     { key: <gate> }`, ANDed (via the outer allOf) onto the base's method
   //     schema for that key.
@@ -1399,11 +1413,13 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
   //
   const OUTPUT_TYPES: JexsType[] = ["string", "number", "boolean", "array", "object", "null"];
   const filteredVariants: Record<string, EmittedSchema> = {};
-  for (const target of OUTPUT_TYPES) {
-    const rejected: Record<string, false> = {};
-    const gated: Record<string, EmittedSchema> = {};
+  type Decisions = Map<string, false | EmittedSchema>;
+  // For the steps whose output `fits` (or is unknown), each op key that needs
+  // one: false where no step with it fits, the condition where only some do.
+  const decide = (fits: (output: string) => boolean): Decisions => {
+    const decisions: Decisions = new Map();
     const accepts = (o: VariantOutput["output"]): boolean =>
-      Array.isArray(o) ? o.some(accepts) : o === undefined || o === "any" || o === target;
+      Array.isArray(o) ? o.some(accepts) : o === undefined || o === "any" || fits(o);
     for (const [methodKey, m] of Object.entries(byKey)) {
       // The first rule whose condition holds decides the output, so a rule with
       // an output that fits this bucket accepts the key only where no EARLIER rule
@@ -1425,29 +1441,82 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
         else clauses.push(!unless ? rule.cond : empty ? unless : { allOf: [rule.cond, unless] });
       });
       if (always) continue;                          // inherit from base, nothing to emit
-      if (clauses.length === 0) rejected[KEY_PREFIX + methodKey] = false;
-      else gated[KEY_PREFIX + methodKey] = clauses.length === 1 ? clauses[0] : { anyOf: clauses };
+      decisions.set(KEY_PREFIX + methodKey, clauses.length === 0 ? false
+        : clauses.length === 1 ? clauses[0] : { anyOf: clauses });
     }
+    return decisions;
+  };
+  // The variant of `base` that also applies `decisions`. They come first, so a
+  // step whose op the variant refuses fails before `base` checks it in depth,
+  // which keeps an `anyOf` over variants from checking a nested step once per
+  // branch. The refused ops are one pattern, tested against the step's own
+  // keys: as `properties`, the editor's validator would record every one of
+  // them as processed on every step it checks.
+  const variant = (base: string, decisions: Decisions): EmittedSchema => {
+    const refused: string[] = [];
+    const deps: Record<string, EmittedSchema> = {};
+    for (const [key, d] of decisions) {
+      if (d === false) refused.push(escapeRegex(key));
+      else deps[key] = d;
+    }
+    const override: EmittedSchema = {};
+    if (refused.length > 0) override.patternProperties = { [`^(?:${refused.join("|")})$`]: false };
+    if (Object.keys(deps).length > 0) override.dependentSchemas = deps;
+    return { allOf: [override, { $ref: `#/$defs/${base}` }] };
+  };
+  const byType = new Map<JexsType, Decisions>();
+  for (const target of OUTPUT_TYPES) {
+    const decisions = decide(o => o.split(":")[0] === target);
     // A fire-and-forget `$then` makes the whole expression resolve to null, so it
     // cannot stand in a slot that wants a real value. `exprFlat_null` is left
     // permissive, since null is exactly what a null slot wants.
-    if (target !== "null") rejected[KEY_PREFIX + "then"] = false;
-    const override: EmittedSchema = { properties: rejected };
-    const deps: Record<string, EmittedSchema> = { ...gated };
-    if (Object.keys(deps).length > 0) override.dependentSchemas = deps;
-    filteredVariants[`exprFlat_${target}`] = {
-      allOf: [{ $ref: "#/$defs/exprFlat" }, override],
-    };
+    if (target !== "null") decisions.set(KEY_PREFIX + "then", false);
+    byType.set(target, decisions);
+    filteredVariants[`exprFlat_${target}`] = variant("exprFlat", decisions);
   }
 
-  // The steps a slot typed by a Node's def takes (see expandProperty): those
-  // whose output fits the def's type, or, for a def with no single type, the def
-  // itself, which is how one that tells steps from data on its own keeps doing so.
+  // The steps a slot typed by a Node's def takes (see expandProperty). A def with
+  // a single type takes those of that type that declare its shape or none. One
+  // that lists its types or defs under `anyOf` takes a step any of them takes,
+  // through one variant, so a step is checked once rather than once per member.
+  // Any other def is how one that tells steps from data on its own keeps doing so.
+  const typeOf = (def: unknown): JexsType | undefined =>
+    isObject(def) ? OUTPUT_TYPES.find(t => t === def.type) : undefined;
+  const ofDef = (name: string, type: JexsType) => (o: string): boolean => o === type || o === `${type}:${name}`;
+  // The outputs one `anyOf` member takes: a type whatever the shape, a def its own.
+  const memberFits = (m: unknown): ((o: string) => boolean) | undefined => {
+    if (!isObject(m)) return undefined;
+    if (typeof m.$ref === "string") {
+      const def = nodeDefName(m.$ref);
+      const type = def !== undefined ? typeOf(extraDefs[def]) : undefined;
+      return def !== undefined && type !== undefined ? ofDef(def, type) : undefined;
+    }
+    const type = typeOf(m);
+    return type !== undefined ? o => o.split(":")[0] === type : undefined;
+  };
   const slots = JSON.stringify({ byKey, vp, extraDefs });
   for (const [name, def] of Object.entries(extraDefs)) {
     if (!slots.includes(`"#/$defs/exprFlat_${name}"`)) continue;
-    const type = OUTPUT_TYPES.find(t => t === def.type);
-    filteredVariants[`exprFlat_${name}`] = { $ref: type ? `#/$defs/exprFlat_${type}` : `#/$defs/${name}` };
+    const type = typeOf(def);
+    if (type !== undefined) {
+      // A subset of its type's steps, so it extends the type's variant and lists
+      // only the keys it decides differently.
+      const ofType = byType.get(type) ?? new Map();
+      const own = [...decide(ofDef(name, type))]
+        .filter(([key, d]) => ofType.get(key) !== false && JSON.stringify(d) !== JSON.stringify(ofType.get(key)));
+      filteredVariants[`exprFlat_${name}`] = variant(`exprFlat_${type}`, new Map(own));
+      continue;
+    }
+    const members = Array.isArray(def.anyOf) ? def.anyOf.map(memberFits) : [];
+    const tests = members.filter(t => t !== undefined);
+    if (tests.length === 0 || tests.length < members.length) {
+      filteredVariants[`exprFlat_${name}`] = { $ref: `#/$defs/${name}` };
+      continue;
+    }
+    const fits = (o: string): boolean => tests.some(t => t(o));
+    const decisions = decide(fits);
+    if (!fits("null")) decisions.set(KEY_PREFIX + "then", false);
+    filteredVariants[`exprFlat_${name}`] = variant("exprFlat", decisions);
   }
 
   // Strip build-only fields from emitted byKey entries: `output` drives the

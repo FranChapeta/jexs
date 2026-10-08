@@ -36,27 +36,27 @@ interface Case {
 
 const cases: Case[] = [
   // Should validate
-  { label: "if/then/else", schemaRef: "byKey/if", expectValid: true,
+  { label: "if/then/else", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $if: { $var: "active" }, then: "yes", else: "no" } },
-  { label: "foreach with literal item", schemaRef: "byKey/foreach", expectValid: true,
+  { label: "foreach with literal item", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $foreach: [1, 2, 3], do: { $var: "item" }, item: "x" } },
-  { label: "foreach with expression item (now allowed since runtime resolves it)", schemaRef: "byKey/foreach", expectValid: true,
+  { label: "foreach with expression item (now allowed since runtime resolves it)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $foreach: [1, 2, 3], do: { $var: "item" }, item: { $var: "varName" } } },
-  { label: "switch with cases", schemaRef: "byKey/switch", expectValid: true,
+  { label: "switch with cases", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $switch: { $var: "role" }, cases: { admin: "full" }, default: "none" } },
-  { label: "filter with renamed item sibling", schemaRef: "byKey/filter", expectValid: true,
+  { label: "filter with renamed item sibling", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $filter: [{ $var: "users" }, { $eq: [{ $var: "u.role" }, "admin"] }], item: "u" } },
   { label: "return via exprFlat", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $if: { $var: "x" }, then: { $return: "early" } } },
-  { label: "var", schemaRef: "byKey/var", expectValid: true,
+  { label: "var", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $var: "user.name" } },
-  { label: "between [3]", schemaRef: "byKey/between", expectValid: true,
+  { label: "between [3]", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $between: [10, 1, 100] } },
   { label: "as via exprFlat", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $if: { $var: "x" }, then: 1, else: 2, $as: "result" } },
   { label: "catch via exprFlat", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $if: { $var: "x" }, then: "ok", $catch: [{ $var: "err" }] } },
-  { label: "parallel as expression (implicit boolean-or-expr)", schemaRef: "byKey/foreach", expectValid: true,
+  { label: "parallel as expression (implicit boolean-or-expr)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $foreach: [1, 2], do: "x", parallel: { $var: "concurrent" } } },
   { label: "tag with mixed-content array of strings and elements (via exprFlat)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $tag: "p", content: ["plain text", { $tag: "b", content: ["bold"] }, "more text"] } },
@@ -702,10 +702,33 @@ const cases: Case[] = [
   { label: "catch as an array of scalars (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { $fetch: "/api/x", $catch: ["failed"] } },
 
-  // Should fail
-  { label: "eq tuple too short", schemaRef: "byKey/eq", expectValid: false,
+  // A slot typed by a def with a single type takes a step returning that def,
+  // its type with no declared shape, or an unknown output. One whose def lists
+  // types under `anyOf` takes a step returning any of them.
+  { label: "menu item from a var", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $menu: [{ $var: "item" }] } },
+  { label: "menu item from an op returning an object of no declared shape", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $menu: [{ $deepMerge: [{ $var: "base" }, { label: "Quit" }] }] } },
+  { label: "menu item from an op returning the body of a fetch (any)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $menu: [{ $fetch: "/menu.json" }] } },
+  { label: "query rows from an op returning an array", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $query: "insert", table: "t", data: { $map: { $var: "list" }, do: { $var: "item" } } } },
+  { label: "a step may carry an empty key", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $var: "a", "": 1 } },
+
+  // A step is validated through exprFlat; its byKey entry checks the siblings
+  // only, leaving the primary value to exprFlat (each value checked once).
+  { label: "byKey alone leaves the primary value to exprFlat", schemaRef: "byKey/eq", expectValid: true,
     expr: { $eq: [1] } },
-  { label: "between tuple too short", schemaRef: "byKey/between", expectValid: false,
+
+  // Should fail
+  { label: "menu item from an op returning another object shape (_fetchResponse)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $menu: [{ $fetch: "/menu.json", full: true }] } },
+  { label: "query rows from an op returning a number", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $query: "insert", table: "t", data: { $length: "abc" } } },
+  { label: "eq tuple too short", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $eq: [1] } },
+  { label: "between tuple too short", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { $between: [10, 1] } },
   { label: "as must be string (exprFlat)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { $if: { $var: "x" }, $as: 42 } },
