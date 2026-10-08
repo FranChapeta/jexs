@@ -20,6 +20,7 @@ import {
   type EntityMeta,
 } from "../EntityStore.js";
 import { raycastStore } from "../Raycast.js";
+import { toVec } from "./Vector.js";
 import { offloadWorld, readContacts, type WorldOffload } from "../sharedPhysics.js";
 import type { WorkerLike } from "@jexs/core";
 import { detectCollision, resolveCollision, wakeBody, isRotated, usesMeshCollision, maskAllows } from "../collision.js";
@@ -672,11 +673,7 @@ export class PhysicsNode extends Node {
         id: { type: "string", description: "The entity's id." },
         slot: { type: "number", description: "The entity's slot in the store." },
         distance: { type: "number", description: "How far along the ray it was hit." },
-        point: {
-          type: "object",
-          properties: { x: { type: "number" }, y: { type: "number" }, z: { type: "number" } },
-          description: "Where the ray hit it.",
-        },
+        point: { $ref: "#/$defs/_vec", description: "Where the ray hit it, `[x, y, z]`." },
       },
     },
   };
@@ -769,18 +766,18 @@ export class PhysicsNode extends Node {
       markdownDescription: "Casts a ray through the world and returns every entity it hits, nearest first. Works on both client and server.",
       outputDescription: "An array of hits ordered by distance, empty when nothing is hit or no world exists.",
       examples: [
-        "{ \"$physics-raycast\": true, \"from\": { \"x\": 0, \"y\": 0 }, \"dir\": { \"x\": 1, \"y\": 0 }, \"mask\": [\"enemy\"] }",
+        "{ \"$physics-raycast\": true, \"from\": [0, 0], \"dir\": [1, 0], \"mask\": [\"enemy\"] }",
       ],
       siblings: {
         from: {
           $ref: "#/$defs/_vec",
           required: true,
-          description: "Ray origin `{ x, y, z }`. `z` defaults to 0.",
+          description: "Ray origin `[x, y, z]`. `z` defaults to 0.",
         },
         dir: {
           $ref: "#/$defs/_vec",
           required: true,
-          description: "Ray direction `{ x, y, z }`. `z` defaults to 0.",
+          description: "Ray direction `[x, y, z]`. `z` defaults to 0.",
         },
         mask: {
           type: "array",
@@ -910,7 +907,7 @@ export class PhysicsNode extends Node {
   }
 
   // ── physics-raycast — cast a ray and return sorted hits (works on client & server) ──
-  // { "$physics-raycast": true, "from": {"x":0,"y":0,"z":0}, "dir": {"x":1,"y":0,"z":0}, "mask": ["enemy"] }
+  // { "$physics-raycast": true, "from": [0, 0, 0], "dir": [1, 0, 0], "mask": ["enemy"] }
 
   ["physics-raycast"](def: Record<string, unknown>, context: Context): NodeValue {
     const selector = PhysicsNode.sel(context);
@@ -919,14 +916,13 @@ export class PhysicsNode extends Node {
     if (!store) return [];
 
     return resolveAll([def["from"], def["dir"], def["mask"] ?? null], context, ([fromRaw, dirRaw, maskRaw]) => {
-      const from = fromRaw as { x: number; y: number; z?: number } | null;
-      const dir = dirRaw as { x: number; y: number; z?: number } | null;
-      if (!from || !dir) return [];
+      if (fromRaw == null || dirRaw == null) return [];
+      const from = toVec(fromRaw), dir = toVec(dirRaw);
       const maskSet = maskRaw ? new Set(maskRaw as string[]) : null;
       return raycastStore(
         store,
-        from.x, from.y, from.z ?? 0,
-        dir.x, dir.y, dir.z ?? 0,
+        from[0], from[1], from[2] ?? 0,
+        dir[0], dir[1], dir[2] ?? 0,
         maskSet,
       );
     });

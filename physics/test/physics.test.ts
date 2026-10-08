@@ -1,10 +1,43 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createResolver, coreNodes, type Context } from "@jexs/core";
-import { EntityNode, PhysicsNode, CollisionNode, JointNode, EntityStore, offloadWorld, type PhysicsConfig } from "../src/index.js";
+import { EntityNode, PhysicsNode, CollisionNode, JointNode, VectorNode, EntityStore, offloadWorld, type PhysicsConfig } from "../src/index.js";
 
 const physicsResolver = () =>
-  createResolver([...coreNodes(), new EntityNode(), new PhysicsNode(), new CollisionNode(), new JointNode()]);
+  createResolver([...coreNodes(), new EntityNode(), new PhysicsNode(), new CollisionNode(), new JointNode(), new VectorNode()]);
+
+// Vectors are arrays, as entity translations are; a 2D vector meets a 3D one
+// at z = 0, and the result is 3D when either is.
+test("vector ops take and return arrays", async () => {
+  const r = physicsResolver();
+  try {
+    assert.deepEqual(await r({ "$v-add": [[1, 2], [3, 4, 5]] }, {}), [4, 6, 5]);
+    assert.deepEqual(await r({ "$v-sub": [[1, 2], [3, 4]] }, {}), [-2, -2]);
+    assert.deepEqual(await r({ "$v-scale": [[1, 2, 3], 2] }, {}), [2, 4, 6]);
+    assert.deepEqual(await r({ "$v-normalize": [3, 4] }, {}), [0.6, 0.8]);
+    assert.deepEqual(await r({ "$v-cross": [[1, 0], [0, 1]] }, {}), [0, 0, 1]);
+    assert.deepEqual(await r({ "$v-toward": [[0, 0], [10, 0], 4] }, {}), [4, 0]);
+    assert.equal(await r({ "$v-distance": [[0, 0], [3, 4]] }, {}), 5);
+    assert.equal(await r({ "$v-dot": [[1, 2, 3], [4, 5, 6]] }, {}), 32);
+    await assert.rejects(async () => r({ "$v-normalize": { x: 3, y: 4 } }, {}), /Expected \[x, y\] or \[x, y, z\]/);
+  } finally {
+    r.destroy();
+  }
+});
+
+test("a raycast takes array vectors and reports where it hit as one", async () => {
+  const r = physicsResolver();
+  try {
+    const context: Context = {};
+    await r({ "$entity-init": "#game" }, context);
+    await r({ "$entity-add": "wall", type: "quad", translation: [10, 0, 0], scale: [2, 2, 2] }, context);
+    const hits = await r({ "$physics-raycast": true, from: [0, 1, 1], dir: [1, 0, 0] }, context);
+    assert.ok(Array.isArray(hits) && hits.length === 1);
+    assert.deepEqual(hits[0].point, [10, 1, 1]);
+  } finally {
+    r.destroy();
+  }
+});
 
 test("an entity color given without alpha is opaque", async () => {
   const r = physicsResolver();

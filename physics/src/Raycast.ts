@@ -48,7 +48,8 @@ export interface RayHit {
   id: string;
   slot: number;
   distance: number;
-  point: { x: number; y: number; z: number };
+  /** Where the ray hit, `[x, y, z]`. */
+  point: [number, number, number];
 }
 
 /**
@@ -100,7 +101,7 @@ export function raycastStore(
         if (triHit < 0) continue;
         hits.push({
           id: meta.id, slot: i, distance: out.t,
-          point: { x: ox + dx * out.t, y: oy + dy * out.t, z: oz + dz * out.t },
+          point: [ox + dx * out.t, oy + dy * out.t, oz + dz * out.t],
         });
         continue;
       }
@@ -110,7 +111,7 @@ export function raycastStore(
       id: meta.id,
       slot: i,
       distance: t,
-      point: { x: ox + dx * t, y: oy + dy * t, z: oz + dz * t },
+      point: [ox + dx * t, oy + dy * t, oz + dz * t],
     });
   }
 

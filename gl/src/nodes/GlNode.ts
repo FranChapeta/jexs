@@ -55,7 +55,7 @@ import {
   _frustum,
 } from "../gl/math.js";
 import { initEquirectSky, drawEquirectSky } from "../gl/skybox.js";
-import { raycastStore, type MeshEntry, type Bounds } from "@jexs/physics";
+import { raycastStore, toVec, type MeshEntry, type Bounds } from "@jexs/physics";
 import type { GpuMesh } from "../gl/types.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "@jexs/core";
 
@@ -494,16 +494,16 @@ export class GlNode extends Node {
       outputDescription: "The entities hit, nearest first; empty when nothing is hit.",
       markdownDescription: "Casts a ray from `from` in direction `dir` and returns all hit entities sorted by distance.\nPass `mask` (array of group names) to restrict which entities are tested.",
       examples: [
-        "{ \"$gl-raycast\": true, \"from\": { \"x\": 0, \"y\": 0, \"z\": 0 }, \"dir\": { \"x\": 1, \"y\": 0, \"z\": 0 }, \"mask\": [\"enemies\"] }",
+        "{ \"$gl-raycast\": true, \"from\": [0, 0, 0], \"dir\": [1, 0, 0], \"mask\": [\"enemies\"] }",
       ],
       siblings: {
         from: {
           $ref: "#/$defs/_vec",
-          description: "Origin vector `{x, y, z?}`.",
+          description: "Origin vector `[x, y, z?]`.",
         },
         dir: {
           $ref: "#/$defs/_vec",
-          description: "Direction vector `{x, y, z?}`.",
+          description: "Direction vector `[x, y, z?]`.",
         },
         mask: {
           type: "array",
@@ -1548,18 +1548,17 @@ export class GlNode extends Node {
   }
 
   // ── gl-raycast — cast a ray and return sorted hits ─────────────────────
-  // { "$gl-raycast": true, "from": {"x":0,"y":0,"z":0}, "dir": {"x":1,"y":0,"z":0}, "mask": ["enemy"] }
+  // { "$gl-raycast": true, "from": [0, 0, 0], "dir": [1, 0, 0], "mask": ["enemy"] }
 
   ["gl-raycast"](def: Record<string, unknown>, context: Context): NodeValue {
     const inst = GlNode.getInst(context);
     if (!inst) return null;
     return resolveFields(def, context, r => {
-      const from = r["from"] as { x: number; y: number; z?: number } | null;
-      const dir = r["dir"] as { x: number; y: number; z?: number } | null;
-      if (!from || !dir) return [];
+      if (r["from"] == null || r["dir"] == null) return [];
+      const from = toVec(r["from"]), dir = toVec(r["dir"]);
       const maskArr = r["mask"] !== undefined ? r["mask"] as string[] : null;
       const maskSet = maskArr ? new Set(maskArr) : null;
-      return raycastStore(inst.store, from.x, from.y, from.z ?? 0, dir.x, dir.y, dir.z ?? 0, maskSet);
+      return raycastStore(inst.store, from[0], from[1], from[2] ?? 0, dir[0], dir[1], dir[2] ?? 0, maskSet);
     });
   }
 

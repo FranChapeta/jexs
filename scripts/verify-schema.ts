@@ -548,13 +548,13 @@ const cases: Case[] = [
   { label: "setVars from an object step (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $setVars: { $var: "defaults" } } },
   { label: "object slot from a string-output step (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
-    expr: { "$v-scale": [{ $upper: "x" }, 2] } },
+    expr: { $parseGLTF: { $upper: "x" } } },
   { label: "object slot from an object-output step (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { "$v-scale": [{ $var: "v" }, 2] } },
+    expr: { $parseGLTF: { $deepMerge: [{ $var: "gltf" }, { buffers: [] }] } } },
   { label: "object slot given a string (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
-    expr: { "$v-scale": ["up", 2] } },
+    expr: { $parseGLTF: "up" } },
   { label: "object slot data with a broken step inside (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
-    expr: { "$v-scale": [{ x: { $concta: 1 }, y: 0 }, 2] } },
+    expr: { $parseGLTF: { json: { $concta: 1 }, buffers: [] } } },
 
   // Data objects: an object without a `$` key is data, and its values are checked.
   { label: "broken step inside a data object (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
@@ -731,14 +731,14 @@ const cases: Case[] = [
   { label: "color from an array of no declared shape", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $toHex: { $slice: [{ $var: "rgba" }, 0, 3] } } },
 
-  // A vector slot takes `{ x, y, z? }` (whose numbers may be steps) or a step
+  // A vector slot takes `[x, y, z?]` (whose numbers may be steps) or a step
   // returning a `_vec`; an element slot a CSS selector or a step returning an
   // `_element`, as every DOM op that acts on one does. A render color takes a
   // `_color`, as the color ops return one.
   { label: "vector from an op returning _vec", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { "$v-add": [{ x: 1, y: 2 }, { "$v-normalize": { $var: "d" } }] } },
+    expr: { "$v-add": [[1, 2], { "$v-normalize": { $var: "d" } }] } },
   { label: "vector with a step inside", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { "$v-scale": [{ x: { $var: "vx" }, y: 0 }, 2] } },
+    expr: { "$v-scale": [[{ $var: "vx" }, 0, 0], 2] } },
   { label: "render color from a color op", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { "$entity-add": "spark", color: { $toRgb: "#ff8800" } } },
   { label: "render color as rgb without alpha", schemaRef: "$defs/exprFlat", expectValid: true,
@@ -782,8 +782,10 @@ const cases: Case[] = [
     expr: { $toHex: [1, 2] } },
   { label: "vector from an op returning another object shape (_fetchResponse)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { "$v-normalize": { $fetch: "/v", full: true } } },
-  { label: "vector missing y", schemaRef: "$defs/exprFlat", expectValid: false,
-    expr: { "$v-add": [{ x: 1 }, { x: 0, y: 0 }] } },
+  { label: "vector with one component", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "$v-add": [[1], [0, 0]] } },
+  { label: "vector as an object", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "$v-normalize": { x: 1, y: 0 } } },
   { label: "render color from an op returning a _vec", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { "$gl-particle": true, color: { "$v-normalize": { $var: "v" } } } },
   { label: "render color as a hex string", schemaRef: "$defs/exprFlat", expectValid: false,

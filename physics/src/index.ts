@@ -55,7 +55,6 @@ export {
 // ── Vector ──
 export {
   VectorNode,
-  type Vec, type Vec2, type Vec3,
-  toVec, toVec2, toVec3,
-  distance, lerp, toward, normalize, direction, cross, dot, dot3,
+  type Vec, toVec,
+  add, sub, scale, distance, lerp, toward, normalize, direction, cross, dot,
 } from "./nodes/Vector.js";
