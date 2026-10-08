@@ -6,6 +6,20 @@ import { EntityNode, PhysicsNode, CollisionNode, JointNode, EntityStore, offload
 const physicsResolver = () =>
   createResolver([...coreNodes(), new EntityNode(), new PhysicsNode(), new CollisionNode(), new JointNode()]);
 
+test("an entity color given without alpha is opaque", async () => {
+  const r = physicsResolver();
+  try {
+    const context: Context = {};
+    await r({ "$entity-init": "#game" }, context);
+    await r({ "$entity-add": "a", type: "quad", color: [1, 0.5, 0] }, context);
+    assert.deepEqual(await r({ "$entity-get": "a", prop: "color" }, context), [1, 0.5, 0, 1]);
+    await r({ "$entity-update": "a", color: [0, 0, 1] }, context);
+    assert.deepEqual(await r({ "$entity-get": "a", prop: "color" }, context), [0, 0, 1, 1]);
+  } finally {
+    r.destroy();
+  }
+});
+
 /** A world on `#game` with one falling body, its context, and a reader for the body's height. */
 async function world(resolver: ReturnType<typeof physicsResolver>, start: boolean) {
   const context: Context = {};

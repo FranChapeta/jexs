@@ -18,7 +18,7 @@ const READONLY_METRICS = [
 const GETTABLE_PROPS = [...WRITABLE_PROPS, ...READONLY_METRICS, "disabled"];
 
 // Ops that act on a target element return that element (an actual HTMLElement),
-// enabling chaining. Declared via `output: "object"` + this description.
+// enabling chaining. Declared via the `_element` output + this description.
 const RETURNS_TARGET = "The element operated on (an HTMLElement), for chaining.";
 
 export class DomNode extends Node {
@@ -39,24 +39,37 @@ export class DomNode extends Node {
         { $ref: "#/$defs/strOrExpr" },
       ],
     },
+    _element: {
+      type: "object",
+      description: "A live DOM element (HTML or SVG), as the ops that find or act on one return it, or the `target` of an event.",
+    },
+    _elementRef: {
+      anyOf: [
+        {
+          type: "string",
+          description: "A CSS selector, naming the first element that matches it: `#email` for an id, `.card` for a class, `form input[name=\"q\"]` for anything more specific. A bare id is not enough: `\"email\"` looks for an `<email>` tag.",
+        },
+        { $ref: "#/$defs/_element" },
+      ],
+    },
   };
 
   static schema: JexsNodeSchema = {
     show: {
-      type: ["string", "object"],
-      output: "object",
+      $ref: "#/$defs/_elementRef",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Shows an element by clearing its inline `display` style. Accepts a CSS selector or HTMLElement.",
     },
     hide: {
-      type: ["string", "object"],
-      output: "object",
+      $ref: "#/$defs/_elementRef",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Hides an element by setting `display: none`. Accepts a CSS selector or HTMLElement.",
     },
     toggle: {
-      type: ["string", "object"],
-      output: "object",
+      $ref: "#/$defs/_elementRef",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Toggles `display: none` on an element.",
     },
@@ -71,42 +84,42 @@ export class DomNode extends Node {
       markdownDescription: "Hides all elements matching a CSS selector. Returns the count of matched elements.",
     },
     enable: {
-      type: ["string", "object"],
-      output: "object",
+      $ref: "#/$defs/_elementRef",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Enables a form input by setting `disabled = false`.",
     },
     disable: {
-      type: ["string", "object"],
-      output: "object",
+      $ref: "#/$defs/_elementRef",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Disables a form input by setting `disabled = true`.",
     },
     focus: {
-      type: ["string", "object"],
-      output: "object",
+      $ref: "#/$defs/_elementRef",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Focuses an element via `HTMLElement.focus()`. Accepts a CSS selector or HTMLElement.",
     },
     blur: {
-      type: ["string", "object"],
-      output: "object",
+      $ref: "#/$defs/_elementRef",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Removes focus from an element via `HTMLElement.blur()`. Accepts a CSS selector or HTMLElement.",
     },
     click: {
-      type: ["string", "object"],
-      output: "object",
+      $ref: "#/$defs/_elementRef",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Dispatches a click on an element via `HTMLElement.click()` (e.g. to trigger a hidden file input). Accepts a CSS selector or HTMLElement.",
     },
     addClass: {
       tuple: 2,
       prefixItems: [
-        { type: ["string", "object"], description: "The element: a CSS selector or an HTMLElement." },
+        { $ref: "#/$defs/_elementRef", description:"The element: a CSS selector or an HTMLElement." },
         { type: "string", description: "The CSS class name to add." },
       ],
-      output: "object",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Adds a CSS class to an element. Pass `[selectorOrElement, className]`.",
       examples: [
@@ -116,38 +129,38 @@ export class DomNode extends Node {
     removeClass: {
       tuple: 2,
       prefixItems: [
-        { type: ["string", "object"], description: "The element: a CSS selector or an HTMLElement." },
+        { $ref: "#/$defs/_elementRef", description:"The element: a CSS selector or an HTMLElement." },
         { type: "string", description: "The CSS class name to remove." },
       ],
-      output: "object",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Removes a CSS class from an element. Pass `[selectorOrElement, className]`.",
     },
     toggleClass: {
       tuple: 2,
       prefixItems: [
-        { type: ["string", "object"], description: "The element: a CSS selector or an HTMLElement." },
+        { $ref: "#/$defs/_elementRef", description:"The element: a CSS selector or an HTMLElement." },
         { type: "string", description: "The CSS class name to toggle." },
       ],
-      output: "object",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Toggles a CSS class on an element. Pass `[selectorOrElement, className]`.",
     },
     setAttr: {
       tuple: 3,
       prefixItems: [
-        { type: ["string", "object"], description: "The element: a CSS selector or an HTMLElement." },
+        { $ref: "#/$defs/_elementRef", description:"The element: a CSS selector or an HTMLElement." },
         { type: "string", description: "The attribute name." },
         { description: "The attribute value (coerced to a string)." },
       ],
-      output: "object",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Sets an attribute on an element. Pass `[selectorOrElement, attrName, value]`.",
     },
     getAttr: {
       tuple: 2,
       prefixItems: [
-        { type: ["string", "object"], description: "The element: a CSS selector or an HTMLElement." },
+        { $ref: "#/$defs/_elementRef", description:"The element: a CSS selector or an HTMLElement." },
         { type: "string", description: "The attribute name." },
       ],
       output: "string",
@@ -156,7 +169,7 @@ export class DomNode extends Node {
     getProp: {
       tuple: 2,
       prefixItems: [
-        { type: ["string", "object"], description: "The element: a CSS selector or an HTMLElement." },
+        { $ref: "#/$defs/_elementRef", description:"The element: a CSS selector or an HTMLElement." },
         { $ref: "#/$defs/_gettableProp", description: "The DOM property to read, or a dot-path to a nested one (e.g. \"style.color\")." },
       ],
       output: "any",
@@ -169,11 +182,11 @@ export class DomNode extends Node {
     setProp: {
       tuple: 3,
       prefixItems: [
-        { type: ["string", "object"], description: "The element: a CSS selector or an HTMLElement." },
+        { $ref: "#/$defs/_elementRef", description:"The element: a CSS selector or an HTMLElement." },
         { $ref: "#/$defs/_writableProp", description: "The DOM property to write, or a dot-path to a nested one (e.g. \"style.color\")." },
         { description: "The value to assign." },
       ],
-      output: "object",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Writes a live DOM property on an element (the JS property, not the HTML attribute), e.g. `scrollTop`, `checked`, `selectedIndex`. Supports dot-paths for nested props (e.g. `style.color`), traversed like `setVars`. Pass `[selectorOrElement, propName, value]`. Returns the element.",
       examples: [
@@ -182,7 +195,7 @@ export class DomNode extends Node {
       ],
     },
     submit: {
-      type: ["string", "object"],
+      $ref: "#/$defs/_elementRef",
       output: "null",
       markdownDescription: "Submits a form. Pass `\"form\"` to submit the closest ancestor form of the event target, or a CSS selector.",
     },
@@ -204,14 +217,14 @@ export class DomNode extends Node {
       ],
     },
     showModal: {
-      type: ["string", "object"],
-      output: "object",
+      $ref: "#/$defs/_elementRef",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Opens a `<dialog>` as a modal via `HTMLDialogElement.showModal()`. Accepts a CSS selector or HTMLElement.",
     },
     closeModal: {
-      type: ["string", "object"],
-      output: "object",
+      $ref: "#/$defs/_elementRef",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Closes a `<dialog>` via `HTMLDialogElement.close()`. Accepts a CSS selector or HTMLElement.",
     },
@@ -233,30 +246,30 @@ export class DomNode extends Node {
     },
     getElementById: {
       type: "string",
-      output: "object",
+      output: { $ref: "#/$defs/_element" },
       markdownDescription: "Returns the element with the given id via `document.getElementById`.",
     },
     querySelector: {
       type: "string",
-      output: "object",
+      output: { $ref: "#/$defs/_element" },
       markdownDescription: "Returns the first element matching a CSS selector.",
     },
     querySelectorAll: {
       type: "string",
-      output: "array",
+      output: { type: "array", items: { $ref: "#/$defs/_element" } },
       markdownDescription: "Returns all elements matching a CSS selector as an array.",
     },
     closest: {
       tuple: 2,
       prefixItems: [
-        { type: ["string", "object"], description: "The starting element: a CSS selector or an HTMLElement." },
+        { $ref: "#/$defs/_elementRef", description:"The starting element: a CSS selector or an HTMLElement." },
         { type: "string", description: "The ancestor selector to match." },
       ],
-      output: "object",
+      output: { $ref: "#/$defs/_element" },
       markdownDescription: "Walks up from an element to the nearest ancestor matching a selector. Pass `[element, selector]`.",
     },
     getBoundingClientRect: {
-      type: ["string", "object"],
+      $ref: "#/$defs/_elementRef",
       output: {
         type: "object",
         properties: {
@@ -292,30 +305,30 @@ export class DomNode extends Node {
       ],
     },
     getValue: {
-      type: ["string", "object"],
+      $ref: "#/$defs/_elementRef",
       output: "string",
       markdownDescription: "Gets the current `.value` of an input element.",
     },
     setValue: {
       tuple: 2,
       prefixItems: [
-        { type: ["string", "object"], description: "The input element: a CSS selector or an HTMLElement." },
+        { $ref: "#/$defs/_elementRef", description:"The input element: a CSS selector or an HTMLElement." },
         { description: "The value to set (assigned to `.value`, coerced to a string)." },
       ],
-      output: "object",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Sets the `.value` of an input element. Pass `[selectorOrElement, value]`.",
     },
     setRangeText: {
       tuple: [2, 5],
       prefixItems: [
-        { type: ["string", "object"], description: "The `<input>`/`<textarea>`: a CSS selector or an HTMLElement." },
+        { $ref: "#/$defs/_elementRef", description:"The `<input>`/`<textarea>`: a CSS selector or an HTMLElement." },
         { type: "string", description: "The replacement text." },
         { type: "number", description: "Start offset of the range to replace (pass with `end`)." },
         { type: "number", description: "End offset of the range to replace (pass with `start`)." },
         { type: "string", enum: ["select", "start", "end", "preserve"], description: "Where the selection lands afterward. Defaults to \"preserve\"." },
       ],
-      output: "object",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Replaces text in an `<input>`/`<textarea>` via `setRangeText()`, preserving the browser's native undo history (unlike setting `.value`, which clears it). Pass `[selectorOrElement, replacement]` to replace the current selection, or `[selectorOrElement, replacement, start, end, selectMode?]` to replace a specific range.",
       examples: [
@@ -324,55 +337,55 @@ export class DomNode extends Node {
       ],
     },
     select: {
-      type: ["string", "object"],
-      output: "object",
+      $ref: "#/$defs/_elementRef",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Selects all text in an `<input>`/`<textarea>` via `.select()`. Accepts a CSS selector or HTMLElement.",
     },
     setHtml: {
       tuple: 2,
       prefixItems: [
-        { type: ["string", "object"], description: "The element: a CSS selector or an HTMLElement." },
+        { $ref: "#/$defs/_elementRef", description:"The element: a CSS selector or an HTMLElement." },
         { type: "string", description: "The HTML string to set as `innerHTML`." },
       ],
-      output: "object",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Sets the `innerHTML` of an element. Pass `[selectorOrElement, html]`.",
     },
     setText: {
       tuple: 2,
       prefixItems: [
-        { type: ["string", "object"], description: "The element: a CSS selector or an HTMLElement." },
+        { $ref: "#/$defs/_elementRef", description:"The element: a CSS selector or an HTMLElement." },
         { type: "string", description: "The text to set as `textContent`." },
       ],
-      output: "object",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Sets the `textContent` of an element. Pass `[selectorOrElement, text]`.",
     },
     append: {
       tuple: 2,
       prefixItems: [
-        { type: ["string", "object"], description: "The element: a CSS selector or an HTMLElement." },
+        { $ref: "#/$defs/_elementRef", description:"The element: a CSS selector or an HTMLElement." },
         { type: "string", description: "The HTML string to append." },
       ],
-      output: "object",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Appends HTML to an element (`insertAdjacentHTML(\"beforeend\")`) and scrolls to the bottom. Pass `[selectorOrElement, html]`.",
     },
     removeEl: {
-      type: ["string", "object"],
+      $ref: "#/$defs/_elementRef",
       output: "null",
       markdownDescription: "Removes an element from the DOM via `Element.remove()`. Accepts a CSS selector or HTMLElement. (Named `removeEl` because `remove` is ArrayNode's element-removal op.)",
     },
     scrollTo: {
-      type: ["string", "object"],
-      output: "object",
+      $ref: "#/$defs/_elementRef",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Scrolls an element to its bottom by setting `scrollTop = scrollHeight`. Useful for chat containers.",
     },
     scrollIntoView: {
-      type: ["string", "object"],
-      output: "object",
+      $ref: "#/$defs/_elementRef",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Scrolls an element into view via `Element.scrollIntoView`. Accepts a CSS selector or HTMLElement.\nOptional siblings: `block` (`\"start\"` | `\"center\"` | `\"end\"` | `\"nearest\"`, default `\"center\"`) for vertical alignment, and `behavior` (`\"auto\"` | `\"smooth\"`, default `\"auto\"`) for animation.",
       examples: [
@@ -391,19 +404,19 @@ export class DomNode extends Node {
       },
     },
     play: {
-      type: ["string", "object"],
-      output: "object",
+      $ref: "#/$defs/_elementRef",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Plays an `<audio>`/`<video>` media element via `HTMLMediaElement.play()`. Accepts a CSS selector or HTMLElement. (For Web Audio sound effects, see the `audio-*` ops.)",
     },
     pause: {
-      type: ["string", "object"],
-      output: "object",
+      $ref: "#/$defs/_elementRef",
+      output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Pauses an `<audio>`/`<video>` media element via `HTMLMediaElement.pause()`. Accepts a CSS selector or HTMLElement.",
     },
     pointerLock: {
-      type: ["string", "object"],
+      $ref: "#/$defs/_elementRef",
       output: "null",
       markdownDescription: "Requests pointer lock on an element, resolving once the browser grants it. A refusal (no user gesture, or the document is not focused) rejects, so `$catch` can see it.\nRead the current state with `pointerLocked` rather than tracking it: the browser also drops the lock on its own when the user presses Escape.",
       examples: ["{ \"$pointerLock\": \"#canvas\" }"],

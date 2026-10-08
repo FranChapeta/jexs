@@ -773,12 +773,12 @@ export class PhysicsNode extends Node {
       ],
       siblings: {
         from: {
-          map: true,
+          $ref: "#/$defs/_vec",
           required: true,
           description: "Ray origin `{ x, y, z }`. `z` defaults to 0.",
         },
         dir: {
-          map: true,
+          $ref: "#/$defs/_vec",
           required: true,
           description: "Ray direction `{ x, y, z }`. `z` defaults to 0.",
         },

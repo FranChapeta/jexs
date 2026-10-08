@@ -79,7 +79,7 @@ const ENTITY_FIELDS: Record<string, P> = {
   fixed:   { type: "boolean", description: "Immovable body: it collides but is never moved by a collision." },
   visible: { type: "boolean", description: "Draw this entity (default `true`). Hiding one hides its children too." },
 
-  color:        vec("RGBA `[r, g, b, a]`, each 0 to 1 (default `[1, 1, 1, 1]`)."),
+  color:        { $ref: "#/$defs/_color", description: "RGBA `[r, g, b, a]`, each 0 to 1, alpha 1 if left out (default `[1, 1, 1, 1]`)." },
   uv:           vec("Texture sub-rect `[u, v, w, h]`, for drawing one frame out of an atlas."),
   opacity:      { type: "number", description: "Opacity from 0 to 1." },
   texture:      { type: "string", description: "Name of a texture loaded with `gl-texture`." },
@@ -401,7 +401,7 @@ export class EntityNode extends Node {
       const rotation = resolveRotation(r);
 
       if (slot === -1) {
-        const color    = (r["color"] ?? [1, 1, 1, 1]) as [number, number, number, number];
+        const color    = (r["color"] ?? [1, 1, 1, 1]) as number[];
         const mass     = r["mass"] !== undefined ? Number(r["mass"]) : 1;
         const vertices = r["vertices"] ? r["vertices"] as number[] : undefined;
         const uv       = r["uv"] ? r["uv"] as [number, number, number, number] : undefined;
@@ -439,8 +439,8 @@ export class EntityNode extends Node {
         const meta = store.meta[slot]!;
         meta.group = r["group"] ? String(r["group"]) : "default";
         meta.mask  = r["mask"]  ? r["mask"] as string[] : ["default"];
-        const color = (r["color"] ?? [1, 1, 1, 1]) as [number, number, number, number];
-        d[b + F_CR] = color[0]; d[b + F_CG] = color[1]; d[b + F_CB] = color[2]; d[b + F_CA] = color[3];
+        const color = (r["color"] ?? [1, 1, 1, 1]) as number[];
+        d[b + F_CR] = color[0]; d[b + F_CG] = color[1]; d[b + F_CB] = color[2]; d[b + F_CA] = color[3] ?? 1;
         if (translation) {
           d[b + F_TX] = translation[0];
           d[b + F_TY] = translation[1];
@@ -625,8 +625,8 @@ export class EntityNode extends Node {
             case "friction":    d[b + F_FRICTION]    = Number(v); break;
             case "damping":     d[b + F_DAMPING]     = Number(v); break;
             case "color": {
-              const c = v as [number, number, number, number];
-              d[b + F_CR] = c[0]; d[b + F_CG] = c[1]; d[b + F_CB] = c[2]; d[b + F_CA] = c[3];
+              const c = v as number[];
+              d[b + F_CR] = c[0]; d[b + F_CG] = c[1]; d[b + F_CB] = c[2]; d[b + F_CA] = c[3] ?? 1;
               meta.dirty |= DIRTY_VISUAL;
               break;
             }

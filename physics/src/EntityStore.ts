@@ -437,7 +437,8 @@ export class EntityStore {
       translation?: [number, number, number];
       scale?: [number, number, number];
       rotation?: [number, number, number, number]; // quaternion [qx,qy,qz,qw]
-      color?: [number, number, number, number];
+      /** `[r, g, b, a]`, alpha 1 if left out. */
+      color?: number[];
       vx?: number; vy?: number; vz?: number;
       ax?: number; ay?: number; az?: number;
       mass?: number; restitution?: number; friction?: number; damping?: number;
@@ -466,7 +467,7 @@ export class EntityStore {
 
     const c = numerics.color ?? [1, 1, 1, 1];
     d[base + F_CR] = c[0]; d[base + F_CG] = c[1];
-    d[base + F_CB] = c[2]; d[base + F_CA] = c[3];
+    d[base + F_CB] = c[2]; d[base + F_CA] = c[3] ?? 1;
 
     d[base + F_VX] = numerics.vx ?? 0;
     d[base + F_VY] = numerics.vy ?? 0;

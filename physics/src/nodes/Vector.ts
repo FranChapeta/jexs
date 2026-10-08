@@ -122,7 +122,7 @@ export class VectorNode extends Node {
     _vec: {
       type: "object",
       description: "A vector: `x` and `y`, plus `z` in 3D.",
-      properties: { x: { type: "number" }, y: { type: "number" }, z: { type: "number" } },
+      properties: { x: { $ref: "#/$defs/numOrExpr" }, y: { $ref: "#/$defs/numOrExpr" }, z: { $ref: "#/$defs/numOrExpr" } },
       required: ["x", "y"],
     },
   };
@@ -131,8 +131,8 @@ export class VectorNode extends Node {
     "v-distance": {
       tuple: 2,
       prefixItems: [
-        { type: "object", description: "First vector `a` (`{ x, y, z? }`)." },
-        { type: "object", description: "Second vector `b` (`{ x, y, z? }`)." },
+        { $ref: "#/$defs/_vec", description:"First vector `a` (`{ x, y, z? }`)." },
+        { $ref: "#/$defs/_vec", description:"Second vector `b` (`{ x, y, z? }`)." },
       ],
       output: "number",
       markdownDescription: "Returns the Euclidean distance between two vectors. Pass `[a, b]`.",
@@ -143,8 +143,8 @@ export class VectorNode extends Node {
     "v-lerp": {
       tuple: 3,
       prefixItems: [
-        { type: "object", description: "Start vector `a` (`{ x, y, z? }`)." },
-        { type: "object", description: "End vector `b` (`{ x, y, z? }`)." },
+        { $ref: "#/$defs/_vec", description:"Start vector `a` (`{ x, y, z? }`)." },
+        { $ref: "#/$defs/_vec", description:"End vector `b` (`{ x, y, z? }`)." },
         { type: "number", description: "Interpolation fraction `t` (0-1)." },
       ],
       output: { $ref: "#/$defs/_vec" },
@@ -156,8 +156,8 @@ export class VectorNode extends Node {
     "v-toward": {
       tuple: 3,
       prefixItems: [
-        { type: "object", description: "The starting vector `a` (`{ x, y, z? }`)." },
-        { type: "object", description: "The target vector `b` (`{ x, y, z? }`)." },
+        { $ref: "#/$defs/_vec", description:"The starting vector `a` (`{ x, y, z? }`)." },
+        { $ref: "#/$defs/_vec", description:"The target vector `b` (`{ x, y, z? }`)." },
         { type: "number", description: "Maximum distance to move toward `b`." },
       ],
       output: { $ref: "#/$defs/_vec" },
@@ -167,13 +167,14 @@ export class VectorNode extends Node {
       ],
     },
     "v-normalize": {
+      $ref: "#/$defs/_vec",
       output: { $ref: "#/$defs/_vec" },
       markdownDescription: "Returns the unit vector (length 1) in the same direction. Works in 2D and 3D.",
     },
     "v-scale": {
       tuple: 2,
       prefixItems: [
-        { type: "object", description: "The vector to scale (`{ x, y, z? }`)." },
+        { $ref: "#/$defs/_vec", description:"The vector to scale (`{ x, y, z? }`)." },
         { type: "number", description: "The scalar multiplier." },
       ],
       output: { $ref: "#/$defs/_vec" },
@@ -182,8 +183,8 @@ export class VectorNode extends Node {
     "v-add": {
       tuple: 2,
       prefixItems: [
-        { type: "object", description: "First vector `a` (`{ x, y, z? }`)." },
-        { type: "object", description: "Second vector `b` (`{ x, y, z? }`)." },
+        { $ref: "#/$defs/_vec", description:"First vector `a` (`{ x, y, z? }`)." },
+        { $ref: "#/$defs/_vec", description:"Second vector `b` (`{ x, y, z? }`)." },
       ],
       output: { $ref: "#/$defs/_vec" },
       markdownDescription: "Adds two vectors component-wise. Pass `[a, b]`. Works in 2D and 3D.",
@@ -191,8 +192,8 @@ export class VectorNode extends Node {
     "v-sub": {
       tuple: 2,
       prefixItems: [
-        { type: "object", description: "The minuend vector `a` (`{ x, y, z? }`)." },
-        { type: "object", description: "The subtrahend vector `b` (`{ x, y, z? }`)." },
+        { $ref: "#/$defs/_vec", description:"The minuend vector `a` (`{ x, y, z? }`)." },
+        { $ref: "#/$defs/_vec", description:"The subtrahend vector `b` (`{ x, y, z? }`)." },
       ],
       output: { $ref: "#/$defs/_vec" },
       markdownDescription: "Subtracts vector `b` from `a`. Pass `[a, b]`. Works in 2D and 3D.",
@@ -200,8 +201,8 @@ export class VectorNode extends Node {
     "v-direction": {
       tuple: 2,
       prefixItems: [
-        { type: "object", description: "The `from` vector (`{ x, y, z? }`)." },
-        { type: "object", description: "The `to` vector (`{ x, y, z? }`)." },
+        { $ref: "#/$defs/_vec", description:"The `from` vector (`{ x, y, z? }`)." },
+        { $ref: "#/$defs/_vec", description:"The `to` vector (`{ x, y, z? }`)." },
       ],
       output: { $ref: "#/$defs/_vec" },
       markdownDescription: "Returns the unit vector from `a` pointing toward `b`. Pass `[from, to]`.",
@@ -209,8 +210,8 @@ export class VectorNode extends Node {
     "v-cross": {
       tuple: 2,
       prefixItems: [
-        { type: "object", description: "First vector `a` (`{ x, y, z? }`)." },
-        { type: "object", description: "Second vector `b` (`{ x, y, z? }`)." },
+        { $ref: "#/$defs/_vec", description:"First vector `a` (`{ x, y, z? }`)." },
+        { $ref: "#/$defs/_vec", description:"Second vector `b` (`{ x, y, z? }`)." },
       ],
       output: { $ref: "#/$defs/_vec" },
       markdownDescription: "Returns the cross product of two vectors as a 3D vector. Pass `[a, b]`.",
@@ -218,8 +219,8 @@ export class VectorNode extends Node {
     "v-dot": {
       tuple: 2,
       prefixItems: [
-        { type: "object", description: "First vector `a` (`{ x, y, z? }`)." },
-        { type: "object", description: "Second vector `b` (`{ x, y, z? }`)." },
+        { $ref: "#/$defs/_vec", description:"First vector `a` (`{ x, y, z? }`)." },
+        { $ref: "#/$defs/_vec", description:"Second vector `b` (`{ x, y, z? }`)." },
       ],
       output: "number",
       markdownDescription: "Returns the scalar dot product of two vectors. Pass `[a, b]`. Works in 2D and 3D.",

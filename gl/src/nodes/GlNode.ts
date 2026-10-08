@@ -89,21 +89,23 @@ export let _glDebug = false;
 
 type P = JexsPropertySchema;
 const vec = (description: string): P => ({ type: "array", items: { type: "number" }, description });
+/** An rgb color, as `$toRgb`, `$lighten` and `$mix` return one. */
+const rgb = (description: string): P => ({ $ref: "#/$defs/_color", description });
 
 /** Lighting, sky, fog and post-processing: set by `gl-init` and changed later by `gl-camera`. */
 const SCENE_SIBLINGS: Record<string, P> = {
   lightDir:     vec("Directional light direction `[x, y, z]` (default `[-0.5, -0.7, -1]`)."),
-  lightColor:   vec("Directional light color `[r, g, b]`, each 0 to 1."),
+  lightColor:   rgb("Directional light color `[r, g, b]`, each 0 to 1."),
   ambient:      { type: "number", description: "Ambient light strength." },
-  ambientColor: vec("Ambient light color `[r, g, b]`, each 0 to 1."),
+  ambientColor: rgb("Ambient light color `[r, g, b]`, each 0 to 1."),
   shininess:    { type: "number", description: "Specular exponent for lit surfaces." },
-  skyTop:       vec("Top color `[r, g, b]` of the procedural sky gradient, drawn when both `skyTop` and `skyBottom` are set."),
-  skyBottom:    vec("Bottom color `[r, g, b]` of the procedural sky gradient."),
+  skyTop:       rgb("Top color `[r, g, b]` of the procedural sky gradient, drawn when both `skyTop` and `skyBottom` are set."),
+  skyBottom:    rgb("Bottom color `[r, g, b]` of the procedural sky gradient."),
   skybox: {
     type: ["string", "object", "boolean"],
     description: "Equirectangular environment sky, drawn in place of the gradient: a texture name loaded with `gl-texture`, `{ texture, intensity, rotation }` (defaults 1 and 0), or `false` to remove it.",
   },
-  fogColor: vec("Fog color `[r, g, b]`, each 0 to 1."),
+  fogColor: rgb("Fog color `[r, g, b]`, each 0 to 1."),
   fogNear:  { type: "number", description: "Distance where fog starts." },
   fogFar:   { type: "number", description: "Distance where fog is total." },
   ortho:    { type: "boolean", description: "Use an orthographic projection instead of a perspective one." },
@@ -165,13 +167,7 @@ export class GlNode extends Node {
           type: "number",
           description: "Logical canvas height in pixels.",
         },
-        clear: {
-          type: "array",
-          items: {
-            type: "number",
-          },
-          description: "Background clear color as `[r, g, b, a]` (default `[0,0,0,1]`).",
-        },
+        clear: rgb("Background clear color as `[r, g, b, a]` (default `[0,0,0,1]`)."),
         depth: {
           type: "boolean",
           description: "Enable depth testing for 3D rendering.",
@@ -485,13 +481,7 @@ export class GlNode extends Node {
           type: "number",
           description: "Trail line width in pixels (default `2`).",
         },
-        color: {
-          type: "array",
-          items: {
-            type: "number",
-          },
-          description: "Trail color as `[r, g, b, a]`.",
-        },
+        color: rgb("Trail color as `[r, g, b, a]`."),
       },
     },
     "gl-trail-remove": {
@@ -508,9 +498,11 @@ export class GlNode extends Node {
       ],
       siblings: {
         from: {
+          $ref: "#/$defs/_vec",
           description: "Origin vector `{x, y, z?}`.",
         },
         dir: {
+          $ref: "#/$defs/_vec",
           description: "Direction vector `{x, y, z?}`.",
         },
         mask: {
@@ -661,6 +653,10 @@ export class GlNode extends Node {
       examples: [
         "{ \"$gl-particle\": true, \"x\": 100, \"y\": 200, \"count\": 30, \"speed\": 5, \"life\": 1, \"color\": [1,0.5,0,1] }",
       ],
+      siblings: {
+        color: rgb("Particle color at birth, `[r, g, b, a]` (default `[1, 1, 1, 1]`)."),
+        colorEnd: rgb("Particle color at death, faded to it over its life (default the birth color with alpha 0)."),
+      },
     },
   };
 

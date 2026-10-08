@@ -28,19 +28,22 @@ export class ColorNode extends Node {
   static schemaDefs = {
     _color: {
       type: "array",
-      items: { type: "number" },
-      minItems: 4,
+      items: { $ref: "#/$defs/numOrExpr" },
+      minItems: 3,
       maxItems: 4,
-      description: "A color as four numbers: rgb `[r, g, b, a]` with each 0..1, or hsl `[h, s, l, a]` with h 0-360, s and l 0-100, and alpha 0..1.",
+      description: "A color as numbers: rgb `[r, g, b, a]` with each 0..1, or hsl `[h, s, l, a]` with h 0-360, s and l 0-100, and alpha 0..1 (1 when left out). Ops that return a color always include alpha.",
+    },
+    _colorValue: {
+      anyOf: [
+        { type: "string", description: "A hex color: `#rgb`, `#rgba`, `#rrggbb` or `#rrggbbaa`." },
+        { $ref: "#/$defs/_color" },
+      ],
     },
   };
 
   static schema: JexsNodeSchema = {
     toRgb: {
-      type: [
-        "string",
-        "array",
-      ],
+      $ref: "#/$defs/_colorValue",
       output: { $ref: "#/$defs/_color" },
       markdownDescription: "Parses a color into an rgb array `[r, g, b, a]` (components 0..1). Accepts a hex string (`#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`) or an array interpreted per `format`.",
       examples: [
@@ -49,10 +52,7 @@ export class ColorNode extends Node {
       ],
     },
     toHsl: {
-      type: [
-        "string",
-        "array",
-      ],
+      $ref: "#/$defs/_colorValue",
       output: { $ref: "#/$defs/_color" },
       markdownDescription: "Converts a color to an hsl array `[h, s, l, a]` (h 0-360, s/l 0-100). Accepts a hex string or an array interpreted per `format`.",
       examples: [
@@ -60,10 +60,7 @@ export class ColorNode extends Node {
       ],
     },
     toHex: {
-      type: [
-        "string",
-        "array",
-      ],
+      $ref: "#/$defs/_colorValue",
       output: "string",
       markdownDescription: "Converts a color to a hex string. Emits `#rrggbb`, or `#rrggbbaa` when alpha is below 1.",
       examples: [
@@ -73,7 +70,7 @@ export class ColorNode extends Node {
     lighten: {
       tuple: 2,
       prefixItems: [
-        { type: ["string", "array"], description: "The color: a hex string or an array in the `format` space." },
+        { $ref: "#/$defs/_colorValue", description: "The color: a hex string or an array in the `format` space." },
         { type: "number", description: "Amount to lighten (0..1 fraction of the full range)." },
       ],
       output: { $ref: "#/$defs/_color" },
@@ -85,7 +82,7 @@ export class ColorNode extends Node {
     darken: {
       tuple: 2,
       prefixItems: [
-        { type: ["string", "array"], description: "The color: a hex string or an array in the `format` space." },
+        { $ref: "#/$defs/_colorValue", description: "The color: a hex string or an array in the `format` space." },
         { type: "number", description: "Amount to darken (0..1 fraction of the full range)." },
       ],
       output: { $ref: "#/$defs/_color" },
@@ -97,8 +94,8 @@ export class ColorNode extends Node {
     mix: {
       tuple: 3,
       prefixItems: [
-        { type: ["string", "array"], description: "First color `a` (returned when `t` is 0)." },
-        { type: ["string", "array"], description: "Second color `b` (returned when `t` is 1)." },
+        { $ref: "#/$defs/_colorValue", description: "First color `a` (returned when `t` is 0)." },
+        { $ref: "#/$defs/_colorValue", description: "Second color `b` (returned when `t` is 1)." },
         { type: "number", description: "Blend fraction `t` (0..1)." },
       ],
       output: { $ref: "#/$defs/_color" },
@@ -108,10 +105,7 @@ export class ColorNode extends Node {
       ],
     },
     luminance: {
-      type: [
-        "string",
-        "array",
-      ],
+      $ref: "#/$defs/_colorValue",
       output: "number",
       markdownDescription: "WCAG relative luminance of a color, 0 (black) to 1 (white).",
       examples: [
@@ -121,8 +115,8 @@ export class ColorNode extends Node {
     contrast: {
       tuple: 2,
       prefixItems: [
-        { type: ["string", "array"], description: "First color: a hex string or an array in the `format` space." },
-        { type: ["string", "array"], description: "Second color: a hex string or an array in the `format` space." },
+        { $ref: "#/$defs/_colorValue", description: "First color: a hex string or an array in the `format` space." },
+        { $ref: "#/$defs/_colorValue", description: "Second color: a hex string or an array in the `format` space." },
       ],
       output: "number",
       markdownDescription: "WCAG contrast ratio between two colors: `(Llighter + 0.05) / (Ldarker + 0.05)`, from 1 (identical) to 21 (black on white). Tuple form `[a, b]`, where order does not matter.",
