@@ -716,6 +716,14 @@ const cases: Case[] = [
   { label: "a step may carry an empty key", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $var: "a", "": 1 } },
 
+  // A slot of several types takes a step returning any of them.
+  { label: "boolean-or-string slot from a boolean-output step", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $tag: "div", hidden: { $not: { $var: "open" } } } },
+  { label: "number-or-string slot from a number-output step", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $tag: "div", tabindex: { $add: [1, 2] } } },
+  { label: "string-or-boolean slot from a var", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { "$window-close": { $var: "w" } } },
+
   // A step is validated through exprFlat; its byKey entry checks the siblings
   // only, leaving the primary value to exprFlat (each value checked once).
   { label: "byKey alone leaves the primary value to exprFlat", schemaRef: "byKey/eq", expectValid: true,
@@ -726,6 +734,12 @@ const cases: Case[] = [
     expr: { $menu: [{ $fetch: "/menu.json", full: true }] } },
   { label: "query rows from an op returning a number", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { $query: "insert", table: "t", data: { $length: "abc" } } },
+  { label: "boolean-or-string slot from an array-output step", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $tag: "div", hidden: { $keys: { $var: "o" } } } },
+  { label: "number-or-string slot from a boolean-output step", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $tag: "div", tabindex: { $eq: [1, 1] } } },
+  { label: "string-or-boolean slot from a number-output step", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "$window-close": { $length: "abc" } } },
   { label: "eq tuple too short", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { $eq: [1] } },
   { label: "between tuple too short", schemaRef: "$defs/exprFlat", expectValid: false,

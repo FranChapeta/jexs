@@ -131,6 +131,25 @@ const FILTERED_REF: Record<Exclude<JexsType, "object">, EmittedSchema> = {
 
 export type EmittedSchema = Record<string, unknown>;
 
+/** The `exprFlat` variants a package's slots point at beyond the one per type,
+ *  recorded as the slots are expanded so the merge builds exactly those: one per
+ *  Node def a slot is typed by, and one per set of types a slot takes several of. */
+export interface StepVariants {
+  defs: string[];
+  typeSets: JexsType[][];
+}
+
+/** StepVariants while they are collected, keyed so each is recorded once. */
+interface Needs {
+  defs: Set<string>;
+  typeSets: Map<string, JexsType[]>;
+}
+
+/** The name of the variant for a slot taking any of `types`: `boolean_string`. */
+function typeSetName(types: readonly JexsType[]): string {
+  return [...new Set(types)].sort().join("_");
+}
+
 const METADATA_KEYS = ["description", "markdownDescription", "examples", "default"] as const;
 
 function liftMetadata(prop: JexsPropertySchema, target: EmittedSchema): void {
@@ -153,8 +172,9 @@ function typeOrExprRef(t: JexsType): EmittedSchema {
 /**
  * Transforms an author-facing JexsPropertySchema into an emitted JSON Schema
  * fragment. Markers like `tuple`, `map`, `steps`, `literal` are resolved away.
+ * The `exprFlat` variants it points steps at are recorded in `needs`.
  */
-export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
+export function expandProperty(prop: JexsPropertySchema, needs: Needs): EmittedSchema {
   if (prop.default !== undefined && prop.enum && !prop.enum.includes(prop.default)) {
     throw new Error(`default ${JSON.stringify(prop.default)} is not one of the enum values ${JSON.stringify(prop.enum)}.`);
   }
@@ -167,7 +187,9 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
   // tell steps from data themselves.
   if (prop.$ref) {
     const def = nodeDefName(prop.$ref);
-    const out: EmittedSchema = def !== undefined && !prop.literal
+    const takesSteps = def !== undefined && !prop.literal;
+    if (takesSteps) needs.defs.add(def);
+    const out: EmittedSchema = takesSteps
       ? { if: NAMES_NO_OP, then: { $ref: prop.$ref }, else: { $ref: `#/$defs/exprFlat_${def}` } }
       : { $ref: prop.$ref };
     liftMetadata(prop, out);
@@ -184,7 +206,7 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
     const props: Record<string, EmittedSchema> = {};
     const required: string[] = [];
     for (const [k, v] of Object.entries(prop.properties)) {
-      props[k] = expandNested(v, `nested property "${k}"`);
+      props[k] = expandNested(v, `nested property "${k}"`, needs);
       if (v.required) required.push(k);
     }
     const shape: EmittedSchema = {
@@ -215,7 +237,7 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
     // list — a variadic tail, when `max` exceeds its length — fall back to anyVal;
     // without a prefix, every slot is anyVal (any literal OR expression).
     if (prop.prefixItems) {
-      out.prefixItems = prop.prefixItems.map((p, i) => expandNested(p, `tuple slot ${i}`));
+      out.prefixItems = prop.prefixItems.map((p, i) => expandNested(p, `tuple slot ${i}`, needs));
       if (max > prop.prefixItems.length) out.items = { ...REF.anyVal };
     } else {
       out.items = { ...REF.anyVal };
@@ -269,15 +291,18 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
       liftMetadata(prop, out);
       return out;
     }
-    // type-or-expr: literal type accepted; else fall back to unfiltered exprFlat
-    // (a multi-type slot's output-type filter is ambiguous, so no narrowing).
+    // type-or-expr: literal type accepted; else a step returning one of the
+    // types, through the variant the merge builds for this set of them.
     const scalars = types.filter(t => t !== "object" && t !== "array");
     const literalBranch: EmittedSchema = prop.enum && scalars.includes("string")
       ? { if: { type: "string" }, then: { enum: [...prop.enum] }, else: {} }
       : {};
+    const set = typeSetName(types);
+    if (set.includes("_")) needs.typeSets.set(set, types);
+    const steps: EmittedSchema = { $ref: `#/$defs/exprFlat_${set}` };
     let out: EmittedSchema = scalars.length > 0
-      ? { if: { type: scalars }, then: literalBranch, else: { ...REF.exprFlat } }
-      : { ...REF.exprFlat };
+      ? { if: { type: scalars }, then: literalBranch, else: steps }
+      : steps;
     if (types.includes("array")) out = { if: { type: "array" }, then: { items: { ...REF.anyVal } }, else: out };
     if (types.includes("object")) out = { if: { type: "object", ...IS_DATA }, then: { ...REF.dataVal }, else: out };
     liftMetadata(prop, out);
@@ -310,7 +335,7 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
   if (prop.literal && prop.type) {
     const out: EmittedSchema = { type: prop.type };
     if (prop.enum) out.enum = [...prop.enum];
-    if (prop.items && prop.type === "array") out.items = expandNested(prop.items, "items");
+    if (prop.items && prop.type === "array") out.items = expandNested(prop.items, "items", needs);
     liftMetadata(prop, out);
     return out;
   }
@@ -318,7 +343,7 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
   if (prop.type === "array" && prop.items) {
     const out: EmittedSchema = {
       if: { type: "array" },
-      then: { items: expandNested(prop.items, "items") },
+      then: { items: expandNested(prop.items, "items", needs) },
       else: { ...FILTERED_REF.array },
     };
     liftMetadata(prop, out);
@@ -339,11 +364,11 @@ export function expandProperty(prop: JexsPropertySchema): EmittedSchema {
 /** A value inside a property (a nested key, an array item, a tuple slot). Variants
  *  select through a step's own keys, so one declared down here could never be
  *  selected and is rejected rather than silently ignored. */
-function expandNested(prop: JexsPropertySchema, where: string): EmittedSchema {
+function expandNested(prop: JexsPropertySchema, where: string, needs: Needs): EmittedSchema {
   if (prop.variants) {
     throw new Error(`variants are valid on a method's primary key, its siblings and its variants, not on a ${where}.`);
   }
-  return expandProperty(prop);
+  return expandProperty(prop, needs);
 }
 
 // ── Package schema build ───────────────────────────────────────────────────────
@@ -369,6 +394,8 @@ export interface PackageSchema {
    *  (own + per-variant + the Node's `commonSiblings`). Documentation only: the
    *  validating form of the same information is `properties`/`allOf`/`$ref`. */
   siblingDocs?: Record<string, SiblingDoc[]>;
+  /** The `exprFlat` variants this package's slots point at, for the merge to build. */
+  stepVariants?: StepVariants;
 }
 
 export interface EmittedMethodSchema {
@@ -688,23 +715,23 @@ function descendants(scope: Scope): Scope[] {
  * ElementNode's `content`, which routes children to exprFlat) or an earlier
  * variant's stub must survive, with this variant's shape layered on top.
  */
-function emitMethod(methodKey: string, root: Scope, common: ReadonlySet<string>): EmittedMethodSchema {
-  const properties: Record<string, EmittedSchema> = { [KEY_PREFIX + methodKey]: expandProperty(root.schema) };
+function emitMethod(methodKey: string, root: Scope, common: ReadonlySet<string>, needs: Needs): EmittedMethodSchema {
+  const properties: Record<string, EmittedSchema> = { [KEY_PREFIX + methodKey]: expandProperty(root.schema, needs) };
   const required: string[] = [];
   const allOf: EmittedSchema[] = [];
 
   for (const scope of [root, ...descendants(root)]) {
-    if (scope.trigger) properties[scope.name] = expandProperty(scope.schema);
+    if (scope.trigger) properties[scope.name] = expandProperty(scope.schema, needs);
     const gated: Record<string, EmittedSchema> = {};
     const gatedRequired: string[] = [];
     for (const [k, v] of Object.entries(scope.schema.siblings ?? {})) {
       if (!scope.cond) {
-        properties[k] = expandProperty(v);
+        properties[k] = expandProperty(v, needs);
         if (v.required) required.push(k);
         continue;
       }
       if (!(k in properties)) properties[k] = {};
-      gated[k] = expandProperty(v);
+      gated[k] = expandProperty(v, needs);
       if (v.required) gatedRequired.push(k);
     }
     if (scope.cond && Object.keys(gated).length > 0) {
@@ -992,6 +1019,7 @@ export function buildPackageSchema(
   const nodeSiblingsRef: Record<string, string> = {};
   /** method key → its siblings with prose, for documentation consumers. */
   const siblingDocs: Record<string, SiblingDoc[]> = {};
+  const needs: Needs = { defs: new Set(), typeSets: new Map() };
 
   for (const n of nodes) {
     // Resolve to the class (constructor) — works for both instances and classes.
@@ -1012,7 +1040,7 @@ export function buildPackageSchema(
         if (v.variants) {
           throw new Error(`${nodeClass}: commonSiblings "${k}" declares variants; declare it on each method's siblings instead.`);
         }
-        expandedProps[k] = expandProperty(v);
+        expandedProps[k] = expandProperty(v, needs);
       }
       extraDefs[siblingsDefName] = { properties: expandedProps };
       nodeSiblingsRef[nodeClass] = `#/$defs/${siblingsDefName}`;
@@ -1027,7 +1055,7 @@ export function buildPackageSchema(
         continue;
       }
       const root = normalizeMethod(methodKey, withOutputTypes(method, cls.schemaDefs ?? {}, `${nodeClass}.${methodKey}`));
-      const entry = emitMethod(methodKey, root, new Set(Object.keys(nodeCommonSiblings ?? {})));
+      const entry = emitMethod(methodKey, root, new Set(Object.keys(nodeCommonSiblings ?? {})), needs);
       // 2020-12 evaluates $ref siblings, so the local `properties` (primary key)
       // applies in addition to the shared siblings block from the ref'd schema.
       const ref = nodeSiblingsRef[nodeClass];
@@ -1063,6 +1091,9 @@ export function buildPackageSchema(
   if (Object.keys(extraDefs).length > 0) out.extraDefs = extraDefs;
   if (Object.keys(keyNode).length > 0) out.keyNode = keyNode;
   if (Object.keys(siblingDocs).length > 0) out.siblingDocs = siblingDocs;
+  if (needs.defs.size > 0 || needs.typeSets.size > 0) {
+    out.stepVariants = { defs: [...needs.defs], typeSets: [...needs.typeSets.values()] };
+  }
   return out;
 }
 
@@ -1284,8 +1315,11 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
   const extraDefs: Record<string, EmittedSchema> = {};
   const collisions: string[] = [];
   const siblingDocs: Record<string, SiblingDoc[]> = {};
+  const needs: Needs = { defs: new Set(), typeSets: new Map() };
 
   for (const pkg of packages) {
+    for (const def of pkg.stepVariants?.defs ?? []) needs.defs.add(def);
+    for (const types of pkg.stepVariants?.typeSets ?? []) needs.typeSets.set(typeSetName(types), types);
     for (const [k, v] of Object.entries(pkg.byKey)) {
       if (k in byKey) {
         collisions.push(`Handler key "${k}" appears in multiple packages.`);
@@ -1494,9 +1528,9 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
     const type = typeOf(m);
     return type !== undefined ? o => o.split(":")[0] === type : undefined;
   };
-  const slots = JSON.stringify({ byKey, vp, extraDefs });
-  for (const [name, def] of Object.entries(extraDefs)) {
-    if (!slots.includes(`"#/$defs/exprFlat_${name}"`)) continue;
+  for (const name of needs.defs) {
+    const def = extraDefs[name];
+    if (def === undefined) continue;
     const type = typeOf(def);
     if (type !== undefined) {
       // A subset of its type's steps, so it extends the type's variant and lists
@@ -1516,6 +1550,14 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
     const fits = (o: string): boolean => tests.some(t => t(o));
     const decisions = decide(fits);
     if (!fits("null")) decisions.set(KEY_PREFIX + "then", false);
+    filteredVariants[`exprFlat_${name}`] = variant("exprFlat", decisions);
+  }
+
+  // A slot of several types takes a step returning any of them, through the
+  // variant named after the set (`exprFlat_boolean_string`, see expandProperty).
+  for (const [name, types] of needs.typeSets) {
+    const decisions = decide(o => types.some(t => t === o.split(":")[0]));
+    if (!types.includes("null")) decisions.set(KEY_PREFIX + "then", false);
     filteredVariants[`exprFlat_${name}`] = variant("exprFlat", decisions);
   }
 
