@@ -46,10 +46,29 @@ export function getValidator(schema: object): ValidateFunction {
   return fn;
 }
 
+/** An error's instance path, dotted, `""` for the document root. */
+function pathOf(err: ErrorObject): string {
+  return err.instancePath ? err.instancePath.replace(/^\//, "").replace(/\//g, ".") : "";
+}
+
+/** An error's message, naming the property where Ajv's own leaves it out. */
+function messageOf(err: ErrorObject): string {
+  const { additionalProperty, propertyName } = err.params;
+  if (err.keyword === "additionalProperties" && typeof additionalProperty === "string") {
+    return `must not have property "${additionalProperty}"`;
+  }
+  if (err.keyword === "propertyNames" && typeof propertyName === "string") {
+    return `must not have a property named "${propertyName}"`;
+  }
+  if (err.keyword === "false schema") return "is not allowed here";
+  // A failure inside `propertyNames` is about one name, held on the error itself.
+  if (err.propertyName !== undefined) return `property name "${err.propertyName}" ${err.message ?? "is invalid"}`;
+  return err.message ?? "is invalid";
+}
+
 function formatError(err: ErrorObject): string {
-  const path = err.instancePath ? err.instancePath.replace(/^\//, "").replace(/\//g, ".") : "";
-  const where = path ? `"${path}" ` : "";
-  return `${where}${err.message ?? "is invalid"}`.trim();
+  const path = pathOf(err);
+  return `${path ? `"${path}" ` : ""}${messageOf(err)}`;
 }
 
 export interface ValidationResult {
@@ -94,10 +113,6 @@ export function validateDetailed(schema: object, data: unknown): DetailedValidat
   const fn = getValidator(schema);
   const valid = fn(data) as boolean;
   if (valid) return { valid: true, errors: [] };
-  const errors = (fn.errors ?? []).map(err => ({
-    path: err.instancePath ? err.instancePath.replace(/^\//, "").replace(/\//g, ".") : "",
-    message: err.message ?? "is invalid",
-    keyword: err.keyword,
-  }));
+  const errors = (fn.errors ?? []).map(err => ({ path: pathOf(err), message: messageOf(err), keyword: err.keyword }));
   return { valid: false, errors };
 }
