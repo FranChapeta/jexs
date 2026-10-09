@@ -39,6 +39,8 @@ type P = JexsPropertySchema;
 
 /** A numeric vector sibling; the arity lives in the description. */
 const vec = (description: string): P => ({ type: "array", items: { type: "number" }, description });
+/** A position or direction, as the `$v-*` ops take and return one. */
+const point = (description: string): P => ({ $ref: "#/$defs/_vec", description });
 
 /**
  * Every writable field on an entity, shared by `entity-add` and `entity-update`.
@@ -53,13 +55,13 @@ const ENTITY_FIELDS: Record<string, P> = {
   vertices: { type: "array", items: { type: "number" }, description: "Flat vertex list, for the `line`, `line-strip` and `points` types." },
   parent:   { type: "string", description: "Id of a parent entity: this entity's transform becomes relative to it. Pass an empty value to detach." },
 
-  translation: vec("Position `[x, y, z]` (default `[0, 0, 0]`). This is the position field; there is no `x`/`y`."),
-  scale:       vec("Size `[sx, sy, sz]` (default `[1, 1, 1]`). This is the size field; there is no `w`/`h`."),
+  translation: point("Position `[x, y, z]` (default `[0, 0, 0]`), or `[x, y]` to leave z as it is (0 on a new entity). This is the position field; there is no `x`/`y`."),
+  scale:       point("Size `[sx, sy, sz]` (default `[1, 1, 1]`), or `[sx, sy]` to leave the depth as it is (0, flat, on a new entity; a mesh keeps its own). This is the size field; there is no `w`/`h`."),
   rotation:    vec("Rotation quaternion `[qx, qy, qz, qw]` (default `[0, 0, 0, 1]`)."),
   angle:       { type: "number", description: "Z-axis rotation in degrees, converted to `rotation` for you." },
   rx:          { type: "number", description: "X-axis rotation in degrees, converted to `rotation` for you." },
   ry:          { type: "number", description: "Y-axis rotation in degrees, converted to `rotation` for you." },
-  "rotation-velocity": vec("Derive `rotation` from a velocity vector `[x, y, z]`, so the entity faces the way it travels."),
+  "rotation-velocity": point("Derive `rotation` from a velocity vector `[x, y, z]`, so the entity faces the way it travels."),
 
   vx: { type: "number", description: "Velocity along X." },
   vy: { type: "number", description: "Velocity along Y." },
@@ -149,8 +151,8 @@ function quatFromVelocity(vx: number, vy: number, vz: number): [number, number, 
 function resolveRotation(r: Record<string, unknown>): [number, number, number, number] | undefined {
   if (r["rotation"] !== undefined) return r["rotation"] as [number, number, number, number];
   if (r["rotation-velocity"] !== undefined) {
-    const v = r["rotation-velocity"] as [number, number, number];
-    return quatFromVelocity(v[0], v[1], v[2]);
+    const v = r["rotation-velocity"] as number[];
+    return quatFromVelocity(v[0], v[1], v[2] ?? 0);
   }
   if (r["angle"] !== undefined) return angleToQuat(Number(r["angle"]));
   if (r["rx"] !== undefined) return rxToQuat(Number(r["rx"]));
@@ -249,23 +251,17 @@ export class EntityNode extends Node {
     "entity-move": {
       type: "string",
       output: "null",
-      markdownDescription: "Updates `x`, `y`, and/or `angle` on an entity. Cheaper than `entity-update` for transform-only changes.",
+      markdownDescription: "Moves and/or turns an entity: its `translation`, and its `rotation` or one of the shorthands that build it. Cheaper than `entity-update` for transform-only changes.",
       examples: [
-        "{ \"$entity-move\": \"player\", \"x\": { \"$var\": \"x\" }, \"y\": { \"$var\": \"y\" } }",
+        "{ \"$entity-move\": \"player\", \"translation\": { \"$v-add\": [{ \"$entity-get\": \"player\", \"prop\": \"translation\" }, [4, 0]] } }",
       ],
       siblings: {
-        x: {
-          type: "number",
-          description: "New X position.",
-        },
-        y: {
-          type: "number",
-          description: "New Y position.",
-        },
-        angle: {
-          type: "number",
-          description: "New rotation angle in radians.",
-        },
+        translation: ENTITY_FIELDS.translation,
+        rotation: ENTITY_FIELDS.rotation,
+        angle: ENTITY_FIELDS.angle,
+        rx: ENTITY_FIELDS.rx,
+        ry: ENTITY_FIELDS.ry,
+        "rotation-velocity": ENTITY_FIELDS["rotation-velocity"],
       },
     },
     "entity-update": {
@@ -385,15 +381,18 @@ export class EntityNode extends Node {
         meshSZ = meshEntry!.bounds.max[2] - meshEntry!.bounds.min[2];
       }
 
+      // A 2D `[x, y]` puts a new entity at z 0 and keeps it flat; a mesh's
+      // multiplier without z keeps the mesh's own depth.
       let translation: [number, number, number] | undefined;
       if (r["translation"] !== undefined) {
-        translation = r["translation"] as [number, number, number];
+        const t = r["translation"] as number[];
+        translation = [t[0], t[1], t[2] ?? 0];
       }
 
       let scale: [number, number, number] | undefined;
       if (r["scale"] !== undefined) {
-        const s = r["scale"] as [number, number, number];
-        scale = useMeshBounds ? [meshSX * s[0], meshSY * s[1], meshSZ * s[2]] : s;
+        const s = r["scale"] as number[];
+        scale = useMeshBounds ? [meshSX * s[0], meshSY * s[1], meshSZ * (s[2] ?? 1)] : [s[0], s[1], s[2] ?? 0];
       } else if (useMeshBounds) {
         scale = [meshSX, meshSY, meshSZ];
       }
@@ -544,9 +543,9 @@ export class EntityNode extends Node {
       const meta = store.meta[slot]!;
 
       if (r["translation"] !== undefined) {
-        const t = r["translation"] as [number, number, number];
-        d[b + F_TX] = t[0]; d[b + F_TY] = t[1]; d[b + F_TZ] = t[2];
-        if (t[2] !== undefined) { meta.dirty |= DIRTY_Z; store.zDirty = true; store.zDirtyCount++; }
+        const t = r["translation"] as number[];
+        d[b + F_TX] = t[0]; d[b + F_TY] = t[1];
+        if (t[2] !== undefined) { d[b + F_TZ] = t[2]; meta.dirty |= DIRTY_Z; store.zDirty = true; store.zDirtyCount++; }
       }
       const rot = resolveRotation(r);
       if (rot) {
@@ -579,15 +578,16 @@ export class EntityNode extends Node {
         const v = r[key];
           switch (key) {
             case "translation": {
-              const t = v as [number, number, number];
-              d[b + F_TX] = t[0]; d[b + F_TY] = t[1]; d[b + F_TZ] = t[2];
-              meta.dirty |= DIRTY_TRANSFORM | DIRTY_Z;
-              store.zDirty = true; store.zDirtyCount++;
+              const t = v as number[];
+              d[b + F_TX] = t[0]; d[b + F_TY] = t[1];
+              meta.dirty |= DIRTY_TRANSFORM;
+              if (t[2] !== undefined) { d[b + F_TZ] = t[2]; meta.dirty |= DIRTY_Z; store.zDirty = true; store.zDirtyCount++; }
               break;
             }
             case "scale": {
-              const s = v as [number, number, number];
-              d[b + F_SX] = s[0]; d[b + F_SY] = s[1]; d[b + F_SZ] = s[2];
+              const s = v as number[];
+              d[b + F_SX] = s[0]; d[b + F_SY] = s[1];
+              if (s[2] !== undefined) d[b + F_SZ] = s[2];
               meta.dirty |= DIRTY_TRANSFORM;
               break;
             }

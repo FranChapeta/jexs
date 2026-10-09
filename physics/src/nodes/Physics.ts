@@ -755,7 +755,7 @@ export class PhysicsNode extends Node {
       ],
       siblings: {
         impulse: {
-          type: "array",
+          $ref: "#/$defs/_vec",
           description: "Impulse vector `[x, y, z]`. Omit `z` for 2D worlds.",
         },
       },
@@ -1072,14 +1072,12 @@ export class JointNode extends Node {
           description: "ID of second entity.",
         },
         anchorA: {
-          type: "array",
-          items: { type: "number" },
-          description: "Attachment point on A as an `[x, y]` offset from its position (default `[0, 0]`).",
+          $ref: "#/$defs/_vec",
+          description: "Attachment point on A as an `[x, y]` offset from its position (default `[0, 0]`). Joints are 2D, so a `z` is ignored.",
         },
         anchorB: {
-          type: "array",
-          items: { type: "number" },
-          description: "Attachment point on B as an `[x, y]` offset from its position (default `[0, 0]`).",
+          $ref: "#/$defs/_vec",
+          description: "Attachment point on B as an `[x, y]` offset from its position (default `[0, 0]`). Joints are 2D, so a `z` is ignored.",
         },
       },
     },

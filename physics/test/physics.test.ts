@@ -39,6 +39,28 @@ test("a raycast takes array vectors and reports where it hit as one", async () =
   }
 });
 
+// A 2D vector puts a new entity at z 0 and flat, and leaves an existing one's
+// z and depth as they are.
+test("a 2D translation or scale leaves z as it is", async () => {
+  const r = physicsResolver();
+  try {
+    const context: Context = {};
+    const get = (prop: string) => r({ "$entity-get": "a", prop }, context);
+    await r({ "$entity-init": "#game" }, context);
+    await r({ "$entity-add": "a", type: "quad", translation: [1, 2], scale: [3, 4] }, context);
+    assert.deepEqual(await get("translation"), [1, 2, 0]);
+    assert.deepEqual(await get("scale"), [3, 4, 0]);
+    await r({ "$entity-update": "a", translation: [0, 0, 5], scale: [1, 1, 2] }, context);
+    await r({ "$entity-update": "a", translation: [7, 8], scale: [9, 9] }, context);
+    assert.deepEqual(await get("translation"), [7, 8, 5]);
+    assert.deepEqual(await get("scale"), [9, 9, 2]);
+    await r({ "$entity-move": "a", translation: [1, 1] }, context);
+    assert.deepEqual(await get("translation"), [1, 1, 5]);
+  } finally {
+    r.destroy();
+  }
+});
+
 test("an entity color given without alpha is opaque", async () => {
   const r = physicsResolver();
   try {

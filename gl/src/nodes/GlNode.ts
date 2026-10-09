@@ -88,9 +88,16 @@ let _glPerfLastLog = 0;
 export let _glDebug = false;
 
 type P = JexsPropertySchema;
-const vec = (description: string): P => ({ type: "array", items: { type: "number" }, description });
+/** A 3D position or direction, as the `$v-*` ops take and return one; z is 0 if left out. */
+const vec = (description: string): P => ({ $ref: "#/$defs/_vec", description });
 /** An rgb color, as `$toRgb`, `$lighten` and `$mix` return one. */
 const rgb = (description: string): P => ({ $ref: "#/$defs/_color", description });
+
+/** A resolved `_vec` as the renderer's `[x, y, z]`, z 0 for a 2D one. */
+function vec3(v: unknown): [number, number, number] {
+  const [x, y, z] = toVec(v);
+  return [x, y, z ?? 0];
+}
 
 /** Lighting, sky, fog and post-processing: set by `gl-init` and changed later by `gl-camera`. */
 const SCENE_SIBLINGS: Record<string, P> = {
@@ -865,7 +872,7 @@ export class GlNode extends Node {
         if (r["fov"] !== undefined) inst.camera.fov = Number(r["fov"]);
       }
 
-      if (r["lightDir"] !== undefined) inst.lightDir = r["lightDir"] as [number, number, number];
+      if (r["lightDir"] !== undefined) inst.lightDir = vec3(r["lightDir"]);
       if (r["ambient"] !== undefined) inst.ambient = Number(r["ambient"]);
       if (r["shininess"] !== undefined) inst.shininess = Number(r["shininess"]);
       if (r["lightColor"] !== undefined) inst.lightColor = r["lightColor"] as [number, number, number];
@@ -1077,8 +1084,8 @@ export class GlNode extends Node {
       if (r["fov"] !== undefined) cam.fov = Number(r["fov"]);
       if (r["near"] !== undefined) cam.near = Number(r["near"]);
       if (r["far"] !== undefined) cam.far = Number(r["far"]);
-      if (r["lookAt"] !== undefined) cam.lookAt = r["lookAt"] as [number, number, number];
-      if (r["up"] !== undefined) cam.up = r["up"] as [number, number, number];
+      if (r["lookAt"] !== undefined) cam.lookAt = vec3(r["lookAt"]);
+      if (r["up"] !== undefined) cam.up = vec3(r["up"]);
 
       if (r["pitch"] !== undefined) cam.pitch = Number(r["pitch"]);
       if (r["yaw"] !== undefined) cam.yaw = Number(r["yaw"]);
@@ -1087,7 +1094,7 @@ export class GlNode extends Node {
       if (r["tpsDistance"] !== undefined) cam.tpsDistance = Number(r["tpsDistance"]);
       if (r["tpsHeight"] !== undefined) cam.tpsHeight = Number(r["tpsHeight"]);
 
-      if (r["lightDir"] !== undefined) inst.lightDir = r["lightDir"] as [number, number, number];
+      if (r["lightDir"] !== undefined) inst.lightDir = vec3(r["lightDir"]);
       if (r["ambient"] !== undefined) inst.ambient = Number(r["ambient"]);
       if (r["shininess"] !== undefined) inst.shininess = Number(r["shininess"]);
       if (r["lightColor"] !== undefined) inst.lightColor = r["lightColor"] as [number, number, number];
