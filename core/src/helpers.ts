@@ -187,14 +187,21 @@ export function escapeScriptJson(json: string): string {
 }
 
 /**
- * Generate a random string
+ * A random alphanumeric string, from the platform's crypto source (Web Crypto,
+ * in Node, browsers and workers alike), so it can name a secret such as an
+ * OAuth `state`.
  */
 export function randomString(length: number = 32): string {
   const chars =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  // A byte has 256 values, which 62 characters do not divide: bytes from 248
+  // (4 x 62) up are drawn again, so every character is equally likely.
+  const limit = 256 - (256 % chars.length);
   let result = "";
-  for (let i = 0; i < length; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  while (result.length < length) {
+    for (const byte of crypto.getRandomValues(new Uint8Array(length - result.length))) {
+      if (byte < limit) result += chars[byte % chars.length];
+    }
   }
   return result;
 }
