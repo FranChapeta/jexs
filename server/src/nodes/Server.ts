@@ -95,6 +95,10 @@ interface Listener {
   steps: unknown[];
   startupContext: Context;
   maxBodySize: number;
+  /** The largest WebSocket message, in bytes, its upgrade server accepts. */
+  maxMessageSize: number;
+  /** Completes this listener's WebSocket upgrades; made on the first one. */
+  wss: WebSocketServer | null;
   staticDirs: Map<string, string>;
   /** The generated service worker: where it is served, its config as JSON, and
    *  the browser bundle it starts the runtime from. */
@@ -166,11 +170,11 @@ async function handleUpgrade(
     socket.destroy();
     return;
   }
-  // One `noServer` WebSocketServer per node, made on the first upgrade. It binds
-  // nothing and only completes handshakes, so one covers every port this node
-  // listens on (it is decoupled from any single http.Server), and its `clients`
-  // set is what dispose closes.
-  const wss = (listener.node.wss ??= new WebSocketServer({ noServer: true }));
+  // One `noServer` WebSocketServer per listener, made on its first upgrade. It
+  // binds nothing and only completes handshakes; `maxPayload` makes it refuse an
+  // oversized frame as it arrives, closing with 1009, rather than buffering it
+  // whole. Its `clients` set is what dispose closes.
+  const wss = (listener.wss ??= new WebSocketServer({ noServer: true, maxPayload: listener.maxMessageSize }));
   const upgrade = { req, socket, head, wss, accepted: false };
   try {
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
@@ -747,31 +751,32 @@ function resolveClientBrowserDir(): string | null {
 
 export class ServerNode extends Node {
   /**
-   * Live listeners and the shared upgrade handler, per node and so per resolver:
-   * a port is held until something closes it, and only the resolver that opened
-   * one should be able to. Instance fields rather than methods, so `handlerKeys`
-   * (which reads the prototype) never sees them as ops.
+   * Live listeners, per node and so per resolver: a port is held until something
+   * closes it, and only the resolver that opened one should be able to. An
+   * instance field rather than a method, so `handlerKeys` (which reads the
+   * prototype) never sees it as an op.
    */
   readonly listeners: Listener[] = [];
-  wss: WebSocketServer | null = null;
 
   /**
    * Release what this resolver holds: the ports it bound, the sockets its
-   * listeners upgraded, and the upgrade handler itself. Reached through
+   * listeners upgraded, and their upgrade servers. Reached through
    * `resolver.destroy()`, so a listener is only ever taken down by whoever
    * opened it.
    *
-   * `wss.clients` is exactly this node's sockets, since the ws server tracks
-   * every socket it completes an upgrade for. Another resolver's connections are
-   * therefore left alone, unlike a process-wide close. WebSocketNode's own
-   * registries need no help here: each socket's `close` handler removes it.
+   * A listener's `wss.clients` is exactly the sockets it upgraded, since the ws
+   * server tracks every socket it completes an upgrade for. Another resolver's
+   * connections are therefore left alone, unlike a process-wide close.
+   * WebSocketNode's own registries need no help here: each socket's `close`
+   * handler removes it.
    */
   dispose(): void {
-    for (const listener of this.listeners) listener.httpServer.close();
+    for (const listener of this.listeners) {
+      listener.httpServer.close();
+      for (const ws of listener.wss?.clients ?? []) ws.close(1001, "Server shutting down");
+      listener.wss?.close();
+    }
     this.listeners.length = 0;
-    for (const ws of this.wss?.clients ?? []) ws.close(1001, "Server shutting down");
-    this.wss?.close();
-    this.wss = null;
   }
 
   static schema: JexsNodeSchema = {
@@ -779,7 +784,7 @@ export class ServerNode extends Node {
       type: "number",
       output: "number",
       outputDescription: "The port it listens on: the one given, or the free port the OS picked for `0`.",
-      markdownDescription: "Starts an HTTP listener on the given port (default 3000; `0` picks any free port). Pass per-request steps in `\"do\"`.\nSet `\"client\": true` (or a path string) to auto-serve the `@jexs/client` browser bundle\nand inject the script tag into rendered `<head>` elements.\nSet `\"sw\"` (with `\"client\"`) to run a service worker: what it precaches, how it answers requests (`routes`), and the steps it resolves per event (`events`).\n\n**Multiple ports.** Bind more ports by adding more `{ \"$listen\": ..., \"do\": [...] }` steps. Each is an independent listener with its own `do` pipeline, `client`, `sw`, and `maxBodySize`.\n\n**Cross-site requests.** A POST, PUT, PATCH or DELETE, or a WebSocket upgrade, that a browser sends from another site's page is refused with 403 before any step runs, since it would carry the user's cookies. Requests from outside a browser (webhooks, scripts) are not affected. Allow other origins with `trustedOrigins`.\n\n**Per-request `do` execution.** The steps run in order against a fresh per-request context. The universal `\"as\"` key is honored (stored into the context for later steps), as is `setVars`. Two stop-signals halt the loop early: a step that resolves to `{ \"$return\": X }` (yields `X`) or to a **response object** (a value with a `response` key).\n\n**Response object.** The final value becomes the HTTP response. A bare string is sent as `text/html`; any other bare value is sent as JSON. For full control return an object:\n- `response`: the body (string, or any JSON value for `responseType: \"json\"`). For `responseType: \"redirect\"` it is the `Location` URL.\n- `responseStatus`: HTTP status code (default `200`).\n- `responseType`: `\"html\"` | `\"json\"` | `\"text\"` | `\"redirect\"` | a literal MIME string (e.g. `\"image/png\"`). When omitted it is inferred: string → `html`, otherwise `json`.\n- `responseHeaders` / `responseHeader`: extra response headers (singular overrides plural on collision).",
+      markdownDescription: "Starts an HTTP listener on the given port (default 3000; `0` picks any free port). Pass per-request steps in `\"do\"`.\nSet `\"client\": true` (or a path string) to auto-serve the `@jexs/client` browser bundle\nand inject the script tag into rendered `<head>` elements.\nSet `\"sw\"` (with `\"client\"`) to run a service worker: what it precaches, how it answers requests (`routes`), and the steps it resolves per event (`events`).\n\n**Multiple ports.** Bind more ports by adding more `{ \"$listen\": ..., \"do\": [...] }` steps. Each is an independent listener with its own `do` pipeline, `client`, `sw`, `maxBodySize` and `maxMessageSize`.\n\n**Cross-site requests.** A POST, PUT, PATCH or DELETE, or a WebSocket upgrade, that a browser sends from another site's page is refused with 403 before any step runs, since it would carry the user's cookies. Requests from outside a browser (webhooks, scripts) are not affected. Allow other origins with `trustedOrigins`.\n\n**Per-request `do` execution.** The steps run in order against a fresh per-request context. The universal `\"as\"` key is honored (stored into the context for later steps), as is `setVars`. Two stop-signals halt the loop early: a step that resolves to `{ \"$return\": X }` (yields `X`) or to a **response object** (a value with a `response` key).\n\n**Response object.** The final value becomes the HTTP response. A bare string is sent as `text/html`; any other bare value is sent as JSON. For full control return an object:\n- `response`: the body (string, or any JSON value for `responseType: \"json\"`). For `responseType: \"redirect\"` it is the `Location` URL.\n- `responseStatus`: HTTP status code (default `200`).\n- `responseType`: `\"html\"` | `\"json\"` | `\"text\"` | `\"redirect\"` | a literal MIME string (e.g. `\"image/png\"`). When omitted it is inferred: string → `html`, otherwise `json`.\n- `responseHeaders` / `responseHeader`: extra response headers (singular overrides plural on collision).",
       examples: [
         "{ \"$listen\": 3000, \"client\": true, \"do\": [{ \"$session\": \"load\" }, { \"$routes\": { \"$var\": \"routes\" } }] }",
         "{ \"response\": \"{\\\"ok\\\":true}\", \"responseType\": \"json\", \"responseStatus\": 201 }",
@@ -796,6 +801,10 @@ export class ServerNode extends Node {
         maxBodySize: {
           type: "number",
           description: "Maximum request body size in bytes.",
+        },
+        maxMessageSize: {
+          type: "number",
+          description: "Maximum WebSocket message size in bytes (default 65536). A larger message closes the socket with code 1009 before it is read whole.",
         },
         trustedOrigins: {
           type: "array",
@@ -886,7 +895,7 @@ export class ServerNode extends Node {
       return null;
     }
 
-    return resolveAll([def.$listen, def.maxBodySize ?? null, def.trustedOrigins ?? null], context, async ([portRaw, maxBodyRaw, originsRaw]) => {
+    return resolveAll([def.$listen, def.maxBodySize ?? null, def.maxMessageSize ?? null, def.trustedOrigins ?? null], context, async ([portRaw, maxBodyRaw, maxMessageRaw, originsRaw]) => {
       // `0` asks the OS for any free port; the step returns the one it got.
       const requested = portRaw == null || portRaw === "" ? 3000 : Number(portRaw);
       if (!Number.isInteger(requested) || requested < 0 || requested > 65535) {
@@ -900,6 +909,8 @@ export class ServerNode extends Node {
         steps,
         startupContext: context,
         maxBodySize: 1_048_576, // 1 MB default
+        maxMessageSize: 65_536, // 64 KiB default
+        wss: null,
         staticDirs: new Map(),
         sw: null,
         publicDir: path.resolve(process.cwd(), "public"),
@@ -909,6 +920,13 @@ export class ServerNode extends Node {
       if (def.maxBodySize && maxBodyRaw != null) {
         const maxBody = Number(maxBodyRaw);
         if (maxBody > 0) listener.maxBodySize = maxBody;
+      }
+      if (maxMessageRaw != null) {
+        const maxMessage = Number(maxMessageRaw);
+        if (!Number.isInteger(maxMessage) || maxMessage <= 0) {
+          throw new Error(`$listen: maxMessageSize ${JSON.stringify(maxMessageRaw)} is not a positive whole number of bytes`);
+        }
+        listener.maxMessageSize = maxMessage;
       }
 
       // Client bundle auto-serving

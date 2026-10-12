@@ -7,10 +7,11 @@ import { WebSocketNode } from "../src/nodes/WebSocket.js";
 
 /** A resolver with a listener, on a free port, whose sockets join `lobby` and
  *  answer any message with the room's size. */
-async function server() {
+async function server(options: Record<string, unknown> = {}) {
   const resolver = createResolver([...coreNodes(), new ServerNode(), new WebSocketNode()]);
   const port = await resolver({
     $listen: 0,
+    ...options,
     do: [{
       "$socket-accept": true,
       "on-connect": [{ "$socket-join": "lobby" }],
@@ -49,5 +50,36 @@ test("two resolvers' sockets do not share rooms", async () => {
     for (const ws of clients) ws.close();
     a.resolver.destroy();
     b.resolver.destroy();
+  }
+});
+
+/** The close code the server ends `ws` with after it is sent `bytes` of payload. */
+function closeCodeAfterSending(ws: WebSocket, bytes: number): Promise<number> {
+  return new Promise(resolve => {
+    ws.once("close", code => resolve(code));
+    ws.send(JSON.stringify({ pad: "x".repeat(bytes) }));
+  });
+}
+
+// The limit is enforced by the ws server while the frame arrives, so an oversized
+// message is never buffered whole: the socket closes with 1009 (message too big).
+test("a message over the listener's maxMessageSize closes the socket with 1009", { timeout: 5000 }, async () => {
+  const { resolver, port } = await server({ maxMessageSize: 1024 });
+  try {
+    const ws = await connect(port);
+    assert.equal(await ask(ws), "1", "a message within the limit is handled");
+    assert.equal(await closeCodeAfterSending(ws, 2048), 1009);
+  } finally {
+    resolver.destroy();
+  }
+});
+
+test("messages are limited to 64 KiB by default", { timeout: 5000 }, async () => {
+  const { resolver, port } = await server();
+  try {
+    const ws = await connect(port);
+    assert.equal(await closeCodeAfterSending(ws, 70_000), 1009);
+  } finally {
+    resolver.destroy();
   }
 });

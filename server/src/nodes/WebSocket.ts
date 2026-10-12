@@ -172,12 +172,9 @@ export class WebSocketNode extends Node {
 
       ws.on("message", (raw: WebSocket.RawData) => {
         if (!onMessage) return;
+        // The listener's upgrade server already refused anything over its
+        // `maxMessageSize`, so this is within the limit.
         const rawStr = raw.toString();
-
-        if (rawStr.length > 65_536) {
-          ws.send(JSON.stringify({ type: "error", message: "Message too large" }));
-          return;
-        }
 
         let messageData: unknown;
         try {
@@ -194,6 +191,12 @@ export class WebSocketNode extends Node {
 
         void runStepsDetached(onMessage, { ...wsContext, message: messageData }, def, "[WebSocket] on-message error:");
       });
+
+      // A client that breaks the protocol (a frame over `maxMessageSize`, invalid
+      // UTF-8, a bad opcode) makes ws emit `error` and then close the socket with
+      // the matching code, so `on-close` still runs. Without a listener the
+      // event would throw and take the process down with it.
+      ws.on("error", () => {});
 
       ws.on("close", () => {
         if (onClose) {
