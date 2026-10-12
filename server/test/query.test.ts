@@ -47,6 +47,20 @@ test("a query step runs end to end against sqlite", async () => {
   assert.equal((ada as { name: string }).name, "Ada");
 });
 
+test("every condition in a where applies: each operator on a column, and or/and beside other columns", async () => {
+  const names = async (where: unknown) =>
+    ((await resolve({ $query: "select", ...conn, table: "people", where, orderBy: { name: "asc" } }, {})) as Array<{ name: string }>)
+      .map(r => r.name);
+
+  assert.deepEqual(await names({ id: { gt: 0, lt: 2 } }), ["Ada"]);
+  assert.deepEqual(await names({ id: { gte: 1, in: [2] } }), ["Grace"]);
+  assert.deepEqual(await names({ name: { like: "%a%", neq: "Ada" } }), ["Grace"]);
+  assert.deepEqual(await names({ name: "Grace", or: [{ id: 1 }, { id: 2 }] }), ["Grace"]);
+  assert.deepEqual(await names({ and: [{ name: "Grace" }], or: [{ id: 1 }, { id: 2 }] }), ["Grace"]);
+  assert.deepEqual(await names({ email: { isNull: false } }), ["Ada", "Grace"]);
+  await assert.rejects(names({ id: { gtt: 1 } }), /id: unknown operator "gtt"/);
+});
+
 test("validators authorize every query: global first, then the table's own", async () => {
   // `seen` is shared by reference with each validator's context, so their writes show here.
   const context = { seen: { global: "", table: "" } };

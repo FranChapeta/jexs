@@ -215,7 +215,7 @@ export type WhereValue =
 /** The clauses a query op takes as siblings, by name. Declared before the class
  *  so the static schema initializer can read them (a `const` is not hoisted). */
 const CLAUSE: Record<string, JexsPropertySchema> = {
-  where:        { description: "WHERE clause: `{ column: value }`, an operator object (`{ column: { gt: 5 } }`), or nested `or`/`and`." },
+  where:        { description: "WHERE clause: `{ column: value }`, an operator object (`{ column: { gt: 1, lt: 5 } }`), and nested `or`/`and` lists of clauses. Every entry must hold, each operator on a column included." },
   data:         { $ref: "#/$defs/_queryRows", description: "Row data: an object, an array of rows, or an expression producing either." },
   orderBy:      { description: "ORDER BY: `{ column: 'asc' | 'desc' }`." },
   groupBy:      { description: "GROUP BY column name or array of names." },
@@ -955,131 +955,68 @@ function applyJoins(
 }
 
 /**
- * Apply WHERE clauses
+ * Apply a WHERE clause. Every entry must hold: each column, each operator on a
+ * column, and an `or` or `and` group beside them, as Mongo, Prisma and
+ * Sequelize read one object.
  */
 function applyWhere(
   builder: KnexType.QueryBuilder,
   where: WhereClause,
 ): KnexType.QueryBuilder {
-  // Handle OR groups
-  if ("or" in where && Array.isArray(where.or)) {
-    const conditions = where.or;
-    builder = builder.where((qb) => {
-      conditions.forEach((cond, i) => {
-        if (i === 0) {
-          applyWhereConditions(qb, cond);
-        } else {
-          qb.orWhere((subQb) => applyWhereConditions(subQb, cond));
+  for (const [key, value] of Object.entries(where)) {
+    if (key === "or" || key === "and") {
+      if (!Array.isArray(value)) throw new Error(`where.${key}: expected an array of clauses`);
+      const groups = value as WhereClause[];
+      builder = builder.where((qb) => {
+        for (const cond of groups) {
+          if (key === "or") qb.orWhere((sub) => applyWhere(sub, cond));
+          else qb.andWhere((sub) => applyWhere(sub, cond));
         }
       });
-    });
-    return builder;
+    } else {
+      builder = applyColumn(builder, key, value);
+    }
   }
-
-  // Handle AND groups
-  if ("and" in where && Array.isArray(where.and)) {
-    const conditions = where.and;
-    builder = builder.where((qb) => {
-      conditions.forEach((cond) => {
-        qb.andWhere((subQb) => applyWhereConditions(subQb, cond));
-      });
-    });
-    return builder;
-  }
-
-  // Regular where conditions
-  return applyWhereConditions(
-    builder,
-    where as Record<string, WhereValue>,
-  );
+  return builder;
 }
 
-/**
- * Apply individual WHERE conditions
- */
-function applyWhereConditions(
+/** Comparison operators by name, with the aliases each accepts. */
+const COMPARISONS: Record<string, string> = {
+  eq: "=",
+  neq: "!=", ne: "!=", "!=": "!=",
+  gt: ">", ">": ">",
+  gte: ">=", ">=": ">=",
+  lt: "<", "<": "<",
+  lte: "<=", "<=": "<=",
+};
+
+/** Apply one column's condition: a value for equality, or an object of operators. */
+function applyColumn(
   builder: KnexType.QueryBuilder,
-  conditions: Record<string, WhereValue>,
+  col: string,
+  value: WhereValue,
 ): KnexType.QueryBuilder {
-  for (const [col, value] of Object.entries(conditions)) {
-    if (col === "or" || col === "and") continue;
-
-    // Simple equality (non-object value)
-    if (value === null || typeof value !== "object") {
-      builder =
-        value === null
-          ? builder.whereNull(col)
-          : builder.where(col, SqlValidator.value(value, col));
-      continue;
-    }
-
-    const c = value as Record<string, unknown>;
-    const v = (key: string) => SqlValidator.value(c[key], `${col}.${key}`);
-
-    // Comparison operators (check multiple aliases)
-    const comparisons: [string[], string][] = [
-      [["eq"], "="],
-      [["neq", "ne", "!="], "!="],
-      [["gt", ">"], ">"],
-      [["gte", ">="], ">="],
-      [["lt", "<"], "<"],
-      [["lte", "<="], "<="],
-    ];
-
-    let handled = false;
-    for (const [keys, op] of comparisons) {
-      const key = keys.find((k) => k in c);
-      if (key) {
-        builder =
-          op === "!="
-            ? builder.whereNot(col, v(key))
-            : builder.where(col, op, v(key));
-        handled = true;
-        break;
-      }
-    }
-    if (handled) continue;
-
-    // String patterns
-    if ("like" in c) {
-      builder = builder.whereLike(
-        col,
-        SqlValidator.string(c.like, `${col}.like`),
-      );
-    } else if ("notLike" in c) {
-      builder = builder.whereNot(
-        col,
-        "like",
-        SqlValidator.string(c.notLike, `${col}.notLike`),
-      );
-    }
-    // Arrays
-    else if ("in" in c) {
-      builder = builder.whereIn(col, SqlValidator.array(c.in, `${col}.in`));
-    } else if ("notIn" in c) {
-      builder = builder.whereNotIn(
-        col,
-        SqlValidator.array(c.notIn, `${col}.notIn`),
-      );
-    }
-    // Range
-    else if ("between" in c) {
-      builder = builder.whereBetween(
-        col,
-        SqlValidator.tuple(c.between, `${col}.between`),
-      );
-    }
-    // Null checks
-    else if ("isNull" in c && c.isNull) {
-      builder = builder.whereNull(col);
-    } else if ("isNotNull" in c && c.isNotNull) {
-      builder = builder.whereNotNull(col);
-    }
-    // Fallback: unknown object treated as equality
-    else {
-      builder = builder.where(col, SqlValidator.value(value, col));
-    }
+  if (value === null) return builder.whereNull(col);
+  if (typeof value !== "object" || value instanceof Date) {
+    return builder.where(col, SqlValidator.value(value, col));
   }
 
+  for (const [op, operand] of Object.entries(value as Record<string, unknown>)) {
+    const at = `${col}.${op}`;
+    const comparison = COMPARISONS[op];
+    if (comparison === "!=") builder = builder.whereNot(col, SqlValidator.value(operand, at));
+    else if (comparison) builder = builder.where(col, comparison, SqlValidator.value(operand, at));
+    else if (op === "like") builder = builder.whereLike(col, SqlValidator.string(operand, at));
+    else if (op === "notLike") builder = builder.whereNot(col, "like", SqlValidator.string(operand, at));
+    else if (op === "in") builder = builder.whereIn(col, SqlValidator.array(operand, at));
+    else if (op === "notIn") builder = builder.whereNotIn(col, SqlValidator.array(operand, at));
+    else if (op === "between") builder = builder.whereBetween(col, SqlValidator.tuple(operand, at));
+    else if (op === "isNull" || op === "isNotNull") {
+      const isNull = (op === "isNull") === Boolean(operand);
+      builder = isNull ? builder.whereNull(col) : builder.whereNotNull(col);
+    } else {
+      throw new Error(`${col}: unknown operator "${op}"`);
+    }
+  }
   return builder;
 }
