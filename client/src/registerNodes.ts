@@ -35,7 +35,10 @@ function missingPackage(pkg: string, needed: string): (err: unknown) => never {
  *    (no `document`/canvas/`localStorage` there — the loader would only fail).
  *
  * `registerLazy` loads a module the first time one of its keys is encountered,
- * then drops the keys; so registering a group is cheap and pays only on use.
+ * then drops the keys; so registering a group is cheap and pays only on use. A
+ * group lists every op its nodes declare, since an op left out finds no handler
+ * when it is the first one called; `test/lazy-keys.test.ts` holds each list to
+ * its nodes' schemas.
  *
  * Both take the resolver to register into, and each loader is handed it again
  * when it fires, so the nodes it builds land in the resolver that asked for them
@@ -51,6 +54,7 @@ export function registerComputeLazy(resolver: Resolver): void {
      "v-distance", "v-lerp", "v-toward", "v-normalize", "v-scale",
      "v-add", "v-sub", "v-direction", "v-cross", "v-dot",
      "physics-init", "physics-pause", "physics-resume", "physics-destroy", "physics-apply", "physics-step",
+     "physics-raycast",
      "collision-on", "collision-off",
      "joint-add", "joint-remove",
      "parseGLB", "parseGLTF", "register-mesh"],
@@ -78,7 +82,8 @@ export function registerComputeLazy(resolver: Resolver): void {
  *  call this (no `document`/canvas/`localStorage` there). */
 export function registerDomLazy(resolver: Resolver): void {
   resolver.registerLazy(
-    ["tree-init", "tree-insert", "tree-remove", "tree-update", "tree-move"],
+    ["tree-init", "tree-render", "tree-insert", "tree-remove", "tree-update", "tree-move",
+     "tree-select", "tree-toggle", "tree-apply"],
     (r) => import("./nodes/TreeNode.js").then(({ TreeNode }) => {
       r.registerNode(new TreeNode());
     }),
@@ -115,7 +120,8 @@ export function registerDomLazy(resolver: Resolver): void {
   resolver.registerLazy(
     ["gl-init", "gl-destroy", "gl-hit", "gl-camera", "gl-texture", "gl-animate",
      "gl-text", "gl-font", "gl-shader", "gl-blur", "gl-transition", "gl-tween", "gl-ssao",
-     "gl-register-mesh"],
+     "gl-register-mesh", "gl-atlas", "gl-frame", "gl-tilemap", "gl-tilemap-set",
+     "gl-trail", "gl-trail-remove", "gl-raycast", "gl-particle"],
     (r) => import("@jexs/gl")
       .catch(missingPackage("@jexs/gl", "gl-* ops"))
       .then(({ GlNode }) => {
