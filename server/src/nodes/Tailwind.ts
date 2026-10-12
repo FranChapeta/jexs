@@ -1,14 +1,9 @@
-import { exec } from "child_process";
-import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 import { Node, Context, NodeValue, resolve, resolveAll, isObject } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
-const execAsync = promisify(exec);
-
-const tempDir = "temp";
-const inputCss = "src/input.css";
+const inputCss = "input.css";
 const outputCss = "public/styles.css";
 
 const PREFIXES = [
@@ -37,10 +32,25 @@ const STANDALONE_CLASSES = [
   "inset", "top", "right", "bottom", "left",
 ];
 
+/** Turns class names into a minified stylesheet. */
+interface TailwindCompiler {
+  build(candidates: string[]): string;
+}
+
+/**
+ * A resolver's Tailwind state: the classes it registered, its compiler once a
+ * stylesheet is first asked for, and the stylesheet for the classes as they
+ * stand, dropped whenever they change. Held by the node instance, so one
+ * resolver's classes never reach another's stylesheet.
+ */
+interface TailwindState {
+  readonly registry: Set<string>;
+  compiler: Promise<TailwindCompiler> | null;
+  css: string | null;
+}
+
 export class TailwindNode extends Node {
-  /** The classes this resolver has registered. An instance field, so one
-   *  resolver's registry is never built into another's stylesheet. */
-  private readonly registry = new Set<string>();
+  private readonly state: TailwindState = { registry: new Set(), compiler: null, css: null };
 
   static schema: JexsNodeSchema = {
     tailwind: {
@@ -53,7 +63,7 @@ export class TailwindNode extends Node {
         "clear",
         "classes",
       ],
-      markdownDescription: "Extracts Tailwind class names from JSON templates and compiles CSS. The operation is the primary value.",
+      markdownDescription: "Extracts Tailwind class names from JSON templates and compiles them to CSS in process with Tailwind v4 (`tailwindcss` and `@tailwindcss/node` installed), starting from the project's `input.css`. The compiler loads on the first `compile` or `build` and the stylesheet is kept until the registered classes change. The operation is the primary value.",
       examples: [
         "{ \"$tailwind\": \"build\", \"data\": { \"$var\": \"template\" } }",
       ],
@@ -79,14 +89,13 @@ export class TailwindNode extends Node {
         },
         compile: {
           output: "string",
-          markdownDescription: "Compiles the registered classes and returns the CSS (`\"\"` when none are registered). A failed compile throws.",
+          markdownDescription: "Compiles the registered classes and returns the minified CSS (`\"\"` when none are registered). A failed compile throws.",
         },
         build: {
           output: "null",
-          markdownDescription: "Registers classes from `data`, then writes the stylesheet. A failed build throws.",
+          markdownDescription: "Registers classes from `data`, then writes the minified stylesheet to `public/styles.css`. A failed build throws.",
           siblings: {
             data: { description: "JSON template to extract classes from." },
-            content: { type: "string", description: "Glob pattern for additional content sources." },
           },
         },
         clear: {
@@ -107,16 +116,17 @@ export class TailwindNode extends Node {
         case "extract":
           return doExtract(def, context);
         case "add":
-          return doAdd(this.registry, def, context);
+          return doAdd(this.state, def, context);
         case "compile":
-          return compile([...this.registry]);
+          return this.state.registry.size === 0 ? "" : stylesheet(this.state);
         case "build":
-          return doBuild(this.registry, def, context);
+          return doBuild(this.state, def, context);
         case "clear":
-          this.registry.clear();
+          this.state.registry.clear();
+          this.state.css = null;
           return null;
         case "classes":
-          return [...this.registry];
+          return [...this.state.registry];
         default:
           console.error(`[Tailwind] Unknown operation: ${operation}`);
           return null;
@@ -133,95 +143,79 @@ function extractClasses(json: unknown): string[] {
   return [...classes];
 }
 
-/** Write the stylesheet for `classes`, plus whatever `contentGlob` matches. */
-async function buildStylesheet(classes: string[], contentGlob?: string): Promise<void> {
-  console.log(`[Tailwind] Building CSS...`);
-
-  await fs.mkdir(tempDir, { recursive: true });
-
-  const contentParts: string[] = [];
-
-  if (classes.length > 0) {
-    const html = classes.map((c) => `<div class="${c}"></div>`).join("\n");
-    const contentFile = path.join(tempDir, "tw-content.html");
-    await fs.writeFile(contentFile, html);
-    contentParts.push(contentFile);
-  }
-
-  if (contentGlob) {
-    contentParts.push(contentGlob);
-  }
-
-  if (contentParts.length === 0) {
-    console.log("[Tailwind] No content sources, skipping");
-    return;
-  }
-
+/**
+ * Load Tailwind v4 in process and compile the project's `input.css` once, the
+ * way the official Vite and PostCSS integrations do: after that, each stylesheet
+ * is a `build` over the class names, a few milliseconds with no child process.
+ * Imported on first use, so a resolver that never compiles never loads it.
+ */
+async function loadCompiler(): Promise<TailwindCompiler> {
+  let tailwind: typeof import("@tailwindcss/node");
   try {
-    const contentArg = contentParts.map((p) => `"${p}"`).join(",");
-    await execAsync(
-      `npx @tailwindcss/cli -i ${inputCss} -o ${outputCss} --content ${contentArg}`,
-      { timeout: 60000 },
-    );
-    console.log(`[Tailwind] CSS written to ${outputCss}`);
-  } catch (error) {
-    console.error("[Tailwind] Build failed:", error);
-    throw error;
+    tailwind = await import("@tailwindcss/node");
+  } catch (err) {
+    if (isObject(err) && err.code === "ERR_MODULE_NOT_FOUND") {
+      throw new Error("$tailwind needs Tailwind v4: npm i -D tailwindcss @tailwindcss/node", { cause: err });
+    }
+    throw err;
   }
+  const input = path.resolve(inputCss);
+  const compiler = await tailwind.compile(await fs.readFile(input, "utf-8"), {
+    base: path.dirname(input),
+    onDependency: () => {},
+  });
+  return { build: candidates => tailwind.optimize(compiler.build(candidates), { minify: true }).code };
+}
+
+/** The resolver's compiler, loaded on the first call; a failed load is retried on the next. */
+function compilerFor(state: TailwindState): Promise<TailwindCompiler> {
+  state.compiler ??= loadCompiler().catch(err => {
+    state.compiler = null;
+    throw err;
+  });
+  return state.compiler;
+}
+
+/** The stylesheet for the registered classes, built once per set of classes. */
+async function stylesheet(state: TailwindState): Promise<string> {
+  if (state.css !== null) return state.css;
+  const compiler = await compilerFor(state);
+  // Built after the await, from the classes as they stand then, so the result is never stale.
+  state.css = compiler.build([...state.registry]);
+  return state.css;
+}
+
+/** Add classes to the registry, dropping the kept stylesheet when any is new. */
+function register(state: TailwindState, classes: Iterable<string>): void {
+  const before = state.registry.size;
+  for (const cls of classes) state.registry.add(cls);
+  if (state.registry.size !== before) state.css = null;
 }
 
 function doExtract(def: Record<string, unknown>, context: Context): unknown {
   return resolve(def.data, context, data => (data ? extractClasses(data) : []));
 }
 
-function doAdd(registry: Set<string>, def: Record<string, unknown>, context: Context): unknown {
+function doAdd(state: TailwindState, def: Record<string, unknown>, context: Context): unknown {
   return resolveAll([def.classes ?? null, def.data ?? null], context, ([classesRaw, dataRaw]) => {
-    let classes: string[] = [];
-
-    if (def.classes && Array.isArray(classesRaw)) {
-      classes = classesRaw.map(String);
-    }
-
-    if (def.data && dataRaw) {
-      classes.push(...extractClasses(dataRaw));
-    }
-
-    for (const cls of classes) registry.add(cls);
+    if (def.classes && Array.isArray(classesRaw)) register(state, classesRaw.map(String));
+    if (def.data && dataRaw) register(state, extractClasses(dataRaw));
     return null;
   });
 }
 
-function doBuild(registry: Set<string>, def: Record<string, unknown>, context: Context): unknown {
-  return resolveAll([def.data ?? null, def.content ?? null], context, async ([dataRaw, contentRaw]) => {
-    if (def.data && dataRaw) {
-      for (const cls of extractClasses(dataRaw)) {
-        registry.add(cls);
-      }
+function doBuild(state: TailwindState, def: Record<string, unknown>, context: Context): unknown {
+  return resolve(def.data ?? null, context, async dataRaw => {
+    if (def.data && dataRaw) register(state, extractClasses(dataRaw));
+    if (state.registry.size === 0) {
+      console.log("[Tailwind] No classes registered, skipping");
+      return null;
     }
-
-    const contentGlob = def.content && contentRaw != null ? String(contentRaw) : undefined;
-
-    await buildStylesheet([...registry], contentGlob);
+    await fs.mkdir(path.dirname(outputCss), { recursive: true });
+    await fs.writeFile(outputCss, await stylesheet(state));
+    console.log(`[Tailwind] CSS written to ${outputCss}`);
     return null;
   });
-}
-
-async function compile(classes: string[]): Promise<string> {
-  if (classes.length === 0) return "";
-
-  await fs.mkdir(tempDir, { recursive: true });
-
-  const content = classes.map((c) => `<div class="${c}"></div>`).join("\n");
-  const contentFile = path.join(tempDir, "tw-content.html");
-  await fs.writeFile(contentFile, content);
-
-  const outputFile = path.join(tempDir, "tw-output.css");
-
-  await execAsync(
-    `npx tailwindcss -i ${inputCss} -o ${outputFile} --content ${contentFile} --minify`,
-    { timeout: 30000 },
-  );
-  return fs.readFile(outputFile, "utf-8");
 }
 
 function traverse(value: unknown, classes: Set<string>): void {

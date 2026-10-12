@@ -262,16 +262,14 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean, useElectron: bo
     lines.push(`- Main-process nodes (\`file\`, \`query\`, \`dialog\`, …) are forwarded from the renderer, so renderer JSON calls them directly. A relative \`{ "$file": "x.json" }\` resolves against the calling page's own directory.`);
     lines.push(`- A \`/\`-prefixed path anchors at \`src/\`, from anywhere, including \`src/main.json\`, so main-process startup reaches a page with \`/index.json\`. Without the slash a path is relative to the file doing the loading.`);
     if (useTailwind) {
-      lines.push(`- \`input.css\`: Tailwind entry. Add custom styles here (\`@layer base { ... }\`, \`@apply\`, etc.).`);
-      lines.push(`- \`tailwind.config.js\`: scans \`./src/**/*.json\` for class names. The stylesheet builds to \`dist/browser/styles.css\` AFTER \`jexs bundle\`, which clears that directory, and the window shell links it.`);
+      lines.push(`- \`input.css\`: Tailwind v4 entry and config. \`@source\` scans \`./src/**/*.json\` for class names; theme, variants and custom styles go here too (\`@theme\`, \`@layer base { ... }\`, \`@apply\`). The stylesheet builds to \`dist/browser/styles.css\` AFTER \`jexs bundle\`, which clears that directory, and the window shell links it.`);
     }
   } else if (useServer) {
     lines.push(`- \`src/\`: JSON templates the resolver loads. FileNode's default base directory.`);
     lines.push(`- \`public/\`: static assets (CSS, images, favicons, fonts). Auto-served by the HTTP server for any GET on a static-extension URL.`);
     lines.push(`- No JS bootstrap: \`npm run dev\` / \`npm start\` run \`jexs run src/index.json src\` (the \`jexs\` CLI from @jexs/server), which resolves \`src/index.json\`; its \`listen\` step(s) bind the port(s).`);
     if (useTailwind) {
-      lines.push(`- \`input.css\`: Tailwind entry. Add custom styles here (\`@layer base { ... }\`, \`@apply\`, etc.).`);
-      lines.push(`- \`tailwind.config.js\`: scans \`./src/**/*.json\` for class names.`);
+      lines.push(`- \`input.css\`: Tailwind v4 entry and config. \`@source\` scans \`./src/**/*.json\` for class names; theme, variants and custom styles go here too (\`@theme\`, \`@layer base { ... }\`, \`@apply\`).`);
     }
   } else {
     lines.push(`- \`src/index.json\`: your entry expression. Browser-side Jexs apps load this via \`@jexs/client\`.`);
@@ -460,9 +458,9 @@ async function main(): Promise<void> {
   // client-only projects pull it in as a devDep for those two commands.
   // prettier >=3.5 is a real floor, not a tidy-up: the `.prettierrc.json` written
   // below sets `objectWrap`, which 3.4 and earlier warn about and ignore.
-  // tailwind stays on 3.x deliberately. v4 moved the CLI out to @tailwindcss/cli
-  // and replaced the JS config with CSS directives, so it is a migration rather
-  // than a version bump.
+  // Tailwind is v4, the major `$tailwind` builds with: the CLI is its own package,
+  // @tailwindcss/cli, whose bin is still `tailwindcss`, and the config lives in
+  // input.css as CSS directives rather than in a JS file.
   // @jexs/mcp is pinned rather than fetched with `npx -y` at launch: the MCP
   // server reads the `.jexs/` schemas this project's own @jexs/server generated,
   // so the two have to be the same release. Installing it also means the server
@@ -470,7 +468,7 @@ async function main(): Promise<void> {
   const devDeps: Record<string, string> = { prettier: "^3.5.0", "@jexs/mcp": JEXS_VERSIONS["@jexs/mcp"] };
   if (!useServer) devDeps["@jexs/server"] = JEXS_VERSIONS["@jexs/server"];
   if (useServer && !useElectron) devDeps.concurrently = "^10.0.0";
-  if (useTailwind) devDeps.tailwindcss = "^3.4.0";
+  if (useTailwind) { devDeps.tailwindcss = "^4.0.0"; devDeps["@tailwindcss/cli"] = "^4.0.0"; }
   if (useElectron) { devDeps.electron = "^44.0.0"; devDeps["electron-builder"] = "^26.0.0"; }
 
   const scripts: Record<string, string> = {};
@@ -734,26 +732,15 @@ async function main(): Promise<void> {
   }
 
   if (useTailwind) {
-    // input.css — the Tailwind entry at the project root. Classes are extracted
-    // from the JSON templates at build time per the content glob below. This is
-    // also where custom styles go (@layer, @apply, @font-face, and the rest).
+    // input.css — the Tailwind entry at the project root, and its whole config:
+    // `@source` points the class scan at the JSON templates (paths are relative
+    // to this file), and the `dark` variant follows a `dark` class rather than the
+    // OS setting. Custom styles go here too (@layer, @apply, @font-face, @theme).
     writeFileSync(
       join(dir, "input.css"),
-      "@tailwind base;\n@tailwind components;\n@tailwind utilities;\n",
-    );
-
-    // tailwind.config.js — ESM (package.json has "type":"module"). Scans wherever
-    // this project's templates live, which is the one thing that moves between
-    // layouts, though every layout now keeps them in src/.
-    writeFileSync(
-      join(dir, "tailwind.config.js"),
-      `/** @type {import('tailwindcss').Config} */\n` +
-      `export default {\n` +
-      `  content: ["./src/**/*.json"],\n` +
-      `  darkMode: "class",\n` +
-      `  theme: { extend: {} },\n` +
-      `  plugins: [],\n` +
-      `};\n`,
+      `@import "tailwindcss";\n` +
+      `@source "./src/**/*.json";\n` +
+      `@custom-variant dark (&:where(.dark, .dark *));\n`,
     );
   }
 
@@ -778,7 +765,6 @@ async function main(): Promise<void> {
   }
   if (useTailwind) {
     console.log(`  input.css`);
-    console.log(`  tailwind.config.js`);
   }
   console.log(`\nDone. Run:\n  cd ${projectName} && npm install${useServer ? " && npm run dev" : ""}`);
 }
