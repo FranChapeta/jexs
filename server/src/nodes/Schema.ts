@@ -3,7 +3,7 @@ import path from "path";
 import { Node, Context, NodeValue, isObject, isStep, resolve, resolveAll, resolverFor } from "@jexs/core";
 import { TableJsonSchema, ColumnSchema } from "./Query.js";
 import { sha256 } from "./Crypto.js";
-import { validate, validateDetailed, getValidator } from "../validate.js";
+import { validate, validateDetailed, getValidator, createValidation } from "../validate.js";
 import type { JexsNodeSchema } from "@jexs/core";
 
 /** The functions a column's `computed` may name, each deriving the column from another on insert. */
@@ -23,7 +23,7 @@ const strings = { type: "array", items: { type: "string" } };
  *
  * Table schemas are authored as JSON Schema (draft 2020-12) documents: the
  * `properties` map defines columns, beside the settings that build the table. Insert/
- * update data is validated against the document by the shared Ajv validator
+ * update data is validated against the document by the node's own validation
  * (see ../validate.ts), after coercion + computed-column enrichment.
  *
  * Register from directory:
@@ -227,6 +227,9 @@ export class SchemaNode extends Node {
   private readonly schemas = new Map<string, TableJsonSchema>();
   private globalValidator: unknown = null;
 
+  /** Validates table rows and `$schema` `validate` documents for this resolver. */
+  readonly validation = createValidation();
+
   /** Cache of `required`-stripped clones used to validate partial updates. */
   private static updateSchemas: WeakMap<TableJsonSchema, object> = new WeakMap();
 
@@ -296,7 +299,7 @@ export class SchemaNode extends Node {
     if (withCommonColumns) this.injectCommonColumns(own);
     // Compile eagerly so a malformed schema throws at registration, not on the
     // first insert.
-    getValidator(own);
+    getValidator(schemaFor(context).validation, own);
     schemaFor(context).schemas.set(own.table, own);
     return own;
   }
@@ -320,10 +323,10 @@ export class SchemaNode extends Node {
 
     if (Array.isArray(data)) {
       return data.map((row) =>
-        this.validateRow(schema, row as Record<string, unknown>),
+        this.validateRow(context, schema, row as Record<string, unknown>),
       );
     }
-    return this.validateRow(schema, data as Record<string, unknown>);
+    return this.validateRow(context, schema, data as Record<string, unknown>);
   }
 
   /**
@@ -331,6 +334,7 @@ export class SchemaNode extends Node {
    * types) then validate the resulting row against the table's JSON Schema.
    */
   private static validateRow(
+    context: Context,
     schema: TableJsonSchema,
     row: Record<string, unknown>,
   ): Record<string, unknown> {
@@ -357,7 +361,7 @@ export class SchemaNode extends Node {
       }
     }
 
-    this.assertValid(schema, result, schema.table);
+    this.assertValid(context, schema, result, schema.table);
     return result;
   }
 
@@ -380,7 +384,7 @@ export class SchemaNode extends Node {
     }
 
     // Partial update: validate provided fields, but never enforce `required`.
-    this.assertValid(this.updateSchemaFor(schema), result, tableName);
+    this.assertValid(context, this.updateSchemaFor(schema), result, tableName);
     return result;
   }
 
@@ -397,11 +401,12 @@ export class SchemaNode extends Node {
   }
 
   private static assertValid(
+    context: Context,
     schema: object,
     row: Record<string, unknown>,
     tableName: string,
   ): void {
-    const { valid, errors } = validate(schema, row);
+    const { valid, errors } = validate(schemaFor(context).validation, schema, row);
     if (!valid) {
       throw new Error(`[Schema] Validation failed for "${tableName}": ${errors.join("; ")}`);
     }
@@ -514,7 +519,7 @@ function doValidate(def: Record<string, unknown>, context: Context): NodeValue {
     // A schema that won't compile is the caller's mistake, not the data's, so it
     // is reported in the same shape rather than thrown past them.
     try {
-      return validateDetailed(schema, data);
+      return validateDetailed(schemaFor(context).validation, schema, data);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { valid: false, errors: [{ path: "", message: `invalid schema: ${message}`, keyword: "schema" }] };

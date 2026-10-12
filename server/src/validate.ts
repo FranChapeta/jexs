@@ -1,9 +1,7 @@
 /**
- * Shared JSON Schema (draft 2020-12) validator.
- *
- * A single Ajv2020 instance reused for both Router body/params validation and
- * QueryNode insert/update validation. Schemas are written as standard JSON
- * Schema — the same dialect the schema generator emits for combined.schema.json.
+ * JSON Schema (draft 2020-12) validation for Router body/params and QueryNode
+ * insert/update. Schemas are written as standard JSON Schema, the same dialect
+ * the schema generator emits for combined.schema.json.
  *
  * Framework-agnostic: returns errors rather than throwing, so callers decide
  * how to surface them (HTTP 400 in Router, a plain Error in QueryNode).
@@ -20,28 +18,55 @@ import type { ValidateFunction, ErrorObject } from "ajv";
 const Ajv2020 = AjvModule.default;
 const addFormats = addFormatsModule.default;
 
-const ajv = new Ajv2020({ allErrors: true, strict: false });
-addFormats(ajv);
+/** How many compiled schemas a validation keeps before dropping the least recently used. */
+export const MAX_COMPILED = 500;
 
 /**
- * Compiled validators, by the schema's JSON text. Ajv keeps every schema object
- * it compiles for good, so it must only ever see one object per distinct schema:
- * a route handler written as an expression hands over an equal but new
- * `queryParams`/`body` object on every request, which would otherwise compile
- * again each time, grow Ajv's cache without bound, and throw on a reused `$id`.
- * Keying on the text, and compiling a copy made from it (Ajv's own cache is
- * keyed by object), also means a schema changed in place gets a validator for
- * what it says now. Compilation validates the schema itself, so a malformed one
- * throws here.
+ * An Ajv instance and the validators compiled in it, by schema text, least
+ * recently used first. Each node that validates holds its own (RouterNode for
+ * route schemas, SchemaNode for table documents), so one resolver's schemas, and
+ * their `$id`s, never meet another's in the same process.
  */
-const cache = new Map<string, ValidateFunction>();
+export interface Validation {
+  readonly ajv: InstanceType<typeof Ajv2020>;
+  readonly compiled: Map<string, ValidateFunction>;
+}
 
-export function getValidator(schema: object): ValidateFunction {
+export function createValidation(): Validation {
+  const ajv = new Ajv2020({ allErrors: true, strict: false });
+  addFormats(ajv);
+  return { ajv, compiled: new Map() };
+}
+
+/**
+ * The validator for `schema`, compiled in `validation`. Compiling checks the
+ * schema itself, so a malformed one throws.
+ *
+ * Validators are kept by the schema's JSON text. Ajv keeps every schema object
+ * it compiles, so it must only ever see one object per distinct schema: a route
+ * handler written as an expression hands over an equal but new
+ * `queryParams`/`body` object on every request, which would otherwise compile
+ * again each time and throw on a reused `$id`. Keying on the text, and compiling
+ * a copy made from it (Ajv's own cache is keyed by object), also means a schema
+ * changed in place gets a validator for what it says now. Schemas that really
+ * are new each time (one built from request data) would still grow the cache, so
+ * it holds at most MAX_COMPILED, in order of use, and one dropped from it is
+ * removed from Ajv as well.
+ */
+export function getValidator({ ajv, compiled }: Validation, schema: object): ValidateFunction {
   const key = JSON.stringify(schema);
-  let fn = cache.get(key);
-  if (!fn) {
-    fn = ajv.compile(JSON.parse(key) as object);
-    cache.set(key, fn);
+  const kept = compiled.get(key);
+  if (kept) {
+    compiled.delete(key);
+    compiled.set(key, kept);
+    return kept;
+  }
+  const fn = ajv.compile(JSON.parse(key) as object);
+  compiled.set(key, fn);
+  if (compiled.size > MAX_COMPILED) {
+    const [oldestKey, oldest] = compiled.entries().next().value!;
+    compiled.delete(oldestKey);
+    if (typeof oldest.schema === "object") ajv.removeSchema(oldest.schema);
   }
   return fn;
 }
@@ -77,8 +102,8 @@ export interface ValidationResult {
 }
 
 /** Validate `data` against `schema`, returning a list of human-readable errors. */
-export function validate(schema: object, data: unknown): ValidationResult {
-  const fn = getValidator(schema);
+export function validate(validation: Validation, schema: object, data: unknown): ValidationResult {
+  const fn = getValidator(validation, schema);
   const valid = fn(data) as boolean;
   if (valid) return { valid: true, errors: [] };
   const errors = (fn.errors ?? []).map(formatError);
@@ -109,8 +134,8 @@ export interface DetailedValidationResult {
  * that name the actual mistake is to rank by path depth and drop the combinator
  * keywords, neither of which survives being formatted into a string.
  */
-export function validateDetailed(schema: object, data: unknown): DetailedValidationResult {
-  const fn = getValidator(schema);
+export function validateDetailed(validation: Validation, schema: object, data: unknown): DetailedValidationResult {
+  const fn = getValidator(validation, schema);
   const valid = fn(data) as boolean;
   if (valid) return { valid: true, errors: [] };
   const errors = (fn.errors ?? []).map(err => ({ path: pathOf(err), message: messageOf(err), keyword: err.keyword }));
