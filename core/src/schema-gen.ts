@@ -741,6 +741,21 @@ function emitMethod(methodKey: string, root: Scope, common: ReadonlySet<string>,
       if (gatedRequired.length > 0) then.required = gatedRequired;
       allOf.push({ if: scope.cond, then });
     }
+    // Presence-selected variants: `requireVariant` needs at least one of them, and
+    // `exclusive: true` allows at most one.
+    const presence = variantMode(scope.schema) === "sibling" ? Object.keys(scope.schema.variants ?? {}) : [];
+    const rules: EmittedSchema[] = [];
+    if (scope.schema.requireVariant) {
+      if (presence.length === 0) {
+        throw new Error(`"${methodKey}": "${scope.name}" sets requireVariant, which needs presence-selected variants to choose from.`);
+      }
+      rules.push({ anyOf: presence.map(key => ({ required: [key] })) });
+    }
+    if (scope.schema.exclusive === true && presence.length > 1) {
+      const pairs = presence.flatMap((a, i) => presence.slice(i + 1).map(b => ({ required: [a, b] })));
+      rules.push({ not: { anyOf: pairs } });
+    }
+    for (const rule of rules) allOf.push(scope.cond ? { if: scope.cond, then: rule } : rule);
   }
   allOf.push(...exclusions(root, new Set([methodKey, ...common])));
 

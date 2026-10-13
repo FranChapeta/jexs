@@ -38,6 +38,20 @@ class FakeSibNode extends Node {
   fakesib() { return null; }
 }
 
+// Presence-selected variants as alternatives: `requireVariant` needs at least one
+// of them, `exclusive: true` allows at most one, and together exactly one.
+const choice = { a: { type: "string" as const }, b: { type: "number" as const } };
+class FakeChoiceNode extends Node {
+  static schema: JexsNodeSchema = {
+    fakeone: { type: "string", requireVariant: true, exclusive: true, variants: choice },
+    fakeany: { type: "string", requireVariant: true, variants: choice },
+    fakeatmost: { type: "string", exclusive: true, variants: choice },
+  };
+  fakeone() { return null; }
+  fakeany() { return null; }
+  fakeatmost() { return null; }
+}
+
 // A method-level `output` is the fallback when no variant matches (FileNode `file`).
 class FakeDefaultNode extends Node {
   static schema: JexsNodeSchema = {
@@ -122,7 +136,7 @@ class FakeDefaultValueNode extends Node {
 const combined = mergePackageSchemas([
   buildPackageSchema([
     ...coreNodes(), new FakeValNode(), new FakeSibNode(), new FakeDefaultNode(), new FakeSibValueNode(),
-    new FakeDefaultValueNode(),
+    new FakeDefaultValueNode(), new FakeChoiceNode(),
   ]),
 ]);
 
@@ -267,6 +281,31 @@ test("a default outside the enum is rejected", () => {
     static schema: JexsNodeSchema = { bad: { siblings: { m: { type: "string", enum: ["a"], default: "z" } } } };
   }
   assert.throws(() => buildPackageSchema([Bad]), /not one of the enum values/);
+});
+
+test("requireVariant needs one presence variant, and exclusive allows no more than one", () => {
+  const valid = (step: Record<string, unknown>) => validAt("$defs/exprFlat", step);
+  // Both flags: exactly one.
+  assert.equal(valid({ $fakeone: "x", a: "s" }), true);
+  assert.equal(valid({ $fakeone: "x", b: 1 }), true);
+  assert.equal(valid({ $fakeone: "x" }), false);
+  assert.equal(valid({ $fakeone: "x", a: "s", b: 1 }), false);
+  assert.equal(valid({ $fakeone: "x", b: "not a number" }), false, "each variant keeps its own type");
+  // requireVariant alone: one or more.
+  assert.equal(valid({ $fakeany: "x" }), false);
+  assert.equal(valid({ $fakeany: "x", a: "s", b: 1 }), true);
+  // exclusive alone: none or one.
+  assert.equal(valid({ $fakeatmost: "x" }), true);
+  assert.equal(valid({ $fakeatmost: "x", a: "s" }), true);
+  assert.equal(valid({ $fakeatmost: "x", a: "s", b: 1 }), false);
+});
+
+test("requireVariant needs presence-selected variants to choose from", () => {
+  class Bad extends Node {
+    static schema: JexsNodeSchema = { bad: { type: "string", enum: ["a"], requireVariant: true, variants: { a: {} } } };
+    bad() { return null; }
+  }
+  assert.throws(() => buildPackageSchema([new Bad()]), /sets requireVariant, which needs presence-selected variants/);
 });
 
 test("presence variants nest under a sibling value", () => {

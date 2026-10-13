@@ -121,6 +121,12 @@ export interface JexsPropertySchema {
   /** Override the inferred discriminator mode. Defaults: `enum` means "value", otherwise "sibling". */
   variantBy?: "sibling" | "value";
   /**
+   * Presence-selected variants only: at least one of them must be given wherever
+   * this scope applies. With `exclusive: true` as well, exactly one, as a timer's
+   * period is `every` or `rate` but never both or neither.
+   */
+  requireVariant?: boolean;
+  /**
    * The value the handler uses when this property is absent. Emitted as the JSON
    * Schema `default` (editors offer it), and it selects: the value-mode variant
    * for this value also applies when the property is omitted, so
@@ -137,6 +143,9 @@ export interface JexsPropertySchema {
    * them. Siblings declared outside these variants are never refused. Set
    * `false` for a property whose values only ADD known siblings on top of
    * arbitrary ones (ElementNode's `tag`, where any attribute is valid).
+   *
+   * Presence-selected variants combine freely unless this is `true`, which allows
+   * at most one of them at a time (and, with `requireVariant`, exactly one).
    */
   exclusive?: boolean;
 }
