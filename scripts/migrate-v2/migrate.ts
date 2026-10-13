@@ -128,6 +128,54 @@ function isPlain(v: Val): boolean {
   return v.k === "obj" && v.props.length === 1 && v.props[0].key === "$var" && v.props[0].value.k === "str";
 }
 
+/** Rewrite a string literal to `text`, keeping its quotes. */
+function replaceString(v: Extract<Val, { k: "str" }>, text: string, m: Codemod): void {
+  const quoted = v.quote === '"' ? JSON.stringify(text) : v.quote + text.replaceAll(v.quote, "\\" + v.quote) + v.quote;
+  m.add({ start: v.start, end: v.end, text: quoted });
+}
+
+/**
+ * Point the reads of a `$tick` or `$cron` step's own variables, inside its
+ * steps, at the `interval` ones: `$var` paths and `$<from>...` interpolated in
+ * strings, with `cron.runCount` now `count`. Reads elsewhere are not found,
+ * since the timer's variables are written where any later step can read them.
+ */
+function retargetTimerReads(v: Val, from: "tick" | "cron", m: Codemod): void {
+  const path = (p: string) => p.replace(new RegExp(`^${from}(?=\\.|$)`), "interval").replace(/^interval\.runCount(?=\.|$)/, "interval.count");
+  if (v.k === "arr") for (const item of v.items) retargetTimerReads(item, from, m);
+  else if (v.k === "obj") {
+    for (const p of v.props) {
+      if (p.key === "$var" && p.value.k === "str") {
+        const next = path(p.value.value);
+        if (next !== p.value.value) replaceString(p.value, next, m);
+      } else retargetTimerReads(p.value, from, m);
+    }
+  } else if (v.k === "str") {
+    const next = v.value.replace(new RegExp(`\\$${from}(?=\\.|\\b|$)((?:\\.[\\w]+)?)`, "g"), (_, rest: string) => "$" + path(from + rest));
+    if (next !== v.value) replaceString(v, next, m);
+  }
+}
+
+/** `$tick` and `$cron` are both `$interval` now; their steps read `interval.*`. */
+function toInterval(step: Step, m: Codemod): void {
+  renameOp(step, "interval", m);
+  const steps = step.obj.props.find(p => p.key === "do")?.value;
+  if (steps) retargetTimerReads(steps, step.op === "tick" ? "tick" : "cron", m);
+  // A tick's `rate` counted runs per second, 60 unless told otherwise, and an
+  // interval's `rate` is the milliseconds between runs.
+  const op = step.obj.props.find(p => p.key === "$tick");
+  if (op?.value.k !== "str" || op.value.value !== "start") return;
+  const msOf = (perSecond: number) => String(Math.round(1_000_000 / perSecond) / 1000);
+  const rate = step.obj.props.find(p => p.key === "rate");
+  if (!rate) {
+    m.add({ start: op.value.end, end: op.value.end, text: `, ${op.keyQuoted ? '"rate"' : "rate"}: ${msOf(60)}` });
+  } else if (rate.value.k === "lit" && typeof rate.value.value === "number" && rate.value.value > 0) {
+    m.add({ start: rate.value.start, end: rate.value.end, text: msOf(rate.value.value) });
+  } else {
+    m.review(rate.keyStart, "`rate` is now the milliseconds between runs, not runs per second: give `1000 / rate`");
+  }
+}
+
 /** Rename the step's `from` sibling to `to`, keeping how its key is quoted. */
 function renameSibling({ obj }: Step, from: string, to: string, m: Codemod): void {
   const prop = obj.props.find(p => p.key === from);
@@ -158,6 +206,9 @@ const RULES: Record<string, Rule> = {
     m.add({ start: prop.keyStart, end: prop.keyEnd, text: "$sort" });
     m.add({ start: prop.value.end, end: prop.value.end, text: `, ${prop.keyQuoted ? '"order"' : "order"}: "desc"` });
   },
+  // One timer op repeats steps at an interval.
+  tick: toInterval,
+  cron: toInterval,
   // Ops that duplicated others.
   sum: (step, m) => renameOp(step, "add", m),
   notEmpty: (step, m) => {
@@ -232,7 +283,10 @@ function walkExpr(v: Val): void {
   walked.add(v);
   if (v.k === "arr") { for (const it of v.items) m.walk(ANY, it); return; }
   if (v.k !== "obj") return;
-  const op = v.props.find(p => p.key.startsWith("$") && HANDLERS.has(p.key.slice(1)))?.key.slice(1);
+  // An op a rule rewrites is a step even where the schema no longer has it (one
+  // made after the upgrade, say); its siblings are then walked as plain values.
+  const isOp = (name: string) => HANDLERS.has(name) || Object.hasOwn(RULES, name);
+  const op = v.props.find(p => p.key.startsWith("$") && isOp(p.key.slice(1)))?.key.slice(1);
   if (op !== undefined) RULES[op]?.({ op, obj: v }, m);
   // `$setVars` with `data: true` stores its values as written, steps included.
   const rawValues = op === "setVars" && v.props.some(p => p.key === "data" && p.value.k === "lit" && p.value.value === true);

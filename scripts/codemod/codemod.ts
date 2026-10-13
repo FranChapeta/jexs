@@ -283,6 +283,7 @@ export function createCodemod(schema: CombinedSchema, hooks: CodemodHooks): Code
 
   const siblingSchema = (op: string, key: string): Schema => {
     const m = schema.byKey[op];
+    if (!m) return ANY;
     const props = m.properties as Record<string, Record<string, unknown>> | undefined;
     let s: Schema = props?.[key];
     const isStub = (x: Schema) => !x || (typeof x === "object" && Object.keys(x).every(k => k === "description" || k === "markdownDescription"));

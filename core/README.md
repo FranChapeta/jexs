@@ -23,13 +23,13 @@ npm install @jexs/core
 | `VariablesNode` | `var`, `setVars` | Read/write context by dot-path |
 | `LogicNode` | `if`, `switch`, `foreach`, `and`, `or`, `not`, `eq`, `lt`, `gt`, ... | Branching, iteration, comparisons |
 | `ElementNode` | `tag` | Render an HTML element tree to a string |
-| `StringNode` | `concat`, `replace`, `split`, `trim`, `join`, `length`, ... | String ops |
-| `ArrayNode` | `map`, `filter`, `reduce`, `sort`, `count`, `groupBy`, ... | Array ops |
-| `ObjectNode` | `keys`, `values`, `entries`, `pick`, `omit`, `deepMerge`, ... | Object ops |
-| `MathNode` | `sum`, `avg`, `min`, `max`, `clamp`, `random`, ... | Numeric ops |
+| `StringNode` | `concat`, `replace`, `split`, `trim`, `length`, `match`, ... | String ops |
+| `ArrayNode` | `map`, `filter`, `reduce`, `sort`, `count`, `join`, `range`, ... | Array ops |
+| `ObjectNode` | `keys`, `values`, `entries`, `pick`, `omit`, `merge`, `groupBy`, `fromEntries`, ... | Object ops |
+| `MathNode` | `add`, `avg`, `min`, `max`, `clamp`, `random`, `parseInt`, ... | Numeric ops |
 | `ColorNode` | `toRgb`, `toHex`, `lighten`, `darken`, `mix`, `contrast`, ... | Color ops |
 | `DateNode` | `dateNow`, `dateFormat`, `dateAdd`, `dateDiff`, ... | Dates |
-| `TimerNode` | `tick`, `cron` | Timing |
+| `TimerNode` | `interval`, `sleep` | Timing |
 | `FetchNode` | `fetch` | HTTP requests |
 | `WorkerNode` | `thread` | Run steps off the main thread |
 | `ErrorNode` | `error` | Throw `{ status, message }` HTTP errors |

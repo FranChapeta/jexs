@@ -132,7 +132,7 @@ test("timers belong to their own resolver and survive another's teardown", async
   const a = createResolver(coreNodes(), { context: ctxA });
   const b = createResolver(coreNodes(), { context: ctxB });
 
-  const start = { $tick: "start", id: "shared", rate: 60, do: [{ $setVars: { hits: { $add: [{ $var: "hits" }, 1] } }, $bubble: true }] };
+  const start = { $interval: "start", id: "shared", rate: 16.667, do: [{ $setVars: { hits: { $add: [{ $var: "hits" }, 1] } }, $bubble: true }] };
   a(start, ctxA);
   b(start, ctxB);
 

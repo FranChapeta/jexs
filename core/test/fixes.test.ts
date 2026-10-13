@@ -12,18 +12,64 @@ function eventsOf(html: string): Array<Record<string, unknown>> {
   return JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"));
 }
 
-test("a cron run that fails goes through the step's $catch", async () => {
+test("an interval run that fails goes through the step's $catch", async () => {
   const resolver = createResolver(coreNodes());
   const ctx: Context = {};
   resolver({
-    $cron: "start", id: "fails", every: "10ms",
+    $interval: "start", id: "fails", every: "10ms",
     do: [{ $error: 500, message: "boom" }],
     $catch: [{ $setVars: { caught: { $var: "error.message" } }, $bubble: true }],
   }, ctx);
   await tick(40);
-  resolver({ $cron: "stop", id: "fails" }, ctx);
+  resolver({ $interval: "stop", id: "fails" }, ctx);
   resolver.destroy();
   assert.equal(ctx.caught, "boom");
+});
+
+test("an interval's steps read interval.count and interval.elapsed", async () => {
+  const resolver = createResolver(coreNodes());
+  const ctx: Context = {};
+  resolver({
+    $interval: "start", id: "counts", every: "10ms",
+    do: { $setVars: { seen: { $var: "interval.count" }, elapsed: { $var: "interval.elapsed" } }, $bubble: true },
+  }, ctx);
+  await tick(45);
+  resolver({ $interval: "stop", id: "counts" }, ctx);
+  resolver.destroy();
+  assert.ok(Number(ctx.seen) >= 2, `seen ${ctx.seen}`);
+  assert.equal(typeof ctx.elapsed, "number");
+});
+
+test("every interval op needs an id, and a start needs exactly one of every and rate", () => {
+  const resolver = createResolver(coreNodes());
+  try {
+    assert.throws(() => resolver({ $interval: "start", every: "1s", do: [] }, {}), /interval needs an `id`/);
+    assert.throws(() => resolver({ $interval: "stop" }, {}), /interval needs an `id`/);
+    assert.throws(() => resolver({ $interval: "start", id: "x", do: [] }, {}), /interval needs `every` or `rate`/);
+    assert.throws(() => resolver({ $interval: "start", id: "x", every: "1s", rate: 60, do: [] }, {}), /not both/);
+    assert.throws(() => resolver({ $interval: "start", id: "x", rate: 0, do: [] }, {}), /positive number of milliseconds/);
+  } finally {
+    resolver.destroy();
+  }
+});
+
+test("a run waits for the last one's steps unless detach is set", async () => {
+  const resolver = createResolver(coreNodes());
+  const ctx: Context = { started: 0 };
+  // Each run takes ~100ms against a 10ms period, so in 250ms waiting runs start
+  // about 3 times; detached ones start every period (timer granularity aside).
+  const slowRun = [{ $setVars: { started: { $add: [{ $var: "started" }, 1] } }, $bubble: true }, { $sleep: 100 }];
+  resolver({ $interval: "start", id: "waits", rate: 10, do: slowRun }, ctx);
+  await tick(250);
+  resolver({ $interval: "stop", id: "waits" }, ctx);
+  const waited = ctx.started as number;
+  ctx.started = 0;
+  resolver({ $interval: "start", id: "overlaps", rate: 10, detach: true, do: slowRun }, ctx);
+  await tick(250);
+  resolver({ $interval: "stop", id: "overlaps" }, ctx);
+  resolver.destroy();
+  assert.ok(waited >= 1 && waited <= 3, `waiting runs started ${waited} times`);
+  assert.ok((ctx.started as number) >= 2 * waited + 2, `detached runs started ${String(ctx.started)} times, waiting ${waited}`);
 });
 
 test("a thread without a worker runs inline, with params as its whole context", async () => {
@@ -89,14 +135,10 @@ test("$join's separator and $error's status and message fall back when they reso
   assert.equal(out, "500|");
 });
 
-test("a tick whose rate resolves to nothing runs at the default 60 per second", async () => {
+test("an interval whose period resolves to nothing has none, so it does not start", () => {
   const resolver = createResolver(coreNodes());
-  const ctx: Context = { n: 0 };
-  resolver({ $tick: "start", id: "t", rate: { $var: "missing" }, do: [{ $setVars: { n: { $add: [{ $var: "n" }, 1] } }, $bubble: true }] }, ctx);
-  await tick(100);
-  resolver({ $tick: "stop", id: "t" }, ctx);
+  assert.throws(() => resolver({ $interval: "start", id: "t", rate: { $var: "missing" }, do: [{ $var: "x" }] }, {}), /interval needs `every` or `rate`/);
   resolver.destroy();
-  assert.ok((ctx.n as number) > 0 && (ctx.n as number) < 20, `ran ${String(ctx.n)} times in 100ms`);
 });
 
 test("$setVars' data flag may be an expression", () => {
