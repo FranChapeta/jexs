@@ -23,6 +23,7 @@
     "@tailwindcss/node": "^4.3.3",
     "@types/node": "^24.0.0",
     "esbuild": "^0.28.1",
+    "happy-dom": "^20.14.6",
     "prettier": "^3.8.1",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.0.0",
