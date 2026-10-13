@@ -1,5 +1,5 @@
-import { Node, Context, loopScope } from "./Node.js";
-import { resolve } from "../Resolver.js";
+import { Node, Context, childContext } from "./Node.js";
+import { resolve, resolveAll } from "../Resolver.js";
 import { isObject } from "../helpers.js";
 import type { JexsNodeSchema } from "../schema.js";
 
@@ -47,7 +47,7 @@ export class ObjectNode extends Node {
     },
     mapValues: {
       output: "object",
-      markdownDescription: "Transforms each value of an object, keeping its keys. Each iteration exposes the value as `item` (rename via the `item` sibling), the current `key`, and `loop`.\nWhen `do` is an array it is resolved as a literal (all elements), not as sequential steps.",
+      markdownDescription: "Transforms each value of an object, keeping its keys. Each iteration exposes the value as `item` and its key as `key` (rename via the `item`/`key` siblings).\nWhen `do` is an array it is resolved as a literal (all elements), not as sequential steps.",
       examples: [
         "{ \"$mapValues\": { \"$var\": \"scores\" }, \"do\": { \"$multiply\": [{ \"$var\": \"item\" }, 2] } }",
       ],
@@ -55,6 +55,10 @@ export class ObjectNode extends Node {
         item: {
           type: "string",
           description: "Variable name for the current value (default `\"item\"`).",
+        },
+        key: {
+          type: "string",
+          description: "Variable name for the current key (default `\"key\"`).",
         },
         do: {
           required: true,
@@ -121,24 +125,29 @@ export class ObjectNode extends Node {
   }
 
   mapValues(def: Record<string, unknown>, context: Context) {
-    const itemName = typeof def.item === "string" ? def.item : "item";
     const template = def.do;
     if (template === undefined) throw new Error("mapValues needs a `do` template");
-    return resolve(def.$mapValues, context, obj => {
-      if (!this.isObject(obj)) return {};
-      const record = obj; // const preserves the narrowed type into the closure below
-      const keys = Object.keys(record);
-      const result: Record<string, unknown> = {};
-      let i = 0;
-      function next(): unknown {
-        if (i >= keys.length) return result;
-        const idx = i++;
-        const key = keys[idx];
-        const item = record[key];
-        const itemCtx = loopScope(context, { [itemName]: item, key }, item, idx, keys.length, key);
-        return resolve(template, itemCtx, v => { result[key] = v; return next(); });
-      }
-      return next();
+    // As on the array iterators, the variable names are resolved first, so
+    // either may be handed in as an expression.
+    return resolveAll([def.item, def.key], context, ([itemRaw, keyRaw]) => {
+      const itemName = typeof itemRaw === "string" ? itemRaw : "item";
+      const keyName = typeof keyRaw === "string" ? keyRaw : "key";
+      return resolve(def.$mapValues, context, obj => {
+        if (!this.isObject(obj)) return {};
+        const record = obj; // const preserves the narrowed type into the closure below
+        const keys = Object.keys(record);
+        const result: Record<string, unknown> = {};
+        let i = 0;
+        function next(): unknown {
+          if (i >= keys.length) return result;
+          const idx = i++;
+          const key = keys[idx];
+          const item = record[key];
+          const itemCtx = childContext(context, { [itemName]: item, [keyName]: key });
+          return resolve(template, itemCtx, v => { result[key] = v; return next(); });
+        }
+        return next();
+      });
     });
   }
 

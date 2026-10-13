@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, loopScope } from "./Node.js";
+import { Node, Context, NodeValue, childContext } from "./Node.js";
 import { resolve, resolveAll, isStep, runSteps } from "../Resolver.js";
 import { hasAnyKey, isObject } from "../helpers.js";
 import type { JexsNodeSchema } from "../schema.js";
@@ -38,7 +38,7 @@ export class LogicNode extends Node {
       },
     },
     foreach: {
-      markdownDescription: "Iterates over an array, resolving `do` for each item, for side-effects or accumulation. Use `item` to name the item variable (default `\"item\"`), `key` for the index variable, and `parallel: true` to resolve all iterations concurrently.\nEach iteration receives a `loop` context with `item`, `index`, `first`, `last`, and `length`.",
+      markdownDescription: "Iterates over an array, resolving `do` for each item, for side-effects or accumulation. Each iteration exposes the current element as `item` and its position as `index` (rename via the `item`/`index` siblings). Pass `parallel: true` to resolve all iterations concurrently.",
       outputDescription: "The **last** iteration's resolved value, not an array (an empty/absent input yields `null`). For an array `do`, that is the last step of the last iteration. Reach for `map` when you need a result per item, e.g. rendering N elements from a collection.",
       examples: [
         "{ \"$foreach\": { \"$var\": \"users\" }, \"item\": \"user\", \"do\": { \"$setVars\": { \"seen\": { \"$add\": [{ \"$var\": \"seen\" }, 1] } } } }",
@@ -50,11 +50,11 @@ export class LogicNode extends Node {
         },
         item: {
           type: "string",
-          description: "Variable name to expose the current item (default `\"item\"`).",
+          description: "Variable name for the current item (default `\"item\"`).",
         },
-        key: {
+        index: {
           type: "string",
-          description: "Variable name to expose the current index (default `\"index\"`).",
+          description: "Variable name for the current index (default `\"index\"`).",
         },
         parallel: {
           type: "boolean",
@@ -255,10 +255,10 @@ export class LogicNode extends Node {
   }
 
   foreach(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def.$foreach, def.parallel, def.item, def.key], context, ([items, parallel, itemRaw, keyRaw]) => {
+    return resolveAll([def.$foreach, def.parallel, def.item, def.index], context, ([items, parallel, itemRaw, indexRaw]) => {
       const arr = this.toArray(items);
       const itemName = typeof itemRaw === "string" ? itemRaw : "item";
-      const keyName = typeof keyRaw === "string" ? keyRaw : null;
+      const indexName = typeof indexRaw === "string" ? indexRaw : "index";
       const template = def.do;
       if (template === undefined) throw new Error("foreach needs a `do` template");
 
@@ -268,8 +268,7 @@ export class LogicNode extends Node {
       if (arr.length === 0) return null;
 
       const buildContext = (item: unknown, i: number): Context =>
-        loopScope(context, keyName ? { [itemName]: item, [keyName]: i } : { [itemName]: item }, item, i, arr.length);
-
+        childContext(context, { [itemName]: item, [indexName]: i });
 
       if (this.toBoolean(parallel)) {
         return Promise.all(arr.map((item, i) => runSteps(template, buildContext(item, i))))

@@ -63,6 +63,16 @@ test("mapValues: exposes the current key and a rename-able item", () => {
   );
 });
 
+test("mapValues: the key is rename-able, and both names may be expressions", () => {
+  assert.deepEqual(
+    resolve(
+      { $mapValues: { $var: "o" }, item: { $var: "itemVar" }, key: "k", do: { $concat: [{ $var: "k" }, "=", { $var: "v" }] } },
+      { o: { a: 1, b: 2 }, itemVar: "v" },
+    ),
+    { a: "a=1", b: "b=2" },
+  );
+});
+
 test("mapValues: non-object input yields an empty object", () => {
   assert.deepEqual(resolve({ $mapValues: 5, do: { $var: "item" } }, {}), {});
 });

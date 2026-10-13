@@ -23,9 +23,16 @@ test("map: item/index names may be expressions, resolved before use", () => {
   assert.deepEqual(out, ["0=a", "1=b"]);
 });
 
-test("map: `loop` still carries the position, alongside the bare index", () => {
-  const out = resolve({ $map: ["a", "b"], do: { $concat: [{ $var: "loop.index" }, "/", { $var: "loop.length" }] } }, {});
-  assert.deepEqual(out, ["0/2", "1/2"]);
+test("an iteration binds only its item and index", () => {
+  const out = resolve({ $map: ["a"], do: { $var: "loop" } }, {});
+  assert.deepEqual(out, [undefined]);
+});
+
+test("foreach: exposes the index as `index`, rename-able like the array ops'", () => {
+  const ctx: Record<string, unknown> = { out: [] };
+  resolve({ $foreach: ["a", "b"], do: { $push: [{ $var: "out" }, { $concat: [{ $var: "index" }, ":", { $var: "item" }] }] } }, ctx);
+  resolve({ $foreach: ["c"], item: "x", index: { $var: "indexVar" }, do: { $push: [{ $var: "out" }, { $concat: [{ $var: "i" }, "=", { $var: "x" }] }] } }, { ...ctx, indexVar: "i" });
+  assert.deepEqual(ctx.out, ["0:a", "1:b", "0=c"]);
 });
 
 test("filter: renames the item via the `item` sibling", () => {

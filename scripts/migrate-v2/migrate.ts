@@ -51,7 +51,8 @@ type Rule = (step: Step, m: Codemod) => void;
  */
 function tupleToSiblings({ op, obj }: Step, names: string[], m: Codemod): void {
   const prop = obj.props.find(p => p.key === "$" + op);
-  if (!prop) return;
+  // A step that already has the siblings is migrated.
+  if (!prop || obj.props.some(p => p.key === names[0])) return;
   const v = prop.value;
   const shape = `[<array>, ${names.map(n => `<${n}>`).join(", ")}]`;
   if (v.k !== "arr" || v.items.length < 2 || v.items.length > names.length + 1) {
@@ -65,6 +66,12 @@ function tupleToSiblings({ op, obj }: Step, names: string[], m: Codemod): void {
   m.add({ start: items[items.length - 1].end, end: v.end, text: "" });
 }
 
+/** Rename the step's `from` sibling to `to`, keeping how its key is quoted. */
+function renameSibling({ obj }: Step, from: string, to: string, m: Codemod): void {
+  const prop = obj.props.find(p => p.key === from);
+  if (prop) m.add({ start: prop.keyStart, end: prop.keyEnd, text: prop.shorthand ? `${to}: ${from}` : to });
+}
+
 /** The v2 rewrites, by the op they apply to. */
 const RULES: Record<string, Rule> = {
   // The per-item template is a `do` sibling, as on `map` and `foreach`, and the
@@ -72,6 +79,16 @@ const RULES: Record<string, Rule> = {
   filter: (step, m) => tupleToSiblings(step, ["do"], m),
   find: (step, m) => tupleToSiblings(step, ["do"], m),
   reduce: (step, m) => tupleToSiblings(step, ["do", "initial"], m),
+  // The index variable is named by `index`, as on the array ops.
+  foreach: (step, m) => renameSibling(step, "key", "index", m),
+  // Iterations bind only their item and index; what `loop` read depends on the
+  // enclosing iterator's names, so it is left for review.
+  var: ({ obj }, m) => {
+    const path = obj.props.find(p => p.key === "$var")?.value;
+    if (path?.k === "str" && /^loop(\.|$)/.test(path.value)) {
+      m.review(path.start, `\`${path.value}\` is gone: \`loop.item\` and \`loop.index\` are the iteration's \`item\` and \`index\` (or the names its \`item\`/\`index\` siblings give), \`loop.key\` is \`index\` (or \`key\` in \`$mapValues\`), \`loop.first\` is \`{ "$eq": [index, 0] }\`, and \`loop.length\`/\`loop.last\` come from \`$count\` of the array`);
+    }
+  },
 };
 
 const m = createCodemod(C, { expr: walkExpr });

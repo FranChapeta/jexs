@@ -1,4 +1,4 @@
-import { Node, Context, loopScope } from "./Node.js";
+import { Node, Context, childContext } from "./Node.js";
 import { resolve, resolveAll } from "../Resolver.js";
 import { getNestedValue } from "../helpers.js";
 import { nextRandom } from "./Math.js";
@@ -196,7 +196,7 @@ export class ArrayNode extends Node {
     },
     filter: {
       output: "array",
-      markdownDescription: "Returns the items of an array for which the `do` condition is truthy.\nEach iteration exposes the current element as `item` (rename via the `item`/`index` siblings), plus `index` and `loop`. Read the element with `{ \"$var\": \"item\" }`.",
+      markdownDescription: "Returns the items of an array for which the `do` condition is truthy.\nEach iteration exposes the current element as `item` and its position as `index` (rename via the `item`/`index` siblings).",
       examples: [
         "{ \"$filter\": { \"$var\": \"nums\" }, \"do\": { \"$gt\": [{ \"$var\": \"item\" }, 2] } }",
         "{ \"$filter\": { \"$var\": \"users\" }, \"do\": { \"$eq\": [{ \"$var\": \"u.role\" }, \"admin\"] }, \"item\": \"u\" }",
@@ -217,7 +217,7 @@ export class ArrayNode extends Node {
       },
     },
     find: {
-      markdownDescription: "Returns the first item of an array for which the `do` condition is truthy.\nEach iteration exposes the current element as `item` (rename via the `item`/`index` siblings), plus `index` and `loop`. Read the element with `{ \"$var\": \"item\" }`.",
+      markdownDescription: "Returns the first item of an array for which the `do` condition is truthy.\nEach iteration exposes the current element as `item` and its position as `index` (rename via the `item`/`index` siblings).",
       outputDescription: "The first matching item (any type), or `undefined` if none match.",
       examples: [
         "{ \"$find\": { \"$var\": \"users\" }, \"do\": { \"$eq\": [{ \"$var\": \"item.role\" }, \"admin\"] } }",
@@ -240,7 +240,7 @@ export class ArrayNode extends Node {
     },
     map: {
       output: "array",
-      markdownDescription: "Transforms each item by resolving a template.\nEach iteration exposes the current element as `item` and its position as `index` (rename via the `item`/`index` siblings), plus `loop` (`item`, `index`, `key`, `first`, `last`, `length`).\nWhen `do` is an array it is resolved as a literal (all elements), not as sequential steps.",
+      markdownDescription: "Transforms each item by resolving a template.\nEach iteration exposes the current element as `item` and its position as `index` (rename via the `item`/`index` siblings).\nWhen `do` is an array it is resolved as a literal (all elements), not as sequential steps.",
       examples: [
         "{ \"$map\": { \"$var\": \"nums\" }, \"item\": \"num\", \"do\": { \"$multiply\": [{ \"$var\": \"num\" }, 2] } }",
       ],
@@ -260,7 +260,7 @@ export class ArrayNode extends Node {
       },
     },
     reduce: {
-      markdownDescription: "Reduces an array to a single value: the `do` reducer runs for each item, and what it returns is the next `accumulator`, starting from `initial`.\nEach iteration exposes the current element as `item` (rename via the `item`/`index` siblings), plus `index`, `accumulator`, and `loop`. Read them with `{ \"$var\": \"item\" }` / `{ \"$var\": \"accumulator\" }`.",
+      markdownDescription: "Reduces an array to a single value: the `do` reducer runs for each item, and what it returns is the next `accumulator`, starting from `initial`.\nEach iteration exposes the current element as `item`, its position as `index` (rename via the `item`/`index` siblings), and the running `accumulator`.",
       outputDescription: "The final accumulator value, typed by the reducer or initial value (the initial value is returned as-is for an empty array).",
       examples: [
         "{ \"$reduce\": { \"$var\": \"nums\" }, \"do\": { \"$add\": [{ \"$var\": \"accumulator\" }, { \"$var\": \"item\" }] }, \"initial\": 0 }",
@@ -587,7 +587,7 @@ export class ArrayNode extends Node {
           if (i >= items.length) return results;
           const idx = i++;
           const item = items[idx];
-          const itemCtx = loopScope(context, { [itemName]: item, [indexName]: idx }, item, idx, items.length);
+          const itemCtx = childContext(context, { [itemName]: item, [indexName]: idx });
           return resolve(condition, itemCtx, v => {
             if (self.toBoolean(v)) results.push(item);
             return next();
@@ -612,7 +612,7 @@ export class ArrayNode extends Node {
           if (i >= items.length) return undefined;
           const idx = i++;
           const item = items[idx];
-          const itemCtx = loopScope(context, { [itemName]: item, [indexName]: idx }, item, idx, items.length);
+          const itemCtx = childContext(context, { [itemName]: item, [indexName]: idx });
           return resolve(condition, itemCtx, v => {
             if (self.toBoolean(v)) return item;
             return next();
@@ -639,7 +639,7 @@ export class ArrayNode extends Node {
           if (i >= items.length) return results;
           const idx = i++;
           const item = items[idx];
-          const itemCtx = loopScope(context, { [itemName]: item, [indexName]: idx }, item, idx, items.length);
+          const itemCtx = childContext(context, { [itemName]: item, [indexName]: idx });
           return resolve(template, itemCtx, v => { results.push(v); return next(); });
         }
         return next();
@@ -662,7 +662,7 @@ export class ArrayNode extends Node {
             if (i >= items.length) return accumulator;
             const idx = i++;
             const item = items[idx];
-            const itemCtx = loopScope(context, { [itemName]: item, [indexName]: idx, accumulator }, item, idx, items.length);
+            const itemCtx = childContext(context, { [itemName]: item, [indexName]: idx, accumulator });
             return resolve(reducer, itemCtx, v => { accumulator = v; return next(); });
           }
           return next();

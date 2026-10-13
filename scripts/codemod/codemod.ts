@@ -311,9 +311,14 @@ function applyEdits(text: string, list: Edit[]): string {
   return out;
 }
 
-/** Migrate every JSON value in `text` (a sequence of values; stray text between them is skipped). */
-function migrateJsonText(m: Codemod, text: string): string {
+/**
+ * Migrate every JSON value in `text` (a sequence of values; stray text between
+ * them is skipped). `base` is where `text` starts in its file, so a review found
+ * in it reports the file's line.
+ */
+function migrateJsonText(m: Codemod, text: string, base = 0): string {
   const p = new Parser(text);
+  const firstReview = reviews.length;
   let any = false;
   while (p.i < text.length) {
     p.ws();
@@ -323,14 +328,17 @@ function migrateJsonText(m: Codemod, text: string): string {
     const save = p.i;
     try { m.walk(ROOT, p.value()); any = true; } catch { p.i = save + 1; }
   }
+  for (let i = firstReview; i < reviews.length; i++) reviews[i].at += base;
   return any ? applyEdits(text, takeEdits()) : text;
 }
 
-/** Backtick code spans (and ```json blocks) whose content is JSON. */
-function migrateCodeSpans(m: Codemod, text: string): string {
+/** Backtick code spans (and ```json blocks) whose content is JSON; `base` as for `migrateJsonText`. */
+function migrateCodeSpans(m: Codemod, text: string, base = 0): string {
   return text
-    .replace(/```json(\r?\n)([\s\S]*?)```/g, (_m, nl: string, body: string) => "```json" + nl + migrateJsonText(m, body) + "```")
-    .replace(/(?<!`)`([^`\n]+)`(?!`)/g, (s, body: string) => (/^\s*[{[]/.test(body) ? "`" + migrateJsonText(m, body) + "`" : s));
+    .replace(/```json(\r?\n)([\s\S]*?)```/g, (_m, nl: string, body: string, at: number) =>
+      "```json" + nl + migrateJsonText(m, body, base + at + "```json".length + nl.length) + "```")
+    .replace(/(?<!`)`([^`\n]+)`(?!`)/g, (s, body: string, at: number) =>
+      (/^\s*[{[]/.test(body) ? "`" + migrateJsonText(m, body, base + at + 1) + "`" : s));
 }
 
 function quoteLike(original: string, value: string): string {
@@ -373,7 +381,7 @@ function migrateSource(m: Codemod, text: string, { literals }: { literals: boole
     let value: string;
     try { value = new Parser(s[0], 0, true).string().value; } catch { continue; }
     if (!/[{[`]/.test(value)) continue;
-    const next = /^\s*[{[]/.test(value) ? migrateJsonText(m, value) : migrateCodeSpans(m, value);
+    const next = /^\s*[{[]/.test(value) ? migrateJsonText(m, value, start + 1) : migrateCodeSpans(m, value, start + 1);
     if (next !== value) out.push({ start, end: start + s[0].length, text: quoteLike(s[0], next) });
   }
   // 2. Expression literals in code. A literal is migrated as a whole; the scan then
@@ -419,7 +427,7 @@ function migrateSource(m: Codemod, text: string, { literals }: { literals: boole
     if (c !== "/" || (text[i + 1] !== "/" && text[i + 1] !== "*")) continue;
     const end = text[i + 1] === "/" ? (text.indexOf("\n", i) < 0 ? text.length : text.indexOf("\n", i)) : (text.indexOf("*/", i + 2) < 0 ? text.length : text.indexOf("*/", i + 2) + 2);
     const comment = text.slice(i, end);
-    const next = migrateJsonText(m, comment);
+    const next = migrateJsonText(m, comment, i);
     if (next !== comment) out.push({ start: i, end, text: next });
     i = end - 1;
   }
