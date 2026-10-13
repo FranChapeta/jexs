@@ -22,12 +22,14 @@ export interface CombinedSchema {
 // ── Values ──────────────────────────────────────────────────────────────────
 
 export interface Edit { start: number; end: number; text: string }
-export type Val =
-  | { k: "obj"; props: Prop[]; start: number; end: number }
+/** A parsed value, with the span of source text it was read from. */
+export type Val = { start: number; end: number } & (
+  | { k: "obj"; props: Prop[] }
   | { k: "arr"; items: Val[] }
-  | { k: "str"; value: string; start: number; end: number; quote: string }
+  | { k: "str"; value: string; quote: string }
   | { k: "lit"; type: "number" | "boolean" | "null"; value: unknown }
-  | { k: "opaque" };
+  | { k: "opaque" }
+);
 /** `shorthand`: a JS `{ routes }`, whose key is also the variable it reads. */
 export interface Prop { key: string; keyStart: number; keyEnd: number; keyQuoted: boolean; value: Val; shorthand?: boolean }
 
@@ -79,22 +81,23 @@ export class Parser {
     }
     if (this.i === start) this.fail();
     this.opaques.push([start, this.i]);
-    return { k: "opaque" };
+    return { k: "opaque", start, end: this.i };
   }
   value(): Val {
     this.ws();
     const c = this.s[this.i];
+    const start = this.i;
     if (c === "{") return this.object();
     if (c === "[") return this.array();
     if (c === '"' || (this.js && (c === "'" || c === "`"))) {
       if (c === "`" && this.s.slice(this.i).match(/^`[^`]*\$\{/)) return this.opaque();
       const t = this.string(); return { k: "str", ...t };
     }
-    if (this.s.startsWith("...", this.i)) { this.i += 3; if (this.js) { this.ws(); if (this.s[this.i] !== "," && this.s[this.i] !== "]" && this.s[this.i] !== "}") this.opaque(); } return { k: "opaque" }; }
+    if (this.s.startsWith("...", this.i)) { this.i += 3; if (this.js) { this.ws(); if (this.s[this.i] !== "," && this.s[this.i] !== "]" && this.s[this.i] !== "}") this.opaque(); } return { k: "opaque", start, end: this.i }; }
     const m = /^-?(?:\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+)/.exec(this.s.slice(this.i));
-    if (m) { this.i += m[0].length; return { k: "lit", type: "number", value: Number(m[0]) }; }
+    if (m) { this.i += m[0].length; return { k: "lit", type: "number", value: Number(m[0]), start, end: this.i }; }
     for (const [w, v, t] of [["true", true, "boolean"], ["false", false, "boolean"], ["null", null, "null"]] as const) {
-      if (this.s.startsWith(w, this.i) && !/[\w$]/.test(this.s[this.i + w.length] ?? "")) { this.i += w.length; return { k: "lit", type: t, value: v }; }
+      if (this.s.startsWith(w, this.i) && !/[\w$]/.test(this.s[this.i + w.length] ?? "")) { this.i += w.length; return { k: "lit", type: t, value: v, start, end: this.i }; }
     }
     if (/[A-Za-z_$<]/.test(c ?? "")) return this.opaque();
     if (this.js) return this.opaque();
@@ -127,7 +130,7 @@ export class Parser {
         let value: Val;
         let shorthand = false;
         if (this.s[this.i] === ":") { this.i++; value = this.value(); }
-        else if (this.js) { value = { k: "opaque" }; shorthand = !keyQuoted; } // shorthand property or method
+        else if (this.js) { value = { k: "opaque", start: keyStart, end: keyEnd }; shorthand = !keyQuoted; } // shorthand property or method
         else this.fail();
         props.push({ key, keyStart, keyEnd, keyQuoted, value, shorthand });
       }
@@ -139,16 +142,18 @@ export class Parser {
     }
   }
   array(): Val {
+    const start = this.i;
     this.i++;
     const items: Val[] = [];
+    const done = (): Val => { this.i++; return { k: "arr", items, start, end: this.i }; };
     for (;;) {
       this.ws();
-      if (this.s[this.i] === "]") { this.i++; return { k: "arr", items }; }
+      if (this.s[this.i] === "]") return done();
       items.push(this.value());
       this.ws();
       if (this.s[this.i] === ",") { this.i++; continue; }
-      if (this.s[this.i] === "]") { this.i++; return { k: "arr", items }; }
-      if (this.js) { this.opaque(); this.ws(); if (this.s[this.i] === ",") { this.i++; continue; } if (this.s[this.i] === "]") { this.i++; return { k: "arr", items }; } }
+      if (this.s[this.i] === "]") return done();
+      if (this.js) { this.opaque(); this.ws(); if (this.s[this.i] === ",") { this.i++; continue; } if (this.s[this.i] === "]") return done(); }
       this.fail();
     }
   }

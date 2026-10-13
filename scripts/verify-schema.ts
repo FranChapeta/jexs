@@ -45,7 +45,7 @@ const cases: Case[] = [
   { label: "switch with cases", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $switch: { $var: "role" }, cases: { admin: "full" }, default: "none" } },
   { label: "filter with renamed item sibling", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $filter: [{ $var: "users" }, { $eq: [{ $var: "u.role" }, "admin"] }], item: "u" } },
+    expr: { $filter: { $var: "users" }, do: { $eq: [{ $var: "u.role" }, "admin"] }, item: "u" } },
   { label: "return via exprFlat", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $if: { $var: "x" }, then: { $return: "early" } } },
   { label: "var", schemaRef: "$defs/exprFlat", expectValid: true,

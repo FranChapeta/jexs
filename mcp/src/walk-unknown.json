@@ -16,17 +16,15 @@
   { "$as": "where", "$if": { "$empty": { "$var": "path" } }, "then": "(root)", "else": { "$var": "path" } },
   { "$as": "resolverKeys", "$merge": [{ "$var": "opKeys" }, { "$var": "globalKeys" }] },
 
-  { "$as": "dispatcher", "$first": { "$filter": [{ "$var": "keys" }, { "$includes": [{ "$var": "opKeys" }, { "$var": "item" }] }] } },
+  { "$as": "dispatcher", "$first": { "$filter": { "$var": "keys" }, "do": { "$includes": [{ "$var": "opKeys" }, { "$var": "item" }] } } },
   { "$as": "op", "$if": { "$empty": { "$var": "dispatcher" } }, "then": "", "else": { "$substring": [{ "$var": "dispatcher" }, 1] } },
   { "$as": "ownSiblings", "$map": { "$coalesce": [{ "$var": { "$concat": ["siblingDocs.", { "$var": "op" }] } }, []] }, "item": "s", "do": { "$var": "s.name" } },
 
   {
     "$as": "unknownOps",
     "$map": {
-      "$filter": [
-        { "$var": "keys" },
-        { "$and": [{ "$startsWith": [{ "$var": "item" }, "$"] }, { "$not": { "$includes": [{ "$var": "resolverKeys" }, { "$var": "item" }] } }] }
-      ]
+      "$filter": { "$var": "keys" },
+      "do": { "$and": [{ "$startsWith": [{ "$var": "item" }, "$"] }, { "$not": { "$includes": [{ "$var": "resolverKeys" }, { "$var": "item" }] } }] }
     },
     "item": "k",
     "do": [
@@ -47,16 +45,14 @@
     "then": [],
     "else": {
       "$map": {
-        "$filter": [
-          { "$var": "keys" },
-          {
-            "$and": [
-              { "$not": { "$startsWith": [{ "$var": "item" }, "$"] } },
-              { "$not": { "$includes": [{ "$var": "ownSiblings" }, { "$var": "item" }] } },
-              { "$notEmpty": { "$runVar": "suggest", "params": { "needle": { "$var": "item" }, "haystack": { "$var": "ownSiblings" } } } }
-            ]
-          }
-        ]
+        "$filter": { "$var": "keys" },
+        "do": {
+          "$and": [
+            { "$not": { "$startsWith": [{ "$var": "item" }, "$"] } },
+            { "$not": { "$includes": [{ "$var": "ownSiblings" }, { "$var": "item" }] } },
+            { "$notEmpty": { "$runVar": "suggest", "params": { "needle": { "$var": "item" }, "haystack": { "$var": "ownSiblings" } } } }
+          ]
+        }
       },
       "item": "k",
       "do": {

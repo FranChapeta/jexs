@@ -29,23 +29,23 @@ test("map: `loop` still carries the position, alongside the bare index", () => {
 });
 
 test("filter: renames the item via the `item` sibling", () => {
-  const out = resolve({ $filter: [[1, 2, 3], { $gt: [{ $var: "n" }, 1] }], item: "n" }, {});
+  const out = resolve({ $filter: [1, 2, 3], do: { $gt: [{ $var: "n" }, 1] }, item: "n" }, {});
   assert.deepEqual(out, [2, 3]);
 });
 
-test("filter: default item is still `item` (backward compatible)", () => {
-  const out = resolve({ $filter: [[1, 2, 3], { $gt: [{ $var: "item" }, 1] }] }, {});
+test("filter: default item is `item`", () => {
+  const out = resolve({ $filter: [1, 2, 3], do: { $gt: [{ $var: "item" }, 1] } }, {});
   assert.deepEqual(out, [2, 3]);
 });
 
 test("filter: renames the index via the `index` sibling", () => {
-  const out = resolve({ $filter: [["a", "b", "c"], { $gt: [{ $var: "i" }, 0] }], index: "i" }, {});
+  const out = resolve({ $filter: ["a", "b", "c"], do: { $gt: [{ $var: "i" }, 0] }, index: "i" }, {});
   assert.deepEqual(out, ["b", "c"]);
 });
 
 test("filter: item/index names may be expressions, resolved before use", () => {
   const out = resolve(
-    { $filter: [[1, 2, 3], { $gt: [{ $var: "n" }, 1] }], item: { $var: "itemVar" } },
+    { $filter: [1, 2, 3], do: { $gt: [{ $var: "n" }, 1] }, item: { $var: "itemVar" } },
     { itemVar: "n" },
   );
   assert.deepEqual(out, [2, 3]);
@@ -53,7 +53,7 @@ test("filter: item/index names may be expressions, resolved before use", () => {
 
 test("find: renames the item via the `item` sibling", () => {
   const out = resolve(
-    { $find: [[{ id: 1 }, { id: 2 }], { $eq: [{ $var: "x.id" }, 2] }], item: "x" },
+    { $find: [{ id: 1 }, { id: 2 }], do: { $eq: [{ $var: "x.id" }, 2] }, item: "x" },
     {},
   );
   assert.deepEqual(out, { id: 2 });
@@ -61,10 +61,29 @@ test("find: renames the item via the `item` sibling", () => {
 
 test("reduce: renames the item while accumulator stays available", () => {
   const out = resolve(
-    { $reduce: [[1, 2, 3], { $add: [{ $var: "accumulator" }, { $var: "n" }] }, 0], item: "n" },
+    { $reduce: [1, 2, 3], do: { $add: [{ $var: "accumulator" }, { $var: "n" }] }, initial: 0, item: "n" },
     {},
   );
   assert.equal(out, 6);
+});
+
+test("reduce: without `initial`, the first accumulator is undefined", () => {
+  const out = resolve({ $reduce: ["a", "b"], do: { $concat: [{ $coalesce: [{ $var: "accumulator" }, ">"] }, { $var: "item" }] } }, {});
+  assert.equal(out, ">ab");
+});
+
+// The array is the op's whole value, so it can come from an expression, as `map`'s can.
+test("filter, find and reduce take their array from an expression", () => {
+  const ctx = { nums: [1, 2, 3] };
+  assert.deepEqual(resolve({ $filter: { $var: "nums" }, do: { $gt: [{ $var: "item" }, 1] } }, { ...ctx }), [2, 3]);
+  assert.equal(resolve({ $find: { $var: "nums" }, do: { $gt: [{ $var: "item" }, 1] } }, { ...ctx }), 2);
+  assert.equal(resolve({ $reduce: { $var: "nums" }, do: { $add: [{ $var: "accumulator" }, { $var: "item" }] }, initial: 0 }, { ...ctx }), 6);
+});
+
+test("filter, find and reduce need a `do`", () => {
+  assert.throws(() => resolve({ $filter: [1] }, {}), /filter needs a `do` condition/);
+  assert.throws(() => resolve({ $find: [1] }, {}), /find needs a `do` condition/);
+  assert.throws(() => resolve({ $reduce: [1] }, {}), /reduce needs a `do` reducer/);
 });
 
 test("return: short-circuits a step array", () => {

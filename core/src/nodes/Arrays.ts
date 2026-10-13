@@ -195,12 +195,11 @@ export class ArrayNode extends Node {
       ],
     },
     filter: {
-      tuple: 2,
       output: "array",
-      markdownDescription: "Returns the items of an array for which a condition is truthy. Tuple form: `[<array>, <condition>]`.\nEach iteration exposes the current element as `item` (rename via the `item`/`index` siblings), plus `index` and `loop`. Read the element with `{ \"$var\": \"item\" }`; a leading `$` is optional.",
+      markdownDescription: "Returns the items of an array for which the `do` condition is truthy.\nEach iteration exposes the current element as `item` (rename via the `item`/`index` siblings), plus `index` and `loop`. Read the element with `{ \"$var\": \"item\" }`.",
       examples: [
-        "{ \"$filter\": [{ \"$var\": \"nums\" }, { \"$gt\": [{ \"$var\": \"item\" }, 2] }] }",
-        "{ \"$filter\": [{ \"$var\": \"users\" }, { \"$eq\": [{ \"$var\": \"u.role\" }, \"admin\"] }], \"item\": \"u\" }",
+        "{ \"$filter\": { \"$var\": \"nums\" }, \"do\": { \"$gt\": [{ \"$var\": \"item\" }, 2] } }",
+        "{ \"$filter\": { \"$var\": \"users\" }, \"do\": { \"$eq\": [{ \"$var\": \"u.role\" }, \"admin\"] }, \"item\": \"u\" }",
       ],
       siblings: {
         item: {
@@ -210,16 +209,19 @@ export class ArrayNode extends Node {
         index: {
           type: "string",
           description: "Variable name for the current index (default `\"index\"`).",
+        },
+        do: {
+          required: true,
+          description: "Condition to resolve for each item; the item is kept when it is truthy.",
         },
       },
     },
     find: {
-      tuple: 2,
-      markdownDescription: "Returns the first item of an array for which a condition is truthy. Tuple form: `[<array>, <condition>]`.\nEach iteration exposes the current element as `item` (rename via the `item`/`index` siblings), plus `index` and `loop`. Read the element with `{ \"$var\": \"item\" }`; a leading `$` is optional.",
+      markdownDescription: "Returns the first item of an array for which the `do` condition is truthy.\nEach iteration exposes the current element as `item` (rename via the `item`/`index` siblings), plus `index` and `loop`. Read the element with `{ \"$var\": \"item\" }`.",
       outputDescription: "The first matching item (any type), or `undefined` if none match.",
       examples: [
-        "{ \"$find\": [{ \"$var\": \"users\" }, { \"$eq\": [{ \"$var\": \"item.role\" }, \"admin\"] }] }",
-        "{ \"$find\": [{ \"$var\": \"users\" }, { \"$eq\": [{ \"$var\": \"u.role\" }, \"admin\"] }], \"item\": \"u\" }",
+        "{ \"$find\": { \"$var\": \"users\" }, \"do\": { \"$eq\": [{ \"$var\": \"item.role\" }, \"admin\"] } }",
+        "{ \"$find\": { \"$var\": \"users\" }, \"do\": { \"$eq\": [{ \"$var\": \"u.role\" }, \"admin\"] }, \"item\": \"u\" }",
       ],
       siblings: {
         item: {
@@ -229,6 +231,10 @@ export class ArrayNode extends Node {
         index: {
           type: "string",
           description: "Variable name for the current index (default `\"index\"`).",
+        },
+        do: {
+          required: true,
+          description: "Condition to resolve for each item; the first item it is truthy for is returned.",
         },
       },
     },
@@ -254,12 +260,11 @@ export class ArrayNode extends Node {
       },
     },
     reduce: {
-      tuple: 3,
-      markdownDescription: "Reduces an array to a single value. Tuple form: `[<array>, <reducer>, <initial>]`.\nEach iteration exposes the current element as `item` (rename via the `item`/`index` siblings), plus `index`, `accumulator`, and `loop`. Read them with `{ \"$var\": \"item\" }` / `{ \"$var\": \"accumulator\" }`; a leading `$` is optional.",
+      markdownDescription: "Reduces an array to a single value: the `do` reducer runs for each item, and what it returns is the next `accumulator`, starting from `initial`.\nEach iteration exposes the current element as `item` (rename via the `item`/`index` siblings), plus `index`, `accumulator`, and `loop`. Read them with `{ \"$var\": \"item\" }` / `{ \"$var\": \"accumulator\" }`.",
       outputDescription: "The final accumulator value, typed by the reducer or initial value (the initial value is returned as-is for an empty array).",
       examples: [
-        "{ \"$reduce\": [{ \"$var\": \"nums\" }, { \"$add\": [{ \"$var\": \"accumulator\" }, { \"$var\": \"item\" }] }, 0] }",
-        "{ \"$reduce\": [{ \"$var\": \"nums\" }, { \"$add\": [{ \"$var\": \"accumulator\" }, { \"$var\": \"n\" }] }, 0], \"item\": \"n\" }",
+        "{ \"$reduce\": { \"$var\": \"nums\" }, \"do\": { \"$add\": [{ \"$var\": \"accumulator\" }, { \"$var\": \"item\" }] }, \"initial\": 0 }",
+        "{ \"$reduce\": { \"$var\": \"nums\" }, \"do\": { \"$add\": [{ \"$var\": \"accumulator\" }, { \"$var\": \"n\" }] }, \"initial\": 0, \"item\": \"n\" }",
       ],
       siblings: {
         item: {
@@ -269,6 +274,13 @@ export class ArrayNode extends Node {
         index: {
           type: "string",
           description: "Variable name for the current index (default `\"index\"`).",
+        },
+        do: {
+          required: true,
+          description: "Reducer to resolve for each item; what it returns becomes the next `accumulator`.",
+        },
+        initial: {
+          description: "The accumulator's starting value (default: none, so the first `accumulator` is undefined).",
         },
       },
     },
@@ -561,13 +573,13 @@ export class ArrayNode extends Node {
   }
 
   filter(def: Record<string, unknown>, context: Context) {
-    const args = this.toArray(def.$filter);
+    const condition = def.do;
+    if (condition === undefined) throw new Error("filter needs a `do` condition");
     return resolveAll([def.item, def.index], context, ([itemRaw, indexRaw]) => {
       const itemName = typeof itemRaw === "string" ? itemRaw : "item";
       const indexName = typeof indexRaw === "string" ? indexRaw : "index";
-      return resolve(args[0], context, arr => {
+      return resolve(def.$filter, context, arr => {
         const items = this.toArray(arr);
-        const condition = args[1];
         const results: unknown[] = [];
         let i = 0;
         const self = this;
@@ -587,13 +599,13 @@ export class ArrayNode extends Node {
   }
 
   find(def: Record<string, unknown>, context: Context) {
-    const args = this.toArray(def.$find);
+    const condition = def.do;
+    if (condition === undefined) throw new Error("find needs a `do` condition");
     return resolveAll([def.item, def.index], context, ([itemRaw, indexRaw]) => {
       const itemName = typeof itemRaw === "string" ? itemRaw : "item";
       const indexName = typeof indexRaw === "string" ? indexRaw : "index";
-      return resolve(args[0], context, arr => {
+      return resolve(def.$find, context, arr => {
         const items = this.toArray(arr);
-        const condition = args[1];
         let i = 0;
         const self = this;
         function next(): unknown {
@@ -614,8 +626,8 @@ export class ArrayNode extends Node {
   map(def: Record<string, unknown>, context: Context) {
     const template = def.do;
     if (template === undefined) throw new Error("map needs a `do` template");
-    // Same shape as `filter`/`find`/`reduce`: the item and index variable names
-    // are resolved first, so either may be handed in as an expression.
+    // As in `filter`/`find`/`reduce`, the item and index variable names are
+    // resolved first, so either may be handed in as an expression.
     return resolveAll([def.item, def.index], context, ([itemRaw, indexRaw]) => {
       const itemName = typeof itemRaw === "string" ? itemRaw : "item";
       const indexName = typeof indexRaw === "string" ? indexRaw : "index";
@@ -636,14 +648,14 @@ export class ArrayNode extends Node {
   }
 
   reduce(def: Record<string, unknown>, context: Context) {
-    const args = this.toArray(def.$reduce);
+    const reducer = def.do;
+    if (reducer === undefined) throw new Error("reduce needs a `do` reducer");
     return resolveAll([def.item, def.index], context, ([itemRaw, indexRaw]) => {
       const itemName = typeof itemRaw === "string" ? itemRaw : "item";
       const indexName = typeof indexRaw === "string" ? indexRaw : "index";
-      return resolve(args[0], context, arr => {
+      return resolve(def.$reduce, context, arr => {
         const items = this.toArray(arr);
-        const reducer = args[1];
-        return resolve(args.length > 2 ? args[2] : undefined, context, initial => {
+        return resolve(def.initial, context, initial => {
           let accumulator: unknown = initial;
           let i = 0;
           function next(): unknown {

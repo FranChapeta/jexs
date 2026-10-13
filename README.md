@@ -100,7 +100,7 @@ A few rules govern how every expression is resolved. Worth internalizing — the
 - `$then` — run the step without waiting for it, then run these steps with its value as `result`.
 - `$bubble` — alongside `$as` or on a `$setVars`, also write into every enclosing scope.
 
-**Iterating.** `map` transforms each element of an array via `do`; `filter`/`find`/`reduce` take a tuple `[<array>, <expr>, …]`. Each exposes the current element as `item` (and `index`, plus `accumulator` for `reduce`); rename it with the `item` sibling — `{ "$filter": [{ "$var": "users" }, { "$eq": [{ "$var": "u.role" }, "admin"] }], "item": "u" }`. Read it with `{ "$var": "item" }`. Inside a string, `$item` interpolates it: `"Hello $user.name"`.
+**Iterating.** `map`, `filter`, `find` and `reduce` take the array as their value and the per-item template in `do`: `map` transforms each element, `filter` and `find` test it, and `reduce` folds it into an `accumulator` that starts at `initial`. Each exposes the current element as `item` (and `index`, plus `accumulator` for `reduce`); rename it with the `item` sibling — `{ "$filter": { "$var": "users" }, "do": { "$eq": [{ "$var": "u.role" }, "admin"] }, "item": "u" }`. Read it with `{ "$var": "item" }`. Inside a string, `$item` interpolates it: `"Hello $user.name"`.
 
 ## Packages
 

@@ -4,23 +4,21 @@
   { "$as": "nSorted", "$join": { "$sort": { "$split": [{ "$var": "n" }, ""] } }, "separator": "" },
   {
     "$as": "hits",
-    "$filter": [
-      { "$var": "haystack" },
-      {
-        "$and": [
-          { "$gt": [{ "$var": "nLen" }, 1] },
-          { "$lte": [{ "$var": "nLen" }, { "$add": [{ "$count": { "$var": "item" } }, 2] }] },
-          { "$lte": [{ "$count": { "$var": "item" } }, { "$add": [{ "$var": "nLen" }, 2] }] },
-          {
-            "$or": [
-              { "$contains": [{ "$lower": { "$var": "item" } }, { "$var": "n" }] },
-              { "$contains": [{ "$var": "n" }, { "$lower": { "$var": "item" } }] },
-              { "$eq": [{ "$join": { "$sort": { "$split": [{ "$lower": { "$var": "item" } }, ""] } }, "separator": "" }, { "$var": "nSorted" }] }
-            ]
-          }
-        ]
-      }
-    ]
+    "$filter": { "$var": "haystack" },
+    "do": {
+      "$and": [
+        { "$gt": [{ "$var": "nLen" }, 1] },
+        { "$lte": [{ "$var": "nLen" }, { "$add": [{ "$count": { "$var": "item" } }, 2] }] },
+        { "$lte": [{ "$count": { "$var": "item" } }, { "$add": [{ "$var": "nLen" }, 2] }] },
+        {
+          "$or": [
+            { "$contains": [{ "$lower": { "$var": "item" } }, { "$var": "n" }] },
+            { "$contains": [{ "$var": "n" }, { "$lower": { "$var": "item" } }] },
+            { "$eq": [{ "$join": { "$sort": { "$split": [{ "$lower": { "$var": "item" } }, ""] } }, "separator": "" }, { "$var": "nSorted" }] }
+          ]
+        }
+      ]
+    }
   },
   { "$return": { "$slice": [{ "$var": "hits" }, 0, 6] } }
 ]

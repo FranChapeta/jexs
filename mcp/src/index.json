@@ -11,7 +11,7 @@
   { "$as": "siblingDocs", "$coalesce": [{ "$var": "schema.siblingDocs" }, {}] },
   { "$as": "opNames", "$keys": { "$var": "byKey" } },
   { "$as": "pkgNames", "$coalesce": [{ "$var": "schema.packages" }, []] },
-  { "$as": "globalDocs", "$fromEntries": [["keys", { "$fromEntries": { "$map": { "$filter": [{ "$entries": { "$coalesce": [{ "$var": "combined.$defs.exprFlat.properties" }, {}] } }, { "$not": { "$includes": [{ "$var": "opNames" }, { "$substring": [{ "$var": "item.key" }, 1] }] } }] }, "item": "e", "do": { "$merge": [[{ "$substring": [{ "$var": "e.key" }, 1] }], [{ "$var": "e.value" }]] } } }]] },
+  { "$as": "globalDocs", "$fromEntries": [["keys", { "$fromEntries": { "$map": { "$filter": { "$entries": { "$coalesce": [{ "$var": "combined.$defs.exprFlat.properties" }, {}] } }, "do": { "$not": { "$includes": [{ "$var": "opNames" }, { "$substring": [{ "$var": "item.key" }, 1] }] } } }, "item": "e", "do": { "$merge": [[{ "$substring": [{ "$var": "e.key" }, 1] }], [{ "$var": "e.value" }]] } } }]] },
   { "$as": "opKeys", "$map": { "$var": "opNames" }, "item": "o", "do": { "$concat": ["$", { "$var": "o" }] } },
   { "$as": "globalNames", "$keys": { "$var": "globalDocs.keys" } },
   { "$as": "globalKeys", "$map": { "$var": "globalNames" }, "item": "g", "do": { "$concat": ["$", { "$var": "g" }] } },
@@ -82,7 +82,7 @@
                 ],
                 "list_nodes": [
                   { "$as": "wanted", "$var": "args.package" },
-                  { "$as": "classNames", "$filter": [{ "$keys": { "$var": "byNode" } }, { "$or": [{ "$empty": { "$var": "wanted" } }, { "$eq": [{ "$var": { "$concat": ["nodePackage.", { "$var": "item" }] } }, { "$var": "wanted" }] }] }] },
+                  { "$as": "classNames", "$filter": { "$keys": { "$var": "byNode" } }, "do": { "$or": [{ "$empty": { "$var": "wanted" } }, { "$eq": [{ "$var": { "$concat": ["nodePackage.", { "$var": "item" }] } }, { "$var": "wanted" }] }] } },
                   {
                     "$as": "classLines",
                     "$map": { "$var": "classNames" },
@@ -141,26 +141,24 @@
                   {
                     "$as": "hits",
                     "$map": {
-                      "$filter": [
-                        { "$var": "opNames" },
-                        {
-                          "$and": [
-                            { "$or": [{ "$empty": { "$var": "wanted" } }, { "$eq": [{ "$var": { "$concat": ["keyPackage.", { "$var": "item" }] } }, { "$var": "wanted" }] }] },
-                            {
-                              "$or": [
-                                { "$contains": [{ "$lower": { "$var": "item" } }, { "$var": "q" }] },
-                                {
-                                  "$contains": [
-                                    { "$lower": { "$coalesce": [{ "$var": { "$concat": ["byKey.", { "$var": "item" }, ".properties.$", { "$var": "item" }, ".markdownDescription"] } }, { "$var": { "$concat": ["byKey.", { "$var": "item" }, ".properties.$", { "$var": "item" }, ".description"] } }, ""] } },
-                                    { "$var": "q" }
-                                  ]
-                                },
-                                { "$eq": [{ "$join": { "$sort": { "$split": [{ "$lower": { "$var": "item" } }, ""] } }, "separator": "" }, { "$var": "qSorted" }] }
-                              ]
-                            }
-                          ]
-                        }
-                      ]
+                      "$filter": { "$var": "opNames" },
+                      "do": {
+                        "$and": [
+                          { "$or": [{ "$empty": { "$var": "wanted" } }, { "$eq": [{ "$var": { "$concat": ["keyPackage.", { "$var": "item" }] } }, { "$var": "wanted" }] }] },
+                          {
+                            "$or": [
+                              { "$contains": [{ "$lower": { "$var": "item" } }, { "$var": "q" }] },
+                              {
+                                "$contains": [
+                                  { "$lower": { "$coalesce": [{ "$var": { "$concat": ["byKey.", { "$var": "item" }, ".properties.$", { "$var": "item" }, ".markdownDescription"] } }, { "$var": { "$concat": ["byKey.", { "$var": "item" }, ".properties.$", { "$var": "item" }, ".description"] } }, ""] } },
+                                  { "$var": "q" }
+                                ]
+                              },
+                              { "$eq": [{ "$join": { "$sort": { "$split": [{ "$lower": { "$var": "item" } }, ""] } }, "separator": "" }, { "$var": "qSorted" }] }
+                            ]
+                          }
+                        ]
+                      }
                     },
                     "item": "op",
                     "do": {
@@ -326,7 +324,7 @@
                         "else": ""
                       },
                       { "$as": "exBlock", "$if": { "$notEmpty": { "$var": "primary.examples" } }, "then": { "$concat": ["Examples:\n", { "$join": { "$map": { "$var": "primary.examples" }, "item": "ex", "do": { "$concat": ["  ", { "$var": "ex" }] } }, "separator": "\n" }] }, "else": "" },
-                      { "content": [{ "type": "text", "text": { "$concat": [{ "$var": "banner" }, { "$join": { "$filter": [[{ "$var": "heading" }, { "$var": "desc" }, { "$var": "returns" }, { "$var": "sibBlock" }, { "$var": "opsBlock" }, { "$var": "exBlock" }], { "$notEmpty": { "$var": "item" } }] }, "separator": "\n\n" }] } }] }
+                      { "content": [{ "type": "text", "text": { "$concat": [{ "$var": "banner" }, { "$join": { "$filter": [{ "$var": "heading" }, { "$var": "desc" }, { "$var": "returns" }, { "$var": "sibBlock" }, { "$var": "opsBlock" }, { "$var": "exBlock" }], "do": { "$notEmpty": { "$var": "item" } } }, "separator": "\n\n" }] } }] }
                     ],
                     "else": [
                       { "$as": "g", "$var": { "$concat": ["globalDocs.keys.", { "$var": "op" }] } },
@@ -403,7 +401,7 @@
                     "then": { "content": [{ "type": "text", "text": { "$concat": [{ "$var": "banner" }, "Error: could not read or parse ", { "$var": "args.filePath" }, " (missing, empty, or not JSON)."] } }], "isError": true },
                     "else": [
                       { "$as": "allKeys", "$unique": { "$flatten": { "$runVar": "walk", "params": { "node": { "$var": "box.node" } } } } },
-                      { "$as": "usedKeys", "$sort": { "$filter": [{ "$var": "allKeys" }, { "$includes": [{ "$var": "opKeys" }, { "$var": "item" }] }] } },
+                      { "$as": "usedKeys", "$sort": { "$filter": { "$var": "allKeys" }, "do": { "$includes": [{ "$var": "opKeys" }, { "$var": "item" }] } } },
                       { "$as": "unknownKeys", "$runVar": "walkUnknown", "params": { "node": { "$var": "box.node" }, "path": "" } },
                       { "$as": "warnings", "$runVar": "walkLint", "params": { "node": { "$var": "box.node" }, "path": "" } },
                       { "$as": "lintText", "$if": { "$notEmpty": { "$var": "warnings" } }, "then": { "$join": { "$map": { "$var": "warnings" }, "item": "w", "do": { "$concat": ["  - ", { "$var": "w" }] } }, "separator": "\n" }, "else": "  none" },
@@ -448,8 +446,8 @@
                         "$if": { "$var": "report.valid" },
                         "then": { "content": [{ "type": "text", "text": { "$concat": [{ "$var": "banner" }, { "$var": "args.filePath" }, " validates against the project schema."] } }] },
                         "else": [
-                          { "$as": "real", "$filter": [{ "$var": "report.errors" }, { "$not": { "$in": [{ "$var": "item.keyword" }, ["anyOf", "oneOf", "if", "not"]] } }] },
-                          { "$as": "deep", "$filter": [{ "$var": "real" }, { "$notEmpty": { "$var": "item.path" } }] },
+                          { "$as": "real", "$filter": { "$var": "report.errors" }, "do": { "$not": { "$in": [{ "$var": "item.keyword" }, ["anyOf", "oneOf", "if", "not"]] } } },
+                          { "$as": "deep", "$filter": { "$var": "real" }, "do": { "$notEmpty": { "$var": "item.path" } } },
                           { "$as": "kept", "$if": { "$notEmpty": { "$var": "deep" } }, "then": { "$var": "deep" }, "else": { "$var": "real" } },
                           { "$as": "lines", "$unique": { "$map": { "$var": "kept" }, "item": "e", "do": { "$concat": ["  ", { "$if": { "$empty": { "$var": "e.path" } }, "then": "(root)", "else": { "$var": "e.path" } }, ": ", { "$var": "e.message" }] } } },
                           {

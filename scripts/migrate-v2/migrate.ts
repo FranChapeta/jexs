@@ -42,8 +42,37 @@ export interface Step {
 
 type Rule = (step: Step, m: Codemod) => void;
 
+/**
+ * A tuple whose later slots become named siblings: `{ "$op": [a, b, c] }` is
+ * `{ "$op": a, "<names[0]>": b, "<names[1]>": c }`. Only the brackets and the
+ * commas between slots are rewritten, so edits inside the slots (a step nested
+ * in one) still apply. A value that is not a literal tuple of a fitting length
+ * is left for review.
+ */
+function tupleToSiblings({ op, obj }: Step, names: string[], m: Codemod): void {
+  const prop = obj.props.find(p => p.key === "$" + op);
+  if (!prop) return;
+  const v = prop.value;
+  const shape = `[<array>, ${names.map(n => `<${n}>`).join(", ")}]`;
+  if (v.k !== "arr" || v.items.length < 2 || v.items.length > names.length + 1) {
+    m.review(prop.keyStart, `\`$${op}\` no longer takes ${shape}: give it the array, with ${names.map(n => `\`${n}\``).join(" and ")} beside it`);
+    return;
+  }
+  const key = (name: string) => (prop.keyQuoted ? `"${name}"` : name);
+  const { items } = v;
+  m.add({ start: v.start, end: items[0].start, text: "" });
+  for (let i = 1; i < items.length; i++) m.add({ start: items[i - 1].end, end: items[i].start, text: `, ${key(names[i - 1])}: ` });
+  m.add({ start: items[items.length - 1].end, end: v.end, text: "" });
+}
+
 /** The v2 rewrites, by the op they apply to. */
-const RULES: Record<string, Rule> = {};
+const RULES: Record<string, Rule> = {
+  // The per-item template is a `do` sibling, as on `map` and `foreach`, and the
+  // reducer's start an `initial` one.
+  filter: (step, m) => tupleToSiblings(step, ["do"], m),
+  find: (step, m) => tupleToSiblings(step, ["do"], m),
+  reduce: (step, m) => tupleToSiblings(step, ["do", "initial"], m),
+};
 
 const m = createCodemod(C, { expr: walkExpr });
 
