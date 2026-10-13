@@ -193,3 +193,9 @@ test("shuffle: empty and single-element arrays are stable", () => {
   assert.deepEqual(resolve({ $shuffle: [] }, {}), []);
   assert.deepEqual(resolve({ $shuffle: [42] }, {}), [42]);
 });
+
+test("count counts an array, and points elsewhere for a string or an object", () => {
+  assert.equal(resolve({ $count: { $var: "xs" } }, { xs: [1, 2, 3] }), 3);
+  assert.throws(() => resolve({ $count: "abc" }, {}), /count takes an array: use `length` for a string/);
+  assert.equal(resolve({ $count: { $keys: { $var: "o" } } }, { o: { a: 1, b: 2 } }), 2);
+});

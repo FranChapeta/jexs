@@ -108,3 +108,7 @@ test("toFixed formats its value with `decimals` places, 2 by default", () => {
   assert.equal(resolve({ $toFixed: { $var: "price" }, decimals: 0 }, { price: 9.5 }), "10");
   assert.equal(resolve({ $toFixed: 1, decimals: 99 }, {}), (1).toFixed(20), "decimals are capped at 20");
 });
+
+test("add sums the array an expression returns", () => {
+  assert.equal(resolve({ $add: { $var: "prices" } }, { prices: [1, 2, 3.5] }), 6.5);
+});

@@ -22,7 +22,7 @@
     "$as": "looksLikeStep",
     "$or": [
       { "$eq": [{ "$count": { "$var": "keys" } }, 1] },
-      { "$notEmpty": { "$filter": { "$var": "keys" }, "do": { "$includes": [{ "$var": "bareSiblings" }, { "$var": "item" }] } } }
+      { "$not": { "$empty": { "$filter": { "$var": "keys" }, "do": { "$includes": [{ "$var": "bareSiblings" }, { "$var": "item" }] } } } }
     ]
   },
 
@@ -31,7 +31,7 @@
     "$if": { "$gt": [{ "$count": { "$var": "stepOps" } }, 1] },
     "then": { "$concat": [{ "$var": "where" }, ": names more than one op (", { "$join": { "$var": "stepOps" }, "separator": ", " }, "); a step dispatches on exactly one, so the resolver refuses it."] },
     "else": {
-      "$if": { "$and": [{ "$empty": { "$var": "stepOps" } }, { "$notEmpty": { "$var": "bare" } }, { "$var": "looksLikeStep" }] },
+      "$if": { "$and": [{ "$empty": { "$var": "stepOps" } }, { "$not": { "$empty": { "$var": "bare" } } }, { "$var": "looksLikeStep" }] },
       "then": { "$concat": [{ "$var": "where" }, ": \"", { "$var": "bare" }, "\" is plain data here, not a step; an op is named with \"$\", so write \"$", { "$var": "bare" }, "\" to run it."] },
       "else": ""
     }
@@ -46,6 +46,6 @@
     }
   },
 
-  { "$as": "all", "$if": { "$notEmpty": { "$var": "warn" } }, "then": { "$merge": [[{ "$var": "warn" }], { "$var": "childWarns" }] }, "else": { "$var": "childWarns" } },
+  { "$as": "all", "$if": { "$not": { "$empty": { "$var": "warn" } } }, "then": { "$merge": [[{ "$var": "warn" }], { "$var": "childWarns" }] }, "else": { "$var": "childWarns" } },
   { "$var": "all" }
 ]

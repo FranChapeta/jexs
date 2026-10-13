@@ -229,17 +229,6 @@ export class MathNode extends Node {
         },
       },
     },
-    sum: {
-      type: "array",
-      items: {
-        type: "number",
-      },
-      output: "number",
-      markdownDescription: "Sums all numbers in an array.",
-      examples: [
-        "{ \"$sum\": [1, 2, 3] }",
-      ],
-    },
     avg: {
       type: "array",
       items: {
@@ -257,9 +246,10 @@ export class MathNode extends Node {
         type: "number",
       },
       output: "number",
-      markdownDescription: "Sums two or more numbers.",
+      markdownDescription: "Sums any number of values: an array written out, or one an expression returns.",
       examples: [
         "{ \"$add\": [{ \"$var\": \"price\" }, 10] }",
+        "{ \"$add\": { \"$pluck\": [{ \"$var\": \"items\" }, \"price\"] } }",
       ],
     },
     subtract: {
@@ -531,10 +521,6 @@ export class MathNode extends Node {
       const hi = Math.max(outMin, outMax);
       return Math.max(lo, Math.min(hi, result));
     });
-  }
-
-  sum(def: Record<string, unknown>, c: Context) {
-    return resolve(def.$sum, c, arr => this.toArray(arr).reduce((s: number, v) => s + this.toNumber(v), 0));
   }
 
   avg(def: Record<string, unknown>, c: Context) {

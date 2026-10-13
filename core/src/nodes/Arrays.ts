@@ -30,7 +30,7 @@ export class ArrayNode extends Node {
     },
     count: {
       output: "number",
-      markdownDescription: "Returns the length of an array, object (key count), or string.",
+      markdownDescription: "Returns the number of items in an array. For a string's length use `length`; for an object's keys, count its `keys`.",
       examples: [
         "{ \"$count\": { \"$var\": \"items\" } }",
       ],
@@ -413,9 +413,7 @@ export class ArrayNode extends Node {
   count(def: Record<string, unknown>, c: Context) {
     return resolve(def.$count, c, value => {
       if (Array.isArray(value)) return value.length;
-      if (this.isObject(value)) return Object.keys(value).length;
-      if (typeof value === "string") return value.length;
-      return 0;
+      throw new Error("count takes an array: use `length` for a string, and count the `keys` of an object");
     });
   }
 

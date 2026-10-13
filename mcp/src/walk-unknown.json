@@ -33,7 +33,7 @@
         "$concat": [
           { "$var": "where" }, ".", { "$var": "k" },
           " is not an op",
-          { "$if": { "$notEmpty": { "$var": "near" } }, "then": { "$concat": [", did you mean: ", { "$join": { "$var": "near" }, "separator": ", " }, "?"] }, "else": "" }
+          { "$if": { "$not": { "$empty": { "$var": "near" } } }, "then": { "$concat": [", did you mean: ", { "$join": { "$var": "near" }, "separator": ", " }, "?"] }, "else": "" }
         ]
       }
     ]
@@ -50,7 +50,7 @@
           "$and": [
             { "$not": { "$startsWith": [{ "$var": "item" }, "$"] } },
             { "$not": { "$includes": [{ "$var": "ownSiblings" }, { "$var": "item" }] } },
-            { "$notEmpty": { "$runVar": "suggest", "params": { "needle": { "$var": "item" }, "haystack": { "$var": "ownSiblings" } } } }
+            { "$not": { "$empty": { "$runVar": "suggest", "params": { "needle": { "$var": "item" }, "haystack": { "$var": "ownSiblings" } } } } }
           ]
         }
       },

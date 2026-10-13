@@ -111,6 +111,23 @@ function siblingToTuple({ op, obj }: Step, name: string, m: Codemod): void {
   }
 }
 
+/** Rename the step's op key to `$<to>`. */
+function renameOp({ op, obj }: Step, to: string, m: Codemod): void {
+  const prop = obj.props.find(p => p.key === "$" + op);
+  if (prop && !prop.shorthand) m.add({ start: prop.keyStart, end: prop.keyEnd, text: "$" + to });
+}
+
+/**
+ * Whether moving `v`'s text elsewhere is safe: a literal, an array of them, or a
+ * lone `$var` of a literal path. Text holding other steps is never moved, as
+ * edits made inside it would be lost.
+ */
+function isPlain(v: Val): boolean {
+  if (v.k === "str" || v.k === "lit") return true;
+  if (v.k === "arr") return v.items.every(isPlain);
+  return v.k === "obj" && v.props.length === 1 && v.props[0].key === "$var" && v.props[0].value.k === "str";
+}
+
 /** Rename the step's `from` sibling to `to`, keeping how its key is quoted. */
 function renameSibling({ obj }: Step, from: string, to: string, m: Codemod): void {
   const prop = obj.props.find(p => p.key === from);
@@ -140,6 +157,37 @@ const RULES: Record<string, Rule> = {
     if (!prop || prop.shorthand) return;
     m.add({ start: prop.keyStart, end: prop.keyEnd, text: "$sort" });
     m.add({ start: prop.value.end, end: prop.value.end, text: `, ${prop.keyQuoted ? '"order"' : "order"}: "desc"` });
+  },
+  // Ops that duplicated others.
+  sum: (step, m) => renameOp(step, "add", m),
+  notEmpty: (step, m) => {
+    const prop = step.obj.props.find(p => p.key === "$notEmpty");
+    if (!prop || prop.shorthand) return;
+    renameOp(step, "not", m);
+    m.add({ start: prop.value.start, end: prop.value.start, text: `{ ${prop.keyQuoted ? '"$empty"' : "$empty"}: ` });
+    m.add({ start: prop.value.end, end: prop.value.end, text: " }" });
+  },
+  in: (step, m) => {
+    const prop = step.obj.props.find(p => p.key === "$in");
+    const v = prop?.value;
+    if (!prop) return;
+    // Which op replaces it depends on the haystack's type, known only for a literal.
+    const haystackKind = v?.k === "arr" ? v.items[1]?.k : undefined;
+    if (v?.k !== "arr" || v.items.length !== 2 || !v.items.every(isPlain) || (haystackKind !== "arr" && haystackKind !== "str")) {
+      m.review(prop.keyStart, "`$in` is gone: `[needle, haystack]` is `$includes` with `[haystack, needle]` for an array, `$contains` with `[haystack, needle]` for a string, or `$includes` with `[{ \"$keys\": haystack }, needle]` for an object's keys");
+      return;
+    }
+    const [needle, haystack] = v.items;
+    renameOp(step, haystackKind === "arr" ? "includes" : "contains", m);
+    m.add({ start: needle.start, end: needle.end, text: m.text(haystack.start, haystack.end) });
+    m.add({ start: haystack.start, end: haystack.end, text: m.text(needle.start, needle.end) });
+  },
+  // `$count` counts arrays only; a string's length is `$length`, an object's keys `$count` of `$keys`.
+  count: ({ obj }, m) => {
+    const prop = obj.props.find(p => p.key === "$count");
+    if (prop && prop.value.k !== "arr") {
+      m.review(prop.keyStart, "`$count` counts arrays only now: if this counts a string, use `$length`; for an object's keys, `$count` of `$keys`");
+    }
   },
   // The part to extract is the second operand.
   datePart: (step, m) => siblingToTuple(step, "part", m),

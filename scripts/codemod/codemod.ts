@@ -219,9 +219,13 @@ export interface Codemod {
   add(edit: Edit): void;
   /** Report a spot the codemod cannot rewrite on its own. */
   review(at: number, message: string): void;
+  /** The source text of a span of the value being walked, e.g. a slot to move. */
+  text(start: number, end: number): string;
 }
 
 const edits = new Map<number, Edit>();
+/** The text the value being walked was parsed from; edit and value positions index into it. */
+let source = "";
 const reviews: Array<{ at: number; message: string }> = [];
 function takeEdits(): Edit[] { const l = [...edits.values()]; edits.clear(); return l; }
 
@@ -300,6 +304,7 @@ export function createCodemod(schema: CombinedSchema, hooks: CodemodHooks): Code
     siblingSchema,
     add: (e) => { edits.set(e.start, e); },
     review: (at, message) => { reviews.push({ at, message }); },
+    text: (start, end) => source.slice(start, end),
   };
 }
 
@@ -326,6 +331,7 @@ function migrateJsonText(m: Codemod, text: string, base = 0): string {
     const c = text[p.i];
     if (c !== "{" && c !== "[") { p.i++; continue; }
     const save = p.i;
+    source = text;
     try { m.walk(ROOT, p.value()); any = true; } catch { p.i = save + 1; }
   }
   for (let i = firstReview; i < reviews.length; i++) reviews[i].at += base;
@@ -403,6 +409,7 @@ function migrateSource(m: Codemod, text: string, { literals }: { literals: boole
         try { v = p.value(); } catch { takeEdits(); }
         if (v) {
           const callee = enclosingCall(text, i);
+          source = text;
           if (!(owner && SCHEMA_WORDS.has(owner)) && !schemaTyped && !(callee && DATA_CALLS.test(callee))) m.walk(ROOT, v);
           out.push(...takeEdits());
           for (const [s, e] of p.opaques) scan(s, e);

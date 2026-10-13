@@ -18,7 +18,7 @@ test("setVars with bubble writes up into the enclosing scope (map do)", () => {
 });
 
 test("bubble enables accumulation across loop iterations", () => {
-  const ctx: Record<string, unknown> = { $sum: 0 };
+  const ctx: Record<string, unknown> = { sum: 0 };
   resolve(
     {
       $map: [1, 2, 3],

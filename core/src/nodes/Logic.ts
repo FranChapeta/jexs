@@ -84,7 +84,7 @@ export class LogicNode extends Node {
       type: "array",
       output: "any",
       markdownDescription: "Resolves values left to right, returning the first non-empty one: the value itself, not a boolean. Short-circuits, so later expressions are never resolved once a value is found. Use it to supply a fallback without repeating an expression across `$if`/`then`.",
-      outputDescription: "The first value that is not empty (`null`, `undefined`, `\"\"`, `[]`, `{}` are skipped; `0` and `false` are kept, the same rule as `notEmpty`). If every value is empty, the LAST one is returned; an empty array yields `undefined`.",
+      outputDescription: "The first value that is not empty (`null`, `undefined`, `\"\"`, `[]`, `{}` are skipped; `0` and `false` are kept, the same rule as `empty`). If every value is empty, the LAST one is returned; an empty array yields `undefined`.",
       examples: [
         "{ \"$coalesce\": [{ \"$var\": \"props.button.properties.size.type\" }, \"any\"] }",
       ],
@@ -145,14 +145,6 @@ export class LogicNode extends Node {
         "{ \"$lte\": [{ \"$var\": \"quantity\" }, 100] }",
       ],
     },
-    in: {
-      tuple: 2,
-      output: "boolean",
-      markdownDescription: "Tests membership: `needle in haystack`. Works with arrays, strings (substring), and object keys.",
-      examples: [
-        "{ \"$in\": [\"admin\", { \"$var\": \"roles\" }] }",
-      ],
-    },
     between: {
       tuple: 3,
       prefixItems: [
@@ -201,18 +193,11 @@ export class LogicNode extends Node {
     },
     empty: {
       output: "boolean",
-      markdownDescription: "Tests whether the resolved value is empty.",
+      markdownDescription: "Tests whether the resolved value is empty. For the opposite, wrap it in `not`.",
       outputDescription: "`true` for `null`, `undefined`, `\"\"`, `[]`, or `{}`; otherwise `false`.",
       examples: [
         "{ \"$empty\": { \"$var\": \"items\" } }",
-      ],
-    },
-    notEmpty: {
-      output: "boolean",
-      markdownDescription: "Tests whether the resolved value is non-empty. Inverse of `empty`.",
-      outputDescription: "`true` when the value is non-null and non-empty; otherwise `false`.",
-      examples: [
-        "{ \"$notEmpty\": { \"$var\": \"items\" } }",
+        "{ \"$not\": { \"$empty\": { \"$var\": \"items\" } } }",
       ],
     },
     sleep: {
@@ -380,17 +365,6 @@ export class LogicNode extends Node {
     });
   }
 
-  in(def: Record<string, unknown>, context: Context): NodeValue {
-    const arr = this.toArray(def.$in);
-    if (arr.length < 2) return false;
-    return resolveAll([arr[0], arr[1]], context, ([needle, haystack]) => {
-      if (Array.isArray(haystack)) return (haystack as unknown[]).includes(needle);
-      if (typeof haystack === "string" && typeof needle === "string") return haystack.includes(needle);
-      if (this.isObject(haystack) && typeof needle === "string") return needle in haystack;
-      return false;
-    });
-  }
-
   between(def: Record<string, unknown>, context: Context): NodeValue {
     const arr = this.toArray(def.$between);
     if (arr.length < 3) return false;
@@ -414,10 +388,6 @@ export class LogicNode extends Node {
     return resolve(def.$empty, context, value => isEmptyValue(value));
   }
 
-  notEmpty(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$notEmpty, context, value => !isEmptyValue(value));
-  }
-
   sleep(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$sleep, context, ms => {
       const delay = this.toNumber(ms);
@@ -437,7 +407,7 @@ function typeName(value: unknown): string {
   return typeof value;
 }
 
-// Shared emptiness rule for empty / notEmpty / coalesce: null, undefined, "",
+// Shared emptiness rule for empty / coalesce: null, undefined, "",
 // [], {} are empty; 0 and false (and other non-collections) are not.
 function isEmptyValue(value: unknown): boolean {
   if (value === null || value === undefined) return true;
