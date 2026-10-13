@@ -333,12 +333,13 @@ export class ArrayNode extends Node {
       tuple: 2,
       prefixItems: [
         { type: "array", description: "The array to read from." },
-        { type: "number", description: "The index to read." },
+        { type: "number", description: "The index to read; a negative one counts from the end (`-1` is the last element)." },
       ],
-      markdownDescription: "Returns the element at a given index.",
+      markdownDescription: "Returns the element at a given index. A negative index counts back from the end.",
       outputDescription: "The element at the index (any type), or `undefined` if out of range.",
       examples: [
         "{ \"$index\": [{ \"$var\": \"items\" }, 2] }",
+        "{ \"$index\": [{ \"$var\": \"items\" }, -2] }",
       ],
     },
     range: {
@@ -707,7 +708,7 @@ export class ArrayNode extends Node {
   index(def: Record<string, unknown>, c: Context) {
     return resolve(def.$index, c, args => {
       const a = this.toArray(args);
-      return this.toArray(a[0])[this.toNumber(a[1])];
+      return this.toArray(a[0]).at(this.toNumber(a[1]));
     });
   }
 

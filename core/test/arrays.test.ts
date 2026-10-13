@@ -199,3 +199,12 @@ test("count counts an array, and points elsewhere for a string or an object", ()
   assert.throws(() => resolve({ $count: "abc" }, {}), /count takes an array: use `length` for a string/);
   assert.equal(resolve({ $count: { $keys: { $var: "o" } } }, { o: { a: 1, b: 2 } }), 2);
 });
+
+test("index reads from the start, or from the end when negative", () => {
+  const xs = ["a", "b", "c"];
+  assert.equal(resolve({ $index: [xs, 0] }, {}), "a");
+  assert.equal(resolve({ $index: [xs, -1] }, {}), "c");
+  assert.equal(resolve({ $index: [xs, -3] }, {}), "a");
+  assert.equal(resolve({ $index: [xs, 3] }, {}), undefined);
+  assert.equal(resolve({ $index: [xs, -4] }, {}), undefined);
+});
