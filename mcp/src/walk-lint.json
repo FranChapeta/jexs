@@ -46,6 +46,6 @@
     }
   },
 
-  { "$as": "all", "$if": { "$not": { "$empty": { "$var": "warn" } } }, "then": { "$merge": [[{ "$var": "warn" }], { "$var": "childWarns" }] }, "else": { "$var": "childWarns" } },
+  { "$as": "all", "$if": { "$not": { "$empty": { "$var": "warn" } } }, "then": { "$flatten": [[{ "$var": "warn" }], { "$var": "childWarns" }], "depth": 1 }, "else": { "$var": "childWarns" } },
   { "$var": "all" }
 ]

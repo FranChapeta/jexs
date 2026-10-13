@@ -200,15 +200,6 @@ export class LogicNode extends Node {
         "{ \"$not\": { \"$empty\": { \"$var\": \"items\" } } }",
       ],
     },
-    sleep: {
-      type: "number",
-      output: "null",
-      markdownDescription: "Pauses execution for the given number of milliseconds.",
-      outputDescription: "Always `null`, after the delay elapses (a value ≤ 0 resolves immediately).",
-      examples: [
-        "{ \"$sleep\": 500 }",
-      ],
-    },
   };
 
   if(def: Record<string, unknown>, context: Context): NodeValue {
@@ -386,14 +377,6 @@ export class LogicNode extends Node {
 
   empty(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$empty, context, value => isEmptyValue(value));
-  }
-
-  sleep(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$sleep, context, ms => {
-      const delay = this.toNumber(ms);
-      if (delay <= 0) return null;
-      return new Promise<null>(r => setTimeout(r, delay)).then(() => null);
-    });
   }
 
 }

@@ -11,7 +11,7 @@
   { "$as": "siblingDocs", "$coalesce": [{ "$var": "schema.siblingDocs" }, {}] },
   { "$as": "opNames", "$keys": { "$var": "byKey" } },
   { "$as": "pkgNames", "$coalesce": [{ "$var": "schema.packages" }, []] },
-  { "$as": "globalDocs", "$fromEntries": [["keys", { "$fromEntries": { "$map": { "$filter": { "$entries": { "$coalesce": [{ "$var": "combined.$defs.exprFlat.properties" }, {}] } }, "do": { "$not": { "$includes": [{ "$var": "opNames" }, { "$substring": [{ "$var": "item.key" }, 1] }] } } }, "item": "e", "do": { "$merge": [[{ "$substring": [{ "$var": "e.key" }, 1] }], [{ "$var": "e.value" }]] } } }]] },
+  { "$as": "globalDocs", "$fromEntries": [["keys", { "$fromEntries": { "$map": { "$filter": { "$entries": { "$coalesce": [{ "$var": "combined.$defs.exprFlat.properties" }, {}] } }, "do": { "$not": { "$includes": [{ "$var": "opNames" }, { "$substring": [{ "$var": "item.key" }, 1] }] } } }, "item": "e", "do": { "$flatten": [[{ "$substring": [{ "$var": "e.key" }, 1] }], [{ "$var": "e.value" }]], "depth": 1 } } }]] },
   { "$as": "opKeys", "$map": { "$var": "opNames" }, "item": "o", "do": { "$concat": ["$", { "$var": "o" }] } },
   { "$as": "globalNames", "$keys": { "$var": "globalDocs.keys" } },
   { "$as": "globalKeys", "$map": { "$var": "globalNames" }, "item": "g", "do": { "$concat": ["$", { "$var": "g" }] } },
@@ -32,7 +32,7 @@
   },
   { "$as": "banner", "$if": { "$not": { "$empty": { "$var": "setupError" } } }, "then": { "$concat": [{ "$var": "setupError" }, "\n\n"] }, "else": "" },
   { "$if": { "$not": { "$empty": { "$var": "setupError" } } }, "then": { "$log": { "$concat": ["[jexs] ", { "$var": "setupError" }] } } },
-  { "$as": "protocolVersions", "$merge": [["2024-11-05", "2025-03-26", "2025-06-18"]] },
+  { "$as": "protocolVersions", "$flatten": [["2024-11-05", "2025-03-26", "2025-06-18"]], "depth": 1 },
   {
     "$as": "instructions",
     "$join": [

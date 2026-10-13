@@ -189,6 +189,20 @@ const RULES: Record<string, Rule> = {
       m.review(prop.keyStart, "`$count` counts arrays only now: if this counts a string, use `$length`; for an object's keys, `$count` of `$keys`");
     }
   },
+  // `$merge` merges objects only; concatenating arrays is `$flatten` one level deep.
+  merge: (step, m) => {
+    const prop = step.obj.props.find(p => p.key === "$merge");
+    const v = prop?.value;
+    if (!prop || prop.shorthand) return;
+    const isData = (item: Val) => item.k === "obj" && item.props.every(p => !p.key.startsWith("$"));
+    if (v?.k === "arr" && v.items.length > 0 && v.items.every(isData)) return;
+    if (v?.k === "arr" && v.items.some(item => item.k === "arr")) {
+      renameOp(step, "flatten", m);
+      m.add({ start: v.end, end: v.end, text: `, ${prop.keyQuoted ? '"depth"' : "depth"}: 1` });
+      return;
+    }
+    m.review(prop.keyStart, "`$merge` merges objects only now: if this concatenates arrays, use `$flatten` with `depth: 1`");
+  },
   // The part to extract is the second operand.
   datePart: (step, m) => siblingToTuple(step, "part", m),
   // `[array, key, value]` is gone: `find` tests objects by a key.

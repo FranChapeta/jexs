@@ -12,13 +12,14 @@
     "$if": { "$isType": [{ "$var": "node" }, "object"] },
     "then": {
       "$return": {
-        "$merge": [
+        "$flatten": [
           { "$keys": { "$var": "node" } },
           {
             "$map": { "$values": { "$var": "node" } },
             "do": { "$runVar": "walk", "params": { "node": { "$var": "item" } } }
           }
-        ]
+        ],
+        "depth": 1
       }
     }
   },

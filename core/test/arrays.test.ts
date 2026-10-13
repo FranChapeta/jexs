@@ -4,26 +4,6 @@ import { createResolver, coreNodes } from "../src/index.js";
 
 const resolve = createResolver(coreNodes());
 
-// fromEntries lives on ArrayNode (its input is an array of pairs) — the inverse
-// of ObjectNode's `entries`. See also its round-trip with `entries` below.
-
-test("fromEntries: builds an object from {key,value} pairs", () => {
-  assert.deepEqual(
-    resolve({ $fromEntries: [{ key: "a", value: 1 }, { key: "b", value: 2 }] }, {}),
-    { a: 1, b: 2 },
-  );
-});
-
-test("fromEntries: accepts [key, value] tuple arrays", () => {
-  assert.deepEqual(resolve({ $fromEntries: [["a", 1], ["b", 2]] }, {}), { a: 1, b: 2 });
-});
-
-test("fromEntries round-trips entries", () => {
-  const o = { a: 1, b: "two", c: true };
-  const pairs = resolve({ $entries: { $var: "o" } }, { o });
-  assert.deepEqual(resolve({ $fromEntries: pairs }, {}), o);
-});
-
 // ── Mutating family — these edit the array referenced by the first argument in
 // place (so `{ $var: "x" }` mutates context.x directly), and return per the docs.
 
@@ -207,4 +187,10 @@ test("index reads from the start, or from the end when negative", () => {
   assert.equal(resolve({ $index: [xs, -3] }, {}), "a");
   assert.equal(resolve({ $index: [xs, 3] }, {}), undefined);
   assert.equal(resolve({ $index: [xs, -4] }, {}), undefined);
+});
+
+test("flatten flattens all the way, or `depth` levels, so depth 1 concatenates arrays", () => {
+  assert.deepEqual(resolve({ $flatten: [[1, [2, [3]]]] }, {}), [1, 2, 3]);
+  assert.deepEqual(resolve({ $flatten: [{ $var: "a" }, { $var: "b" }], depth: 1 }, { a: [1, [2]], b: [3] }), [1, [2], 3]);
+  assert.throws(() => resolve({ $flatten: [[1]], depth: -1 }, {}), /flatten depth must be a number of levels/);
 });

@@ -51,10 +51,17 @@ export class ArrayNode extends Node {
     },
     flatten: {
       output: "array",
-      markdownDescription: "Recursively flattens a nested array.",
+      markdownDescription: "Flattens a nested array, all the way down unless `depth` limits it. With `depth: 1` it concatenates a list of arrays.",
       examples: [
         "{ \"$flatten\": [[1, [2, [3]]]] }",
+        "{ \"$flatten\": [{ \"$var\": \"a\" }, { \"$var\": \"b\" }], \"depth\": 1 }",
       ],
+      siblings: {
+        depth: {
+          type: "number",
+          description: "How many levels of nesting to flatten (default: all of them).",
+        },
+      },
     },
     sort: {
       output: "array",
@@ -199,14 +206,6 @@ export class ArrayNode extends Node {
         "{ \"$move\": [{ \"$var\": \"items\" }, 2, 0] }",
       ],
     },
-    merge: {
-      type: "array",
-      markdownDescription: "Merges multiple arrays (concatenation) or multiple objects (shallow merge).",
-      outputDescription: "A single shallow-merged **object** when every input is a plain object (later keys win); otherwise all inputs concatenated into one **array**.",
-      examples: [
-        "{ \"$merge\": [{ \"a\": 1 }, { \"b\": 2 }] }",
-      ],
-    },
     filter: {
       output: "array",
       markdownDescription: "Returns the items of an array for which the `do` condition is truthy.\nEach iteration exposes the current element as `item` and its position as `index` (rename via the `item`/`index` siblings).",
@@ -297,26 +296,6 @@ export class ArrayNode extends Node {
         },
       },
     },
-    groupBy: {
-      tuple: 2,
-      prefixItems: [
-        { type: "array", description: "The array of objects to group." },
-        { type: "string", description: "The key to group by." },
-      ],
-      output: "object",
-      markdownDescription: "Groups an array of objects by a key. Returns an object keyed by group values.",
-      outputDescription: "An object mapping each distinct group-key (stringified) to the **array** of items in that group.",
-      examples: [
-        "{ \"$groupBy\": [{ \"$var\": \"users\" }, \"role\"] }",
-      ],
-    },
-    fromEntries: {
-      output: "object",
-      markdownDescription: "Builds an object from `[{ key, value }]` pairs (the inverse of `entries` in the object node). Also accepts `[key, value]` tuple arrays.",
-      examples: [
-        "{ \"$fromEntries\": { \"$var\": \"pairs\" } }",
-      ],
-    },
     includes: {
       tuple: 2,
       prefixItems: [
@@ -357,6 +336,21 @@ export class ArrayNode extends Node {
       examples: [
         "{ \"$range\": [1, 5] }",
       ],
+    },
+    join: {
+      type: "array",
+      output: "string",
+      markdownDescription: "Joins an array into a string with a separator (default `\",\"`).",
+      examples: [
+        "{ \"$join\": [\"a\", \"b\", \"c\"], \"separator\": \" - \" }",
+      ],
+      siblings: {
+        separator: {
+          type: "string",
+          default: ",",
+          description: "Put between items. Omitted, `\",\"`.",
+        },
+      },
     },
     listFormat: {
       type: "array",
@@ -433,9 +427,11 @@ export class ArrayNode extends Node {
   }
 
   flatten(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.$flatten, def.clone], c, ([v, cl]) => {
+    return resolveAll([def.$flatten, def.clone, def.depth], c, ([v, cl, depthRaw]) => {
       const clone = this.toBoolean(cl);
-      const f = this.toArray(v).flat(Infinity);
+      const depth = depthRaw == null ? Infinity : this.toNumber(depthRaw);
+      if (!(depth >= 0)) throw new Error(`flatten depth must be a number of levels, not ${JSON.stringify(depthRaw)}`);
+      const f = this.toArray(v).flat(depth);
       if (clone || !Array.isArray(v)) return f;
       v.splice(0, v.length, ...f);
       return v;
@@ -561,18 +557,6 @@ export class ArrayNode extends Node {
     });
   }
 
-  merge(def: Record<string, unknown>, c: Context) {
-    return resolve(def.$merge, c, args => {
-      const resolved = this.toArray(args);
-      if (resolved.length > 0 && resolved.every(r => this.isObject(r) && !Array.isArray(r))) {
-        const result: Record<string, unknown> = {};
-        for (const obj of resolved) Object.assign(result, obj as Record<string, unknown>);
-        return result;
-      }
-      return resolved.reduce((acc: unknown[], r) => [...acc, ...this.toArray(r)], []);
-    });
-  }
-
   filter(def: Record<string, unknown>, context: Context) {
     const condition = def.do;
     if (condition === undefined) throw new Error("filter needs a `do` condition");
@@ -672,32 +656,6 @@ export class ArrayNode extends Node {
     });
   }
 
-  groupBy(def: Record<string, unknown>, c: Context) {
-    return resolve(def.$groupBy, c, args => {
-      const a = this.toArray(args);
-      const arr = this.toArray(a[0]);
-      const key = this.toString(a[1]);
-      const result: Record<string, unknown[]> = {};
-      for (const item of arr) {
-        const groupKey = this.isObject(item) ? this.toString(getNestedValue(item, key)) : "";
-        if (!result[groupKey]) result[groupKey] = [];
-        result[groupKey].push(item);
-      }
-      return result;
-    });
-  }
-
-  fromEntries(def: Record<string, unknown>, c: Context) {
-    return resolve(def.$fromEntries, c, value => {
-      const result: Record<string, unknown> = {};
-      for (const e of this.toArray(value)) {
-        if (this.isObject(e) && "key" in e) result[this.toString(e.key)] = e.value;
-        else if (Array.isArray(e)) result[this.toString(e[0])] = e[1];
-      }
-      return result;
-    });
-  }
-
   includes(def: Record<string, unknown>, c: Context) {
     return resolve(def.$includes, c, args => {
       const a = this.toArray(args);
@@ -724,6 +682,12 @@ export class ArrayNode extends Node {
       else { for (let i = start; i >= end; i += step) result.push(i); }
       return result;
     });
+  }
+
+  join(def: Record<string, unknown>, c: Context) {
+    return resolveAll([def.$join, def.separator], c, ([items, separator]) =>
+      this.toArray(items).map(v => this.toString(v)).join(this.toString(separator ?? ",")),
+    );
   }
 
   listFormat(def: Record<string, unknown>, c: Context) {

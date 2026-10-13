@@ -196,21 +196,6 @@ export class StringNode extends Node {
       ],
       siblings: { regex: REGEX },
     },
-    join: {
-      type: "array",
-      output: "string",
-      markdownDescription: "Joins an array into a string with a separator (default `\",\"`).",
-      examples: [
-        "{ \"$join\": [\"a\", \"b\", \"c\"], \"separator\": \" - \" }",
-      ],
-      siblings: {
-        separator: {
-          type: "string",
-          default: ",",
-          description: "Put between items. Omitted, `\",\"`.",
-        },
-      },
-    },
     padStart: {
       tuple: 2,
       prefixItems: [
@@ -516,12 +501,6 @@ export class StringNode extends Node {
       if (a.length < 2) return str.split("");
       return str.split(this.toString(a[1]));
     });
-  }
-
-  join(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.$join, def.separator], c, ([items, separator]) =>
-      this.toArray(items).map(v => this.toString(v)).join(this.toString(separator ?? ",")),
-    );
   }
 
   padStart(def: Record<string, unknown>, c: Context) {

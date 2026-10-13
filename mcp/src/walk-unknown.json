@@ -14,7 +14,7 @@
 
   { "$as": "keys", "$keys": { "$var": "node" } },
   { "$as": "where", "$if": { "$empty": { "$var": "path" } }, "then": "(root)", "else": { "$var": "path" } },
-  { "$as": "resolverKeys", "$merge": [{ "$var": "opKeys" }, { "$var": "globalKeys" }] },
+  { "$as": "resolverKeys", "$flatten": [{ "$var": "opKeys" }, { "$var": "globalKeys" }], "depth": 1 },
 
   { "$as": "dispatcher", "$first": { "$filter": { "$var": "keys" }, "do": { "$includes": [{ "$var": "opKeys" }, { "$var": "item" }] } } },
   { "$as": "op", "$if": { "$empty": { "$var": "dispatcher" } }, "then": "", "else": { "$substring": [{ "$var": "dispatcher" }, 1] } },
@@ -75,5 +75,5 @@
     }
   },
 
-  { "$return": { "$merge": [{ "$var": "unknownOps" }, { "$var": "here" }, { "$var": "childHits" }] } }
+  { "$return": { "$flatten": [{ "$var": "unknownOps" }, { "$var": "here" }, { "$var": "childHits" }], "depth": 1 } }
 ]

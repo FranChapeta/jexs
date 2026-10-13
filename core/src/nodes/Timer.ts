@@ -133,10 +133,27 @@ export class TimerNode extends Node {
         ...LIFECYCLE_OPS,
       },
     },
+    sleep: {
+      type: "number",
+      output: "null",
+      markdownDescription: "Pauses execution for the given number of milliseconds.",
+      outputDescription: "Always `null`, after the delay elapses (a value ≤ 0 resolves immediately).",
+      examples: [
+        "{ \"$sleep\": 500 }",
+      ],
+    },
   };
 
   readonly ticks = new Map<string, TimerState>();
   readonly crons = new Map<string, TimerState>();
+
+  sleep(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$sleep, context, ms => {
+      const delay = this.toNumber(ms);
+      if (delay <= 0) return null;
+      return new Promise<null>(r => setTimeout(r, delay)).then(() => null);
+    });
+  }
 
   tick(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$tick, context, op => dispatch(this, String(op), def, context, "tick"));

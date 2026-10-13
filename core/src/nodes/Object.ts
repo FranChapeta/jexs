@@ -1,6 +1,6 @@
 import { Node, Context, childContext } from "./Node.js";
 import { resolve, resolveAll } from "../Resolver.js";
-import { isObject } from "../helpers.js";
+import { getNestedValue, isObject } from "../helpers.js";
 import type { JexsNodeSchema } from "../schema.js";
 
 export class ObjectNode extends Node {
@@ -66,10 +66,38 @@ export class ObjectNode extends Node {
         },
       },
     },
+    fromEntries: {
+      output: "object",
+      markdownDescription: "Builds an object from `[{ key, value }]` pairs (the inverse of `entries`). Also accepts `[key, value]` tuple arrays.",
+      examples: [
+        "{ \"$fromEntries\": { \"$var\": \"pairs\" } }",
+      ],
+    },
+    groupBy: {
+      tuple: 2,
+      prefixItems: [
+        { type: "array", description: "The array of objects to group." },
+        { type: "string", description: "The key (dot-path) to group by." },
+      ],
+      output: "object",
+      markdownDescription: "Groups an array of objects by a key. Returns an object keyed by group values.",
+      outputDescription: "An object mapping each distinct group-key (stringified) to the **array** of items in that group.",
+      examples: [
+        "{ \"$groupBy\": [{ \"$var\": \"users\" }, \"role\"] }",
+      ],
+    },
+    merge: {
+      type: "array",
+      output: "object",
+      markdownDescription: "Shallow-merges objects into one (later keys win). For nested objects use `deepMerge`; to concatenate arrays, `flatten` them with `depth: 1`.",
+      examples: [
+        "{ \"$merge\": [{ \"$var\": \"defaults\" }, { \"theme\": \"dark\" }] }",
+      ],
+    },
     deepMerge: {
       type: "array",
       output: "object",
-      markdownDescription: "Recursively merges multiple objects (later keys win). Nested plain objects merge; arrays and primitive values are replaced. For a shallow merge, or to concatenate arrays, use `merge`.",
+      markdownDescription: "Recursively merges multiple objects (later keys win). Nested plain objects merge; arrays and primitive values are replaced. For a shallow merge use `merge`.",
       examples: [
         "{ \"$deepMerge\": [{ \"$var\": \"defaults\" }, { \"$var\": \"overrides\" }] }",
       ],
@@ -148,6 +176,43 @@ export class ObjectNode extends Node {
         }
         return next();
       });
+    });
+  }
+
+  fromEntries(def: Record<string, unknown>, c: Context) {
+    return resolve(def.$fromEntries, c, value => {
+      const result: Record<string, unknown> = {};
+      for (const e of this.toArray(value)) {
+        if (this.isObject(e) && "key" in e) result[this.toString(e.key)] = e.value;
+        else if (Array.isArray(e)) result[this.toString(e[0])] = e[1];
+      }
+      return result;
+    });
+  }
+
+  groupBy(def: Record<string, unknown>, c: Context) {
+    return resolve(def.$groupBy, c, args => {
+      const a = this.toArray(args);
+      const arr = this.toArray(a[0]);
+      const key = this.toString(a[1]);
+      const result: Record<string, unknown[]> = {};
+      for (const item of arr) {
+        const groupKey = this.isObject(item) ? this.toString(getNestedValue(item, key)) : "";
+        if (!result[groupKey]) result[groupKey] = [];
+        result[groupKey].push(item);
+      }
+      return result;
+    });
+  }
+
+  merge(def: Record<string, unknown>, c: Context) {
+    return resolve(def.$merge, c, args => {
+      const result: Record<string, unknown> = {};
+      for (const obj of this.toArray(args)) {
+        if (!this.isObject(obj)) throw new Error("merge takes objects: to concatenate arrays, use `flatten` with `depth: 1`");
+        Object.assign(result, obj);
+      }
+      return result;
     });
   }
 

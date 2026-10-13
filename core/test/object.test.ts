@@ -4,7 +4,7 @@ import { createResolver, coreNodes } from "../src/index.js";
 
 const resolve = createResolver(coreNodes());
 
-// ── keys / values / entries — relocated from ArrayNode, behavior unchanged ──
+// ── keys / values / entries ──
 
 test("keys/values: object introspection", () => {
   assert.deepEqual(resolve({ $keys: { $var: "o" } }, { o: { a: 1, b: 2 } }), ["a", "b"]);
@@ -97,4 +97,36 @@ test("deepMerge: does not mutate the input objects", () => {
   resolve({ $deepMerge: [{ $var: "d" }, { $var: "o" }] }, { d: defaults, o: overrides });
   assert.deepEqual(defaults, { a: { x: 1 } });
   assert.deepEqual(overrides, { a: { y: 2 } });
+});
+
+test("merge shallow-merges objects, later keys winning, and refuses anything else", () => {
+  assert.deepEqual(resolve({ $merge: [{ a: 1, b: 1 }, { $var: "o" }] }, { o: { b: 2 } }), { a: 1, b: 2 });
+  assert.throws(() => resolve({ $merge: [[1], [2]] }, {}), /merge takes objects: to concatenate arrays, use `flatten`/);
+});
+
+// ── fromEntries — builds an object, the inverse of `entries` ──
+
+test("fromEntries: builds an object from {key,value} pairs", () => {
+  assert.deepEqual(
+    resolve({ $fromEntries: [{ key: "a", value: 1 }, { key: "b", value: 2 }] }, {}),
+    { a: 1, b: 2 },
+  );
+});
+
+test("fromEntries: accepts [key, value] tuple arrays", () => {
+  assert.deepEqual(resolve({ $fromEntries: [["a", 1], ["b", 2]] }, {}), { a: 1, b: 2 });
+});
+
+test("fromEntries round-trips entries", () => {
+  const o = { a: 1, b: "two", c: true };
+  const pairs = resolve({ $entries: { $var: "o" } }, { o });
+  assert.deepEqual(resolve({ $fromEntries: pairs }, {}), o);
+});
+
+test("groupBy: groups an array of objects by a key (dot-path) into an object of arrays", () => {
+  const users = [{ n: "a", team: { id: "x" } }, { n: "b", team: { id: "y" } }, { n: "c", team: { id: "x" } }];
+  assert.deepEqual(resolve({ $groupBy: [{ $var: "users" }, "team.id"] }, { users }), {
+    x: [users[0], users[2]],
+    y: [users[1]],
+  });
 });
