@@ -4,6 +4,14 @@ import { getNestedValue } from "../helpers.js";
 import { nextRandom } from "./Math.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
 
+const ORDERS = ["asc", "desc"] as const;
+
+const ORDER: JexsPropertySchema = {
+  type: "string",
+  enum: [...ORDERS],
+  description: "Sort direction: `\"asc\"` (default) or `\"desc\"`.",
+};
+
 export class ArrayNode extends Node {
   static schema: JexsNodeSchema = {
     first: {
@@ -50,17 +58,14 @@ export class ArrayNode extends Node {
     },
     sort: {
       output: "array",
-      markdownDescription: "Sorts an array ascending (numbers numerically, strings lexicographically).",
+      markdownDescription: "Sorts an array (numbers numerically, strings lexicographically), ascending unless `order` is `\"desc\"`.",
       examples: [
         "{ \"$sort\": [3, 1, 2] }",
+        "{ \"$sort\": { \"$var\": \"scores\" }, \"order\": \"desc\" }",
       ],
-    },
-    sortDesc: {
-      output: "array",
-      markdownDescription: "Sorts an array descending.",
-      examples: [
-        "{ \"$sortDesc\": [3, 1, 2] }",
-      ],
+      siblings: {
+        order: ORDER,
+      },
     },
     shuffle: {
       output: "array",
@@ -70,12 +75,20 @@ export class ArrayNode extends Node {
       ],
     },
     sortBy: {
-      type: "array",
-      output: "array",
-      markdownDescription: "Sorts an array of objects by a key. Direction is `\"asc\"` (default) or `\"desc\"`.",
-      examples: [
-        "{ \"$sortBy\": [{ \"$var\": \"users\" }, \"name\", \"desc\"] }",
+      tuple: 2,
+      prefixItems: [
+        { type: "array", description: "The array of objects to sort." },
+        { type: "string", description: "The key (dot-path) to sort by." },
       ],
+      output: "array",
+      markdownDescription: "Sorts an array of objects by a key (dot-path), ascending unless `order` is `\"desc\"`.",
+      examples: [
+        "{ \"$sortBy\": [{ \"$var\": \"users\" }, \"name\"], \"order\": \"desc\" }",
+        "{ \"$sortBy\": [{ \"$var\": \"posts\" }, \"author.name\"] }",
+      ],
+      siblings: {
+        order: ORDER,
+      },
     },
     pluck: {
       tuple: 2,
@@ -305,17 +318,13 @@ export class ArrayNode extends Node {
       ],
     },
     includes: {
-      tuple: [
-        2,
-        3,
-      ],
+      tuple: 2,
       prefixItems: [
         { type: "array", description: "The array to search." },
-        { description: "The value to find; or, with a third argument, the object key to match." },
-        { description: "With a key in the second slot, the value that key must equal." },
+        { description: "The value to find." },
       ],
       output: "boolean",
-      markdownDescription: "Checks if an array contains a value: `[arr, value]`.\nWith three arguments `[arr, key, value]`, checks if any object has that key-value pair.",
+      markdownDescription: "Checks if an array contains a value (strict equality): `[arr, value]`. To test objects by a key, use `find`.",
       examples: [
         "{ \"$includes\": [{ \"$var\": \"roles\" }, \"admin\"] }",
       ],
@@ -435,11 +444,10 @@ export class ArrayNode extends Node {
   }
 
   sort(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.$sort, def.clone], c, ([v, cl]) => sortInPlace(mutArr(v, this.toBoolean(cl)), false));
-  }
-
-  sortDesc(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.$sortDesc, def.clone], c, ([v, cl]) => sortInPlace(mutArr(v, this.toBoolean(cl)), true));
+    return resolveAll([def.$sort, def.clone, def.order], c, ([v, cl, order]) => {
+      const direction = this.getOption(order, ORDERS, "sort order") === "desc" ? -1 : 1;
+      return mutArr(v, this.toBoolean(cl)).sort((a, b) => compareValues(a, b) * direction);
+    });
   }
 
   shuffle(def: Record<string, unknown>, c: Context) {
@@ -447,18 +455,12 @@ export class ArrayNode extends Node {
   }
 
   sortBy(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.$sortBy, def.clone], c, ([args, cl]) => {
-      const clone = this.toBoolean(cl);
+    return resolveAll([def.$sortBy, def.clone, def.order], c, ([args, cl, order]) => {
       const a = this.toArray(args);
-      const arr = mutArr(a[0], clone);
+      const arr = mutArr(a[0], this.toBoolean(cl));
       const key = this.toString(a[1]);
-      const direction = a.length > 2 && a[2] === "desc" ? -1 : 1;
-      return arr.sort((x, y) => {
-        const xVal = this.isObject(x) ? (x as Record<string, unknown>)[key] : undefined;
-        const yVal = this.isObject(y) ? (y as Record<string, unknown>)[key] : undefined;
-        if (typeof xVal === "number" && typeof yVal === "number") return (xVal - yVal) * direction;
-        return this.toString(xVal).localeCompare(this.toString(yVal)) * direction;
-      });
+      const direction = this.getOption(order, ORDERS, "sort order") === "desc" ? -1 : 1;
+      return arr.sort((x, y) => compareValues(getNestedValue(x, key), getNestedValue(y, key)) * direction);
     });
   }
 
@@ -700,13 +702,7 @@ export class ArrayNode extends Node {
   includes(def: Record<string, unknown>, c: Context) {
     return resolve(def.$includes, c, args => {
       const a = this.toArray(args);
-      const arr = this.toArray(a[0]);
-      if (a.length >= 3) {
-        const key = this.toString(a[1]);
-        const value = a[2];
-        return arr.some(item => this.isObject(item) && (item as Record<string, unknown>)[key] === value);
-      }
-      return arr.includes(a[1]);
+      return this.toArray(a[0]).includes(a[1]);
     });
   }
 
@@ -749,12 +745,10 @@ function mutArr(value: unknown, clone: boolean): unknown[] {
   return clone ? [...value] : value;
 }
 
-function sortInPlace(arr: unknown[], desc: boolean): unknown[] {
-  arr.sort((a, b) => {
-    if (typeof a === "number" && typeof b === "number") return a - b;
-    return String(a ?? "").localeCompare(String(b ?? ""));
-  });
-  return desc ? arr.reverse() : arr;
+/** Ascending order: numbers numerically, anything else as text. */
+function compareValues(a: unknown, b: unknown): number {
+  if (typeof a === "number" && typeof b === "number") return a - b;
+  return String(a ?? "").localeCompare(String(b ?? ""));
 }
 
 /** Fisher-Yates shuffle in place, drawing from this resolver's (seedable) RNG. */

@@ -102,3 +102,9 @@ test("math ops resolve nested-expression arguments", () => {
   assert.equal(resolve({ $hypot: [{ $var: "a" }, { $var: "b" }] }, { a: 3, b: 4 }), 5);
   assert.equal(resolve({ $mapRange: [{ $var: "v" }, 0, 10, 0, 100] }, { v: 5 }), 50);
 });
+
+test("toFixed formats its value with `decimals` places, 2 by default", () => {
+  assert.equal(resolve({ $toFixed: 3.14159 }, {}), "3.14");
+  assert.equal(resolve({ $toFixed: { $var: "price" }, decimals: 0 }, { price: 9.5 }), "10");
+  assert.equal(resolve({ $toFixed: 1, decimals: 99 }, {}), (1).toFixed(20), "decimals are capped at 20");
+});

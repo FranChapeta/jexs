@@ -81,15 +81,30 @@ test("move: relocates an element in place", () => {
 
 // ── Reordering verbs now mutate the source by default too ──
 
-test("sort / sortDesc / reverse mutate the referenced array in place", () => {
+test("sort / reverse mutate the referenced array in place", () => {
   const ctx = { nums: [3, 1, 2] };
   const out = resolve({ $sort: { $var: "nums" } }, ctx);
   assert.deepEqual(ctx.nums, [1, 2, 3]);
   assert.equal(out, ctx.nums);                 // same reference
-  resolve({ $sortDesc: { $var: "nums" } }, ctx);
+  resolve({ $sort: { $var: "nums" }, order: "desc" }, ctx);
   assert.deepEqual(ctx.nums, [3, 2, 1]);
   resolve({ $reverse: { $var: "nums" } }, ctx);
   assert.deepEqual(ctx.nums, [1, 2, 3]);
+});
+
+test("sortBy: sorts objects by a dot-path, in the `order` given", () => {
+  const people = () => [{ n: { first: "b" }, age: 30 }, { n: { first: "c" }, age: 20 }, { n: { first: "a" }, age: 25 }];
+  assert.deepEqual((resolve({ $sortBy: [people(), "n.first"] }, {}) as Array<{ age: number }>).map(p => p.age), [25, 30, 20]);
+  assert.deepEqual((resolve({ $sortBy: [people(), "age"], order: "desc" }, {}) as Array<{ age: number }>).map(p => p.age), [30, 25, 20]);
+});
+
+test("an order other than asc or desc throws", () => {
+  assert.throws(() => resolve({ $sort: [2, 1], order: "down" }, {}), /Invalid sort order "down"/);
+});
+
+test("includes: tests an array for a value", () => {
+  assert.equal(resolve({ $includes: [["a", "b"], "b"] }, {}), true);
+  assert.equal(resolve({ $includes: [[1, 2], "2"] }, {}), false, "strict equality");
 });
 
 test("unique / flatten rewrite the source array in place", () => {

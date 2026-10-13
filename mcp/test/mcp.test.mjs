@@ -213,7 +213,7 @@ describe("describe_op", () => {
 describe("search_ops", () => {
   test("finds ops by name fragment, with package attribution", async () => {
     const { text } = await callTool("search_ops", { query: "sort" });
-    for (const op of ["sort", "sortDesc", "sortBy"]) assert.match(text, new RegExp(`\\b${op}\\b`));
+    for (const op of ["sort", "sortBy"]) assert.match(text, new RegExp(`\\b${op}\\b`));
     assert.match(text, /@jexs\/core/);
   });
 

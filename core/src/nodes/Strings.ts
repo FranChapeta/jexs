@@ -12,6 +12,8 @@ const BASE64_CHUNK = 8192;
 
 const STRING_LIST: JexsPropertySchema = { type: "array", items: { type: "string" } };
 
+const PAD: JexsPropertySchema = { type: "string", description: "The text to pad with, repeated as needed (default `\" \"`)." };
+
 const FLAGS: JexsPropertySchema = {
   type: "string",
   pattern: "^(?!.*(.).*\\1)[imsuv]*$",
@@ -210,36 +212,34 @@ export class StringNode extends Node {
       },
     },
     padStart: {
-      tuple: [
-        2,
-        3,
-      ],
+      tuple: 2,
       prefixItems: [
         { type: "string", description: "The string to pad." },
         { type: "number", description: "Target total length." },
-        { type: "string", description: "Pad string (default `\" \"`)." },
       ],
       output: "string",
-      markdownDescription: "Pads the start of a string to a target length.",
+      markdownDescription: "Pads the start of a string to a target length, with `pad` (default `\" \"`).",
       examples: [
-        "{ \"$padStart\": [\"5\", 3, \"0\"] }",
+        "{ \"$padStart\": [\"5\", 3], \"pad\": \"0\" }",
       ],
+      siblings: {
+        pad: PAD,
+      },
     },
     padEnd: {
-      tuple: [
-        2,
-        3,
-      ],
+      tuple: 2,
       prefixItems: [
         { type: "string", description: "The string to pad." },
         { type: "number", description: "Target total length." },
-        { type: "string", description: "Pad string (default `\" \"`)." },
       ],
       output: "string",
-      markdownDescription: "Pads the end of a string to a target length.",
+      markdownDescription: "Pads the end of a string to a target length, with `pad` (default `\" \"`).",
       examples: [
-        "{ \"$padEnd\": [\"hi\", 5, \".\"] }",
+        "{ \"$padEnd\": [\"hi\", 5], \"pad\": \".\" }",
       ],
+      siblings: {
+        pad: PAD,
+      },
     },
     repeat: {
       tuple: 2,
@@ -525,11 +525,11 @@ export class StringNode extends Node {
   }
 
   padStart(def: Record<string, unknown>, c: Context) {
-    return resolve(def.$padStart, c, args => doPad(args, "start"));
+    return resolveAll([def.$padStart, def.pad], c, ([args, pad]) => doPad(args, pad, "start"));
   }
 
   padEnd(def: Record<string, unknown>, c: Context) {
-    return resolve(def.$padEnd, c, args => doPad(args, "end"));
+    return resolveAll([def.$padEnd, def.pad], c, ([args, pad]) => doPad(args, pad, "end"));
   }
 
   repeat(def: Record<string, unknown>, c: Context) {
@@ -680,10 +680,10 @@ const SLUG_EDGE_DASHES = /^-|-$/g;
 // `-` is only special inside a character class.
 const REGEX_SPECIALS = /[\\^$.*+?()[\]{}|/]/g;
 
-function doPad(args: unknown, side: "start" | "end"): string {
+function doPad(args: unknown, pad: unknown, side: "start" | "end"): string {
   const a = Array.isArray(args) ? (args as unknown[]) : args != null ? [args] : [];
   const str = String(a[0] ?? "");
   const length = Number(a[1]) || 0;
-  const padChar = a.length > 2 ? String(a[2] ?? "") : " ";
-  return side === "start" ? str.padStart(length, padChar) : str.padEnd(length, padChar);
+  const padText = pad == null ? " " : String(pad);
+  return side === "start" ? str.padStart(length, padText) : str.padEnd(length, padText);
 }

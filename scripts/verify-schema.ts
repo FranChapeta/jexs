@@ -70,7 +70,7 @@ const cases: Case[] = [
   { label: "string-slot accepts boolean-output expression (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { $foreach: [1, 2], item: { $eq: [1, 1] }, do: "x" } },
   { label: "string-slot accepts string-output expression (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $foreach: [1, 2], item: { $toFixed: [3.14, 2] }, do: "x" } },
+    expr: { $foreach: [1, 2], item: { $toFixed: 3.14, decimals: 2 }, do: "x" } },
   { label: "string-slot accepts unannotated (any-output) expression (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $foreach: [1, 2], item: { $var: "dynamic" }, do: "x" } },
 

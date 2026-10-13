@@ -96,3 +96,11 @@ test("base64: an expression on either side, and urlSafe as one too", () => {
   );
   assert.equal(resolve({ $toBase64: "a?b>c~ÿ", urlSafe: { $var: "safe" } }, { safe: true }), "YT9iPmN-w78");
 });
+
+// ── padStart / padEnd — the pad text is the `pad` sibling ──
+
+test("padStart and padEnd pad with `pad`, a space by default", () => {
+  assert.equal(resolve({ $padStart: ["5", 3], pad: "0" }, {}), "005");
+  assert.equal(resolve({ $padEnd: ["hi", 5], pad: { $var: "dot" } }, { dot: "." }), "hi...");
+  assert.equal(resolve({ $padStart: ["x", 3] }, {}), "  x");
+});

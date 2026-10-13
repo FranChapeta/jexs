@@ -356,19 +356,19 @@ export class MathNode extends Node {
       ],
     },
     toFixed: {
-      tuple: [
-        1,
-        2,
-      ],
-      prefixItems: [
-        { type: "number", description: "The number to format." },
-        { type: "number", description: "Decimal places (default 2)." },
-      ],
+      type: "number",
       output: "string",
-      markdownDescription: "Formats a number to a fixed number of decimal places (default 2). Returns a string.",
+      markdownDescription: "Formats a number with a fixed number of decimal places, `decimals` (default 2, at most 20). Returns a string.",
       examples: [
-        "{ \"$toFixed\": [3.14159, 2] }",
+        "{ \"$toFixed\": 3.14159 }",
+        "{ \"$toFixed\": { \"$var\": \"price\" }, \"decimals\": 0 }",
       ],
+      siblings: {
+        decimals: {
+          type: "number",
+          description: "Decimal places, 0 to 20 (default 2).",
+        },
+      },
     },
     numberFormat: {
       type: "number",
@@ -615,11 +615,9 @@ export class MathNode extends Node {
   }
 
   toFixed(def: Record<string, unknown>, c: Context) {
-    return resolve(def.$toFixed, c, values => {
-      const arr = this.toArray(values);
-      const value = this.toNumber(arr[0]);
-      const decimals = arr.length > 1 ? this.toNumber(arr[1]) : 2;
-      return value.toFixed(Math.max(0, Math.min(20, decimals)));
+    return resolveAll([def.$toFixed, def.decimals], c, ([value, decimalsRaw]) => {
+      const decimals = decimalsRaw == null ? 2 : this.toNumber(decimalsRaw);
+      return this.toNumber(value).toFixed(Math.max(0, Math.min(20, decimals)));
     });
   }
 

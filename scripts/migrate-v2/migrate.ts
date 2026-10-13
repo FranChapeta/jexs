@@ -49,13 +49,13 @@ type Rule = (step: Step, m: Codemod) => void;
  * in one) still apply. A value that is not a literal tuple of a fitting length
  * is left for review.
  */
-function tupleToSiblings({ op, obj }: Step, names: string[], m: Codemod): void {
+function tupleToSiblings({ op, obj }: Step, names: string[], m: Codemod, minSlots = 2): void {
   const prop = obj.props.find(p => p.key === "$" + op);
   // A step that already has the siblings is migrated.
   if (!prop || obj.props.some(p => p.key === names[0])) return;
   const v = prop.value;
   const shape = `[<array>, ${names.map(n => `<${n}>`).join(", ")}]`;
-  if (v.k !== "arr" || v.items.length < 2 || v.items.length > names.length + 1) {
+  if (v.k !== "arr" || v.items.length < minSlots || v.items.length > names.length + 1) {
     m.review(prop.keyStart, `\`$${op}\` no longer takes ${shape}: give it the array, with ${names.map(n => `\`${n}\``).join(" and ")} beside it`);
     return;
   }
@@ -64,6 +64,26 @@ function tupleToSiblings({ op, obj }: Step, names: string[], m: Codemod): void {
   m.add({ start: v.start, end: items[0].start, text: "" });
   for (let i = 1; i < items.length; i++) m.add({ start: items[i - 1].end, end: items[i].start, text: `, ${key(names[i - 1])}: ` });
   m.add({ start: items[items.length - 1].end, end: v.end, text: "" });
+}
+
+/**
+ * Move a tuple's optional last slot out to a sibling: `[a, b, c]` becomes
+ * `[a, b], "<name>": c`. Only a literal slot moves, as it is rewritten from its
+ * value; an expression there is left for review, so edits inside it are never
+ * lost. A tuple without the slot is left as it is.
+ */
+function lastSlotToSibling({ op, obj }: Step, slot: number, name: string, m: Codemod): void {
+  const prop = obj.props.find(p => p.key === "$" + op);
+  const v = prop?.value;
+  if (!prop || v?.k !== "arr" || v.items.length <= slot) return;
+  const moved = v.items[slot];
+  if (v.items.length > slot + 1 || (moved.k !== "str" && moved.k !== "lit")) {
+    m.review(prop.keyStart, `\`$${op}\`'s slot ${slot + 1} is now the \`${name}\` sibling: move it out of the tuple`);
+    return;
+  }
+  const key = prop.keyQuoted ? `"${name}"` : name;
+  m.add({ start: v.items[slot - 1].end, end: moved.end, text: "" });
+  m.add({ start: v.end, end: v.end, text: `, ${key}: ${JSON.stringify(moved.value)}` });
 }
 
 /** Rename the step's `from` sibling to `to`, keeping how its key is quoted. */
@@ -81,6 +101,28 @@ const RULES: Record<string, Rule> = {
   reduce: (step, m) => tupleToSiblings(step, ["do", "initial"], m),
   // The index variable is named by `index`, as on the array ops.
   foreach: (step, m) => renameSibling(step, "key", "index", m),
+  // Optional modifiers are siblings, not tuple slots.
+  sortBy: (step, m) => lastSlotToSibling(step, 2, "order", m),
+  padStart: (step, m) => lastSlotToSibling(step, 2, "pad", m),
+  padEnd: (step, m) => lastSlotToSibling(step, 2, "pad", m),
+  // `[n, decimals]` becomes `n` with `decimals` beside it; a plain number is already migrated.
+  toFixed: (step, m) => {
+    if (step.obj.props.find(p => p.key === "$toFixed")?.value.k === "arr") tupleToSiblings(step, ["decimals"], m, 1);
+  },
+  // `$sortDesc` is `$sort` with `order: "desc"`.
+  sortDesc: ({ obj }, m) => {
+    const prop = obj.props.find(p => p.key === "$sortDesc");
+    if (!prop || prop.shorthand) return;
+    m.add({ start: prop.keyStart, end: prop.keyEnd, text: "$sort" });
+    m.add({ start: prop.value.end, end: prop.value.end, text: `, ${prop.keyQuoted ? '"order"' : "order"}: "desc"` });
+  },
+  // `[array, key, value]` is gone: `find` tests objects by a key.
+  includes: ({ obj }, m) => {
+    const prop = obj.props.find(p => p.key === "$includes");
+    if (prop?.value.k === "arr" && prop.value.items.length === 3) {
+      m.review(prop.keyStart, "`$includes` takes `[array, value]` only: for `[array, key, value]` test `{ \"$find\": array, \"do\": { \"$eq\": [{ \"$var\": \"item.<key>\" }, value] } }` against `null`");
+    }
+  },
   // Iterations bind only their item and index; what `loop` read depends on the
   // enclosing iterator's names, so it is left for review.
   var: ({ obj }, m) => {
