@@ -39,14 +39,20 @@ test("then: fire-and-forget does not block the sequence and runs the continuatio
   assert.equal(ctx.grabbed, "R:A");
 });
 
-test("then: a sibling `as` binds null (the result is delivered to `result`, not returned)", async () => {
+test("then: the step itself yields null, as its result is delivered to `result`", async () => {
   const ctx: Record<string, unknown> = {};
-  const out = resolve([
-    { $defer: "Z", $as: "sync", $then: [{ $as: "async", $var: "result", $bubble: true }], $bubble: true },
-    { $var: "sync" },
-  ], ctx);
-  // The step itself yields null; `as` on the same step captures that, not the result.
-  assert.equal(out, undefined);
+  const out = resolve({ $defer: "Z", $then: [{ $as: "async", $var: "result", $bubble: true }] }, ctx);
+  assert.equal(out, null);
   await flush();
   assert.equal(ctx.async, "R:Z");
+});
+
+test("then: `$as` beside it is refused, before the work starts", async () => {
+  const ctx: Record<string, unknown> = {};
+  assert.throws(
+    () => resolve({ $defer: "Z", $as: "sync", $then: [{ $as: "ran", $var: "result", $bubble: true }] }, ctx),
+    /`\$as` cannot store a `\$then` step's result/,
+  );
+  await flush();
+  assert.equal(ctx.ran, undefined);
 });

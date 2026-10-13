@@ -288,6 +288,11 @@ function walkExpr(v: Val): void {
   const isOp = (name: string) => HANDLERS.has(name) || Object.hasOwn(RULES, name);
   const op = v.props.find(p => p.key.startsWith("$") && isOp(p.key.slice(1)))?.key.slice(1);
   if (op !== undefined) RULES[op]?.({ op, obj: v }, m);
+  // A `$then` step yields null at once, so `$as` beside it is refused now.
+  const asKey = v.props.find(p => p.key === "$as");
+  if (asKey && v.props.some(p => p.key === "$then")) {
+    m.review(asKey.keyStart, "`$as` is refused beside `$then`, whose result arrives later: read it as `result` inside `$then`, or drop the `$as`");
+  }
   // `$setVars` with `data: true` stores its values as written, steps included.
   const rawValues = op === "setVars" && v.props.some(p => p.key === "data" && p.value.k === "lit" && p.value.value === true);
   for (const p of v.props) {

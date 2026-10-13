@@ -1228,12 +1228,12 @@ export const GLOBAL_KEY_DOCS: Record<string, { markdownDescription: string; exam
   catch: {
     markdownDescription:
       "Step array to run if this expression throws. Catches ANY error, not just HTTP ones, on a step at any depth. The sequence then carries on with the catch's value as this step's result (so a sibling `$as` binds it). To end the enclosing sequence instead, return from the catch: a single expression lets `{ \"$return\": X }` through, while an array is a sequence of its own that consumes one level, so it needs `{ \"$return\": { \"$return\": X } }`. The `error` context variable carries `{ message }`, plus `status` when the thrower was an HTTP error (and whatever further variables it offered, e.g. `fetch`'s `response`).",
-    examples: ["{ \"query-select\": \"users\", \"$catch\": [{ \"$var\": \"error.message\" }] }"],
+    examples: ["{ \"$fetch\": \"/api/users\", \"$catch\": [{ \"$var\": \"error.message\" }] }"],
   },
   then: {
     markdownDescription:
-      "Run these steps as a FIRE-AND-FORGET continuation (like a Promise `.then`): the step returns immediately (later steps do NOT block on it), and once this expression settles, the steps run with the result bound as `result`. A rejection runs `$catch`. The step itself yields `null` (the result is delivered to `result`, not returned), so a sibling `$as` here would bind `null`; read the value via `result` inside `$then`. Works on ANY node, at any depth; use it to kick off async I/O (`query`, `file`, a host `dialog`, `thread`) without stalling the sequence. (Under `$if`, `then` is the branch, not a continuation.)",
-    examples: ["{ \"query-select\": \"saves\", \"$then\": [{ \"set-html\": [\"#list\", { \"$var\": \"result\" }] }] }"],
+      "Run these steps as a FIRE-AND-FORGET continuation (like a Promise `.then`): the step returns immediately (later steps do NOT block on it), and once this expression settles, the steps run with the result bound as `result`. A rejection runs `$catch`. The step itself yields `null`, as the result is delivered to `result`, not returned, so `$as` is refused beside it: read the value via `result` inside `$then`. Works on ANY node, at any depth; use it to kick off async I/O (`query`, `file`, a host `dialog`, `thread`) without stalling the sequence. (Under `$if`, `then` is the branch, not a continuation.)",
+    examples: ["{ \"$fetch\": \"/api/saves\", \"$then\": [{ \"$setHtml\": [\"#list\", { \"$var\": \"result\" }] }] }"],
   },
   bubble: {
     markdownDescription:
@@ -1411,6 +1411,9 @@ export function mergePackageSchemas(packages: PackageSchema[], opts: SchemaBuild
   exprFlatDependentSchemas[KEY_PREFIX + "bubble"] = {
     anyOf: [{ required: [KEY_PREFIX + "as"] }, { required: [KEY_PREFIX + "setVars"] }],
   };
+  // A `$then` step yields `null` at once and its result arrives later, so `$as`
+  // beside it would store nothing: the two are refused together.
+  exprFlatDependentSchemas[KEY_PREFIX + "then"] = { not: { required: [KEY_PREFIX + "as"] } };
 
   // Undeclared siblings (keys a handler's `properties` doesn't list) are checked
   // as `anyVal`: a step, data, or a primitive, each branch validating its contents

@@ -382,23 +382,28 @@ function walk(self: ResolverImpl, value: unknown, context: Context): unknown {
   // A step runs through its node, with its global keys applied around it.
   //
   // `$then` makes the step FIRE-AND-FORGET: the work starts off the caller's
-  // stack (so even synchronous setup doesn't block), the caller gets `undefined`
+  // stack (so even synchronous setup doesn't block), the caller gets `null`
   // right away, and when the work settles the `$then` steps run with the result
   // bound as `result`. Errors go through `$catch`, unhandled if there is none,
-  // like any background task.
+  // like any background task. `$as` beside it could only ever store that `null`,
+  // which is never what it is written for, so it is refused.
   //
   // `$catch` runs its steps with `error` (`{ status, message }`) bound, alongside
   // any further variables the thrower offered (see `createHttpError`).
   //
-  // `$as` stores what the step ends up with: the node's value, the `$catch`
-  // steps' value, or `undefined` under `$then`.
+  // `$as` stores what the step ends up with: the node's value or the `$catch`
+  // steps' value.
   let r: unknown;
   if (obj.$then !== undefined) {
+    if (obj.$as !== undefined) {
+      throw new Error("`$as` cannot store a `$then` step's result, which arrives later: read it as `result` inside `$then`");
+    }
     const then = obj.$then;
     void Promise.resolve()
       .then(() => callNode(self, obj, op, context))
       .then(result => runSteps(then, childContext(context, { result })))
       .catch(err => handleErr(err, obj, context));
+    r = null;
   } else if (obj.$catch === undefined) {
     r = callNode(self, obj, op, context);
   } else {
