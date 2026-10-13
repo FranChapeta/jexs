@@ -55,19 +55,23 @@ test("dateDiff: fewer than two args or unknown unit is null", () => {
 // ── datePart — UTC component extraction ──
 
 test("datePart: extracts each component in UTC", () => {
-  assert.equal(resolve({ $datePart: TS, part: "year" }, {}), 2026);
-  assert.equal(resolve({ $datePart: TS, part: "month" }, {}), 7); // 1-12
-  assert.equal(resolve({ $datePart: TS, part: "day" }, {}), 1);
-  assert.equal(resolve({ $datePart: TS, part: "hour" }, {}), 12);
-  assert.equal(resolve({ $datePart: TS, part: "minute" }, {}), 30);
-  assert.equal(resolve({ $datePart: TS, part: "second" }, {}), 45);
-  assert.equal(resolve({ $datePart: TS, part: "ms" }, {}), 123);
-  assert.equal(resolve({ $datePart: TS, part: "weekday" }, {}), 3); // Wednesday
+  assert.equal(resolve({ $datePart: [TS, "year"] }, {}), 2026);
+  assert.equal(resolve({ $datePart: [TS, "month"] }, {}), 7); // 1-12
+  assert.equal(resolve({ $datePart: [TS, "day"] }, {}), 1);
+  assert.equal(resolve({ $datePart: [TS, "hour"] }, {}), 12);
+  assert.equal(resolve({ $datePart: [TS, "minute"] }, {}), 30);
+  assert.equal(resolve({ $datePart: [TS, "second"] }, {}), 45);
+  assert.equal(resolve({ $datePart: [TS, "ms"] }, {}), 123);
+  assert.equal(resolve({ $datePart: [TS, "weekday"] }, {}), 3); // Wednesday
 });
 
 test("datePart: missing or unknown part is null", () => {
   assert.equal(resolve({ $datePart: TS }, {}), null);
-  assert.equal(resolve({ $datePart: TS, part: "fortnight" }, {}), null);
+  assert.equal(resolve({ $datePart: [TS, "fortnight"] }, {}), null);
+});
+
+test("datePart: the whole [timestamp, part] can come from an expression", () => {
+  assert.equal(resolve({ $datePart: { $var: "args" } }, { args: [TS, "month"] }), 7);
 });
 
 // ── dateStartOf / dateEndOf — UTC boundaries, week starts Monday ──
@@ -107,7 +111,7 @@ test("dateStartOf: honors the format sibling like dateAdd", () => {
 
 test("date ops resolve nested-expression arguments", () => {
   const ctx = { ts: TS };
-  assert.equal(resolve({ $datePart: { $var: "ts" }, part: "year" }, ctx), 2026);
+  assert.equal(resolve({ $datePart: [{ $var: "ts" }, "year"] }, ctx), 2026);
   assert.equal(
     resolve({ $dateDiff: [{ $var: "ts" }, { $dateAdd: [{ $var: "ts" }, "2d"] }], unit: "day" }, ctx),
     2,

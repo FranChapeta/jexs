@@ -86,6 +86,31 @@ function lastSlotToSibling({ op, obj }: Step, slot: number, name: string, m: Cod
   m.add({ start: v.end, end: v.end, text: `, ${key}: ${JSON.stringify(moved.value)}` });
 }
 
+/**
+ * Move a sibling into a tuple with the op's value: `{ "$op": a, "<name>": b }`
+ * becomes `{ "$op": [a, b] }`. Only a literal sibling after another key moves,
+ * as it is rewritten from its value; anything else is left for review.
+ */
+function siblingToTuple({ op, obj }: Step, name: string, m: Codemod): void {
+  const value = obj.props.find(p => p.key === "$" + op)?.value;
+  const at = obj.props.findIndex(p => p.key === name);
+  const sibling = obj.props[at];
+  if (!value || !sibling) return;
+  if (at === 0 || (sibling.value.k !== "str" && sibling.value.k !== "lit")) {
+    m.review(sibling.keyStart, `\`$${op}\` takes \`[<value>, <${name}>]\` now: move \`${name}\` into the tuple`);
+    return;
+  }
+  const close = `, ${JSON.stringify(sibling.value.value)}]`;
+  const before = obj.props[at - 1].value.end;
+  m.add({ start: value.start, end: value.start, text: "[" });
+  // Right after the op's value, closing the tuple and dropping the sibling are one edit.
+  if (before === value.end) m.add({ start: value.end, end: sibling.value.end, text: close });
+  else {
+    m.add({ start: value.end, end: value.end, text: close });
+    m.add({ start: before, end: sibling.value.end, text: "" });
+  }
+}
+
 /** Rename the step's `from` sibling to `to`, keeping how its key is quoted. */
 function renameSibling({ obj }: Step, from: string, to: string, m: Codemod): void {
   const prop = obj.props.find(p => p.key === from);
@@ -116,6 +141,8 @@ const RULES: Record<string, Rule> = {
     m.add({ start: prop.keyStart, end: prop.keyEnd, text: "$sort" });
     m.add({ start: prop.value.end, end: prop.value.end, text: `, ${prop.keyQuoted ? '"order"' : "order"}: "desc"` });
   },
+  // The part to extract is the second operand.
+  datePart: (step, m) => siblingToTuple(step, "part", m),
   // `[array, key, value]` is gone: `find` tests objects by a key.
   includes: ({ obj }, m) => {
     const prop = obj.props.find(p => p.key === "$includes");

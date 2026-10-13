@@ -97,28 +97,21 @@ export class DateNode extends Node {
       },
     },
     datePart: {
-      output: "number",
-      markdownDescription: "Extracts a single component from a Unix-ms timestamp, in UTC. Choose the component with the `part` sibling.",
-      outputDescription: "A **number**: `month` is 1-12, `day` is 1-31, `weekday` is 0-6 (0 = Sunday). `null` if `part` is missing or unknown.",
-      examples: [
-        "{ \"$datePart\": { \"$var\": \"ts\" }, \"part\": \"weekday\" }",
-      ],
-      siblings: {
-        part: {
+      tuple: 2,
+      prefixItems: [
+        { type: "number", description: "The Unix-ms timestamp." },
+        {
           type: "string",
-          enum: [
-            "year",
-            "month",
-            "day",
-            "hour",
-            "minute",
-            "second",
-            "ms",
-            "weekday",
-          ],
-          description: "Component to extract (required).",
+          enum: ["year", "month", "day", "hour", "minute", "second", "ms", "weekday"],
+          description: "The component to extract.",
         },
-      },
+      ],
+      output: "number",
+      markdownDescription: "Extracts a single component from a Unix-ms timestamp, in UTC: `[timestamp, part]`.",
+      outputDescription: "A **number**: `month` is 1-12, `day` is 1-31, `weekday` is 0-6 (0 = Sunday). `null` if the part is unknown.",
+      examples: [
+        "{ \"$datePart\": [{ \"$var\": \"ts\" }, \"weekday\"] }",
+      ],
     },
     dateStartOf: {
       markdownDescription: "Snaps a Unix-ms timestamp down to the start of a `unit` (default `\"day\"`), in UTC. Weeks start on Monday (ISO-8601).",
@@ -270,10 +263,10 @@ export class DateNode extends Node {
   }
 
   datePart(def: Record<string, unknown>, context: Context): NodeValue {
-    if (def.part == null) return null;
-    return resolve(def.$datePart, context, ts =>
-      resolve(def.part, context, part => extractPart(this.toNumber(ts), String(part)))
-    );
+    return resolve(def.$datePart, context, args => {
+      const a = this.toArray(args);
+      return extractPart(this.toNumber(a[0]), String(a[1]));
+    });
   }
 
   dateStartOf(def: Record<string, unknown>, context: Context): NodeValue {
