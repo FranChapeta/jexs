@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readdirSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { createResolver, coreNodes, Node } from "@jexs/core";
+import { CLIENT_SCRIPT, createResolver, coreNodes, Node } from "@jexs/core";
 // The option builders are internal, so they are imported from their modules
 // rather than widening the barrel (see CLAUDE.md: index.ts is public API only).
 import { browserWindowOptions, pageName, shellTemplate } from "../src/nodes/Window.js";
@@ -125,7 +125,7 @@ test("shellTemplate resolves to a document with the page mounted and script inje
     resolve(shellTemplate(), {
       title: "My App",
       page: "index.json",
-      _clientScript: "/client.js",
+      [CLIENT_SCRIPT]: "/client.js",
     }),
   );
 

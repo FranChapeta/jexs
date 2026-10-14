@@ -1,5 +1,5 @@
 // ── Node system ──
-export { Node, childContext, type Context, type NodeValue } from "./nodes/Node.js";
+export { Node, childContext, CLIENT_SCRIPT, SW_SCRIPT, CSRF_TOKEN, type Context, type NodeValue } from "./nodes/Node.js";
 
 // ── Schema types ──
 export type {

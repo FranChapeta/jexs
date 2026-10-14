@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue } from "./Node.js";
+import { Node, Context, NodeValue, CLIENT_SCRIPT, SW_SCRIPT, CSRF_TOKEN } from "./Node.js";
 import { resolve, resolveAll, translate, isOwnedKey, isStep } from "../Resolver.js";
 import { hasVariables, interpolate } from "./Variables.js";
 import { escapeHtml, escapeScriptJson, isObject } from "../helpers.js";
@@ -258,26 +258,23 @@ function buildEventsAttr(events: unknown): string {
 function buildInjections(tag: string, def: Record<string, unknown>, context: Context): string {
   let result = "";
 
-  if (tag === "head") {
-    if (context._clientScript) {
-      // The client script registers the service worker named here, so the page
-      // needs no inline script for it.
-      const sw = context._swScript ? ` data-sw="${escapeHtml(String(context._swScript))}"` : "";
-      result += `<script type="module" src="${escapeHtml(String(context._clientScript))}"${sw}></script>`;
-    }
+  const clientScript = context[CLIENT_SCRIPT];
+  if (tag === "head" && typeof clientScript === "string") {
+    // The client script registers the service worker named here, so the page
+    // needs no inline script for it.
+    const swScript = context[SW_SCRIPT];
+    const sw = typeof swScript === "string" ? ` data-sw="${escapeHtml(swScript)}"` : "";
+    result += `<script type="module" src="${escapeHtml(clientScript)}"${sw}></script>`;
   }
 
   // A page that loads the client script gets the token from the `csrf` cookie
   // when a form is submitted, so its HTML carries nothing per-visitor and can
   // be cached. Only a page without the client needs the token rendered in.
-  if (tag === "form" && !context._clientScript) {
+  if (tag === "form" && typeof clientScript !== "string") {
     const method = (def.method || "GET").toString().toUpperCase();
-    if (method !== "GET") {
-      const session = (context as Record<string, unknown>).session as Record<string, unknown> | undefined;
-      const csrfToken = session?._csrf;
-      if (csrfToken) {
-        result += `<input type="hidden" name="_csrf" value="${escapeHtml(String(csrfToken))}">`;
-      }
+    const csrfToken = context[CSRF_TOKEN];
+    if (method !== "GET" && typeof csrfToken === "string" && csrfToken !== "") {
+      result += `<input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}">`;
     }
   }
 

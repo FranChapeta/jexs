@@ -1,5 +1,6 @@
 import { Node, Context, NodeValue, resolve } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
+import { DEFERRED } from "../context.js";
 
 // Module-level on purpose, not an instance field: the id is written into the HTML
 // as `__jexs_defer_N` and again into the script that replaces the placeholder, so
@@ -53,13 +54,10 @@ export class DeferNode extends Node {
       const start = delayMs > 0 ? new Promise<void>(r => setTimeout(r, delayMs)) : Promise.resolve();
       const promise = start.then(() => resolve(expr, deferredContext));
 
-      if (!Array.isArray(context._deferred)) {
-        context._deferred = [];
-      }
-      (context._deferred as { id: string; promise: Promise<unknown> }[]).push({
-        id,
-        promise,
-      });
+      // A request's context has the list, which its page streams; elsewhere there
+      // is no page to stream into, so the part is only resolved.
+      const deferred = context[DEFERRED];
+      if (Array.isArray(deferred)) deferred.push({ id, promise });
 
       return `<div id="${id}">${loaderHtml}</div>`;
     });

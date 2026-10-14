@@ -4,6 +4,7 @@ import type { Duplex } from "node:stream";
 import type { IncomingMessage } from "node:http";
 import WebSocket, { WebSocketServer } from "ws";
 import type { JexsNodeSchema } from "@jexs/core";
+import { UPGRADE, WS, WS_PATH } from "../context.js";
 
 interface UpgradeContext {
   req: IncomingMessage;
@@ -14,7 +15,8 @@ interface UpgradeContext {
 }
 
 function getUpgrade(context: Context): UpgradeContext {
-  const upgrade = context._upgrade as UpgradeContext | undefined;
+  // Only the listener's upgrade handling sets it, as an UpgradeContext.
+  const upgrade = context[UPGRADE] as UpgradeContext | undefined;
   if (!upgrade) {
     throw createHttpError(500, "socket-accept must be called from an upgrade pipeline");
   }
@@ -22,11 +24,13 @@ function getUpgrade(context: Context): UpgradeContext {
 }
 
 function currentSocket(context: Context): WebSocket | null {
-  return (context._ws as WebSocket | undefined) ?? null;
+  const ws = context[WS];
+  return ws instanceof WebSocket ? ws : null;
 }
 
 function currentPath(context: Context): string {
-  return (context._wsPath as string | undefined) ?? "/";
+  const path = context[WS_PATH];
+  return typeof path === "string" ? path : "/";
 }
 
 function encodePayload(data: unknown): string {
@@ -48,14 +52,14 @@ export class WebSocketNode extends Node {
     "socket-accept": {
       type: "boolean",
       output: "null",
-      markdownDescription: "Completes the WebSocket upgrade for the current request and binds per-connection step arrays. Must be called from an upgrade pipeline (where `_upgrade` is in context, populated by the `listen` node's upgrade handling).",
+      markdownDescription: "Completes the WebSocket upgrade for the current request and binds per-connection step arrays. Must be called while a `listen` node handles an upgrade (a `WS` route), and throws anywhere else.",
       examples: [
         "{ \"$socket-accept\": true, \"on-message\": [{ \"$socket-broadcast\": { \"$var\": \"message\" } }] }",
       ],
       siblings: {
         "on-connect": {
           steps: true,
-          description: "Steps run once after the upgrade completes. `_ws`, `_wsPath`, `wsId` available in context.",
+          description: "Steps run once after the upgrade completes. `wsId` is the connection's id.",
         },
         "on-message": {
           steps: true,
@@ -69,7 +73,7 @@ export class WebSocketNode extends Node {
     },
     "socket-send": {
       output: "null",
-      markdownDescription: "Sends a message on the current connection (`_ws` in context). Objects are JSON-encoded.",
+      markdownDescription: "Sends a message on the connection a socket handler runs for. Objects are JSON-encoded.",
       examples: [
         "{ \"$socket-send\": { \"type\": \"pong\" } }",
       ],
@@ -160,11 +164,11 @@ export class WebSocketNode extends Node {
 
       const wsContext: Context = {
         ...context,
-        _ws: ws,
-        _wsPath: path,
+        [WS]: ws,
+        [WS_PATH]: path,
         wsId: id,
       };
-      delete wsContext._upgrade;
+      delete wsContext[UPGRADE];
 
       if (onConnect) {
         void runStepsDetached(onConnect, { ...wsContext }, def, "[WebSocket] on-connect error:");

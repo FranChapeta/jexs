@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createResolver, coreNodes, Node } from "@jexs/core";
+import { CLIENT_SCRIPT, createResolver, coreNodes, Node } from "@jexs/core";
 import path from "node:path";
 import { safeRelative } from "@jexs/server";
 import { SHELL_CSP, pageForWindowName, registerWrap, resetWindows, shellTemplate, wrapPage } from "../src/nodes/Window.js";
@@ -16,7 +16,7 @@ class StubFileNode extends Node {
 test("the shell carries a CSP", () => {
   const resolver = createResolver([...coreNodes(), new StubFileNode()]);
   const html = String(resolver(shellTemplate(), {
-    title: "T", page: "index.json", _clientScript: "/client.js",
+    title: "T", page: "index.json", [CLIENT_SCRIPT]: "/client.js",
   }));
   assert.match(html, /http-equiv="Content-Security-Policy"/);
   assert.match(html, /script-src/);

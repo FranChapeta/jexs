@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createResolver, coreNodes } from "@jexs/core";
-import type { Resolver } from "@jexs/core";
+import { SW_SCRIPT, createResolver, coreNodes } from "@jexs/core";
+import type { Context, Resolver } from "@jexs/core";
 import { ServerNode } from "../src/nodes/Server.js";
 
 // Each listener takes a free port (`0`) and the step returns it.
@@ -99,9 +99,9 @@ test("events from a step resolve to the map; a literal map's steps are left alon
     assert.ok(call, script);
     assert.deepEqual(JSON.parse(call[1]), { events: swEvents });
 
-    const ctx: Record<string, unknown> = {};
+    const ctx: Context = {};
     await other({ $listen: 0, client: true, sw: { events: { $concat: ["no", "map"] } }, do: [] }, ctx);
-    assert.equal(ctx._swScript, undefined);
+    assert.equal(ctx[SW_SCRIPT], undefined);
     assert.ok(warnings.some(w => w.includes('"sw.events"')), warnings.join("\n"));
   } finally {
     other.destroy();
@@ -129,13 +129,13 @@ test("sw from a step resolves to the config, which is data: nothing in it resolv
 test("an empty sw, or one without client, warns and registers nothing", async () => {
   const other = createResolver([...coreNodes(), new ServerNode()]);
   try {
-    const ctxEmpty: Record<string, unknown> = {};
+    const ctxEmpty: Context = {};
     await other({ $listen: 0, client: true, sw: {}, do: [{ $tag: "head" }] }, ctxEmpty);
-    const ctxNoClient: Record<string, unknown> = {};
+    const ctxNoClient: Context = {};
     const noClient = await other({ $listen: 0, sw: config, do: [{ response: "routed" }] }, ctxNoClient);
 
-    assert.equal(ctxEmpty._swScript, undefined);
-    assert.equal(ctxNoClient._swScript, undefined);
+    assert.equal(ctxEmpty[SW_SCRIPT], undefined);
+    assert.equal(ctxNoClient[SW_SCRIPT], undefined);
     assert.ok(warnings.some(w => w.includes('"sw" takes a config')), warnings.join("\n"));
     assert.ok(warnings.some(w => w.includes('"sw" needs "client"')), warnings.join("\n"));
     assert.equal(await (await fetch(`${at(noClient)}/jexs/sw.js`)).text(), "routed");

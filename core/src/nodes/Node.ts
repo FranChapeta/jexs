@@ -14,6 +14,8 @@ import {
 
 export interface Context {
   [key: string]: unknown;
+  /** What the runtime keeps for its nodes, out of templates' reach (see CLIENT_SCRIPT). */
+  [key: symbol]: unknown;
   /** HTTP request data */
   request?: {
     method?: string;
@@ -56,6 +58,18 @@ export type NodeValue = unknown;
  *    boundaries, never mis-routes.
  */
 export const PARENT = Symbol("jexs.parent");
+
+// What one package's nodes set on the context for another's to read. Symbol
+// keys, so a template can't read them with `$var` (string paths) and request
+// data or `$as` can't forge them. They are enumerable, so a spread or a child
+// scope keeps them.
+
+/** The browser bundle's URL, when the page is served with it: a `<head>` loads it. */
+export const CLIENT_SCRIPT = Symbol("jexs.clientScript");
+/** The service worker's URL, which the client script registers. */
+export const SW_SCRIPT = Symbol("jexs.swScript");
+/** The session's CSRF token, which a form on a page without the client script carries. */
+export const CSRF_TOKEN = Symbol("jexs.csrfToken");
 
 /**
  * Derive a child scope from `parent`, linked back via PARENT so `$setVars` / `$as`

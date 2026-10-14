@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createResolver, coreNodes } from "@jexs/core";
+import { COOKIES } from "../src/context.js";
 import { CacheNode, cacheFor } from "../src/nodes/Cache.js";
 import { SessionNode } from "../src/nodes/Session.js";
 import { TranslationNode } from "../src/nodes/Translation.js";
@@ -35,16 +36,16 @@ test("a session started in one resolver is not loaded by another", async () => {
   const a = resolverWithCache();
   const b = resolverWithCache();
   try {
-    const started: Record<string, unknown> = { request: { cookies: {} }, _cookies: [] };
-    await a.resolver({ $session: { user: "ada" } }, started);
-    const sid = (started._cookies as string[]).join(";").match(/sid=([^;]+)/)?.[1];
+    const setCookies: string[] = [];
+    await a.resolver({ $session: { user: "ada" } }, { request: { cookies: {} }, [COOKIES]: setCookies });
+    const sid = setCookies.join(";").match(/sid=([^;]+)/)?.[1];
     assert.ok(sid, "a session cookie was set");
 
-    const inA: Record<string, unknown> = { request: { cookies: { sid } }, _cookies: [] };
+    const inA: Record<string, unknown> = { request: { cookies: { sid } } };
     await a.resolver({ $session: "load" }, inA);
     assert.equal((inA.session as Record<string, unknown>).user, "ada");
 
-    const inB: Record<string, unknown> = { request: { cookies: { sid } }, _cookies: [] };
+    const inB: Record<string, unknown> = { request: { cookies: { sid } } };
     await b.resolver({ $session: "load" }, inB);
     assert.equal((inB.session as Record<string, unknown> | undefined)?.user, undefined);
   } finally {
@@ -120,9 +121,10 @@ test("a session kept in a named cache stays there for the rest of the request", 
   try {
     await resolver({ "$cache-connect": "memory" }, {});
     await resolver({ "$cache-connect": "memory", connection: "sessions" }, {});
-    const request: Record<string, unknown> = { request: { method: "GET", cookies: {} }, _cookies: [] };
+    const setCookies: string[] = [];
+    const request = { request: { method: "GET", cookies: {} }, [COOKIES]: setCookies };
     await resolver([{ $session: "load", cache: "sessions" }, { $session: { user: "ada" } }], request);
-    const sid = (request._cookies as string[]).join(";").match(/sid=([^;]+)/)?.[1];
+    const sid = setCookies.join(";").match(/sid=([^;]+)/)?.[1];
 
     const stored = await resolver({ "$cache-get": `session:${sid}`, connection: "sessions" }, {});
     assert.equal((stored as { data: Record<string, unknown> }).data.user, "ada");

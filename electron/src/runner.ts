@@ -5,7 +5,7 @@ import { app, protocol, net, BrowserWindow, globalShortcut } from "electron";
 import { pathToFileURL } from "node:url";
 import { existsSync, statSync, watch } from "node:fs";
 import path from "node:path";
-import { createResolver } from "@jexs/core";
+import { CLIENT_SCRIPT, createResolver } from "@jexs/core";
 import type { Context } from "@jexs/core";
 import { loadNodePackages, entryContext, safeRelative } from "@jexs/server";
 import {
@@ -89,7 +89,7 @@ async function main(): Promise<void> {
         return new Response("Not found", { status: 404 });
       }
       const ctx = mainContext();
-      ctx._clientScript = "/client.js";
+      ctx[CLIENT_SCRIPT] = "/client.js";
       ctx.page = rel;
       ctx.title = app.getName();
       // By presence rather than configuration: a project with no CSS step emits

@@ -5,8 +5,9 @@ import path from "node:path";
 import { URL } from "node:url";
 import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
-import { Context, Node, NodeValue, isHttpError, isObject, isStep, resolve, resolveAll, resolveFields, runSteps } from "@jexs/core";
+import { CLIENT_SCRIPT, Context, Node, NodeValue, SW_SCRIPT, isHttpError, isObject, isStep, resolve, resolveAll, resolveFields, runSteps } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
+import { COOKIES, DEFERRED, UPGRADE, type Deferred } from "../context.js";
 import { safeRelative } from "./File.js";
 import { SAFE_METHODS } from "./Session.js";
 import { serviceWorkerScript } from "../sw.js";
@@ -187,8 +188,8 @@ async function handleUpgrade(
         headers: req.headers,
         cookies: parseCookies(req),
       },
-      _cookies: [],
-      _upgrade: upgrade,
+      [COOKIES]: [],
+      [UPGRADE]: upgrade,
     };
 
     for (const step of listener.steps) {
@@ -260,6 +261,8 @@ async function handleRequest(
     const totalMem = os.totalmem();
     const freeMem = os.freemem();
     const mem = process.memoryUsage();
+    const setCookies: string[] = [];
+    const deferred: Deferred[] = [];
     const context: Context = {
       ...listener.startupContext,
       baseUrl,
@@ -285,26 +288,22 @@ async function handleRequest(
           heapTotal: mem.heapTotal,
         },
       },
-      _cookies: [],
-      _deferred: [],
+      [COOKIES]: setCookies,
+      [DEFERRED]: deferred,
     };
 
     // The steps yield the response: what a `$return` gives, or the last step's value.
     const result = (await runSteps(listener.steps, context)) ?? null;
 
-    // Apply pending cookies (set by session operations via context)
-    if (Array.isArray(context._cookies)) {
-      for (const cookie of context._cookies as string[]) {
-        res.appendHeader("Set-Cookie", cookie);
-      }
-      // A shared cache must never replay one visitor's cookies to another, but
-      // it may keep the page without them (RFC 9111 §5.2.2.7); a cache that
-      // doesn't know this form treats it as plain `private`. A `Cache-Control`
-      // the response sets itself wins, since `writeHead` headers override this one.
-      if (context._cookies.length > 0) res.setHeader("Cache-Control", 'private="Set-Cookie"');
-    }
+    // Cookies the session ops queued.
+    for (const cookie of setCookies) res.appendHeader("Set-Cookie", cookie);
+    // A shared cache must never replay one visitor's cookies to another, but it
+    // may keep the page without them (RFC 9111 §5.2.2.7); a cache that doesn't
+    // know this form treats it as plain `private`. A `Cache-Control` the response
+    // sets itself wins, since `writeHead` headers override this one.
+    if (setCookies.length > 0) res.setHeader("Cache-Control", 'private="Set-Cookie"');
 
-    await sendResponse(res, result, Array.isArray(context._deferred) ? context._deferred : []);
+    await sendResponse(res, result, deferred);
   } catch (error) {
     // Once the status line is out (a static file, a streamed render) there is no
     // status left to change. Log and close, rather than raise a second error
@@ -584,9 +583,6 @@ function getMimeType(ext: string): string {
   return MIME_TYPES[ext] || "application/octet-stream";
 }
 
-/** A part of the page `$defer` resolves in the background, and the id of its placeholder. */
-type Deferred = { id: string; promise: Promise<unknown> };
-
 /**
  * Send the response for `value`, as `replyFor` makes it. An HTML page with
  * deferred parts is streamed: the page with their placeholders first, then each
@@ -827,7 +823,7 @@ export class ServerNode extends Node {
         browserDir = resolveClientBrowserDir();
         if (browserDir) {
           serveStaticDir(listener, servePath, browserDir);
-          context._clientScript = `${servePath}/client.js`;
+          context[CLIENT_SCRIPT] = `${servePath}/client.js`;
         } else {
           console.warn("[ServerNode] no browser bundle at ./dist/browser — run `jexs bundle` to build the client (with any browser nodes); it will not be served until then");
         }
@@ -855,7 +851,7 @@ export class ServerNode extends Node {
           } else {
             const config = eventMap == null ? resolved : { ...resolved, events: eventMap };
             listener.sw = { path: `${servePath}/sw.js`, config: JSON.stringify(config), dir: browserDir };
-            context._swScript = listener.sw.path;
+            context[SW_SCRIPT] = listener.sw.path;
           }
         }
       }

@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createResolver, coreNodes, type Context } from "@jexs/core";
+import { COOKIES } from "../src/context.js";
 import { CacheNode } from "../src/nodes/Cache.js";
 import { SessionNode } from "../src/nodes/Session.js";
 import { OAuthNode } from "../src/nodes/OAuth.js";
@@ -20,15 +21,18 @@ async function app() {
 
 const request = (cookies: Record<string, string>, query: Record<string, unknown> = {}): Context => ({
   request: { method: "GET", path: "/", cookies, query, headers: {}, body: {} },
-  _cookies: [],
+  [COOKIES]: [],
 });
+
+/** The session id a request's queued cookies set. */
+const sidOf = (ctx: Context) => (ctx[COOKIES] as string[]).join(";").match(/sid=([^;]+)/)?.[1] ?? "";
 
 /** Start a login in a fresh browser: its session cookie and the state sent. */
 async function startLogin(resolver: Awaited<ReturnType<typeof app>>) {
   const ctx = request({});
   const url = String(await resolver({ $oauth: "authUrl", provider: "github", redirectUri: REDIRECT }, ctx));
   const state = new URL(url).searchParams.get("state") ?? "";
-  const sid = (ctx._cookies as string[]).join(";").match(/sid=([^;]+)/)?.[1] ?? "";
+  const sid = sidOf(ctx);
   assert.ok(state && sid, "a state was sent and a session started");
   return { state, sid };
 }
@@ -81,6 +85,19 @@ test("a state works once", async t => {
   }
 });
 
+// It holds the PKCE verifier, which a template that shows `session` must not see.
+test("a pending login is kept out of the session's data", async () => {
+  const resolver = await app();
+  try {
+    const { sid } = await startLogin(resolver);
+    const ctx = request({ sid });
+    await resolver({ $session: "load" }, ctx);
+    assert.deepEqual(ctx.session, {});
+  } finally {
+    resolver.destroy();
+  }
+});
+
 // The login CSRF: an attacker starts a login, then sends the victim their own
 // callback, state and all. The victim's browser never asked for it.
 test("a state from another browser's login is refused", async t => {
@@ -127,7 +144,7 @@ test("the token request proves the login's PKCE challenge and reuses its redirec
   try {
     const ctx = request({});
     const url = new URL(String(await resolver({ $oauth: "authUrl", provider: "github", redirectUri: REDIRECT }, ctx)));
-    const sid = (ctx._cookies as string[]).join(";").match(/sid=([^;]+)/)?.[1] ?? "";
+    const sid = sidOf(ctx);
     assert.equal(url.searchParams.get("code_challenge_method"), "S256");
 
     await exchange(resolver, request({ sid }, { state: url.searchParams.get("state"), code: "c" }));
@@ -150,7 +167,7 @@ test("a provider using Basic auth gets its credentials in the header, not the fo
     await resolver({ $oauth: "configure", provider: "twitter", clientId: "tw id", clientSecret: "tw:secret" }, {});
     const ctx = request({});
     const url = new URL(String(await resolver({ $oauth: "authUrl", provider: "twitter", redirectUri: REDIRECT }, ctx)));
-    const sid = (ctx._cookies as string[]).join(";").match(/sid=([^;]+)/)?.[1] ?? "";
+    const sid = sidOf(ctx);
 
     await exchange(resolver, request({ sid }, { state: url.searchParams.get("state"), code: "c" }));
     const { form, headers } = tokenCall(fetch);

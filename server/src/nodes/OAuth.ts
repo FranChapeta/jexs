@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "crypto";
 import { Node, Context, NodeValue, resolve, resolveAll, resolveFields, randomString, isObject, createHttpError } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
-import { sessionData, setSessionData } from "./Session.js";
+import { sessionValue, setSessionValue } from "./Session.js";
 import { tokensEqual } from "./Crypto.js";
 
 /** How the client credentials reach the token endpoint: as form fields, or as
@@ -346,7 +346,7 @@ function doAuthUrl(providers: Providers, def: Record<string, unknown>, context: 
 
       // The callback must come back to the browser that started the login, so
       // the login waits in its session, per provider, for `exchange` to finish.
-      await setSessionData(context, { _oauth: { ...(await pendingLogins(context)), [provider]: login } });
+      await setSessionValue(context, LOGINS, { ...(await pendingLogins(context)), [provider]: login });
 
       return `${config.authorizeUrl}?${params.toString()}`;
     },
@@ -375,9 +375,12 @@ function doExchange(providers: Providers, def: Record<string, unknown>, context:
   });
 }
 
+/** Where the session keeps the logins `authUrl` started, out of its data. */
+const LOGINS = "oauth";
+
 /** The logins `authUrl` started in this browser's session, by provider. */
 async function pendingLogins(context: Context): Promise<Record<string, unknown>> {
-  const pending = (await sessionData(context))._oauth;
+  const pending = await sessionValue(context, LOGINS);
   return isObject(pending) ? pending : {};
 }
 
@@ -403,7 +406,7 @@ async function takeLogin(context: Context, providerRaw: unknown, submitted: unkn
   const login = provider !== undefined ? logins[provider] : undefined;
   if (provider !== undefined && login !== undefined) {
     const { [provider]: _used, ...rest } = logins;
-    await setSessionData(context, { _oauth: rest });
+    await setSessionValue(context, LOGINS, rest);
   }
   if (provider === undefined || !isPendingLogin(login) || typeof submitted !== "string" || !tokensEqual(login.state, submitted)) {
     throw createHttpError(403, "OAuth state mismatch");

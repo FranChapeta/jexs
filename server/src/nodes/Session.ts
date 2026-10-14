@@ -1,14 +1,21 @@
 import { randomUUID, randomBytes } from "crypto";
-import { Node, Context, NodeValue, resolveAll, createHttpError, isObject } from "@jexs/core";
+import { CSRF_TOKEN, Node, Context, NodeValue, resolveAll, createHttpError, isObject } from "@jexs/core";
+import { COOKIES } from "../context.js";
 import { cacheFor, optionalName } from "./Cache.js";
 import { tokensEqual } from "./Crypto.js";
 import type { CacheAdapter } from "../cache/CacheAdapter.js";
 import type { JexsNodeSchema } from "@jexs/core";
 
-/** A session as the cache keeps it. */
+/**
+ * A session as the cache keeps it. `data` is what templates read as `session`;
+ * its CSRF token and what other nodes keep with it (`internal`, by key) sit
+ * beside it, out of their reach.
+ */
 interface StoredSession {
   id: string;
   data: Record<string, unknown>;
+  csrf: string;
+  internal: Record<string, unknown>;
   createdAt: number;
 }
 
@@ -74,16 +81,20 @@ export class SessionNode extends Node {
   }
 }
 
-/** The request's session data for another node, loading it first when no
- *  `$session` op has (a page view starts one, as `load` does). */
-export function sessionData(context: Context): Promise<Record<string, unknown>> {
-  return loadSession(context, sessionCache(context));
+/** What another node keeps with the request's session under `key`, loading the
+ *  session first when no `$session` op has (a page view starts one, as `load`
+ *  does). */
+export async function sessionValue(context: Context, key: string): Promise<unknown> {
+  return (await openSession(context, sessionCache(context)))?.internal[key];
 }
 
-/** Merge values into the request's session for another node, starting one if
- *  the request has none. */
-export async function setSessionData(context: Context, values: Record<string, unknown>): Promise<void> {
-  await setSessionValues(values, context, sessionCache(context));
+/** Keep `value` with the request's session under `key`, for another node,
+ *  starting a session if the request has none. */
+export async function setSessionValue(context: Context, key: string, value: unknown): Promise<void> {
+  const cache = sessionCache(context);
+  const stored = (await readSession(context, cache)) ?? (await initSession(context, cache));
+  stored.internal[key] = value;
+  await cache.set(PREFIX + stored.id, stored, TTL);
 }
 
 /** The cache holding this request's session: the op's own `cache`, else the one
@@ -112,8 +123,9 @@ async function readSession(context: Context, cache: CacheAdapter): Promise<Store
   const id = request?.cookies?.[COOKIE_NAME];
   if (!id) return null;
   const stored = await cache.get<StoredSession>(PREFIX + id);
-  if (!stored) return null;
-  checkCsrf(context, stored.data._csrf);
+  // A record without a token can't be checked, so it counts as no session.
+  if (!stored || typeof stored.csrf !== "string") return null;
+  checkCsrf(context, stored.csrf);
   return stored;
 }
 
@@ -121,8 +133,9 @@ async function readSession(context: Context, cache: CacheAdapter): Promise<Store
  *  ops, and its CSRF token handed to the page. */
 function useSession(context: Context, cache: CacheAdapter, stored: StoredSession): Record<string, unknown> {
   context.session = stored.data;
+  context[CSRF_TOKEN] = stored.csrf;
   if (context.request) current.set(context.request, { cache, stored });
-  syncCsrfCookie(context, stored.data);
+  syncCsrfCookie(context, stored.csrf);
   return stored.data;
 }
 
@@ -142,7 +155,8 @@ function checkCsrf(context: Context, stored: unknown): void {
 }
 
 function pushCookie(context: Context, cookie: string): void {
-  if (Array.isArray(context._cookies)) context._cookies.push(cookie);
+  const cookies = context[COOKIES];
+  if (Array.isArray(cookies)) cookies.push(cookie);
 }
 
 function shouldUseSecureCookie(context: Context): boolean {
@@ -176,33 +190,33 @@ function buildCookie(context: Context, name: string, value: string, maxAge = TTL
  * a session from before the cookie existed). Keeping it out of the HTML is
  * what lets pages be cached while `$fetch` still sends the token.
  */
-function syncCsrfCookie(context: Context, data: Record<string, unknown>): void {
-  const token = data._csrf;
+function syncCsrfCookie(context: Context, token: string): void {
   const cookies = context.request?.cookies;
-  if (typeof token !== "string" || cookies?.[CSRF_COOKIE] === token) return;
+  if (cookies?.[CSRF_COOKIE] === token) return;
   if (cookies) cookies[CSRF_COOKIE] = token;
   pushCookie(context, buildCookie(context, CSRF_COOKIE, token));
 }
 
 /**
- * Store a new session with the given data and send its cookie. The id is
- * always a new one: a session id the server didn't issue, such as one in a
- * cookie an attacker planted, is never adopted.
+ * Store a new session with the given data and send its cookie. The id and the
+ * CSRF token are always new ones: a session id the server didn't issue, such as
+ * one in a cookie an attacker planted, is never adopted.
  */
 async function initSession(
   context: Context,
   cache: CacheAdapter,
   data: Record<string, unknown> = {},
-): Promise<Record<string, unknown>> {
-  data._csrf ||= newToken();
-  const stored: StoredSession = { id: randomUUID(), data, createdAt: Date.now() };
+  internal: Record<string, unknown> = {},
+): Promise<StoredSession> {
+  const stored: StoredSession = { id: randomUUID(), data, csrf: newToken(), internal, createdAt: Date.now() };
   await cache.set(PREFIX + stored.id, stored, TTL);
 
   if (context.request) trusted.add(context.request);
   // Later ops in this request see the new id.
   if (context.request?.cookies) context.request.cookies[COOKIE_NAME] = stored.id;
   pushCookie(context, buildCookie(context, COOKIE_NAME, stored.id));
-  return useSession(context, cache, stored);
+  useSession(context, cache, stored);
+  return stored;
 }
 
 async function destroySession(context: Context, cache: CacheAdapter): Promise<null> {
@@ -211,6 +225,7 @@ async function destroySession(context: Context, cache: CacheAdapter): Promise<nu
   if (context.request) current.delete(context.request);
 
   context.session = {};
+  delete context[CSRF_TOKEN];
   pushCookie(context, buildCookie(context, COOKIE_NAME, "", 0));
   pushCookie(context, buildCookie(context, CSRF_COOKIE, "", 0));
   return null;
@@ -222,7 +237,7 @@ async function setSessionValues(
   cache: CacheAdapter,
 ): Promise<Record<string, unknown>> {
   const stored = await readSession(context, cache);
-  if (!stored) return initSession(context, cache, { ...values });
+  if (!stored) return (await initSession(context, cache, { ...values })).data;
 
   Object.assign(stored.data, values);
   await cache.set(PREFIX + stored.id, stored, TTL);
@@ -238,16 +253,27 @@ async function regenerateSession(
   const stored = await readSession(context, cache);
   if (stored) await cache.delete(PREFIX + stored.id);
   // A new token as well as a new id, so one obtained before can't ride along.
-  return initSession(context, cache, { ...stored?.data, ...values, _csrf: newToken() });
+  return (await initSession(context, cache, { ...stored?.data, ...values }, stored?.internal)).data;
+}
+
+/**
+ * The request's session: the one its cookie names, or a new one for a page
+ * view. A state-changing request without one has nothing to protect, so it
+ * gets none.
+ */
+async function openSession(context: Context, cache: CacheAdapter): Promise<StoredSession | null> {
+  const stored = await readSession(context, cache);
+  if (stored) {
+    useSession(context, cache, stored);
+    return stored;
+  }
+  if (SAFE_METHODS.includes(context.request?.method?.toUpperCase() ?? "GET")) return initSession(context, cache);
+  return null;
 }
 
 async function loadSession(context: Context, cache: CacheAdapter): Promise<Record<string, unknown>> {
-  const stored = await readSession(context, cache);
-  if (stored) return useSession(context, cache, stored);
-
-  // A page view starts a session; a state-changing request without one has
-  // nothing to protect, so it gets none.
-  if (SAFE_METHODS.includes(context.request?.method?.toUpperCase() ?? "GET")) return initSession(context, cache);
+  const stored = await openSession(context, cache);
+  if (stored) return stored.data;
   context.session = {};
   return context.session;
 }
