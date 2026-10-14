@@ -23,6 +23,7 @@ const tag = (siblings: Record<string, A>) => ({ siblings });
 // (not per-variant). `class`/`style` accept their special shapes.
 const GLOBAL: Record<string, A> = {
   content: { description: "Children of the element: a string or mixed array of strings and expressions." },
+  raw:     bool("Render this element's string content as written, without interpolating `$identifier` tokens or translating it: for code samples and literal `$` text. Nested elements keep their own setting."),
   events:  { $ref: "#/$defs/_eventMap", description: "DOM event handlers, keyed by event name: `{ \"$tag\": \"button\", \"events\": { \"click\": { \"do\": [...] } } }`, or a step that resolves to such a map, read as data. Two names are not DOM events: `load` runs once when the element is hydrated, and `sw-message` runs for each message the service worker posts (`$sw-post`), with the message as `value`." },
   class:   { type: ["string", "array", "object"], description: "Class list: a string, array, or `{ className: bool }` map." },
   id:      str("Element id."),
@@ -41,7 +42,7 @@ const GLOBAL: Record<string, A> = {
 
 /** Siblings the element reads itself rather than rendering as attributes. The `$`
  *  keys (the op, and the global step keys) belong to the resolver and never render. */
-const RESERVED_KEYS = new Set(["content", "events"]);
+const RESERVED_KEYS = new Set(["content", "events", "raw"]);
 const SELF_CLOSING = new Set([
   "area", "base", "br", "col", "embed", "hr", "img", "input",
   "link", "meta", "source", "track", "wbr",
@@ -110,7 +111,7 @@ export class ElementNode extends Node {
       variantBy: "value",
       exclusive: false,
       markdownDescription: "Renders an HTML element. Attributes are flat keys on the object; `content` holds children.\r\n`class` accepts a string, array, or `{ className: bool }` map. `style` accepts a camel- or kebab-case object.\r\nFor `<style>`/`<script>` the `content` is emitted as literal text (no escaping/translation); a `<style>` object `content` is compiled to CSS, and a `<script>` with a JSON `type` (`application/json` or a `+json` media type such as `application/ld+json`) has its `content` resolved and serialized to safely-escaped JSON.\r\nWire DOM events via an `\"events\"` object. To render conditionally, wrap the element in `$if`/`then`.\r\nA step in `content` renders what it returns as a value: an object it returns is data and renders as nothing, so a template held in a variable renders only through `$runVar` (`{ \"$runVar\": \"card\" }`).",
-      outputDescription: "An HTML **string**. String content has `$identifier` tokens interpolated, so wrap literal `$` content in `{ \"raw\": \"…\" }`.",
+      outputDescription: "An HTML **string**. String content has `$identifier` tokens interpolated, so give an element with literal `$` content `raw: true`.",
       examples: [
         "{ \"$tag\": \"button\", \"class\": \"btn\", \"events\": { \"click\": { \"do\": [...] } }, \"content\": [\"Submit\"] }",
       ],
@@ -212,7 +213,8 @@ function renderElement(def: Record<string, unknown>, context: Context): unknown 
         return typeof def.content === "string" ? def.content : String(def.content ?? "");
       }) as string | Promise<string>;
     } else {
-      contentResult = renderContent(def.content, context);
+      contentResult = resolve(def.raw ?? false, context, raw =>
+        renderContent(def.content, context, raw === true)) as string | Promise<string>;
     }
 
     return resolveAll([attrsResult, eventsResult, contentResult], context, parts => {
@@ -368,19 +370,12 @@ function compileCss(obj: Record<string, unknown>): string {
   return [decls.join(" "), ...rules].filter(Boolean).join(" ");
 }
 
-function renderContent(content: unknown, context: Context): string | Promise<string> {
+/** Render an element's children. Its literal strings are interpolated and
+ *  translated, unless the element is `raw`, which keeps them as written. */
+function renderContent(content: unknown, context: Context, raw: boolean): string | Promise<string> {
   if (content === undefined || content === null) return "";
-
-  if (typeof content === "string") {
-    const text = hasVariables(content) ? interpolate(content, context) : content;
-    return translate(text, context);
-  }
-
-  if (Array.isArray(content)) {
-    return renderItems(content, context, true);
-  }
-
-  return renderItem(content, context, true);
+  if (Array.isArray(content)) return renderItems(content, context, !raw);
+  return renderItem(content, context, !raw);
 }
 
 function renderItems(items: unknown[], context: Context, shouldTranslate: boolean): string | Promise<string> {
@@ -406,13 +401,6 @@ function renderItem(item: unknown, context: Context, shouldTranslate: boolean): 
   }
 
   if (typeof item !== "object") return "";
-
-  const obj = item as Record<string, unknown>;
-
-  if ("raw" in obj) {
-    const r = resolve(obj.raw, context, val => String(val ?? ""));
-    return r as string | Promise<string>;
-  }
 
   return resolve(item, context, renderValue) as string | Promise<string>;
 }

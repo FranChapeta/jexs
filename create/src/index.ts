@@ -240,9 +240,9 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean, useElectron: bo
   if (useServer) {
     lines.push(`- **\`{ "$file": "x.json" }\` resolves the file's contents as a Jexs expression by default.** Pass \`"data": true\` for raw parsed JSON, required for data files, route trees, schema dumps, anything you do NOT want the resolver to evaluate. Without \`data\`, an array file is run as a step sequence and an object file is resolved as a single expression.`);
   }
-  lines.push(`- **Element content interpolates \`$identifier\` tokens.** Undefined vars become empty strings, so code samples like \`{ "$var": "result" }\` would display as \`{ "": "result" }\`. Wrap any literal-\`$\` content in \`{ "raw": "..." }\`:`);
+  lines.push(`- **Element content interpolates \`$identifier\` tokens.** Undefined vars become empty strings, so code samples like \`{ "$var": "result" }\` would display as \`{ "": "result" }\`. Give an element with literal-\`$\` content \`"raw": true\`:`);
   lines.push(`  \`\`\`json`);
-  lines.push(`  { "$tag": "code", "content": { "raw": "{ \\"$var\\": \\"result\\" }" } }`);
+  lines.push(`  { "$tag": "code", "raw": true, "content": "{ \\"$var\\": \\"result\\" }" }`);
   lines.push(`  \`\`\``);
   lines.push(`- **DOM event bindings use the \`events\` object**, not inline \`onclick\`/\`oninput\` attributes. The steps inside \`do\` run through the client resolver when the event fires:`);
   lines.push(`  \`\`\`json`);

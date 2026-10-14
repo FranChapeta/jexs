@@ -176,6 +176,30 @@ function toInterval(step: Step, m: Codemod): void {
   }
 }
 
+/** A content item written `{ "raw": x }`, an object whose one key is `raw`. */
+const rawItem = (v: Val) => (v.k === "obj" && v.props.length === 1 && v.props[0].key === "raw" ? v.props[0].value : undefined);
+
+/**
+ * An element whose content is one `{ "raw": "text" }` item becomes
+ * `"content": "text", "raw": true`. One mixed in with other content is left for
+ * review: giving it an element of its own would change the markup.
+ */
+function rawContent(obj: Extract<Val, { k: "obj" }>, m: Codemod): void {
+  const content = obj.props.find(p => p.key === "content");
+  if (!content || obj.props.some(p => p.key === "raw")) return;
+  const v = content.value;
+  const only = rawItem(v) ?? (v.k === "arr" && v.items.length === 1 ? rawItem(v.items[0]) : undefined);
+  if (only?.k === "str") {
+    m.add({ start: v.start, end: v.end, text: m.text(only.start, only.end) });
+    m.add({ start: v.end, end: v.end, text: `, ${content.keyQuoted ? '"raw"' : "raw"}: true` });
+  } else if (only?.k === "obj" && isPlain(only)) {
+    // A step's result in content is never interpolated, so a lone `$var` needs no `raw`.
+    m.add({ start: v.start, end: v.end, text: m.text(only.start, only.end) });
+  } else if (only !== undefined || (v.k === "arr" && v.items.some(item => rawItem(item) !== undefined))) {
+    m.review(content.keyStart, "`{ \"raw\": ... }` content is gone: give the element `\"raw\": true` (its string content then renders as written), or put the literal text in an element of its own that has it");
+  }
+}
+
 /** Rename the step's `from` sibling to `to`, keeping how its key is quoted. */
 function renameSibling({ obj }: Step, from: string, to: string, m: Codemod): void {
   const prop = obj.props.find(p => p.key === from);
@@ -254,6 +278,8 @@ const RULES: Record<string, Rule> = {
     }
     m.review(prop.keyStart, "`$merge` merges objects only now: if this concatenates arrays, use `$flatten` with `depth: 1`");
   },
+  // Literal content is the element's `raw: true`, not an object with a `raw` key.
+  tag: ({ obj }, m) => rawContent(obj, m),
   // The part to extract is the second operand.
   datePart: (step, m) => siblingToTuple(step, "part", m),
   // `[array, key, value]` is gone: `find` tests objects by a key.
