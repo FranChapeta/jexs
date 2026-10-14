@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import WebSocket from "ws";
-import { createResolver, coreNodes } from "@jexs/core";
+import { Node, createResolver, coreNodes, type Context } from "@jexs/core";
 import { ServerNode } from "../src/nodes/Server.js";
 import { WebSocketNode } from "../src/nodes/WebSocket.js";
 
@@ -14,7 +14,7 @@ async function server(options: Record<string, unknown> = {}) {
     ...options,
     do: [{
       "$socket-accept": true,
-      "on-connect": [{ "$socket-join": "lobby" }],
+      "on-open": [{ "$socket-join": "lobby" }],
       "on-message": [{ "$socket-send": { "$socket-count": "lobby" } }],
     }],
   }, {});
@@ -43,13 +43,54 @@ test("two resolvers' sockets do not share rooms", async () => {
   const b = await server();
   const clients = [await connect(a.port), await connect(b.port)];
   try {
-    await new Promise(r => setTimeout(r, 50)); // let on-connect join the room
+    await new Promise(r => setTimeout(r, 50)); // let on-open join the room
     assert.equal(await ask(clients[0]), "1");
     assert.equal(await ask(clients[1]), "1");
   } finally {
     for (const ws of clients) ws.close();
     a.resolver.destroy();
     b.resolver.destroy();
+  }
+});
+
+// Each event runs in a scope of its own under the connection's, so a handler's
+// own variables are gone after it, and what it bubbles stays with the connection.
+test("a connection's handlers share its id and what they bubble, and on-close gets the close code", { timeout: 5000 }, async () => {
+  const closes: unknown[] = [];
+  class SeenNode extends Node {
+    seen(def: Record<string, unknown>, context: Context) {
+      closes.push({ id: context.id, code: context.code, reason: context.reason, name: context.name, reply: context.reply });
+      return null;
+    }
+  }
+  const resolver = createResolver([...coreNodes(), new ServerNode(), new WebSocketNode(), new SeenNode()]);
+  const port = await resolver({
+    $listen: 0,
+    do: [{
+      "$socket-accept": true,
+      "on-message": [
+        { $if: { $var: "message.name" }, then: { $setVars: { name: { $var: "message.name" } }, $bubble: true } },
+        { $concat: [{ $var: "id" }, "|", { $var: "name" }], $as: "reply" },
+        { "$socket-send": { $var: "reply" } },
+      ],
+      "on-close": [{ $seen: true }],
+    }],
+  }, {});
+  try {
+    const ws = await connect(port);
+    const first = (await new Promise<string>(resolve => {
+      ws.once("message", data => resolve(data.toString()));
+      ws.send(JSON.stringify({ name: "ada" }));
+    })).split("|");
+    assert.match(first[0], /^[0-9a-f-]{36}$/, "the connection's id");
+    assert.equal(first[1], "ada");
+    assert.deepEqual(await ask(ws), `${first[0]}|ada`, "a later message reads what an earlier one bubbled");
+
+    ws.close(4000, "bye");
+    await new Promise(r => setTimeout(r, 100));
+    assert.deepEqual(closes, [{ id: first[0], code: 4000, reason: "bye", name: "ada", reply: undefined }]);
+  } finally {
+    resolver.destroy();
   }
 });
 

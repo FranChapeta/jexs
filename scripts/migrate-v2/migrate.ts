@@ -272,7 +272,11 @@ const isRunHandler = (v: Val): v is Extract<Val, { k: "obj" }> =>
 function routeHandler(v: Val, params: string[], m: Codemod): void {
   if (v.k !== "obj") return;
   const steps = v.props.find(p => p.key === "run");
-  if (steps && isRunHandler(v)) m.add({ start: steps.keyStart, end: steps.keyEnd, text: steps.shorthand ? "do: run" : "do" });
+  if (steps && isRunHandler(v)) {
+    m.add({ start: steps.keyStart, end: steps.keyEnd, text: steps.shorthand ? "do: run" : "do" });
+    // Walked as steps here too, as a schema that has the handler's `do` has no `run`.
+    m.walk(STEPS, steps.value);
+  }
   const file = v.props.find(p => p.key === "$file");
   if (file && params.length > 0) {
     m.review(file.keyStart, `Route params are read from \`request.params\` now: in the page this loads, read ${params.map(p => `\`${p}\` as \`request.params.${p}\``).join(", ")}`);
@@ -389,6 +393,13 @@ const RULES: Record<string, Rule> = {
   routes: ({ obj }, m) => {
     const tree = obj.props.find(p => p.key === "$routes")?.value;
     if (tree) routeTree(tree, [], m);
+  },
+  // A connection's handlers: `on-connect` is `on-open`, and its id is `id`.
+  "socket-accept": (step, m) => {
+    renameSibling(step, "on-connect", "on-open", m);
+    for (const p of step.obj.props) {
+      if (p.key.startsWith("on-")) retargetReads(p.value, ["wsId"], path => path.replace("wsId", "id"), m);
+    }
   },
   // The global validator's steps are its `do`.
   schema: (step, m) => {

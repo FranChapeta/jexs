@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, resolve, runStepsDetached } from "@jexs/core";
+import { Node, Context, NodeValue, childContext, resolve, runStepsDetached } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { createInterface } from "node:readline";
 
@@ -66,11 +66,11 @@ export class StdioNode extends Node {
       siblings: {
         "on-message": {
           steps: true,
-          description: "Steps run per NDJSON line with `message` in context.",
+          description: "Steps run per NDJSON line with `message` in context, in a scope of their own: `$bubble` writes to the scope `stdio-listen` ran in.",
         },
         "on-close": {
           steps: true,
-          description: "Optional steps run when stdin closes.",
+          description: "Optional steps run when stdin closes, in a scope of their own like `on-message`'s.",
         },
       },
     },
@@ -139,8 +139,7 @@ export class StdioNode extends Node {
           continue;
         }
 
-        const childContext: Context = { ...context, message };
-        runStepsDetached(steps, childContext, def).catch((err: unknown) => {
+        runStepsDetached(steps, childContext(context, { message }), def).catch((err: unknown) => {
           process.stderr.write(`[StdioNode] Error: ${err}\n`);
         });
       }
@@ -148,7 +147,7 @@ export class StdioNode extends Node {
 
     process.stdin.on("close", () => {
       if (closeSteps) {
-        runStepsDetached(closeSteps, { ...context }, def).catch((err: unknown) => {
+        runStepsDetached(closeSteps, childContext(context), def).catch((err: unknown) => {
           process.stderr.write(`[StdioNode] on-close error: ${err}\n`);
         });
       }

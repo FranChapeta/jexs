@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, resolve, resolveAll, runStepsDetached, createHttpError } from "@jexs/core";
+import { Node, Context, NodeValue, childContext, resolve, resolveAll, runStepsDetached, createHttpError } from "@jexs/core";
 import crypto from "node:crypto";
 import type { Duplex } from "node:stream";
 import type { IncomingMessage } from "node:http";
@@ -57,9 +57,9 @@ export class WebSocketNode extends Node {
         "{ \"$socket-accept\": true, \"on-message\": [{ \"$socket-broadcast\": { \"$var\": \"message\" } }] }",
       ],
       siblings: {
-        "on-connect": {
+        "on-open": {
           steps: true,
-          description: "Steps run once after the upgrade completes. `wsId` is the connection's id.",
+          description: "Steps run once after the upgrade completes. Every handler sees `id`, the connection's id (for `socket-send-to`), and the request that opened it; a value it sets with `$bubble` stays for the connection's later handlers.",
         },
         "on-message": {
           steps: true,
@@ -67,7 +67,7 @@ export class WebSocketNode extends Node {
         },
         "on-close": {
           steps: true,
-          description: "Steps run once when the connection closes.",
+          description: "Steps run once when the connection closes. `code` and `reason` are the close code and its reason text.",
         },
       },
     },
@@ -146,7 +146,7 @@ export class WebSocketNode extends Node {
     if (upgrade.accepted) return null;
     upgrade.accepted = true;
 
-    const onConnect = def["on-connect"] ?? null;
+    const onOpen    = def["on-open"]    ?? null;
     const onMessage = def["on-message"] ?? null;
     const onClose   = def["on-close"]   ?? null;
 
@@ -162,16 +162,13 @@ export class WebSocketNode extends Node {
       const session = context.session as Record<string, unknown> | undefined;
       this.meta.set(ws, { name: session?.user_name ?? "Anonymous" });
 
-      const wsContext: Context = {
-        ...context,
-        [WS]: ws,
-        [WS_PATH]: path,
-        wsId: id,
-      };
-      delete wsContext[UPGRADE];
+      // The connection's own scope, under the request that opened it. Each event's
+      // steps run in a scope of their own under it, so what one handler sets with
+      // `$bubble` the connection's later handlers read.
+      const connection = childContext(context, { [WS]: ws, [WS_PATH]: path, [UPGRADE]: undefined, id });
 
-      if (onConnect) {
-        void runStepsDetached(onConnect, { ...wsContext }, def, "[WebSocket] on-connect error:");
+      if (onOpen) {
+        void runStepsDetached(onOpen, childContext(connection), def, "[WebSocket] on-open error:");
       }
 
       ws.on("message", (raw: WebSocket.RawData) => {
@@ -193,7 +190,7 @@ export class WebSocketNode extends Node {
           return;
         }
 
-        void runStepsDetached(onMessage, { ...wsContext, message: messageData }, def, "[WebSocket] on-message error:");
+        void runStepsDetached(onMessage, childContext(connection, { message: messageData }), def, "[WebSocket] on-message error:");
       });
 
       // A client that breaks the protocol (a frame over `maxMessageSize`, invalid
@@ -202,9 +199,10 @@ export class WebSocketNode extends Node {
       // event would throw and take the process down with it.
       ws.on("error", () => {});
 
-      ws.on("close", () => {
+      ws.on("close", (code: number, reason: Buffer) => {
         if (onClose) {
-          void runStepsDetached(onClose, { ...wsContext }, def, "[WebSocket] on-close error:");
+          const closed = childContext(connection, { code, reason: reason.toString() });
+          void runStepsDetached(onClose, closed, def, "[WebSocket] on-close error:");
         }
 
         this.paths.get(path)?.delete(ws);
