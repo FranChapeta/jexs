@@ -616,8 +616,7 @@ const cases: Case[] = [
   // A route file is a step wrapping the tree, so it matches the root via `steps`.
   // `_routeNode` is underscored and therefore NOT a root branch.
   { label: "a route file, tree wrapped in a step (valid)", schemaRef: "", expectValid: true,
-    expr: [{ $routes: { children: { email: { methods: { GET: { run: [{ response: "x" }] } } } } } }] },
-  { label: "a wrapped tree with a handler-key segment name (valid)", schemaRef: "", expectValid: true,
+    expr: [{ $routes: { children: { email: { methods: { GET: { do: [{ response: "x" }] } } } } } }] },  { label: "a wrapped tree with a handler-key segment name (valid)", schemaRef: "", expectValid: true,
     expr: { $routes: { children: { email: { methods: { GET: { $file: "x.json" } } } } } } },
   { label: "root no longer masks a broken step (FAIL)", schemaRef: "", expectValid: false,
     expr: { $email: { a: {} }, body: { b: {} } } },

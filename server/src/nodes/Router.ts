@@ -11,10 +11,10 @@ import { validate, createValidation, type Validation } from "../validate.js";
  * `paramName` / `paramRegex` at each route node, not by a handler schema.
  */
 /** A route leaf: a `$file` step (the router's `queryParams`/`body` ride along
- *  as its own fields), or a `run` step list. */
+ *  as its own fields), or a `do` step list. */
 interface RouteHandler {
   $file?: unknown;
-  run?: unknown;
+  do?: unknown;
   queryParams?: Record<string, unknown>;
   body?: Record<string, unknown>;
 }
@@ -76,8 +76,8 @@ export class RouterNode extends Node {
   static schema: JexsNodeSchema = {
     routes: {
       $ref: "#/$defs/_routesSlot",
-      markdownDescription: "Matches the incoming request path and method against a route tree, then executes the handler.\nSupports exact segments, `*` (single param with optional `paramName`/`paramRegex`),\n`**` (catch-all), and `queryParams`/`body` validation.\n\n`paramRegex` is anchored to the whole segment (for `**`, the whole rest of the path), so `\"new|edit\"` matches `new` but not `newsletter`.\n\nA handler is a `$file` step or a `run` of steps, never both, or an expression resolving to one of those. A `WS` handler completes a WebSocket upgrade by calling `socket-accept` as a `run` step.\n\nA route node written as a step is resolved when the matcher reaches it, after the params above it are captured, so `{ \"$if\": <cond>, \"then\": { \"$var\": \"adminRoutes\" } }` adds a subtree only when the condition holds; a failed condition leaves no node there. Hold such a subtree by reference, stored with `$setVars` or loaded with `$file`, either with `data: true`: `$if` resolves the branch it picks, so an inline subtree would run its handlers.",
-      outputDescription: "The matched handler's result, as it stands: a rendered `$file` page, or what its `run` yields. As the value a `$listen` request's steps end with, it is the response. Throws a 404 HTTP error when no route matches, so use a catch-all route (`**`) or wrap calls in `$catch` to handle not-found.",
+      markdownDescription: "Matches the incoming request path and method against a route tree, then executes the handler.\nSupports exact segments, `*` (single param with optional `paramName`/`paramRegex`),\n`**` (catch-all), and `queryParams`/`body` validation.\n\nA captured param is read from `request.params` (`{ \"$var\": \"request.params.id\" }`), beside `request.query` and `request.body`. `paramRegex` is anchored to the whole segment (for `**`, the whole rest of the path), so `\"new|edit\"` matches `new` but not `newsletter`.\n\nA handler is a `$file` step or a `do` of steps, never both, or an expression resolving to one of those. A `WS` handler completes a WebSocket upgrade by calling `socket-accept` as a `do` step.\n\nA route node written as a step is resolved when the matcher reaches it, after the params above it are captured, so `{ \"$if\": <cond>, \"then\": { \"$var\": \"adminRoutes\" } }` adds a subtree only when the condition holds; a failed condition leaves no node there. Hold such a subtree by reference, stored with `$setVars` or loaded with `$file`, either with `data: true`: `$if` resolves the branch it picks, so an inline subtree would run its handlers.",
+      outputDescription: "The matched handler's result, as it stands: a rendered `$file` page, or what its `do` yields. As the value a `$listen` request's steps end with, it is the response. Throws a 404 HTTP error when no route matches, so use a catch-all route (`**`) or wrap calls in `$catch` to handle not-found.",
       examples: [
         "{ \"$routes\": { \"children\": { \"users\": { \"methods\": { \"GET\": { \"$file\": \"pages/users.json\" } } } } } }",
       ],
@@ -113,7 +113,7 @@ export class RouterNode extends Node {
       properties: {
         // The leaf is a FileNode step, resolved as one, so its path takes an expression too.
         $file:   { $ref: "#/$defs/strOrExpr" },
-        run:     { $ref: "#/$defs/steps" },
+        do:      { $ref: "#/$defs/steps" },
         // `queryParams`/`body` values are themselves JSON Schemas — describe them with
         // the 2020-12 meta-schema so editors give full JSON-Schema autocomplete
         // inside them (NOT exprFlat: these are static author-time schemas).
@@ -122,8 +122,8 @@ export class RouterNode extends Node {
       },
       // One node to an object: a handler is a template, a step list or a bare
       // expression, never two. A step list already covers both, file last:
-      //   { "run": [ { …, "$as": "user" }, { "$file": "pages/user.json" } ] }
-      not: { required: ["$file", "run"] },
+      //   { "do": [ { …, "$as": "user" }, { "$file": "pages/user.json" } ] }
+      not: { required: ["$file", "do"] },
     },
     _jsonSchema: { $ref: "https://json-schema.org/draft/2020-12/schema" },
   };
@@ -141,18 +141,22 @@ export class RouterNode extends Node {
   routes(def: Record<string, unknown>, context: Context): NodeValue {
     const method = context.request?.method?.toUpperCase() ?? "GET";
     const path = context.request?.path ?? "/";
+    // Captured params land here as matching goes, so a node resolved on the way
+    // and the handler both read them as `request.params`.
+    const params: Record<string, string> = {};
+    if (isObject(context.request)) context.request.params = params;
     return (async () => {
       const root = await nodeAt(def.$routes, "/", context);
-      const handler = root ? await matchRoute(this.paramRegexes, root, path, method, context) : null;
+      const handler = root ? await matchRoute(this.paramRegexes, root, path, method, context, params) : null;
       if (!handler) throw createHttpError(404, "Not Found");
       if (isHandlerShape(handler)) return executeHandler(this.validation, handler, context);
 
-      // Not a `$file`/`run` object, so the handler is an expression that has to
+      // Not a `$file`/`do` object, so the handler is an expression that has to
       // produce one. What it produces is the handler, `queryParams` and `body`
       // included, and takes the same path as an inline object.
       return resolve(handler, context, value => {
         if (!isHandlerShape(value)) {
-          throw createHttpError(500, `${method} ${path}: a route handler must be, or resolve to, a "$file" step or a "run" object`);
+          throw createHttpError(500, `${method} ${path}: a route handler must be, or resolve to, a "$file" step or a "do" object`);
         }
         return executeHandler(this.validation, value, context);
       });
@@ -160,9 +164,19 @@ export class RouterNode extends Node {
   }
 }
 
+/** One request's match: what it looks for, and where captured params go. */
+interface Match {
+  paramRegexes: ParamRegexes;
+  segments: string[];
+  method: string;
+  context: Context;
+  params: Record<string, string>;
+}
+
 /**
- * Match route against path starting from root node. Params are set on context
- * as they are captured, and a node written as a step is resolved when reached.
+ * Match route against path starting from root node. Params are captured into
+ * `params` as they are matched, and a node written as a step is resolved when
+ * reached.
  */
 async function matchRoute(
   paramRegexes: ParamRegexes,
@@ -170,6 +184,7 @@ async function matchRoute(
   urlPath: string,
   method: string,
   context: Context,
+  params: Record<string, string>,
 ): Promise<RouteHandler | null> {
   const segments = urlPath.split("/").filter(Boolean);
 
@@ -180,7 +195,7 @@ async function matchRoute(
 
   // Match segments starting from root's children
   if (root.children) {
-    return matchSegments(paramRegexes, root.children, segments, 0, method, context);
+    return matchSegments({ paramRegexes, segments, method, context, params }, root.children, 0);
   }
 
   return null;
@@ -190,20 +205,18 @@ async function matchRoute(
  * Recursively match segments against children
  */
 async function matchSegments(
-  paramRegexes: ParamRegexes,
+  match: Match,
   children: Record<string, RouteNode>,
-  segments: string[],
   index: number,
-  method: string,
-  context: Context,
 ): Promise<RouteHandler | null> {
+  const { paramRegexes, segments, context, params } = match;
   const segment = segments[index];
 
   // 1. Try exact match
   if (segment in children) {
     const node = await nodeAt(children[segment], nodePath(segments, index, segment), context);
     if (node) {
-      const result = await matchNode(paramRegexes, node, segments, index, method, context);
+      const result = await matchNode(match, node, index);
       if (result) return result;
     }
   }
@@ -211,38 +224,26 @@ async function matchSegments(
   // 2. Try * (single param). Resolved first: its paramRegex and paramName are on the node.
   if ("*" in children) {
     const node = await nodeAt(children["*"], nodePath(segments, index, "*"), context);
-    if (node) {
-      // Check regex constraint
-      if (node.paramRegex) {
-        if (!paramRegexOf(paramRegexes, node, node.paramRegex).test(segment)) {
-          return tryCatchAll(paramRegexes, children, segments, index, method, context);
-        }
-      }
-
-      // Capture param on context
-      if (node.paramName) {
-        context[node.paramName] = segment;
-      }
-
-      const result = await matchNode(paramRegexes, node, segments, index, method, context);
+    if (node && (!node.paramRegex || paramRegexOf(paramRegexes, node, node.paramRegex).test(segment))) {
+      if (node.paramName) params[node.paramName] = segment;
+      const result = await matchNode(match, node, index);
       if (result) return result;
+      // Matched no further down, so the segment is not this param.
+      if (node.paramName) delete params[node.paramName];
     }
   }
 
   // 3. Try ** (catch-all)
-  return tryCatchAll(paramRegexes, children, segments, index, method, context);
+  return tryCatchAll(match, children, index);
 }
 
 /**
  * Try to match catch-all route
  */
 async function tryCatchAll(
-  paramRegexes: ParamRegexes,
+  { paramRegexes, segments, method, context, params }: Match,
   children: Record<string, RouteNode>,
-  segments: string[],
   index: number,
-  method: string,
-  context: Context,
 ): Promise<RouteHandler | null> {
   if ("**" in children) {
     const node = await nodeAt(children["**"], nodePath(segments, index, "**"), context);
@@ -255,12 +256,9 @@ async function tryCatchAll(
       return null;
     }
 
-    // Capture rest of path
-    if (node.paramName) {
-      context[node.paramName] = rest;
-    }
-
-    return node.methods?.[method] ?? null;
+    const handler = node.methods?.[method] ?? null;
+    if (handler && node.paramName) params[node.paramName] = rest;
+    return handler;
   }
 
   return null;
@@ -269,30 +267,16 @@ async function tryCatchAll(
 /**
  * Match a specific node (after segment matched).
  */
-async function matchNode(
-  paramRegexes: ParamRegexes,
-  node: RouteNode,
-  segments: string[],
-  index: number,
-  method: string,
-  context: Context,
-): Promise<RouteHandler | null> {
+async function matchNode(match: Match, node: RouteNode, index: number): Promise<RouteHandler | null> {
   const nextIndex = index + 1;
-  const isLast = nextIndex >= segments.length;
+  const isLast = nextIndex >= match.segments.length;
 
   if (isLast) {
-    return node.methods?.[method] ?? null;
+    return node.methods?.[match.method] ?? null;
   }
 
   if (node.children) {
-    return matchSegments(
-      paramRegexes,
-      node.children,
-      segments,
-      nextIndex,
-      method,
-      context,
-    );
+    return matchSegments(match, node.children, nextIndex);
   }
 
   return null;
@@ -308,8 +292,8 @@ async function executeHandler(
 ): Promise<unknown> {
   checkRequest(validation, handler, context);
 
-  if (handler.run !== undefined) {
-    return (await runSteps(handler.run, context)) ?? null;
+  if (handler.do !== undefined) {
+    return (await runSteps(handler.do, context)) ?? null;
   }
   // A `$file` step, then, since `isHandlerShape` admits nothing else. Resolved through
   // the resolver so FileNode loads it and ElementNode renders it.
@@ -333,7 +317,7 @@ function checkRequest(validation: Validation, handler: RouteHandler, context: Co
 
 /**
  * Validate a value against a JSON Schema (draft 2020-12) using the router's
- * validation. Used for both `params` and `body`. Throws a 400 HTTP error listing
+ * validation. Used for both `queryParams` and `body`. Throws a 400 HTTP error listing
  * the validation failures.
  */
 function validateAgainstSchema(
@@ -354,5 +338,5 @@ function validateAgainstSchema(
  * them and the resolve below never reaches this function twice.
  */
 function isHandlerShape(value: unknown): value is RouteHandler {
-  return isObject(value) && (value.run !== undefined || !!value.$file);
+  return isObject(value) && (value.do !== undefined || !!value.$file);
 }

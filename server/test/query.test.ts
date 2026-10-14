@@ -65,7 +65,7 @@ test("validators authorize every query: global first, then the table's own", asy
   // `seen` is shared by reference with each validator's context, so their writes show here.
   const context = { seen: { global: "", table: "" } };
   const table = [{ $setVars: { "seen.table": { $concat: [{ $var: "operation" }, ":", { $var: "query.table" }] } } }];
-  await resolve({ $schema: "validator", run: [
+  await resolve({ $schema: "validator", do: [
     { $setVars: { "seen.global": { $concat: [{ $var: "operation" }, ":", { $var: "schema.table" }] } } },
     { $if: { $eq: [{ $var: "operation" }, "delete"] }, then: { $error: 403, message: "no deletes" } },
     // Narrow every select on notes to one author, the way a row-level policy would.
@@ -90,7 +90,7 @@ test("validators authorize every query: global first, then the table's own", asy
     await assert.rejects(resolve({ $query: "delete", ...conn, table: "notes", where: { author: "bob" } }, context), /no deletes/);
     assert.equal(await resolve({ $query: "count", ...conn, table: "notes", system: true }, context), 2);
   } finally {
-    await resolve({ $schema: "validator", run: null }, {});
+    await resolve({ $schema: "validator", do: null }, {});
   }
 });
 
@@ -188,7 +188,7 @@ test("two resolvers keep separate table registries and global validators", async
   const ra = createResolver([...coreNodes(), ...serverNodes()], { context: a });
   const rb = createResolver([...coreNodes(), ...serverNodes()], { context: b });
   await ra({ $schema: "register", table: { table: "isolated", properties: { email: { type: "string" } }, required: ["email"] } }, {});
-  await ra({ $schema: "validator", run: [{ $error: 403 }] }, {});
+  await ra({ $schema: "validator", do: [{ $error: 403 }] }, {});
 
   assert.ok(SchemaNode.get(a, "isolated"));
   assert.equal(SchemaNode.get(b, "isolated"), undefined);

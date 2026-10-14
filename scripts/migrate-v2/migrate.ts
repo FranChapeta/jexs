@@ -135,32 +135,42 @@ function replaceString(v: Extract<Val, { k: "str" }>, text: string, m: Codemod):
 }
 
 /**
- * Point the reads of a `$tick` or `$cron` step's own variables, inside its
- * steps, at the `interval` ones: `$var` paths and `$<from>...` interpolated in
- * strings, with `cron.runCount` now `count`. Reads elsewhere are not found,
- * since the timer's variables are written where any later step can read them.
+ * Point the reads, inside `v`, of the variables named in `roots` through `to`:
+ * `$var` paths and `$name...` interpolated in strings, given the whole path.
  */
-function retargetTimerReads(v: Val, from: "tick" | "cron", m: Codemod): void {
-  const path = (p: string) => p.replace(new RegExp(`^${from}(?=\\.|$)`), "interval").replace(/^interval\.runCount(?=\.|$)/, "interval.count");
-  if (v.k === "arr") for (const item of v.items) retargetTimerReads(item, from, m);
-  else if (v.k === "obj") {
-    for (const p of v.props) {
-      if (p.key === "$var" && p.value.k === "str") {
-        const next = path(p.value.value);
-        if (next !== p.value.value) replaceString(p.value, next, m);
-      } else retargetTimerReads(p.value, from, m);
+function retargetReads(v: Val, roots: string[], to: (path: string) => string, m: Codemod): void {
+  if (roots.length === 0) return;
+  const names = roots.map(r => r.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  const rooted = new RegExp(`^(?:${names})(?=\\.|$)`);
+  const interpolated = new RegExp(`\\$((?:${names})(?![\\w$])(?:\\.\\w+)*)`, "g");
+  const walk = (x: Val): void => {
+    if (x.k === "arr") x.items.forEach(walk);
+    else if (x.k === "obj") {
+      for (const p of x.props) {
+        if (p.key === "$var" && p.value.k === "str") {
+          if (rooted.test(p.value.value)) replaceString(p.value, to(p.value.value), m);
+        } else walk(p.value);
+      }
+    } else if (x.k === "str") {
+      const next = x.value.replace(interpolated, (_, path: string) => "$" + to(path));
+      if (next !== x.value) replaceString(x, next, m);
     }
-  } else if (v.k === "str") {
-    const next = v.value.replace(new RegExp(`\\$${from}(?=\\.|\\b|$)((?:\\.[\\w]+)?)`, "g"), (_, rest: string) => "$" + path(from + rest));
-    if (next !== v.value) replaceString(v, next, m);
-  }
+  };
+  walk(v);
 }
 
-/** `$tick` and `$cron` are both `$interval` now; their steps read `interval.*`. */
+/**
+ * `$tick` and `$cron` are both `$interval` now; their steps read `interval.*`,
+ * with `cron.runCount` now `count`. Reads elsewhere are not found, since the
+ * timer's variables are written where any later step can read them.
+ */
 function toInterval(step: Step, m: Codemod): void {
   renameOp(step, "interval", m);
+  const from = step.op === "tick" ? "tick" : "cron";
   const steps = step.obj.props.find(p => p.key === "do")?.value;
-  if (steps) retargetTimerReads(steps, step.op === "tick" ? "tick" : "cron", m);
+  if (steps) {
+    retargetReads(steps, [from], p => p.replace(from, "interval").replace(/^interval\.runCount(?=\.|$)/, "interval.count"), m);
+  }
   // A tick's `rate` counted runs per second, 60 unless told otherwise, and an
   // interval's `rate` is the milliseconds between runs.
   const op = step.obj.props.find(p => p.key === "$tick");
@@ -247,6 +257,52 @@ function listenSteps({ obj }: Step, m: Codemod): void {
   }
 }
 
+const ROUTE_KEYS = new Set(["paramName", "paramRegex", "methods", "children"]);
+const HANDLER_KEYS = new Set(["run", "queryParams", "body"]);
+
+/** A route tree written as data: route keys only, with methods or children. */
+const isRouteTree = (v: Val): v is Extract<Val, { k: "obj" }> =>
+  v.k === "obj" && v.props.length > 0 && v.props.every(p => ROUTE_KEYS.has(p.key)) && v.props.some(p => p.key === "methods" || p.key === "children");
+
+/** A route handler written as data: a `run` of steps, with its request schemas. */
+const isRunHandler = (v: Val): v is Extract<Val, { k: "obj" }> =>
+  v.k === "obj" && v.props.some(p => p.key === "run") && v.props.every(p => HANDLER_KEYS.has(p.key));
+
+/** A handler's steps are its `do`, and the params above it are read from `request.params`. */
+function routeHandler(v: Val, params: string[], m: Codemod): void {
+  if (v.k !== "obj") return;
+  const steps = v.props.find(p => p.key === "run");
+  if (steps && isRunHandler(v)) m.add({ start: steps.keyStart, end: steps.keyEnd, text: steps.shorthand ? "do: run" : "do" });
+  const file = v.props.find(p => p.key === "$file");
+  if (file && params.length > 0) {
+    m.review(file.keyStart, `Route params are read from \`request.params\` now: in the page this loads, read ${params.map(p => `\`${p}\` as \`request.params.${p}\``).join(", ")}`);
+  }
+  retargetReads(v, params, p => "request.params." + p, m);
+}
+
+/**
+ * A route tree as v2 has it: each handler's steps in `do`, and a captured param
+ * read from `request.params`. A param is retargeted where it is read under the
+ * route that declares it; a subtree held elsewhere (a variable, a file) does not
+ * know the params above it.
+ */
+function routeTree(v: Val, params: string[], m: Codemod): void {
+  if (v.k !== "obj") return;
+  if (!isRouteTree(v)) { retargetReads(v, params, p => "request.params." + p, m); return; }
+  const name = v.props.find(p => p.key === "paramName")?.value;
+  const inScope = name?.k === "str" && !params.includes(name.value) ? [...params, name.value] : params;
+  for (const p of v.props) {
+    if (p.key === "methods" && p.value.k === "obj") for (const h of p.value.props) routeHandler(h.value, inScope, m);
+    if (p.key === "children" && p.value.k === "obj") for (const c of p.value.props) routeTree(c.value, inScope, m);
+  }
+}
+
+/** A route tree or handler held as data, migrated without the params above it. */
+function dataRoute(v: Val, m: Codemod): void {
+  if (isRouteTree(v)) routeTree(v, [], m);
+  else if (isRunHandler(v)) routeHandler(v, [], m);
+}
+
 /** Rename the step's `from` sibling to `to`, keeping how its key is quoted. */
 function renameSibling({ obj }: Step, from: string, to: string, m: Codemod): void {
   const prop = obj.props.find(p => p.key === from);
@@ -329,6 +385,16 @@ const RULES: Record<string, Rule> = {
   tag: ({ obj }, m) => rawContent(obj, m),
   // A request's response is what its steps yield.
   listen: listenSteps,
+  // Handlers run `do`, and read params from `request.params`.
+  routes: ({ obj }, m) => {
+    const tree = obj.props.find(p => p.key === "$routes")?.value;
+    if (tree) routeTree(tree, [], m);
+  },
+  // The global validator's steps are its `do`.
+  schema: (step, m) => {
+    const value = step.obj.props.find(p => p.key === "$schema")?.value;
+    if (value?.k === "str" && value.value === "validator") renameSibling(step, "run", "do", m);
+  },
   // The part to extract is the second operand.
   datePart: (step, m) => siblingToTuple(step, "part", m),
   // `[array, key, value]` is gone: `find` tests objects by a key.
@@ -364,6 +430,9 @@ function walkExpr(v: Val): void {
   const op = v.props.find(p => p.key.startsWith("$") && isOp(p.key.slice(1)))?.key.slice(1);
   if (op !== undefined) RULES[op]?.({ op, obj: v }, m);
   else responseObject(v, m);
+  // A route tree or handler written as data, such as a file `$routes` loads a
+  // subtree from.
+  if (op === undefined) dataRoute(v, m);
   // A response object is also a branch's or a `$return`'s value, which the schema
   // takes for data.
   for (const p of v.props) {
@@ -380,6 +449,8 @@ function walkExpr(v: Val): void {
   }
   // `$setVars` with `data: true` stores its values as written, steps included.
   const rawValues = op === "setVars" && v.props.some(p => p.key === "data" && p.value.k === "lit" && p.value.value === true);
+  const stored = v.props.find(p => p.key === "$setVars")?.value;
+  if (rawValues && stored?.k === "obj") for (const p of stored.props) dataRoute(p.value, m);
   for (const p of v.props) {
     const owned = p.key.startsWith("$") ? p.key.slice(1) : null;
     if (owned !== null && GLOBALS.has(owned)) m.walk(owned === "then" || owned === "catch" ? STEPS : ANY, p.value);

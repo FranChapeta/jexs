@@ -188,7 +188,7 @@ export class SchemaNode extends Node {
           output: "null",
           markdownDescription: "Sets the global validator: steps run before every query on every table, create and drop included, to authorize it. They see `operation`, the table document as `schema`, and `query` (`table`, `where`, `data`, ...), which they may narrow. Refuse with `{ \"$error\": 403 }`. A table's own `validator` runs after this one, never instead of it. Queries with `system: true` skip both, so pass it for the app's own queries, such as creating tables at startup.",
           siblings: {
-            run: { steps: true, description: "Steps run before each query." },
+            do: { steps: true, description: "Steps run before each query." },
           },
         },
         validate: {
@@ -267,8 +267,8 @@ export class SchemaNode extends Node {
         return Array.from(this.schemas.values(), schema => structuredClone(schema));
       }
       if (op === "validator") {
-        if (def.run !== undefined) {
-          this.globalValidator = def.run;
+        if (def.do !== undefined) {
+          this.globalValidator = def.do;
         }
         return null;
       }
