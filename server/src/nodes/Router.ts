@@ -77,7 +77,7 @@ export class RouterNode extends Node {
     routes: {
       $ref: "#/$defs/_routesSlot",
       markdownDescription: "Matches the incoming request path and method against a route tree, then executes the handler.\nSupports exact segments, `*` (single param with optional `paramName`/`paramRegex`),\n`**` (catch-all), and `queryParams`/`body` validation.\n\n`paramRegex` is anchored to the whole segment (for `**`, the whole rest of the path), so `\"new|edit\"` matches `new` but not `newsletter`.\n\nA handler is a `$file` step or a `run` of steps, never both, or an expression resolving to one of those. A `WS` handler completes a WebSocket upgrade by calling `socket-accept` as a `run` step.\n\nA route node written as a step is resolved when the matcher reaches it, after the params above it are captured, so `{ \"$if\": <cond>, \"then\": { \"$var\": \"adminRoutes\" } }` adds a subtree only when the condition holds; a failed condition leaves no node there. Hold such a subtree by reference, stored with `$setVars` or loaded with `$file`, either with `data: true`: `$if` resolves the branch it picks, so an inline subtree would run its handlers.",
-      outputDescription: "The matched handler's result. A `$file` step or `run` that renders to a string is wrapped as `{ response: <html> }`; a handler that returns an object passes it through unchanged, as either a response envelope (`{ response, responseStatus, responseType, responseHeaders }`) or a bare JSON value. Throws a 404 HTTP error when no route matches, so use a catch-all route (`**`) or wrap calls in `$catch` to handle not-found.",
+      outputDescription: "The matched handler's result, as it stands: a rendered `$file` page, or what its `run` yields. As the value a `$listen` request's steps end with, it is the response. Throws a 404 HTTP error when no route matches, so use a catch-all route (`**`) or wrap calls in `$catch` to handle not-found.",
       examples: [
         "{ \"$routes\": { \"children\": { \"users\": { \"methods\": { \"GET\": { \"$file\": \"pages/users.json\" } } } } } }",
       ],
@@ -309,12 +309,11 @@ async function executeHandler(
   checkRequest(validation, handler, context);
 
   if (handler.run !== undefined) {
-    const result = await runSteps(handler.run, context);
-    return isResponse(result) ? result : asBody(result ?? null);
+    return (await runSteps(handler.run, context)) ?? null;
   }
   // A `$file` step, then, since `isHandlerShape` admits nothing else. Resolved through
   // the resolver so FileNode loads it and ElementNode renders it.
-  return resolve(handler, context, asBody);
+  return resolve(handler, context);
 }
 
 /**
@@ -330,11 +329,6 @@ function checkRequest(validation: Validation, handler: RouteHandler, context: Co
   if (handler.body) {
     validateAgainstSchema(validation, handler.body, context.request?.body as Record<string, unknown> ?? {}, "body");
   }
-}
-
-/** A string renders as HTML; anything else is sent as it stands. */
-function asBody(value: unknown): unknown {
-  return typeof value === "string" ? { response: value } : value;
 }
 
 /**
@@ -361,11 +355,4 @@ function validateAgainstSchema(
  */
 function isHandlerShape(value: unknown): value is RouteHandler {
   return isObject(value) && (value.run !== undefined || !!value.$file);
-}
-
-/**
- * Check if result is a response object
- */
-export function isResponse(value: unknown): value is Record<string, unknown> {
-  return isObject(value) && "response" in value;
 }

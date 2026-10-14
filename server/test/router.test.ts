@@ -30,37 +30,37 @@ after(async () => {
 
 test("a file handler renders its template", async () => {
   const routes = { methods: { GET: { $file: "/page.json" } } };
-  assert.deepEqual(await get(routes, { greeting: "hi" }), { response: "<p>hi</p>" });
+  assert.deepEqual(await get(routes, { greeting: "hi" }), "<p>hi</p>");
 });
 
 test("a file handler takes an expression, not just a literal path", async () => {
   const routes = { methods: { GET: { $file: { $var: "page" } } } };
   assert.deepEqual(
     await get(routes, { page: "/page.json", greeting: "from expr" }),
-    { response: "<p>from expr</p>" },
+    "<p>from expr</p>",
   );
 });
 
 test("a run handler yields its last step", async () => {
   const routes = { methods: { GET: { run: [{ $concat: ["a", "b"] }] } } };
-  assert.deepEqual(await get(routes), { response: "ab" });
+  assert.equal(await get(routes), "ab");
 });
 
 test("a run handler may be a single step", async () => {
   const routes = { methods: { GET: { run: { $concat: ["one ", "step"] } } } };
-  assert.deepEqual(await get(routes), { response: "one step" });
+  assert.equal(await get(routes), "one step");
 });
 
 test("an expression resolving to a file handler takes the file path", async () => {
   const routes = { methods: { GET: { $var: "handler" } } };
   const ctx = { handler: { $file: "/page.json" }, greeting: "indirect" };
-  assert.deepEqual(await get(routes, ctx), { response: "<p>indirect</p>" });
+  assert.equal(await get(routes, ctx), "<p>indirect</p>");
 });
 
 test("an expression resolving to a run handler takes the run path", async () => {
   const routes = { methods: { GET: { $var: "handler" } } };
   const ctx = { handler: { run: [{ $concat: ["from ", "steps"] }] } };
-  assert.deepEqual(await get(routes, ctx), { response: "from steps" });
+  assert.equal(await get(routes, ctx), "from steps");
 });
 
 test("a resolved handler's own schema is what gates the request", async () => {
@@ -86,7 +86,7 @@ test("a resolved handler passes its own schema when the request satisfies it", a
     },
     request: { method: "GET", path: "/", query: { page: "2" } },
   };
-  assert.deepEqual(await get(routes, ctx), { response: "ok" });
+  assert.equal(await get(routes, ctx), "ok");
 });
 
 test("an expression resolving to anything but a handler is an error", async () => {
@@ -122,14 +122,14 @@ const idRoute = (paramRegex: string) => ({
 });
 
 test("paramRegex is anchored, so an alternation must match the whole segment", async () => {
-  assert.deepEqual(await at(idRoute("new|edit"), "/new"), { response: "new" });
-  assert.deepEqual(await at(idRoute("new|edit"), "/edit"), { response: "edit" });
+  assert.equal(await at(idRoute("new|edit"), "/new"), "new");
+  assert.equal(await at(idRoute("new|edit"), "/edit"), "edit");
   await assert.rejects(() => at(idRoute("new|edit"), "/newsletter"), { status: 404 });
   await assert.rejects(() => at(idRoute("new|edit"), "/reedit"), { status: 404 });
 });
 
 test("paramRegex still constrains a plain pattern", async () => {
-  assert.deepEqual(await at(idRoute("\\d+"), "/42"), { response: "42" });
+  assert.equal(await at(idRoute("\\d+"), "/42"), "42");
   await assert.rejects(() => at(idRoute("\\d+"), "/4a"), { status: 404 });
 });
 
@@ -137,7 +137,7 @@ test("paramRegex on a catch-all is anchored to the whole rest of the path", asyn
   const routes = {
     children: { "**": { paramName: "rest", paramRegex: "a|b/c", methods: { GET: { run: [{ $var: "rest" }] } } } },
   };
-  assert.deepEqual(await at(routes, "/b/c"), { response: "b/c" });
+  assert.equal(await at(routes, "/b/c"), "b/c");
   await assert.rejects(() => at(routes, "/a/x"), { status: 404 });
 });
 
@@ -156,8 +156,8 @@ test("an $if node adds its subtree only when the condition holds", async () => {
   };
   const adminRoutes = { methods: { GET: { run: [{ $concat: ["admin"] }] } } };
   const request = { method: "GET", path: "/admin" };
-  assert.deepEqual(await get(routes, { request, isAdmin: true, adminRoutes }), { response: "admin" });
-  assert.deepEqual(await get(routes, { request, isAdmin: false, adminRoutes }), { response: "fallback" });
+  assert.deepEqual(await get(routes, { request, isAdmin: true, adminRoutes }), "admin");
+  assert.equal(await get(routes, { request, isAdmin: false, adminRoutes }), "fallback");
 });
 
 test("a node written as a step resolves only when reached, after the params above it", async () => {
@@ -175,7 +175,7 @@ test("a node written as a step resolves only when reached, after the params abov
 
   await assert.rejects(() => go("/red/elsewhere"), { status: 404 });
   assert.deepEqual(subtrees.seen, []);
-  assert.deepEqual(await go("/red/roster"), { response: "red" });
+  assert.equal(await go("/red/roster"), "red");
   assert.deepEqual(subtrees.seen, ["red"]);
 });
 
@@ -197,7 +197,7 @@ test("an expression handler's query schema validates every request", async () =>
       { $routes: routes },
       { request: { method: "GET", path: "/", query: { q: "x" } }, handler: handler() },
     ));
-    assert.deepEqual(out, { response: "ok" });
+    assert.equal(out, "ok");
   }
   await assert.rejects(Promise.resolve(resolve(
     { $routes: routes },

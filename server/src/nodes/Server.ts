@@ -5,10 +5,9 @@ import path from "node:path";
 import { URL } from "node:url";
 import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
-import { Context, Node, NodeValue, isHttpError, isObject, isStep, resolve, resolveAll, resolveFields } from "@jexs/core";
+import { Context, Node, NodeValue, isHttpError, isObject, isStep, resolve, resolveAll, resolveFields, runSteps } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { safeRelative } from "./File.js";
-import { isResponse } from "./Router.js";
 import { SAFE_METHODS } from "./Session.js";
 import { serviceWorkerScript } from "../sw.js";
 
@@ -195,10 +194,7 @@ async function handleUpgrade(
     for (const step of listener.steps) {
       const stepResult = await resolve(step, context);
       if (upgrade.accepted) return;
-      if (isResponse(stepResult)) {
-        socket.destroy();
-        return;
-      }
+      if (isReturn(stepResult)) break;
     }
 
     if (!upgrade.accepted) socket.destroy();
@@ -293,23 +289,8 @@ async function handleRequest(
       _deferred: [],
     };
 
-    // Execute per-request steps sequentially. Two stop signals:
-    //   - a step that resolves to `{ $return: X }` yields X and halts
-    //   - a step that resolves to a response object halts
-    let result: unknown = null;
-    for (const step of listener.steps) {
-      result = await resolve(step, context);
-      if (isReturn(result)) {
-        result = result.$return ?? null;
-        break;
-      }
-      if (isResponse(result)) break;
-    }
-
-    // Wrap string results as HTML responses (responseType inferred from string)
-    if (typeof result === "string") {
-      result = { response: result };
-    }
+    // The steps yield the response: what a `$return` gives, or the last step's value.
+    const result = (await runSteps(listener.steps, context)) ?? null;
 
     // Apply pending cookies (set by session operations via context)
     if (Array.isArray(context._cookies)) {
@@ -323,24 +304,7 @@ async function handleRequest(
       if (context._cookies.length > 0) res.setHeader("Cache-Control", 'private="Set-Cookie"');
     }
 
-    // Check for deferred content that needs streaming
-    const deferred = context._deferred as
-      | { id: string; promise: Promise<unknown> }[]
-      | undefined;
-    if (
-      deferred?.length &&
-      isResponse(result) &&
-      isHtmlResponse(result)
-    ) {
-      await sendStreamingResponse(
-        res,
-        result as Record<string, unknown>,
-        deferred,
-      );
-      return;
-    }
-
-    sendResponse(res, result);
+    await sendResponse(res, result, Array.isArray(context._deferred) ? context._deferred : []);
   } catch (error) {
     // Once the status line is out (a static file, a streamed render) there is no
     // status left to change. Log and close, rather than raise a second error
@@ -351,24 +315,15 @@ async function handleRequest(
       return;
     }
     if (error instanceof Error && error.message === "Body too large") {
-      sendResponse(res, {
-        response: "Request body too large",
-        responseStatus: 413,
-      });
+      sendResponse(res, { response: "Request body too large", responseStatus: 413 });
       return;
     }
     if (isHttpError(error)) {
-      sendResponse(res, {
-        response: error.message || `HTTP ${error.status}`,
-        responseStatus: error.status,
-      });
+      sendResponse(res, { response: error.message || `HTTP ${error.status}`, responseStatus: error.status });
       return;
     }
     console.error("Request error:", error);
-    sendResponse(res, {
-      response: "Internal Server Error",
-      responseStatus: 500,
-    });
+    sendResponse(res, { response: "Internal Server Error", responseStatus: 500 });
   }
 }
 
@@ -376,26 +331,41 @@ function isReturn(value: unknown): value is { $return: unknown } {
   return isObject(value) && "$return" in value;
 }
 
-/** Whether the response body is HTML (explicit or inferred from string content). */
-function isHtmlResponse(r: Record<string, unknown>): boolean {
-  if (typeof r.responseType === "string") return r.responseType === "html";
-  return typeof r.response === "string";
+/** What is written: the status, the headers, and the body as text. */
+interface Reply {
+  status: number;
+  headers: Record<string, string>;
+  body: string;
 }
 
-/** Map responseType (or content shape) to a Content-Type header value. */
-function resolveContentType(explicit: string | null, content: unknown): string {
-  if (explicit) {
-    switch (explicit) {
-      case "html": return "text/html; charset=utf-8";
-      case "json": return "application/json";
-      case "text": return "text/plain; charset=utf-8";
-    }
-    // Literal MIME (e.g. "image/png", "application/xml")
-    if (explicit.includes("/")) return explicit;
-    // Unknown keyword falls back to plain text
-    return "text/plain; charset=utf-8";
+const HTML = "text/html; charset=utf-8";
+const CONTENT_TYPES: Record<string, string> = { html: HTML, json: "application/json", text: "text/plain; charset=utf-8" };
+const NOT_FOUND = { response: "<h1>404 Not Found</h1>", responseStatus: 404 };
+
+/**
+ * What to write for the value a request's steps yield. A response object (one
+ * with a `response`, its body, that is not a step held as data) sets the status,
+ * type and headers, and its other keys are not sent; any other value is the body
+ * itself, and nothing at all is a 404. The body is sent as HTML when it is a string and as JSON otherwise, unless
+ * the type says how; a redirect sends it as the `Location`.
+ */
+function replyFor(value: unknown): Reply {
+  const { response: body, responseStatus, responseType, responseHeaders }: Record<string, unknown> =
+    value == null ? NOT_FOUND : isObject(value) && "response" in value && !isStep(value) ? value : { response: value };
+  const type = typeof responseType === "string" ? responseType : typeof body === "string" ? "html" : "json";
+  const redirect = type === "redirect";
+  // A literal MIME type is sent as given, and an unknown keyword as plain text.
+  const headers: Record<string, string> = redirect
+    ? { Location: String(body ?? "/") }
+    : { "Content-Type": CONTENT_TYPES[type] ?? (type.includes("/") ? type : CONTENT_TYPES.text) };
+  if (isObject(responseHeaders)) {
+    for (const [name, v] of Object.entries(responseHeaders)) headers[name] = String(v);
   }
-  return typeof content === "string" ? "text/html; charset=utf-8" : "application/json";
+  return {
+    status: typeof responseStatus === "number" ? responseStatus : redirect ? 302 : 200,
+    headers,
+    body: redirect ? "" : type === "json" ? JSON.stringify(body ?? null) : body == null ? "" : String(body),
+  };
 }
 
 async function parseBody(req: http.IncomingMessage, listener: Listener): Promise<unknown> {
@@ -614,119 +584,40 @@ function getMimeType(ext: string): string {
   return MIME_TYPES[ext] || "application/octet-stream";
 }
 
-async function sendStreamingResponse(
-  res: http.ServerResponse,
-  result: Record<string, unknown>,
-  deferred: { id: string; promise: Promise<unknown> }[],
-): Promise<void> {
-  // Apply custom headers (responseHeaders plural + responseHeader singular alias)
-  for (const key of ["responseHeaders", "responseHeader"] as const) {
-    const h = result[key];
-    if (h && typeof h === "object" && !Array.isArray(h)) {
-      for (const [k, v] of Object.entries(h as Record<string, string>)) {
-        res.setHeader(k, v);
-      }
-    }
+/** A part of the page `$defer` resolves in the background, and the id of its placeholder. */
+type Deferred = { id: string; promise: Promise<unknown> };
+
+/**
+ * Send the response for `value`, as `replyFor` makes it. An HTML page with
+ * deferred parts is streamed: the page with their placeholders first, then each
+ * part as it resolves, in whatever order they finish.
+ */
+function sendResponse(res: http.ServerResponse, value: unknown, deferred: Deferred[] = []): void | Promise<void> {
+  const { status, headers, body } = replyFor(value);
+  res.writeHead(status, headers);
+  if (deferred.length === 0 || headers["Content-Type"] !== HTML) {
+    res.end(body);
+    return;
   }
-
-  const status =
-    typeof result.responseStatus === "number" ? result.responseStatus : 200;
-  res.writeHead(status, {
-    "Content-Type": "text/html; charset=utf-8",
-  });
-
-  // Send initial HTML with placeholders
-  res.write(String(result.response ?? ""));
-
-  // Inline helper script (runs once, defines the replacement function)
+  res.write(body);
+  // Defines the function each part's script calls to replace its placeholder.
   res.write(
     '<script>function __jexs_defer(i,h){var e=document.getElementById(i);if(!e)return;var t=document.createElement("template");t.innerHTML=h;e.replaceWith(t.content);if(window.jexs)window.jexs.hydrate()}</script>',
   );
-
-  // Stream deferred content out-of-order as each resolves
-  // Wrap each promise so it self-removes from pending when settled
-  type DeferResult = { id: string; html: string };
-  const pending: Promise<DeferResult>[] = deferred.map((d) =>
-    d.promise.then(
-      (html) => ({ id: d.id, html: String(html ?? "") }),
-      (err) => {
-        console.error(`[Defer] Error resolving ${d.id}:`, err);
-        return { id: d.id, html: "" };
+  const parts = deferred.map(({ id, promise }) =>
+    promise.then(
+      html => String(html ?? ""),
+      err => {
+        console.error(`[Defer] Error resolving ${id}:`, err);
+        return "";
       },
-    ),
+    ).then(html => {
+      // Escaped for a JS string literal inside a script element.
+      const escaped = JSON.stringify(html).replace(/<\//g, "<\\/");
+      res.write(`<script>__jexs_defer("${id}",${escaped})</script>`);
+    }),
   );
-
-  // Map promise → index for removal after race
-  let remaining = pending.map((p, i) => ({ p, i }));
-
-  while (remaining.length > 0) {
-    // Tag each promise with its index so we know which one settled
-    const tagged = remaining.map(({ p, i }) =>
-      p.then((result) => ({ result, i })),
-    );
-    const { result: settled, i: settledIdx } = await Promise.race(tagged);
-
-    // Remove the settled promise
-    remaining = remaining.filter(({ i }) => i !== settledIdx);
-
-    // Escape HTML for safe embedding in a JS string literal
-    const escaped = JSON.stringify(settled.html).replace(/<\//g, "<\\/");
-    res.write(
-      `<script>__jexs_defer("${settled.id}",${escaped})</script>`,
-    );
-  }
-
-  res.end();
-}
-
-function sendResponse(res: http.ServerResponse, result: unknown): void {
-  if (!isResponse(result)) {
-    if (typeof result === "string") {
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(result);
-    } else if (result == null) {
-      res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
-      res.end("<h1>404 Not Found</h1>");
-    } else {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(result));
-    }
-    return;
-  }
-
-  const r = result as Record<string, unknown>;
-  const content = r.response;
-
-  // Merge headers: plural first, singular overrides on collision
-  const headers: Record<string, string> = {};
-  for (const key of ["responseHeaders", "responseHeader"] as const) {
-    const h = r[key];
-    if (h && typeof h === "object" && !Array.isArray(h)) {
-      Object.assign(headers, h as Record<string, string>);
-    }
-  }
-
-  const explicitType = typeof r.responseType === "string" ? r.responseType : null;
-  const status = typeof r.responseStatus === "number" ? r.responseStatus : null;
-
-  // Redirect is the one type that meaningfully changes the response shape:
-  // `response` is the target URL placed in Location, body is empty.
-  if (explicitType === "redirect") {
-    res.writeHead(status ?? 302, { Location: String(content ?? "/"), ...headers });
-    res.end();
-    return;
-  }
-
-  const contentType = resolveContentType(explicitType, content);
-  res.writeHead(status ?? 200, { "Content-Type": contentType, ...headers });
-
-  const serializeAsJson =
-    explicitType === "json" || (!explicitType && typeof content !== "string");
-  if (serializeAsJson) {
-    res.end(JSON.stringify(content ?? null));
-  } else {
-    res.end(content == null ? "" : String(content));
-  }
+  return Promise.all(parts).then(() => void res.end());
 }
 
 // Pick a sensible Cache-Control for a static asset.
@@ -784,15 +675,15 @@ export class ServerNode extends Node {
       type: "number",
       output: "number",
       outputDescription: "The port it listens on: the one given, or the free port the OS picked for `0`.",
-      markdownDescription: "Starts an HTTP listener on the given port (default 3000; `0` picks any free port). Pass per-request steps in `\"do\"`.\nSet `\"client\": true` (or a path string) to auto-serve the `@jexs/client` browser bundle\nand inject the script tag into rendered `<head>` elements.\nSet `\"sw\"` (with `\"client\"`) to run a service worker: what it precaches, how it answers requests (`routes`), and the steps it resolves per event (`events`).\n\n**Multiple ports.** Bind more ports by adding more `{ \"$listen\": ..., \"do\": [...] }` steps. Each is an independent listener with its own `do` pipeline, `client`, `sw`, `maxBodySize` and `maxMessageSize`.\n\n**Cross-site requests.** A POST, PUT, PATCH or DELETE, or a WebSocket upgrade, that a browser sends from another site's page is refused with 403 before any step runs, since it would carry the user's cookies. Requests from outside a browser (webhooks, scripts) are not affected. Allow other origins with `trustedOrigins`.\n\n**Per-request `do` execution.** The steps run in order against a fresh per-request context. The universal `\"as\"` key is honored (stored into the context for later steps), as is `setVars`. Two stop-signals halt the loop early: a step that resolves to `{ \"$return\": X }` (yields `X`) or to a **response object** (a value with a `response` key).\n\n**Response object.** The final value becomes the HTTP response. A bare string is sent as `text/html`; any other bare value is sent as JSON. For full control return an object:\n- `response`: the body (string, or any JSON value for `responseType: \"json\"`). For `responseType: \"redirect\"` it is the `Location` URL.\n- `responseStatus`: HTTP status code (default `200`).\n- `responseType`: `\"html\"` | `\"json\"` | `\"text\"` | `\"redirect\"` | a literal MIME string (e.g. `\"image/png\"`). When omitted it is inferred: string → `html`, otherwise `json`.\n- `responseHeaders` / `responseHeader`: extra response headers (singular overrides plural on collision).",
+      markdownDescription: "Starts an HTTP listener on the given port (default 3000; `0` picks any free port). Pass per-request steps in `\"do\"`.\nSet `\"client\": true` (or a path string) to auto-serve the `@jexs/client` browser bundle\nand inject the script tag into rendered `<head>` elements.\nSet `\"sw\"` (with `\"client\"`) to run a service worker: what it precaches, how it answers requests (`routes`), and the steps it resolves per event (`events`).\n\n**Multiple ports.** Bind more ports by adding more `{ \"$listen\": ..., \"do\": [...] }` steps. Each is an independent listener with its own `do` pipeline, `client`, `sw`, `maxBodySize` and `maxMessageSize`.\n\n**Cross-site requests.** A POST, PUT, PATCH or DELETE, or a WebSocket upgrade, that a browser sends from another site's page is refused with 403 before any step runs, since it would carry the user's cookies. Requests from outside a browser (webhooks, scripts) are not affected. Allow other origins with `trustedOrigins`.\n\n**Per-request `do` execution.** The steps run in order against a fresh per-request context, as any step list does: `\"as\"` and `setVars` write into the context for later steps, and a step resolving to `{ \"$return\": X }` ends the list early with `X`.\n\n**The response.** What the steps yield, `$return`'s value or the last step's, is the response. A string is sent as `text/html`, nothing at all as a 404, and any other value as JSON. For full control yield a response object, one with a `response`:\n- `response`: the body (string, or any JSON value for `responseType: \"json\"`). For `responseType: \"redirect\"` it is the `Location` URL.\n- `responseStatus`: HTTP status code (default `200`, or `302` for a redirect).\n- `responseType`: `\"html\"` | `\"json\"` | `\"text\"` | `\"redirect\"` | a literal MIME string (e.g. `\"image/png\"`). When omitted it is inferred: string → `html`, otherwise `json`.\n- `responseHeaders`: extra response headers.\n\nIts other keys are not sent. To send a value that has a `response` of its own (an email's delivery report) as data, yield it as a response object's `response`.",
       examples: [
         "{ \"$listen\": 3000, \"client\": true, \"do\": [{ \"$session\": \"load\" }, { \"$routes\": { \"$var\": \"routes\" } }] }",
-        "{ \"response\": \"{\\\"ok\\\":true}\", \"responseType\": \"json\", \"responseStatus\": 201 }",
+        "{ \"response\": { \"id\": 7 }, \"responseStatus\": 201 }",
       ],
       siblings: {
         do: {
           steps: true,
-          description: "Per-request steps run for each incoming HTTP request. `\"as\"` and `setVars` write into the shared request context; a step resolving to `{ response }` or `{ return }` ends the loop.",
+          description: "Per-request steps run for each incoming HTTP request. What they yield, `$return`'s value or the last step's, is the response.",
         },
         client: {
           type: "boolean",

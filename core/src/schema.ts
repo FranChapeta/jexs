@@ -181,8 +181,8 @@ export interface JexsMethodSchema extends JexsPropertySchema {
   /**
    * Human-readable description of what this method resolves to. Surfaced in
    * the primary key's hover (as a "Returns:" line) and by the MCP `describe_op`
-   * tool. Use it for non-obvious return shapes — e.g. a node that returns a
-   * `{ response, responseStatus }` envelope rather than a plain value.
+   * tool. Use it for non-obvious return shapes, e.g. `$fetch` with `full: true`,
+   * which resolves to the whole response rather than its body.
    */
   outputDescription?: string;
   siblings?: Record<string, JexsPropertySchema>;

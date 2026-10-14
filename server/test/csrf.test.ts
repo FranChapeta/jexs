@@ -265,7 +265,7 @@ test("a response that sets a cookie keeps it from shared caches, unless the app 
       $listen: 0,
       do: [
         { $session: "load" },
-        { $if: { $eq: [{ $var: "request.path" }, "/public"] }, then: { response: "page", responseHeaders: { "Cache-Control": "public, max-age=60" } } },
+        { $if: { $eq: [{ $var: "request.path" }, "/public"] }, then: { $return: { response: "page", responseHeaders: { "Cache-Control": "public, max-age=60" } } } },
         { response: "page" },
       ],
     }, {});

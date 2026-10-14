@@ -200,6 +200,53 @@ function rawContent(obj: Extract<Val, { k: "obj" }>, m: Codemod): void {
   }
 }
 
+/** A step: an object with an op key. Where a step list yields a value, anything else is the response. */
+const isStep = (v: Val) => v.k === "obj" && v.props.some(p => p.key.startsWith("$"));
+
+/** A response object, written where a value is yielded, sets its headers with `responseHeaders`, not `responseHeader`. */
+function responseObject(obj: Extract<Val, { k: "obj" }>, m: Codemod): void {
+  const keys = obj.props.map(p => p.key);
+  if (isStep(obj) || !keys.includes("response")) return;
+  const alias = obj.props.find(p => p.key === "responseHeader");
+  if (alias && keys.includes("responseHeaders")) {
+    m.review(alias.keyStart, "`responseHeader` is gone: merge it into `responseHeaders`");
+  } else if (alias) {
+    m.add({ start: alias.keyStart, end: alias.keyEnd, text: alias.shorthand ? "responseHeaders: responseHeader" : "responseHeaders" });
+  }
+}
+
+/** Wrap `v` in a `$return` step, quoting the key as `quoted` says. */
+function wrapInReturn(v: Val, quoted: boolean, m: Codemod): void {
+  m.add({ start: v.start, end: v.start, text: `{ ${quoted ? '"$return"' : "$return"}: ` });
+  m.add({ start: v.end, end: v.end, text: " }" });
+}
+
+/**
+ * A `$listen` request ends with what its steps yield, so a response object no
+ * longer ends them early: one before the last step, written there or as an `$if`
+ * or `$switch` branch, is wrapped in `$return`. A `$routes` step before the last
+ * ended them whenever a route matched, so it is left for review.
+ */
+function listenSteps({ obj }: Step, m: Codemod): void {
+  const steps = obj.props.find(p => p.key === "do");
+  if (steps?.value.k !== "arr") return;
+  const quoted = steps.keyQuoted;
+  const wrap = (v: Val) => { if (v.k === "obj" && !isStep(v)) wrapInReturn(v, quoted, m); };
+  for (const item of steps.value.items.slice(0, -1)) {
+    if (item.k !== "obj") continue;
+    if (!isStep(item)) { wrap(item); continue; }
+    const op = item.props.find(p => p.key.startsWith("$"))?.key;
+    for (const p of item.props) {
+      if (op === "$if" && (p.key === "then" || p.key === "else")) wrap(p.value);
+      if (op === "$switch" && p.key === "default") wrap(p.value);
+      if (op === "$switch" && p.key === "cases" && p.value.k === "obj") p.value.props.forEach(c => wrap(c.value));
+    }
+    if (op === "$routes") {
+      m.review(item.start, "A `$listen` request's steps no longer stop at a route's result: the last step's value (or a `$return`'s) is the response, so put `$routes` last or wrap it in `$return`");
+    }
+  }
+}
+
 /** Rename the step's `from` sibling to `to`, keeping how its key is quoted. */
 function renameSibling({ obj }: Step, from: string, to: string, m: Codemod): void {
   const prop = obj.props.find(p => p.key === from);
@@ -280,6 +327,8 @@ const RULES: Record<string, Rule> = {
   },
   // Literal content is the element's `raw: true`, not an object with a `raw` key.
   tag: ({ obj }, m) => rawContent(obj, m),
+  // A request's response is what its steps yield.
+  listen: listenSteps,
   // The part to extract is the second operand.
   datePart: (step, m) => siblingToTuple(step, "part", m),
   // `[array, key, value]` is gone: `find` tests objects by a key.
@@ -314,6 +363,16 @@ function walkExpr(v: Val): void {
   const isOp = (name: string) => HANDLERS.has(name) || Object.hasOwn(RULES, name);
   const op = v.props.find(p => p.key.startsWith("$") && isOp(p.key.slice(1)))?.key.slice(1);
   if (op !== undefined) RULES[op]?.({ op, obj: v }, m);
+  else responseObject(v, m);
+  // A response object is also a branch's or a `$return`'s value, which the schema
+  // takes for data.
+  for (const p of v.props) {
+    const branch = (op === "if" && (p.key === "then" || p.key === "else")) || (op === "switch" && p.key === "default") || p.key === "$return";
+    if (branch && p.value.k === "obj") responseObject(p.value, m);
+    if (op === "switch" && p.key === "cases" && p.value.k === "obj") {
+      for (const c of p.value.props) if (c.value.k === "obj") responseObject(c.value, m);
+    }
+  }
   // A `$then` step yields null at once, so `$as` beside it is refused now.
   const asKey = v.props.find(p => p.key === "$as");
   if (asKey && v.props.some(p => p.key === "$then")) {
