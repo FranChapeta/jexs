@@ -7,6 +7,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { Node, Context, resolve, resolveAll } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
+import { isProduction } from "../env.js";
 
 /** Reusable SHA-256 helper (used by SchemaNode and QueryNode) */
 /**
@@ -44,36 +45,39 @@ function pair(value: unknown, name: string, shape: string): unknown[] {
   return value;
 }
 
-// APP_SECRET env is the primary source for the encryption key; the `secret.key`
-// file is a dev fallback, resolved under the root a CryptoNode is constructed
-// with (default "src"). Both the root and the cached key live on the node, so two
-// resolvers built at different roots read their own key file instead of the last
+// APP_SECRET env is the source for the encryption key; outside production the
+// `secret.key` file is a fallback, resolved under the root a CryptoNode is
+// constructed with (default "src"). The key is cached per node, so two resolvers
+// built at different roots read their own key file instead of the last
 // constructor silently winning for the whole process.
 
-function keyFilePath(self: CryptoNode): string {
-  return path.join(self.keyFileDir, "secret.key");
-}
+/** Each node's key, once derived; kept off the node so nothing reads it there. */
+const keys = new WeakMap<CryptoNode, Buffer>();
 
-/** Derive a 32-byte key from APP_SECRET env var, key file, or auto-generated key file */
+/** Derive a 32-byte key from APP_SECRET, else, outside production, a key file it writes once. */
 function getEncryptionKey(self: CryptoNode): Buffer {
-  if (self.cachedKey) return self.cachedKey;
+  const cached = keys.get(self);
+  if (cached) return cached;
 
   const secret = process.env.APP_SECRET;
+  let key: Buffer;
   if (secret) {
-    self.cachedKey = createHash("sha256").update(secret).digest();
-    return self.cachedKey;
+    key = createHash("sha256").update(secret).digest();
+  } else if (isProduction()) {
+    // A key written at startup changes with every fresh deploy or container, and
+    // what it encrypted could no longer be read.
+    throw new Error("APP_SECRET must be set in production: it is the key encrypt and decrypt use");
+  } else {
+    const keyFile = path.join(self.keyFileDir, "secret.key");
+    if (existsSync(keyFile)) {
+      key = Buffer.from(readFileSync(keyFile, "utf8").trim(), "hex");
+    } else {
+      key = randomBytes(32);
+      writeFileSync(keyFile, key.toString("hex"), "utf8");
+    }
   }
-
-  const keyFile = keyFilePath(self);
-  if (existsSync(keyFile)) {
-    self.cachedKey = Buffer.from(readFileSync(keyFile, "utf8").trim(), "hex");
-    return self.cachedKey;
-  }
-
-  const key = randomBytes(32);
-  writeFileSync(keyFile, key.toString("hex"), "utf8");
-  self.cachedKey = key;
-  return self.cachedKey;
+  keys.set(self, key);
+  return key;
 }
 
 /** AES-256-GCM encrypt. Returns "iv:authTag:ciphertext" (all hex). */
@@ -102,7 +106,7 @@ export function decrypt(self: CryptoNode, ciphertext: string): string {
  * Handles cryptographic operations (server-only, requires Node.js).
  *
  * Supported operations:
- * - { "$hash": "password" }              -> "$2b$10$..." (bcrypt hash)
+ * - { "$hash": "password" }              -> "$2b$12$..." (bcrypt hash)
  * - { "$hash": "password", "rounds": 12 } -> bcrypt with custom rounds
  * - { "$verify": ["password", "$2b$..."] } -> true/false (bcrypt compare)
  * - { "$randomHex": 32 }                 -> random hex string (32 bytes)
@@ -190,15 +194,15 @@ export class CryptoNode extends Node {
     hash: {
       type: "string",
       output: "string",
-      markdownDescription: "Hashes a password with bcrypt. Pass `\"rounds\"` for the cost factor (default 10).",
-      outputDescription: "A bcrypt hash string (e.g. `$2b$10$…`), safe to store. Check it later with `verify`.",
+      markdownDescription: "Hashes a password with bcrypt. Pass `\"rounds\"` for the cost factor (default 12).",
+      outputDescription: "A bcrypt hash string (e.g. `$2b$12$…`), safe to store. Check it later with `verify`.",
       examples: [
         "{ \"$hash\": { \"$var\": \"body.password\" }, \"rounds\": 12 }",
       ],
       siblings: {
         rounds: {
           type: "number",
-          description: "Bcrypt cost factor (default `10`).",
+          description: "Bcrypt cost factor (default `12`). Each step doubles the time a hash takes, for you and for anyone guessing.",
         },
       },
     },
@@ -235,10 +239,9 @@ export class CryptoNode extends Node {
     },
   };
 
-  /** Root the `secret.key` dev fallback is resolved under. Instance fields, not
-   *  prototype members, so `handlerKeys` never sees them. */
+  /** Root the `secret.key` dev fallback is resolved under. An instance field, not
+   *  a prototype member, so `handlerKeys` never sees it. */
   keyFileDir: string;
-  cachedKey: Buffer | null = null;
 
   constructor(root: string = "src") {
     super();
@@ -287,7 +290,7 @@ export class CryptoNode extends Node {
 
   hash(def: Record<string, unknown>, context: Context) {
     return resolveAll([def.$hash, def.rounds], context, ([v, rounds]) =>
-      bcrypt.hash(this.toString(v), rounds == null ? 10 : this.toNumber(rounds)));
+      bcrypt.hash(this.toString(v), rounds == null ? 12 : this.toNumber(rounds)));
   }
 
   verify(def: Record<string, unknown>, context: Context) {

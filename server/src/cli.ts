@@ -10,7 +10,7 @@
 // Tokens after a `--` sentinel are parsed into `args` (a key/value object), letting a JSON
 // entry act as its own CLI — e.g. `jexs run @jexs/create -- my-app --env both --physics`.
 // An HTTP app is just an entry whose `listen` step(s) bind ports — one `http.Server` per `listen`.
-// `--prod` sets process.env.prod; `--watch` restarts the app when files under the app dir change;
+// `--prod` sets NODE_ENV=production (and process.env.prod); `--watch` restarts the app when files under the app dir change;
 // `--log` sends the nodes' own messages to stderr (the default), stdout, or nowhere.
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -88,7 +88,10 @@ function cliLogger(target: string): Logger {
 }
 
 async function run(args: string[]): Promise<void> {
-  if (args.includes("--prod")) process.env.prod = "1";
+  if (args.includes("--prod")) {
+    process.env.prod = "1";
+    process.env.NODE_ENV = "production";
+  }
 
   // Everything after the first `--` belongs to the JSON app, not the jexs CLI:
   // it's parsed into `args` and never treated as jexs positionals/flags (so an

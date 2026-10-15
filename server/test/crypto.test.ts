@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { createResolver, coreNodes } from "@jexs/core";
 import { CryptoNode } from "../src/nodes/Crypto.js";
 
@@ -146,7 +149,29 @@ test("uuid: a version 4 uuid, different every time", () => {
   assert.notEqual(first, second);
 });
 
-test("hash rounds that resolve to nothing take the default of 10", async () => {
+test("hash rounds that resolve to nothing take the default of 12", async () => {
   const hash = await resolve({ $hash: "hunter2", rounds: { $var: "missing" } }, {}) as string;
-  assert.match(hash, /^\$2[aby]\$10\$/);
+  assert.match(hash, /^\$2[aby]\$12\$/);
+});
+
+// A key written at startup would change with every fresh deploy, and what it
+// encrypted could no longer be read.
+test("in production, encrypt needs APP_SECRET and writes no key file", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "jexs-crypto-"));
+  const saved = { env: process.env.NODE_ENV, secret: process.env.APP_SECRET };
+  process.env.NODE_ENV = "production";
+  delete process.env.APP_SECRET;
+  try {
+    const local = createResolver([...coreNodes(), new CryptoNode(dir)]);
+    await assert.rejects(async () => local({ $encrypt: "x" }, {}), /APP_SECRET must be set in production/);
+    assert.deepEqual(await fs.readdir(dir), []);
+
+    process.env.APP_SECRET = "s3cret";
+    const sealed = await local({ $encrypt: "x" }, {}) as string;
+    assert.equal(await local({ $decrypt: sealed }, {}), "x");
+  } finally {
+    if (saved.env === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = saved.env;
+    if (saved.secret === undefined) delete process.env.APP_SECRET; else process.env.APP_SECRET = saved.secret;
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });

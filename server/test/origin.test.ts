@@ -10,6 +10,7 @@ import { WebSocketNode } from "../src/nodes/WebSocket.js";
 let PORT = 0;
 let TRUSTING_PORT = 0;
 let SOCKET_PORT = 0;
+let PROXIED_PORT = 0;
 
 let resolver: Resolver;
 
@@ -18,6 +19,7 @@ before(async () => {
   PORT = Number(await resolver({ $listen: 0, do: [{ response: "ran" }] }, {}));
   TRUSTING_PORT = Number(await resolver({ $listen: 0, trustedOrigins: ["https://admin.example"], do: [{ response: "ran" }] }, {}));
   SOCKET_PORT = Number(await resolver({ $listen: 0, do: [{ "$socket-accept": true }] }, {}));
+  PROXIED_PORT = Number(await resolver({ $listen: 0, trustProxy: true, do: [{ $var: "baseUrl" }] }, {}));
 });
 
 after(() => {
@@ -66,6 +68,19 @@ test("a trusted origin may send unsafe requests", async () => {
   const headers = { "sec-fetch-site": "cross-site", origin: "https://admin.example" };
   assert.equal(await send("POST", headers, TRUSTING_PORT), 200);
   assert.equal(await send("POST", { ...headers, origin: "https://evil.example" }, TRUSTING_PORT), 403);
+});
+
+// Any client can send X-Forwarded-Host, so only a listener told a proxy sets it
+// believes it, for the cross-site check and for `baseUrl`.
+test("forwarded headers count only on a listener that trusts a proxy", async () => {
+  const proxied = { origin: "https://app.example", "x-forwarded-host": "app.example", "x-forwarded-proto": "https" };
+  assert.equal(await send("POST", proxied), 403);
+  assert.equal(await send("POST", proxied, PROXIED_PORT), 200);
+
+  const base = (port: number, headers: Record<string, string>) =>
+    fetch(`http://127.0.0.1:${port}/`, { headers }).then(r => r.text());
+  assert.equal(await base(PROXIED_PORT, proxied), "https://app.example");
+  assert.equal(await base(PROXIED_PORT, {}), `http://127.0.0.1:${PROXIED_PORT}`);
 });
 
 /** Attempt a WebSocket handshake from `origin`; resolves to what happened. */

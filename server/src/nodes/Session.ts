@@ -1,6 +1,7 @@
 import { randomUUID, randomBytes } from "crypto";
 import { CSRF_TOKEN, Node, Context, NodeValue, resolveAll, createHttpError, isObject } from "@jexs/core";
 import { COOKIES } from "../context.js";
+import { isProduction } from "../env.js";
 import { cacheFor, optionalName } from "./Cache.js";
 import { tokensEqual } from "./Crypto.js";
 import type { CacheAdapter } from "../cache/CacheAdapter.js";
@@ -21,7 +22,11 @@ interface StoredSession {
 
 const PREFIX = "session:";
 const TTL = 86400; // 24 hours in seconds
+/** The session id's cookie, and its name once Secure: a browser takes a
+ *  `__Host-` cookie only from this exact host over TLS, so a sibling subdomain
+ *  can't plant one. */
 const COOKIE_NAME = "sid";
+const SECURE_COOKIE_NAME = "__Host-sid";
 /** Read by the client's `$fetch`, which sends it back as `x-csrf-token`. */
 const CSRF_COOKIE = "csrf";
 /** Methods that must not change state, so they carry no CSRF token. */
@@ -49,7 +54,7 @@ export class SessionNode extends Node {
         "destroy",
         "object",
       ],
-      markdownDescription: "Manages request sessions stored in cache. Pass an object to set session values. Read values with `{ \"$var\": \"session.key\" }`.\r\nSession ID is stored in a `sid` HTTP-only cookie with a 24-hour TTL.\r\nOn a request other than GET, HEAD or OPTIONS that carries a session cookie, every operation first checks the session's CSRF token, sent as the `_csrf` body field or the `x-csrf-token` header, and fails with 403 without it. The client runtime sends it on its own, read from the `csrf` cookie the session sets: as the header on the page's `$fetch`, and as the field on its form posts. A page served without the client gets the field rendered into its non-GET forms instead.",
+      markdownDescription: "Manages request sessions stored in cache. Pass an object to set session values. Read values with `{ \"$var\": \"session.key\" }`.\r\nSession ID is stored in an HTTP-only cookie with a 24-hour TTL: `sid`, or `__Host-sid` once Secure. Its cookies are Secure in production (`NODE_ENV=production`) and whenever the app's URL is https (`BASE_URL`, or a trusted proxy's `X-Forwarded-Proto`; see `$listen`'s `trustProxy`).\r\nOn a request other than GET, HEAD or OPTIONS that carries a session cookie, every operation first checks the session's CSRF token, sent as the `_csrf` body field or the `x-csrf-token` header, and fails with 403 without it. The client runtime sends it on its own, read from the `csrf` cookie the session sets: as the header on the page's `$fetch`, and as the field on its form posts. A page served without the client gets the field rendered into its non-GET forms instead.",
       outputDescription: "The session's data, which `load` and setting values also make readable as `session`; `null` after `destroy`. The cookies are queued onto the response for you; you don't return them yourself.",
       examples: [
         "{ \"$session\": { \"user_id\": { \"$var\": \"user.id\" }, \"role\": { \"$var\": \"user.role\" } }, \"regenerate\": true }",
@@ -120,7 +125,7 @@ async function readSession(context: Context, cache: CacheAdapter): Promise<Store
   const known = request ? current.get(request) : undefined;
   if (known?.cache === cache) return known.stored;
 
-  const id = request?.cookies?.[COOKIE_NAME];
+  const id = request?.cookies?.[sidCookie(context)];
   if (!id) return null;
   const stored = await cache.get<StoredSession>(PREFIX + id);
   // A record without a token can't be checked, so it counts as no session.
@@ -159,16 +164,21 @@ function pushCookie(context: Context, cookie: string): void {
   if (Array.isArray(cookies)) cookies.push(cookie);
 }
 
-function shouldUseSecureCookie(context: Context): boolean {
-  const baseUrl = process.env.BASE_URL;
-  if (baseUrl && /^https:\/\//i.test(baseUrl)) return true;
+/**
+ * Whether the session's cookies are Secure: in production, which is served
+ * over TLS even when a proxy in front terminates it, and wherever the app's URL
+ * is https. `baseUrl` is the listener's, which believes a proxy's headers only
+ * when told to trust it.
+ */
+function isSecure(context: Context): boolean {
+  if (isProduction()) return true;
+  const baseUrl = typeof context.baseUrl === "string" ? context.baseUrl : process.env.BASE_URL;
+  return baseUrl !== undefined && /^https:\/\//i.test(baseUrl);
+}
 
-  const forwardedProto = context.request?.headers?.["x-forwarded-proto"];
-  if (typeof forwardedProto === "string") {
-    return forwardedProto.split(",")[0].trim().toLowerCase() === "https";
-  }
-
-  return false;
+/** The name the session id's cookie has on this request. */
+function sidCookie(context: Context): string {
+  return isSecure(context) ? SECURE_COOKIE_NAME : COOKIE_NAME;
 }
 
 function buildCookie(context: Context, name: string, value: string, maxAge = TTL): string {
@@ -177,9 +187,9 @@ function buildCookie(context: Context, name: string, value: string, maxAge = TTL
     "Path=/",
     // The session id stays out of reach of page scripts; the CSRF token is
     // meant for them, so `$fetch` can send it back.
-    ...(name === COOKIE_NAME ? ["HttpOnly"] : []),
+    ...(name === CSRF_COOKIE ? [] : ["HttpOnly"]),
     "SameSite=Lax",
-    ...(shouldUseSecureCookie(context) ? ["Secure"] : []),
+    ...(isSecure(context) ? ["Secure"] : []),
     `Max-Age=${maxAge}`,
   ].join("; ");
 }
@@ -213,8 +223,8 @@ async function initSession(
 
   if (context.request) trusted.add(context.request);
   // Later ops in this request see the new id.
-  if (context.request?.cookies) context.request.cookies[COOKIE_NAME] = stored.id;
-  pushCookie(context, buildCookie(context, COOKIE_NAME, stored.id));
+  if (context.request?.cookies) context.request.cookies[sidCookie(context)] = stored.id;
+  pushCookie(context, buildCookie(context, sidCookie(context), stored.id));
   useSession(context, cache, stored);
   return stored;
 }
@@ -226,7 +236,7 @@ async function destroySession(context: Context, cache: CacheAdapter): Promise<nu
 
   context.session = {};
   delete context[CSRF_TOKEN];
-  pushCookie(context, buildCookie(context, COOKIE_NAME, "", 0));
+  pushCookie(context, buildCookie(context, sidCookie(context), "", 0));
   pushCookie(context, buildCookie(context, CSRF_COOKIE, "", 0));
   return null;
 }

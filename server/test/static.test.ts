@@ -30,6 +30,7 @@ before(async () => {
   // way to reach the prefix branch of the lookup.
   await fs.mkdir(path.join(root, "dist", "browser"), { recursive: true });
   await fs.writeFile(path.join(root, "dist", "browser", "client.js"), "// bundle");
+  await fs.writeFile(path.join(root, "dist", "browser", "client.js.map"), '{"version":3}');
   // Same prefix, but only present in public/: reaching it means the lookup
   // moved on from the static dir rather than stopping there.
   await fs.mkdir(path.join(root, "public", "jexs"), { recursive: true });
@@ -208,9 +209,14 @@ test("a body is sent with its length rather than chunked", async () => {
   assert.equal(res.headers.get("transfer-encoding"), null);
 });
 
-test("a source map is typed as JSON", async () => {
-  const res = await fetch(`${base}/app.css.map`);
+test("the client bundle's source map is served, typed as JSON", async () => {
+  const res = await fetch(`${base}/jexs/client.js.map`);
   assert.equal(res.headers.get("content-type"), "application/json");
+});
+
+// It would map the app's own sources, which a deploy can ship by accident.
+test("a source map in public/ is not served", async () => {
+  assert.equal(await (await fetch(`${base}/app.css.map`)).text(), "routed");
 });
 
 // One fact, two headers: the cache policy and the registration scope.

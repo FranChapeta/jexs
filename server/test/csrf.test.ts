@@ -227,6 +227,31 @@ test("steps that load the session late are still refused without a token", async
   }
 });
 
+// Over https the cookies are Secure, and the session's is `__Host-sid`, which a
+// browser takes only from this exact host, so a sibling subdomain can't plant one.
+test("on an https app the session cookie is Secure and host-only", async () => {
+  const { resolver } = await started();
+  try {
+    const first = { ...request("GET", {}), baseUrl: "https://app.example" };
+    await resolver([{ $session: "load" }, { $session: { user: "ada" } }], first);
+    const line = cookiesOf(first).find(c => c.startsWith("__Host-sid=")) ?? "";
+    assert.match(line, /; Secure/);
+    assert.match(line, /; Path=\//);
+    assert.ok(cookiesOf(first).every(c => /; Secure/.test(c)), "the csrf cookie is Secure too");
+
+    const sid = line.slice("__Host-sid=".length, line.indexOf(";"));
+    const again = { ...request("GET", { "__Host-sid": sid }), baseUrl: "https://app.example" };
+    await resolver({ $session: "load" }, again);
+    assert.equal(again.session?.user, "ada");
+
+    const plain = request("GET", {});
+    await resolver({ $session: "load" }, plain);
+    assert.ok(cookiesOf(plain).some(c => c.startsWith("sid=") && !/Secure/.test(c)), "plain http in development keeps `sid`");
+  } finally {
+    resolver.destroy();
+  }
+});
+
 /** The `csrf` cookie a response queued, as its raw Set-Cookie line. */
 const csrfCookie = (ctx: Context) => cookiesOf(ctx).find(c => c.startsWith("csrf="));
 

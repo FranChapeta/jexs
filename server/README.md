@@ -90,7 +90,11 @@ These are on without any configuration:
 - **CSRF.** On a POST, PUT, PATCH or DELETE that carries a session cookie, every `$session` op first checks the session's token, sent as the `_csrf` body field or the `x-csrf-token` header, and answers 403 without it. A page that loads `@jexs/client` sends it on its own, on its `$fetch` calls and its form posts, read from the `csrf` cookie the session sets; a page served without the client gets the field rendered into its forms.
 - **Cross-site requests.** A state-changing request or WebSocket upgrade that a browser sends from another site's page is refused with 403 before any step runs. Requests from outside a browser (webhooks, scripts) pass. Allow other origins with `$listen`'s `trustedOrigins`.
 - **Session ids.** A cookie naming a session the server doesn't hold is never adopted, so a planted cookie can't choose a user's session. Log in with `{ "$session": { "user_id": ... }, "regenerate": true }`, which also moves the session to a new id and token.
+- **Session cookies.** In production (`NODE_ENV=production`, which `jexs run --prod` sets) and whenever the app's URL is https, the session's cookies are `Secure`, and its id's is named `__Host-sid`, which a browser accepts only from this exact host.
+- **Proxies.** `X-Forwarded-Host` and `X-Forwarded-Proto` are ignored, since any client can send them, unless `$listen` has `trustProxy: true` because a proxy in front sets them.
+- **Secrets.** `$encrypt` and `$decrypt` key off `APP_SECRET`. In production it must be set; elsewhere a `secret.key` file is generated once as a fallback.
 - **Caching.** A response that sets a cookie gets `Cache-Control: private="Set-Cookie"` unless it sets its own, so a shared cache never hands one visitor's cookies to another.
+- **Source maps.** `.map` files in `public/` are not served, so a deploy can't hand out the app's own sources; the client bundle's maps still are.
 - **Values are data.** Request bodies, rows and anything read with `$var` render as values; steps inside them never run.
 
 Run with the `jexs` CLI — it resolves the entry as steps, and each `listen` step in it binds a port (add more `listen` steps to serve more ports):

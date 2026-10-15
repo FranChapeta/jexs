@@ -83,6 +83,19 @@ const HOST_INFO = {
   cpus: os.cpus().length,
 };
 
+/** The host and process facts a listener with `system: true` gives each request. */
+function systemInfo(): Record<string, unknown> {
+  const total = os.totalmem();
+  const free = os.freemem();
+  const mem = process.memoryUsage();
+  return {
+    uptime: Math.floor(process.uptime()),
+    ...HOST_INFO,
+    memory: { total, free, used: total - free },
+    process: { rss: mem.rss, heapUsed: mem.heapUsed, heapTotal: mem.heapTotal },
+  };
+}
+
 /**
  * One HTTP listener bound to one port. Bundles the state that used to be `Server` instance
  * fields, so each `listen` step is fully independent (its own request pipeline and config).
@@ -106,6 +119,10 @@ interface Listener {
   publicDir: string;
   /** Other origins allowed to send unsafe requests; `"*"` allows any. */
   trustedOrigins: string[];
+  /** Whether a proxy in front sets `X-Forwarded-Host` and `-Proto`, so they are believed. */
+  trustProxy: boolean;
+  /** Whether each request's context gets the `system` block. */
+  system: boolean;
 }
 
 /**
@@ -129,27 +146,34 @@ function isCrossSite(req: http.IncomingMessage, method: string, listener: Listen
   } catch {
     return true;
   }
-  const own = [req.headers.host, req.headers["x-forwarded-host"]];
+  const own = [req.headers.host];
+  const forwarded = forwardedHeader(req, "x-forwarded-host", listener);
+  if (forwarded) own.push(forwarded);
   if (process.env.BASE_URL) own.push(new URL(process.env.BASE_URL).host);
   return !own.includes(host);
 }
 
 /**
- * Compute the base URL for a listener.
- * With a request: env var > X-Forwarded-Host > Host header.
- * Without a request (startup): env var > http://localhost:port.
+ * A proxy's `X-Forwarded-*` header, first value, when the listener trusts a
+ * proxy to set it. Without one in front, any client can send these, so they
+ * are ignored.
  */
-function getBaseUrl(port: number, req?: http.IncomingMessage): string {
+function forwardedHeader(req: http.IncomingMessage, name: string, listener: Listener): string | undefined {
+  const value = listener.trustProxy ? req.headers[name] : undefined;
+  return typeof value === "string" ? value.split(",")[0].trim() : undefined;
+}
+
+/**
+ * The URL the app is reached at: `BASE_URL`, else what a trusted proxy says it
+ * forwarded, else the request's own Host over plain http (the listener serves
+ * no TLS itself). Without a request (startup), `BASE_URL` or localhost.
+ */
+function getBaseUrl(listener: Listener, req?: http.IncomingMessage): string {
   if (process.env.BASE_URL) return process.env.BASE_URL;
-  if (req) {
-    const headers = req.headers;
-    if (headers["x-forwarded-host"]) {
-      return `${headers["x-forwarded-proto"] || "https"}://${headers["x-forwarded-host"]}`;
-    }
-    const url = new URL(req.url || "/", `http://${headers.host || "localhost"}`);
-    return `${url.protocol}//${headers.host}`;
-  }
-  return `http://localhost:${port}`;
+  if (!req) return `http://localhost:${listener.port}`;
+  const host = forwardedHeader(req, "x-forwarded-host", listener) ?? req.headers.host ?? "localhost";
+  const proto = forwardedHeader(req, "x-forwarded-proto", listener) ?? "http";
+  return `${proto}://${host}`;
 }
 
 /** Register a URL path prefix to serve files from a local directory (e.g. the @jexs/client bundle). */
@@ -255,12 +279,9 @@ async function handleRequest(
       return;
     }
 
-    const baseUrl = getBaseUrl(listener.port, req);
+    const baseUrl = getBaseUrl(listener, req);
 
     // Build per-request context, inheriting from startup context
-    const totalMem = os.totalmem();
-    const freeMem = os.freemem();
-    const mem = process.memoryUsage();
     const setCookies: string[] = [];
     const deferred: Deferred[] = [];
     const context: Context = {
@@ -274,23 +295,10 @@ async function handleRequest(
         headers,
         cookies,
       },
-      system: {
-        uptime: Math.floor(process.uptime()),
-        ...HOST_INFO,
-        memory: {
-          total: totalMem,
-          free: freeMem,
-          used: totalMem - freeMem,
-        },
-        process: {
-          rss: mem.rss,
-          heapUsed: mem.heapUsed,
-          heapTotal: mem.heapTotal,
-        },
-      },
       [COOKIES]: setCookies,
       [DEFERRED]: deferred,
     };
+    if (listener.system) context.system = systemInfo();
 
     // The steps yield the response: what a `$return` gives, or the last step's value.
     const result = (await runSteps(listener.steps, context)) ?? null;
@@ -477,6 +485,9 @@ function* candidateFiles(requestPath: string, listener: Listener): Generator<str
     if (relative !== null) yield path.join(localDir, relative);
   }
 
+  // A source map in public/ would hand out the app's own sources; the bundle's
+  // above only map the library.
+  if (path.extname(requestPath).toLowerCase() === ".map") return;
   const relative = safeRelative(listener.publicDir, requestPath);
   if (relative !== null) yield path.join(listener.publicDir, relative);
 }
@@ -683,6 +694,21 @@ export class ServerNode extends Node {
           type: "number",
           description: "Maximum request body size in bytes.",
         },
+        host: {
+          type: "string",
+          default: "0.0.0.0",
+          description: "The address to bind: `\"0.0.0.0\"` (every interface, the default, as a container needs), `\"127.0.0.1\"` to take requests from this machine only, or `\"::\"` for IPv6 too.",
+        },
+        trustProxy: {
+          type: "boolean",
+          default: false,
+          description: "A proxy in front (nginx, a load balancer, a PaaS router) terminates TLS and says what it forwarded in `X-Forwarded-Host` and `X-Forwarded-Proto`, so believe those for `baseUrl`, the cross-site check and Secure cookies. Leave it off when clients reach the listener directly: any of them can send these headers.",
+        },
+        system: {
+          type: "boolean",
+          default: false,
+          description: "Give each request's context a `system` block: uptime, platform, hostname, CPU count, and host and process memory.",
+        },
         maxMessageSize: {
           type: "number",
           description: "Maximum WebSocket message size in bytes (default 65536). A larger message closes the socket with code 1009 before it is read whole.",
@@ -776,12 +802,17 @@ export class ServerNode extends Node {
       return null;
     }
 
-    return resolveAll([def.$listen, def.maxBodySize ?? null, def.maxMessageSize ?? null, def.trustedOrigins ?? null], context, async ([portRaw, maxBodyRaw, maxMessageRaw, originsRaw]) => {
+    const options = [def.maxBodySize, def.maxMessageSize, def.trustedOrigins, def.host, def.trustProxy, def.system].map(o => o ?? null);
+    return resolveAll([def.$listen, ...options], context, async ([portRaw, maxBodyRaw, maxMessageRaw, originsRaw, hostRaw, trustProxy, system]) => {
       // `0` asks the OS for any free port; the step returns the one it got.
       const requested = portRaw == null || portRaw === "" ? 3000 : Number(portRaw);
       if (!Number.isInteger(requested) || requested < 0 || requested > 65535) {
         throw new Error(`$listen: ${JSON.stringify(portRaw)} is not a port number`);
       }
+      if (hostRaw !== null && typeof hostRaw !== "string") {
+        throw new Error(`$listen: host ${JSON.stringify(hostRaw)} is not an address`);
+      }
+      const host = hostRaw ?? "0.0.0.0";
 
       const listener: Listener = {
         node: this,
@@ -796,6 +827,8 @@ export class ServerNode extends Node {
         sw: null,
         publicDir: path.resolve(process.cwd(), "public"),
         trustedOrigins: Array.isArray(originsRaw) ? originsRaw.filter(o => typeof o === "string") : [],
+        trustProxy: trustProxy === true,
+        system: system === true,
       };
 
       if (def.maxBodySize && maxBodyRaw != null) {
@@ -867,7 +900,7 @@ export class ServerNode extends Node {
         await new Promise<void>((res, rej) => {
           httpServer.once("listening", () => res());
           httpServer.once("error", rej);
-          httpServer.listen(requested, "0.0.0.0");
+          httpServer.listen(requested, host);
         });
       } catch (err) {
         const idx = this.listeners.indexOf(listener);
@@ -887,11 +920,11 @@ export class ServerNode extends Node {
         loggerFor(context).error("[Server] Server error:", err.message);
       });
 
-      loggerFor(context).info(`Jexs running at http://0.0.0.0:${port}`);
+      loggerFor(context).info(`Jexs running at http://${host.includes(":") ? `[${host}]` : host}:${port}`);
 
       // Log install URL if in installer mode
       if (context.installToken) {
-        const installUrl = `${getBaseUrl(port)}/install?token=${context.installToken}`;
+        const installUrl = `${getBaseUrl(listener)}/install?token=${context.installToken}`;
         console.log(`\n[Install] No database configured.`);
         console.log(`[Install] Access the installer at: ${installUrl}\n`);
         fs.writeFileSync("install.txt", installUrl + "\n");
