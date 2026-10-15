@@ -1,507 +1,352 @@
 import fs from "fs/promises";
 import path from "path";
+import AjvModule from "ajv/dist/2020.js";
+import addFormatsModule from "ajv-formats";
+import type { ValidateFunction, ErrorObject } from "ajv";
 import { Node, Context, NodeValue, isObject, isStep, resolve, resolveAll, resolverFor } from "@jexs/core";
-import { TableJsonSchema, ColumnSchema } from "./Query.js";
-import { sha256 } from "./Crypto.js";
-import { validate, validateDetailed, getValidator, createValidation } from "../validate.js";
 import type { JexsNodeSchema } from "@jexs/core";
 
-/** The functions a column's `computed` may name, each deriving the column from another on insert. */
-const COMPUTE_FNS: Record<string, (value: string) => string> = { sha256 };
+// ajv/dist/2020 and ajv-formats are CommonJS; under NodeNext the class/plugin
+// are reached via the synthesized default's `.default`.
+const Ajv2020 = AjvModule.default;
+const addFormats = addFormatsModule.default;
 
-const JSON_TYPES = ["string", "number", "integer", "boolean", "object", "array", "null"];
-const SQL_TYPES = [
-  "integer", "int", "biginteger", "bigint", "smallint", "tinyint", "float", "double", "decimal",
-  "varchar", "string", "text", "mediumtext", "longtext", "boolean", "bool",
-  "date", "datetime", "timestamp", "time", "json", "jsonb", "binary", "blob", "uuid",
-];
-const REFERENTIAL = ["CASCADE", "SET NULL", "RESTRICT", "NO ACTION"];
-const strings = { type: "array", items: { type: "string" } };
+/** JSON Schema's own `$` keywords. An object with one is a schema written out,
+ *  never a step, however it is otherwise shaped. */
+const SCHEMA_KEYWORDS = ["$schema", "$id", "$ref", "$defs", "$anchor", "$dynamicRef", "$dynamicAnchor", "$vocabulary", "$comment"];
+
+/** How many inline schemas a SchemaNode keeps compiled before dropping the least recently used. */
+export const MAX_COMPILED = 500;
+
+/** The id a table document is registered under, which `$table` and `$query` look it up by. */
+export function tableId(table: string): string {
+  return `table/${table}`;
+}
+
+/** A table document: a `table` name and its column `properties`. */
+export function isTableDocument(value: unknown): value is { table: string; properties: Record<string, unknown> } {
+  return isObject(value) && typeof value.table === "string" && isObject(value.properties);
+}
 
 /**
- * SchemaNode - Manages table schema registration and data validation.
- *
- * Table schemas are authored as JSON Schema (draft 2020-12) documents: the
- * `properties` map defines columns, beside the settings that build the table. Insert/
- * update data is validated against the document by the node's own validation
- * (see ../validate.ts), after coercion + computed-column enrichment.
- *
- * Register from directory:
- * { "$schema": "register", "path": "db/tables" }
- *
- * Register inline:
- * { "$schema": "register", "table": { "table": "migrations", "properties": { ... } } }
+ * A `schema` value, resolved once: a schema written out is kept as written, so
+ * its `$` keywords stay JSON Schema's and a table document's `validator` stays
+ * steps; a step producing one (`$var`, a `$file` with `data: true`) resolves to
+ * it; a string names a registered schema.
  */
-/** The resolver's own SchemaNode, whose registry its queries consult. */
-export function schemaFor(context: Context): SchemaNode {
+export async function schemaArg(value: unknown, context: Context): Promise<unknown> {
+  const written = isObject(value) && SCHEMA_KEYWORDS.some(k => k in value);
+  return isStep(value) && !written ? resolve(value, context) : value;
+}
+
+/** The resolver's SchemaNode, which route, table and `$schema` validation all go through. */
+export function requireSchemaNode(context: Context): SchemaNode {
   const node = resolverFor(context).nodeFor("schema");
-  if (!(node instanceof SchemaNode)) {
-    throw new Error("No SchemaNode in this resolver; build it with serverNodes().");
-  }
+  if (!(node instanceof SchemaNode)) throw new Error("No SchemaNode in this resolver; build it with serverNodes().");
   return node;
 }
 
+const result = {
+  type: "object",
+  properties: {
+    valid: { type: "boolean" },
+    errors: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "Where, dotted; `\"\"` for the root." },
+          message: { type: "string" },
+          keyword: { type: "string", description: "The JSON Schema keyword that failed." },
+        },
+      },
+    },
+  },
+} as const;
+
 export class SchemaNode extends Node {
-  /** `tableSchema` is a table document: JSON Schema for its rows, beside the
-   *  settings that build and guard the table (display settings go under
-   *  `x-entity`). It is a root document kind, so a file whose root has
-   *  `properties` and `table` is checked as one. */
   static schemaDefs: Record<string, Record<string, unknown>> = {
-    tableSchema: {
-      type: "object",
-      required: ["properties", "table"],
-      properties: {
-        type:       { const: "object" },
-        required:   { ...strings, description: "Columns every row must have." },
-        properties: { type: "object", additionalProperties: { $ref: "#/$defs/_tableColumn" }, description: "The columns, by name." },
-        table:      { type: "string", description: "The table's name." },
-        primaryKey: { ...strings, description: "A composite primary key. A single-column key is set on its column instead." },
-        indexes: {
-          type: "object",
-          description: "Indexes, by name.",
-          additionalProperties: {
-            type: "object",
-            required: ["columns"],
-            additionalProperties: false,
-            properties: {
-              type:    { enum: ["index", "unique", "fulltext"], default: "index" },
-              columns: { anyOf: [{ type: "string" }, strings] },
-            },
-          },
-        },
-        foreignKeys: {
-          type: "object",
-          description: "Foreign keys, by name.",
-          additionalProperties: {
-            type: "object",
-            required: ["column", "references"],
-            additionalProperties: false,
-            properties: {
-              column: { type: "string" },
-              references: {
-                type: "object",
-                required: ["table", "column"],
-                additionalProperties: false,
-                properties: { table: { type: "string" }, column: { type: "string" } },
-              },
-              onDelete: { enum: REFERENTIAL },
-              onUpdate: { enum: REFERENTIAL },
-            },
-          },
-        },
-        options: {
-          type: "object",
-          additionalProperties: false,
-          description: "MySQL table options; other databases ignore them.",
-          properties: { engine: { type: "string" }, charset: { type: "string" }, collate: { type: "string" } },
-        },
-        validator: { $ref: "#/$defs/steps", description: "Steps run before each query on this table, after the global validator, with `operation`, `schema` and `query`. Not run for the table's own `create`." },
-        "x-entity": { $ref: "#/$defs/_tableEntity" },
+    // A schema written out (no `$` key, or one of JSON Schema's own), or a step
+    // producing one.
+    _schemaDocument: {
+      if: {
+        type: "object",
+        anyOf: [{ propertyNames: { not: { pattern: "^\\$" } } }, ...SCHEMA_KEYWORDS.map(k => ({ required: [k] }))],
       },
+      then: { type: "object" },
+      else: { $ref: "#/$defs/exprFlat" },
     },
-    _tableColumn: {
-      type: "object",
-      description: "A column: JSON Schema for its values, beside the SQL settings that build it.",
-      properties: {
-        type:          { anyOf: [{ enum: JSON_TYPES }, { type: "array", items: { enum: JSON_TYPES } }] },
-        default:       { description: "JSON Schema's default, the value a row is given. The column's SQL default is `sqlDefault`." },
-        sqlType:       { enum: SQL_TYPES, description: "The SQL type; without it, mapped from the JSON Schema `type`." },
-        sqlDefault:    { type: ["string", "number", "boolean", "null"], description: "The column's SQL default. `CURRENT_TIMESTAMP` is passed through as SQL." },
-        length:        { type: "integer", description: "Length of a `varchar` (default 255); `maxLength` wins when both are set." },
-        precision:     { type: "integer" },
-        scale:         { type: "integer" },
-        primaryKey:    { type: "boolean" },
-        autoIncrement: { type: "boolean" },
-        unique:        { type: "boolean" },
-        unsigned:      { type: "boolean" },
-        comment:       { type: "string" },
-        computed: {
-          type: "object",
-          propertyNames: { enum: Object.keys(COMPUTE_FNS) },
-          additionalProperties: { type: "string" },
-          description: "Fill this column on insert from another, by function: `{ \"sha256\": \"password\" }`.",
-        },
-      },
-    },
-    _tableEntity: {
-      type: "object",
-      description: "Display settings for admin and listing templates; the server does not read them.",
-      properties: {
-        label:       { type: "string" },
-        singular:    { type: "string" },
-        icon:        { type: "object" },
-        listColumns: strings,
-        orderBy: {
-          type: "object",
-          properties: { column: { type: "string" }, direction: { enum: ["asc", "desc"] } },
-        },
-        color: { type: "string" },
-      },
-    },
-    /** `create`'s `schema`: a table document, or a name, `"*"` or a step producing one. */
-    _tableSchemaSlot: {
-      if: { type: "object", anyOf: [{ required: ["properties"] }, { required: ["table"] }] },
-      then: { $ref: "#/$defs/tableSchema" },
-      else: { $ref: "#/$defs/strOrExpr" },
+    // A registered schema's id, or a schema as `_schemaDocument` takes it.
+    _schemaOrId: {
+      if: { type: "string" },
+      then: { type: "string" },
+      else: { $ref: "#/$defs/_schemaDocument" },
     },
   };
 
   static schema: JexsNodeSchema = {
     schema: {
       type: "string",
-      enum: [
-        "register",
-        "get",
-        "list",
-        "validator",
-        "validate",
-      ],
-      markdownDescription: "Registers table schemas for use by QueryNode. The operation is the primary value.",
+      enum: ["register", "unregister", "list", "validate"],
+      markdownDescription: "JSON Schema (draft 2020-12): registered schemas, which route bodies, table rows and other schemas can `$ref` by id, and checking a value against one. A table document registers as `table/<name>`; `$table: \"create\"` and `\"sync\"` register theirs themselves.",
       examples: [
-        "{ \"$schema\": \"register\", \"path\": \"db/tables\" }",
+        "{ \"$schema\": \"register\", \"path\": \"db/schemas\" }",
+        "{ \"$schema\": \"validate\", \"schema\": \"table/users\", \"data\": { \"$var\": \"request.body\" } }",
       ],
       variants: {
         register: {
-          output: {
-            type: "object",
-            properties: { registered: { type: "array", items: { type: "string" }, description: "The names of the tables registered." } },
-          },
-          markdownDescription: "Registers schemas from a directory `path` or an inline `table` document.",
+          output: { type: "array", items: { type: "string" } },
+          outputDescription: "The ids it registered.",
+          markdownDescription: "Registers a `schema`, or every document in a `path` directory, under its `$id` (a table document under `table/<name>`), replacing what was there.",
           siblings: {
-            path: { type: "string", description: "Directory of JSON schema files to load." },
-            table: { $ref: "#/$defs/tableSchema", description: "A table document to register inline." },
+            schema: { $ref: "#/$defs/_schemaDocument", literal: true, description: "A schema with an `$id`, or a table document, written out or from a step (`$file` with `data: true`)." },
+            path: { type: "string", description: "Directory of schema documents to register." },
           },
         },
-        get: {
-          output: { $ref: "#/$defs/tableSchema" },
-          outputDescription: "The table's JSON Schema document, or `null` if not registered.",
-          markdownDescription: "Returns a registered table schema by name.",
-          siblings: {
-            table: { type: "string", description: "Table name to retrieve." },
-          },
+        unregister: {
+          output: "boolean",
+          outputDescription: "Whether something was registered under the id.",
+          markdownDescription: "Forgets a registered schema. A table's document going leaves the table as it is; `$query` writes to it are just no longer checked.",
+          siblings: { id: { type: "string", required: true, description: "The schema's id, `table/<name>` for a table." } },
         },
         list: {
-          output: { type: "array", items: { $ref: "#/$defs/tableSchema" } },
-          markdownDescription: "Returns all registered table schemas.",
-        },
-        validator: {
-          output: "null",
-          markdownDescription: "Sets the global validator: steps run before every query on every table, create and drop included, to authorize it. They see `operation`, the table document as `schema`, and `query` (`table`, `where`, `data`, ...), which they may narrow. Refuse with `{ \"$error\": 403 }`. A table's own `validator` runs after this one, never instead of it. Queries with `system: true` skip both, so pass it for the app's own queries, such as creating tables at startup.",
-          siblings: {
-            do: { steps: true, description: "Steps run before each query." },
-          },
+          output: { type: "array", items: { type: "object" } },
+          outputDescription: "Copies of the registered documents, as they were written.",
+          markdownDescription: "Lists the registered schemas.",
         },
         validate: {
-          output: {
-            type: "object",
-            properties: {
-              valid: { type: "boolean" },
-              errors: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    path: { type: "string", description: "Where, dotted; `\"\"` for the root." },
-                    message: { type: "string" },
-                    keyword: { type: "string", description: "The JSON Schema keyword that failed." },
-                  },
-                },
-              },
-            },
-          },
+          output: result,
           outputDescription: "Whether the data is valid, and why not when it isn't.",
-          markdownDescription: "Validates `data` against a JSON Schema (draft 2020-12): either a `document` handed in, or the schema registered for `table`. Returns the result rather than throwing, so the caller decides what a failure means.",
+          markdownDescription: "Checks `data` against a schema: a registered one by id, or one written out. Returns the result rather than throwing, so the caller decides what a failure means; an unknown id or a schema that does not compile is reported the same way.",
           siblings: {
-            data: { description: "The value to check. Pass it through a `var` (loaded with `data: true`) when it is itself a Jexs template, otherwise it resolves as an expression before it can be checked." },
-            document: { description: "The JSON Schema document to check against. It compiles once per distinct document, whether written inline or passed by `var`." },
-            table: { type: "string", description: "Name of a registered table schema to check against, instead of `document`." },
+            schema: { $ref: "#/$defs/_schemaOrId", literal: true, required: true, description: "A registered schema's id, or a schema. One written out compiles once per distinct schema, inline or by `$var`." },
+            data: { description: "The value to check." },
           },
         },
       },
     },
   };
 
-  /** Registered table documents and the global validator. Instance fields, so a
-   *  table registered in one resolver never judges another resolver's queries;
-   *  the statics below take a context to find their own node. */
-  private readonly schemas = new Map<string, TableJsonSchema>();
-  private globalValidator: unknown = null;
+  /**
+   * The resolver's one Ajv: route, table and `$schema` schemas all compile here,
+   * so registered ones can be `$ref`d from any of them, while one resolver's
+   * schemas, and their `$id`s, never meet another's in the same process.
+   * `strict: false` lets schemas carry keywords Ajv does not know (a table
+   * document's `table`, `sqlType`, ...) without rejecting them.
+   */
+  readonly ajv = new Ajv2020({ allErrors: true, strict: false });
 
-  /** Validates table rows and `$schema` `validate` documents for this resolver. */
-  readonly validation = createValidation();
+  /** Inline schemas compiled in `ajv`, by their JSON text, least recently used first. */
+  readonly compiled = new Map<string, ValidateFunction>();
 
-  /** Cache of `required`-stripped clones used to validate partial updates. */
-  private static updateSchemas: WeakMap<TableJsonSchema, object> = new WeakMap();
+  /** Registered documents by id, as written. Ajv keeps its own compiled copies,
+   *  but cannot list them. */
+  readonly documents = new Map<string, Record<string, unknown>>();
 
   private root: string;
 
   constructor(root: string = "src") {
     super();
     this.root = root;
+    addFormats(this.ajv);
   }
 
   schema(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$schema, context, op => {
-      // Copies: a step that changes what it reads must not change the registry.
-      if (op === "get") {
-        const found = this.schemas.get(this.toString(def.table));
-        return found ? structuredClone(found) : null;
-      }
-      if (op === "list") {
-        return Array.from(this.schemas.values(), schema => structuredClone(schema));
-      }
-      if (op === "validator") {
-        if (def.do !== undefined) {
-          this.globalValidator = def.do;
+    return resolve(def.$schema, context, async op => {
+      switch (op) {
+        case "register": {
+          const docs = await documentsOf(def, context, this.root);
+          return docs.map(doc => SchemaNode.register(this, doc));
         }
-        return null;
+        case "unregister":
+          return resolve(def.id, context, id => SchemaNode.unregister(this, String(id)));
+        case "list":
+          // Copies: a step that changes what it reads must not change the registry.
+          return Array.from(this.documents.values(), doc => structuredClone(doc));
+        case "validate":
+          return check(this, def, context);
+        default:
+          throw new Error(`$schema: unknown operation ${JSON.stringify(op)}`);
       }
-      if (op === "validate") {
-        return doValidate(def, context);
-      }
-      return doRegister(def, context, this.root);
     });
   }
 
-  // ============================================
-  // Static API (used by QueryNode). Statics rather than methods, since every
-  // method on a Node registers as an op; each takes the context to find the
-  // resolver's own registry.
-  // ============================================
+  // API for the other nodes. Statics rather than methods, since every method on
+  // a Node registers as an op.
 
   /**
-   * Register a table document. The registry keeps its own copy, since the
-   * document is usually a template's literal or a value from context that later
-   * steps may change, and returns it.
+   * Register `doc` under its id, replacing what was there, and return the id.
+   * It compiles now, so a malformed one throws here and stays unregistered.
+   * Inline schemas compiled against what was there are dropped, to compile again
+   * against this one; another registered schema that `$ref`s it keeps the old
+   * one until it is registered again.
    */
-  static register(context: Context, schema: unknown): TableJsonSchema {
-    if (!isTableDocument(schema)) {
-      throw new Error("A table document needs a `table` name and `properties`.");
-    }
-    const own = structuredClone(schema);
-    // Compile eagerly so a malformed schema throws at registration, not on the
-    // first insert.
-    getValidator(schemaFor(context).validation, own);
-    schemaFor(context).schemas.set(own.table, own);
-    return own;
-  }
-
-  static getAll(context: Context): TableJsonSchema[] {
-    return Array.from(schemaFor(context).schemas.values());
-  }
-
-  static get(context: Context, tableName: string): TableJsonSchema | undefined {
-    return schemaFor(context).schemas.get(tableName);
-  }
-
-  /** The steps `$schema: "validator"` set, run before every query. */
-  static globalValidator(context: Context): unknown {
-    return schemaFor(context).globalValidator;
-  }
-
-  static validateInsert(context: Context, tableName: string, data: unknown): unknown {
-    const schema = this.get(context, tableName);
-    if (!schema?.properties) return data;
-
-    if (Array.isArray(data)) {
-      return data.map((row) =>
-        this.validateRow(context, schema, row as Record<string, unknown>),
-      );
-    }
-    return this.validateRow(context, schema, data as Record<string, unknown>);
-  }
-
-  /**
-   * Enrich (strip unknown columns, fill computed, drop auto-increment, coerce
-   * types) then validate the resulting row against the table's JSON Schema.
-   */
-  private static validateRow(
-    context: Context,
-    schema: TableJsonSchema,
-    row: Record<string, unknown>,
-  ): Record<string, unknown> {
-    const props = schema.properties;
-    const result: Record<string, unknown> = {};
-    for (const key of Object.keys(row)) {
-      if (key in props) result[key] = row[key];
-    }
-
-    for (const [colName, col] of Object.entries(props)) {
-      if (col.computed && result[colName] === undefined) {
-        // Read source values from the original row: a computed column's source
-        // (e.g. a plaintext password) is often not itself a stored column.
-        this.fillComputed(result, row, colName, col.computed);
+  static register(node: SchemaNode, doc: unknown): string {
+    if (!isObject(doc)) throw new Error("A schema to register must be an object");
+    const own = structuredClone(doc);
+    const declared = own.$id;
+    let id: string;
+    if (isTableDocument(own)) {
+      if (declared !== undefined) {
+        throw new Error(`Table "${own.table}" is registered as "${tableId(own.table)}"; leave \`$id\` out of a table document`);
       }
-
-      if (col.autoIncrement) {
-        delete result[colName];
-        continue;
-      }
-
-      if (result[colName] !== undefined) {
-        result[colName] = this.coerceType(result[colName], col, colName, schema.table);
-      }
+      id = tableId(own.table);
+    } else if (typeof declared === "string" && declared !== "") {
+      id = declared;
+    } else {
+      throw new Error("A schema needs an `$id` to be registered (a table document is registered by its `table`)");
     }
-
-    this.assertValid(context, schema, result, schema.table);
-    return result;
+    SchemaNode.unregister(node, id);
+    node.ajv.addSchema({ ...own, $id: id });
+    try {
+      node.ajv.getSchema(id);
+    } catch (error) {
+      node.ajv.removeSchema(id);
+      throw error;
+    }
+    node.documents.set(id, own);
+    return id;
   }
 
-  static validateUpdate(
-    context: Context,
-    tableName: string,
-    data: Record<string, unknown>,
-  ): Record<string, unknown> {
-    const schema = this.get(context, tableName);
-    if (!schema?.properties) return data;
-    const props = schema.properties;
-
-    const result: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(data)) {
-      if (!(key in props)) continue;
-      const col = props[key];
-      if (col.autoIncrement || col.computed) continue;
-      if (this.coercionType(col) === "timestamp") continue;
-      result[key] = this.coerceType(value, col, key, tableName);
+  /** Forget the schema registered as `id`, and the inline schemas compiled against it. */
+  static unregister(node: SchemaNode, id: string): boolean {
+    node.ajv.removeSchema(id);
+    for (const fn of node.compiled.values()) {
+      if (typeof fn.schema === "object") node.ajv.removeSchema(fn.schema);
     }
-
-    // Partial update: validate provided fields, but never enforce `required`.
-    this.assertValid(context, this.updateSchemaFor(schema), result, tableName);
-    return result;
+    node.compiled.clear();
+    return node.documents.delete(id);
   }
 
-  /** A `required`-stripped clone of `schema`, cached for reuse, used to validate
-   *  partial updates without rejecting absent columns. */
-  private static updateSchemaFor(schema: TableJsonSchema): object {
-    let clone = this.updateSchemas.get(schema);
-    if (!clone) {
-      const { required: _required, ...rest } = schema;
-      clone = rest;
-      this.updateSchemas.set(schema, clone);
-    }
-    return clone;
-  }
-
-  private static assertValid(
-    context: Context,
-    schema: object,
-    row: Record<string, unknown>,
-    tableName: string,
-  ): void {
-    const { valid, errors } = validate(schemaFor(context).validation, schema, row);
-    if (!valid) {
-      throw new Error(`[Schema] Validation failed for "${tableName}": ${errors.join("; ")}`);
-    }
-  }
-
-  private static fillComputed(
-    target: Record<string, unknown>,
-    source: Record<string, unknown>,
-    colName: string,
-    computed: Record<string, string>,
-  ): void {
-    for (const [fn, sourceCol] of Object.entries(computed)) {
-      const computeFn = COMPUTE_FNS[fn];
-      if (computeFn && source[sourceCol] !== undefined) {
-        target[colName] = computeFn(String(source[sourceCol]));
-      }
-    }
-  }
-
-  /** The type name driving coercion: `sqlType` if present, else the JSON
-   *  Schema `type` (first non-null when an array). */
-  private static coercionType(col: ColumnSchema): string {
-    const jsonType = Array.isArray(col.type)
-      ? col.type.find((t) => t !== "null")
-      : col.type;
-    return (col.sqlType ?? jsonType ?? "").toLowerCase();
-  }
-
-  /**
-   * Coerce a raw value to its stored representation. Pure type conversion only —
-   * declarative constraints (max length, enum, pattern, format) are enforced by
-   * the JSON Schema via Ajv after coercion.
-   */
-  private static coerceType(
-    value: unknown,
-    col: ColumnSchema,
-    colName: string,
-    tableName: string,
-  ): unknown {
-    switch (this.coercionType(col)) {
-      case "integer":
-      case "int":
-      case "biginteger":
-      case "bigint":
-      case "smallint":
-      case "tinyint": {
-        const num = Number(value);
-        if (isNaN(num)) {
-          throw new Error(
-            `[Schema] Column "${colName}" in "${tableName}" expects integer, got "${value}"`,
-          );
-        }
-        return Math.floor(num);
-      }
-
-      case "number":
-      case "float":
-      case "double":
-      case "decimal": {
-        const num = Number(value);
-        if (isNaN(num)) {
-          throw new Error(
-            `[Schema] Column "${colName}" in "${tableName}" expects number, got "${value}"`,
-          );
-        }
-        return num;
-      }
-
-      case "varchar":
-      case "string":
-      case "text":
-        return String(value);
-
-      case "boolean":
-      case "bool": {
-        if (typeof value === "string") {
-          return value !== "" && value !== "0" && value.toLowerCase() !== "false" ? 1 : 0;
-        }
-        return value ? 1 : 0;
-      }
-
-      default:
-        return value;
-    }
+  /** The registered documents whose id starts with `prefix`. */
+  static all(node: SchemaNode, prefix = ""): Record<string, unknown>[] {
+    return [...node.documents].filter(([id]) => id.startsWith(prefix)).map(([, doc]) => doc);
   }
 }
 
 /**
- * `{ "$schema": "validate", "data": ..., "document"|"table": ... }`.
+ * The validator for `schema`: the one registered under that id when it is a
+ * string, else the schema compiled in the node's Ajv. Compiling checks the
+ * schema itself, so a malformed one throws.
  *
- * `data` is resolved (it is normally a `var` holding an already-parsed value),
- * and `document` too, so it can be handed over by `var`. Its compiled validator
- * is cached by content as well as by object, so a document written inline
- * compiles once however many times the step runs.
+ * An inline schema is kept by its JSON text. Ajv keeps every schema object it
+ * compiles, so it must only ever see one object per distinct schema: a route
+ * handler written as an expression hands over an equal but new
+ * `queryParams`/`body` object on every request, which would otherwise compile
+ * again each time and throw on a reused `$id`. Keying on the text, and compiling
+ * a copy made from it (Ajv's own cache is keyed by object), also means a schema
+ * changed in place gets a validator for what it says now. Schemas that really
+ * are new each time (one built from request data) would still grow the cache, so
+ * it holds at most MAX_COMPILED, in order of use, and one dropped from it is
+ * removed from Ajv as well.
  */
-function doValidate(def: Record<string, unknown>, context: Context): NodeValue {
-  return resolveAll([def.document ?? null, def.table ?? null, def.data ?? null], context, ([documentRaw, tableRaw, data]) => {
-    let schema: object | undefined;
-    if (documentRaw !== null && typeof documentRaw === "object") {
-      schema = documentRaw as object;
-    } else if (typeof tableRaw === "string") {
-      schema = SchemaNode.get(context, tableRaw);
-      if (!schema) {
-        return { valid: false, errors: [{ path: "", message: `no schema registered for table "${tableRaw}"`, keyword: "table" }] };
-      }
+export function getValidator({ ajv, compiled }: SchemaNode, schema: object | string): ValidateFunction {
+  if (typeof schema === "string") {
+    const registered = ajv.getSchema(schema);
+    if (!registered) throw new Error(`No schema is registered as "${schema}"`);
+    return registered;
+  }
+  const key = JSON.stringify(schema);
+  const kept = compiled.get(key);
+  if (kept) {
+    compiled.delete(key);
+    compiled.set(key, kept);
+    return kept;
+  }
+  const fn = ajv.compile(JSON.parse(key) as object);
+  compiled.set(key, fn);
+  if (compiled.size > MAX_COMPILED) {
+    const [oldestKey, oldest] = compiled.entries().next().value!;
+    compiled.delete(oldestKey);
+    if (typeof oldest.schema === "object") ajv.removeSchema(oldest.schema);
+  }
+  return fn;
+}
+
+/** An error's instance path, dotted, `""` for the document root. */
+function pathOf(err: ErrorObject): string {
+  return err.instancePath ? err.instancePath.replace(/^\//, "").replace(/\//g, ".") : "";
+}
+
+/** An error's message, naming the property where Ajv's own leaves it out. */
+function messageOf(err: ErrorObject): string {
+  const { additionalProperty, propertyName } = err.params;
+  if (err.keyword === "additionalProperties" && typeof additionalProperty === "string") {
+    return `must not have property "${additionalProperty}"`;
+  }
+  if (err.keyword === "propertyNames" && typeof propertyName === "string") {
+    return `must not have a property named "${propertyName}"`;
+  }
+  if (err.keyword === "false schema") return "is not allowed here";
+  // A failure inside `propertyNames` is about one name, held on the error itself.
+  if (err.propertyName !== undefined) return `property name "${err.propertyName}" ${err.message ?? "is invalid"}`;
+  return err.message ?? "is invalid";
+}
+
+export interface ValidationResult {
+  valid: boolean;
+  errors: string[];
+}
+
+/**
+ * Validate `data` against `schema` (a document, or a registered id), returning
+ * a list of human-readable errors rather than throwing, so callers decide how
+ * to surface them: an HTTP 400 for a route, an Error for a table row.
+ */
+export function validate(node: SchemaNode, schema: object | string, data: unknown): ValidationResult {
+  const fn = getValidator(node, schema);
+  const valid = fn(data) as boolean;
+  if (valid) return { valid: true, errors: [] };
+  const errors = (fn.errors ?? []).map(err => {
+    const where = pathOf(err);
+    return `${where ? `"${where}" ` : ""}${messageOf(err)}`;
+  });
+  return { valid: false, errors };
+}
+
+/** One error, with the pieces a caller needs to rank or filter it. */
+export interface DetailedError {
+  /** Dotted instance path, `""` for the document root. */
+  path: string;
+  message: string;
+  /** The Ajv keyword that failed, e.g. `"type"`, `"anyOf"`, `"additionalProperties"`. */
+  keyword: string;
+}
+
+export interface DetailedValidationResult {
+  valid: boolean;
+  errors: DetailedError[];
+}
+
+/**
+ * Validate, keeping each error's path and keyword separate rather than flattened
+ * into prose.
+ *
+ * `validate` above is right for a handful of errors on a small table row. A
+ * document validated against a large `anyOf` union produces hundreds, most of
+ * them the union's own bookkeeping, and the only way to reduce that to the few
+ * that name the actual mistake is to rank by path depth and drop the combinator
+ * keywords, neither of which survives being formatted into a string.
+ */
+export function validateDetailed(node: SchemaNode, schema: object | string, data: unknown): DetailedValidationResult {
+  const fn = getValidator(node, schema);
+  const valid = fn(data) as boolean;
+  if (valid) return { valid: true, errors: [] };
+  const errors = (fn.errors ?? []).map(err => ({ path: pathOf(err), message: messageOf(err), keyword: err.keyword }));
+  return { valid: false, errors };
+}
+
+/** `validate`: check `data` against a registered schema or one written out. */
+async function check(node: SchemaNode, def: Record<string, unknown>, context: Context): Promise<unknown> {
+  const schema = await schemaArg(def.schema, context);
+  return resolveAll([def.data ?? null], context, ([data]) => {
+    if (typeof schema !== "string" && !isObject(schema)) {
+      throw new Error("$schema validate needs `schema`: a registered schema's id, or a schema");
     }
-    if (!schema) {
-      return { valid: false, errors: [{ path: "", message: "no schema to validate against: pass `document` or `table`", keyword: "document" }] };
-    }
-    // A schema that won't compile is the caller's mistake, not the data's, so it
-    // is reported in the same shape rather than thrown past them.
+    // An unknown id or a schema that won't compile is the caller's mistake,
+    // not the data's, so it is reported in the same shape rather than thrown.
     try {
-      return validateDetailed(schemaFor(context).validation, schema, data);
+      return validateDetailed(node, schema, data);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { valid: false, errors: [{ path: "", message: `invalid schema: ${message}`, keyword: "schema" }] };
@@ -509,49 +354,16 @@ function doValidate(def: Record<string, unknown>, context: Context): NodeValue {
   });
 }
 
-/** A table document: a `table` name and its column `properties`. */
-function isTableDocument(value: unknown): value is TableJsonSchema {
-  return isObject(value) && typeof value.table === "string" && isObject(value.properties);
-}
-
-async function doRegister(def: Record<string, unknown>, context: Context, root: string): Promise<unknown> {
-  // A literal document registers as written, so its `validator` steps stay
-  // steps; a step producing one (`$var`, or a `$file` with `data: true`)
-  // resolves to it first.
-  const table = isStep(def.table) ? await resolve(def.table, context) : def.table;
-  if (isObject(table)) {
-    const schema = SchemaNode.register(context, table);
-    return { registered: [schema.table] };
-  }
-
-  // Directory path
-  if (def.path && typeof def.path === "string") {
-    const dirPath = path.join(root, def.path);
-    const registered: string[] = [];
-
-    try {
-      const files = (await fs.readdir(dirPath)).filter(f => f.endsWith(".json"));
-      // Read all files concurrently, then parse/register sequentially in
-      // readdir order so registration order stays deterministic.
-      const contents = await Promise.all(
-        files.map(file => fs.readFile(path.join(dirPath, file), "utf-8")),
-      );
-      for (const content of contents) {
-        const schema: unknown = JSON.parse(content);
-        // The same keys that make the editor treat a file as a table document.
-        if (isTableDocument(schema)) {
-          registered.push(SchemaNode.register(context, schema).table);
-        }
-      }
-    } catch (error) {
-      console.error(
-        `[SchemaNode] Error loading schemas from ${dirPath}:`,
-        (error as Error).message,
-      );
-    }
-
-    return { registered };
-  }
-
-  return null;
+/**
+ * The documents a `register` was given: its `schema`, or every JSON file in its
+ * `path` directory, in name order.
+ */
+async function documentsOf(def: Record<string, unknown>, context: Context, root: string): Promise<unknown[]> {
+  if (def.schema !== undefined) return [await schemaArg(def.schema, context)];
+  const dir = await resolve(def.path ?? null, context);
+  if (typeof dir !== "string") throw new Error("$schema register needs a `schema` or a `path`");
+  const dirPath = path.resolve(root, dir);
+  const files = (await fs.readdir(dirPath)).filter(f => f.endsWith(".json")).sort();
+  const contents = await Promise.all(files.map(file => fs.readFile(path.join(dirPath, file), "utf-8")));
+  return contents.map(content => JSON.parse(content) as unknown);
 }

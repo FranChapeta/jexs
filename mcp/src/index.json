@@ -441,7 +441,7 @@
                     "$if": { "$empty": { "$var": "box.node" } },
                     "then": { "content": [{ "type": "text", "text": { "$concat": [{ "$var": "banner" }, "Error: could not read or parse ", { "$var": "args.filePath" }, " (missing, empty, or not JSON)."] } }], "isError": true },
                     "else": [
-                      { "$as": "report", "$schema": "validate", "document": { "$var": "combined" }, "data": { "$var": "box.node" } },
+                      { "$as": "report", "$schema": "validate", "schema": { "$var": "combined" }, "data": { "$var": "box.node" } },
                       {
                         "$if": { "$var": "report.valid" },
                         "then": { "content": [{ "type": "text", "text": { "$concat": [{ "$var": "banner" }, { "$var": "args.filePath" }, " validates against the project schema."] } }] },

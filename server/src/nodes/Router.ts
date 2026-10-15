@@ -1,12 +1,12 @@
 import { Node, Context, NodeValue, isStep, resolve, runSteps, createHttpError, isObject } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
-import { validate, createValidation, type Validation } from "../validate.js";
+import { requireSchemaNode, validate } from "./Schema.js";
 
 /**
  * Route handler structure.
  *
  * `queryParams` and `body` are standard JSON Schema (draft 2020-12) objects,
- * validated by the router's own validation against the request's query string /
+ * validated through the resolver's SchemaNode against the request's query string /
  * parsed body. URL path params are matched and constrained structurally via
  * `paramName` / `paramRegex` at each route node, not by a handler schema.
  */
@@ -135,9 +135,6 @@ export class RouterNode extends Node {
    */
   private readonly paramRegexes: ParamRegexes = new WeakMap();
 
-  /** Validates route `queryParams` and `body` schemas for this resolver. */
-  private readonly validation = createValidation();
-
   routes(def: Record<string, unknown>, context: Context): NodeValue {
     const method = context.request?.method?.toUpperCase() ?? "GET";
     const path = context.request?.path ?? "/";
@@ -149,7 +146,7 @@ export class RouterNode extends Node {
       const root = await nodeAt(def.$routes, "/", context);
       const handler = root ? await matchRoute(this.paramRegexes, root, path, method, context, params) : null;
       if (!handler) throw createHttpError(404, "Not Found");
-      if (isHandlerShape(handler)) return executeHandler(this.validation, handler, context);
+      if (isHandlerShape(handler)) return executeHandler(handler, context);
 
       // Not a `$file`/`do` object, so the handler is an expression that has to
       // produce one. What it produces is the handler, `queryParams` and `body`
@@ -158,7 +155,7 @@ export class RouterNode extends Node {
         if (!isHandlerShape(value)) {
           throw createHttpError(500, `${method} ${path}: a route handler must be, or resolve to, a "$file" step or a "do" object`);
         }
-        return executeHandler(this.validation, value, context);
+        return executeHandler(value, context);
       });
     })() as Promise<NodeValue>;
   }
@@ -285,12 +282,8 @@ async function matchNode(match: Match, node: RouteNode, index: number): Promise<
 /**
  * Execute route handler
  */
-async function executeHandler(
-  validation: Validation,
-  handler: RouteHandler,
-  context: Context,
-): Promise<unknown> {
-  checkRequest(validation, handler, context);
+async function executeHandler(handler: RouteHandler, context: Context): Promise<unknown> {
+  checkRequest(handler, context);
 
   if (handler.do !== undefined) {
     return (await runSteps(handler.do, context)) ?? null;
@@ -303,30 +296,31 @@ async function executeHandler(
 /**
  * The request checks a handler declares: its query/body schemas. Read from the
  * handler that runs, so an expression handler's come from whatever it resolved
- * to.
+ * to. They validate through the resolver's SchemaNode, so they can `$ref`
+ * registered schemas, `table/<name>` included.
  */
-function checkRequest(validation: Validation, handler: RouteHandler, context: Context): void {
+function checkRequest(handler: RouteHandler, context: Context): void {
   if (handler.queryParams) {
-    validateAgainstSchema(validation, handler.queryParams, context.request?.query as Record<string, unknown> ?? {}, "query");
+    validateAgainstSchema(context, handler.queryParams, context.request?.query as Record<string, unknown> ?? {}, "query");
   }
 
   if (handler.body) {
-    validateAgainstSchema(validation, handler.body, context.request?.body as Record<string, unknown> ?? {}, "body");
+    validateAgainstSchema(context, handler.body, context.request?.body as Record<string, unknown> ?? {}, "body");
   }
 }
 
 /**
- * Validate a value against a JSON Schema (draft 2020-12) using the router's
- * validation. Used for both `queryParams` and `body`. Throws a 400 HTTP error listing
- * the validation failures.
+ * Validate a value against a JSON Schema (draft 2020-12). Used for both
+ * `queryParams` and `body`. Throws a 400 HTTP error listing the validation
+ * failures.
  */
 function validateAgainstSchema(
-  validation: Validation,
+  context: Context,
   schema: Record<string, unknown>,
   source: Record<string, unknown>,
   label: string,
 ): void {
-  const { valid, errors } = validate(validation, schema, source);
+  const { valid, errors } = validate(requireSchemaNode(context), schema, source);
   if (!valid) {
     throw createHttpError(400, `Invalid ${label}: ${errors.join("; ")}`);
   }

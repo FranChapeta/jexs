@@ -6,6 +6,7 @@ import path from "node:path";
 import { Node, createResolver, coreNodes, type Context } from "@jexs/core";
 import { RouterNode } from "../src/nodes/Router.js";
 import { FileNode } from "../src/nodes/File.js";
+import { SchemaNode } from "../src/nodes/Schema.js";
 
 // A real root, because the handler paths that matter here end in FileNode
 // rendering a template off disk.
@@ -21,7 +22,7 @@ before(async () => {
     path.join(root, "page.json"),
     JSON.stringify({ $tag: "p", content: [{ $var: "greeting" }] }),
   );
-  resolve = createResolver([...coreNodes(), new RouterNode(), new FileNode(root)]);
+  resolve = createResolver([...coreNodes(), new RouterNode(), new FileNode(root), new SchemaNode()]);
 });
 
 after(async () => {

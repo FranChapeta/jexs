@@ -5,7 +5,8 @@ import { FileNode } from "./nodes/File.js";
 import { RouterNode } from "./nodes/Router.js";
 import { SessionNode } from "./nodes/Session.js";
 import { DatabaseNode } from "./nodes/Database.js";
-import { QueryNode } from "./nodes/Query.js";
+import { DatabaseQueryNode } from "./nodes/DatabaseQuery.js";
+import { DatabaseTableNode } from "./nodes/DatabaseTable.js";
 import { CacheNode } from "./nodes/Cache.js";
 import { TailwindNode } from "./nodes/Tailwind.js";
 import { OAuthNode } from "./nodes/OAuth.js";
@@ -44,7 +45,8 @@ export function serverNodes({ root = "src" }: ServerNodesOptions = {}): Node[] {
     new RouterNode(),
     new SessionNode(),
     new DatabaseNode(),
-    new QueryNode(),
+    new DatabaseQueryNode(),
+    new DatabaseTableNode(),
     new CacheNode(),
     new TailwindNode(),
     new OAuthNode(),
@@ -70,7 +72,8 @@ export const nodes = serverNodes;
 
 export { makePhysicsWorker } from "./physicsWorker.js";
 export { DatabaseNode } from "./nodes/Database.js";
-export { QueryNode } from "./nodes/Query.js";
+export { DatabaseQueryNode } from "./nodes/DatabaseQuery.js";
+export { DatabaseTableNode } from "./nodes/DatabaseTable.js";
 export { SchemaNode } from "./nodes/Schema.js";
 export { TranslationNode } from "./nodes/Translation.js";
 export { WebSocketNode } from "./nodes/WebSocket.js";

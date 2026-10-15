@@ -331,6 +331,33 @@ function renameSibling({ obj }: Step, from: string, to: string, m: Codemod): voi
   if (prop) m.add({ start: prop.keyStart, end: prop.keyEnd, text: prop.shorthand ? `${to}: ${from}` : to });
 }
 
+/** Remove the step's `name` sibling, with the comma that joined it. */
+function removeSibling({ obj }: Step, name: string, m: Codemod): void {
+  const at = obj.props.findIndex(p => p.key === name);
+  if (at === -1) return;
+  const prop = obj.props[at];
+  const keyStart = (p: typeof prop) => p.keyStart - (p.keyQuoted ? 1 : 0);
+  if (at > 0) m.add({ start: obj.props[at - 1].value.end, end: prop.value.end, text: "" });
+  else if (obj.props[at + 1]) m.add({ start: keyStart(prop), end: keyStart(obj.props[at + 1]), text: "" });
+}
+
+/**
+ * Move the step to another op: `{ "$<op>": "<from>" }` becomes
+ * `{ "$<node>": "<to>" }`, keeping how its key is quoted.
+ */
+function moveOp({ op, obj }: Step, node: string, to: string, m: Codemod): void {
+  const prop = obj.props.find(p => p.key === "$" + op);
+  if (!prop || prop.shorthand || prop.value.k !== "str") return;
+  m.add({ start: prop.keyStart, end: prop.keyEnd, text: "$" + node });
+  if (prop.value.value !== to) replaceString(prop.value, to, m);
+}
+
+/** The value a value-mode step names, when it is written as a literal. */
+const opValue = ({ op, obj }: Step) => {
+  const value = obj.props.find(p => p.key === "$" + op)?.value;
+  return value?.k === "str" ? value.value : undefined;
+};
+
 /** The v2 rewrites, by the op they apply to. */
 const RULES: Record<string, Rule> = {
   // The per-item template is a `do` sibling, as on `map` and `foreach`, and the
@@ -420,9 +447,12 @@ const RULES: Record<string, Rule> = {
     }
   },
   // One name per option: `tls` and `user`.
+  // A table's structure is `$table`'s.
   database: (step, m) => {
-    const prop = step.obj.props.find(p => p.key === "$database");
-    if (prop?.value.k === "str" && prop.value.value === "connect") renameSibling(step, "ssl", "tls", m);
+    const value = opValue(step);
+    if (value === "connect") renameSibling(step, "ssl", "tls", m);
+    if (value === "tableExists") moveOp(step, "table", "exists", m);
+    if (value === "dropTable") moveOp(step, "table", "drop", m);
   },
   "cache-connect": (step, m) => {
     renameSibling(step, "username", "user", m);
@@ -435,18 +465,50 @@ const RULES: Record<string, Rule> = {
     const delay = obj.props.find(p => p.key === "delay");
     if (delay) m.review(delay.keyStart, "`$defer`'s `delay` is gone: start the deferred steps with `{ \"$sleep\": <ms> }`");
   },
-  query: ({ obj }, m) => {
-    const where = obj.props.find(p => p.key === "where");
+  // `$query` is rows: creating, altering and dropping a table are `$table`'s,
+  // which no validator guards, and the connection is `connection`.
+  query: (step, m) => {
+    const where = step.obj.props.find(p => p.key === "where");
     if (where) whereOperators(where.value, m);
+    renameSibling(step, "database", "connection", m);
+    const value = opValue(step);
+    if (value === "create" || value === "drop" || value === "alter") {
+      moveOp(step, "table", value === "create" ? "sync" : value, m);
+      renameSibling(step, "addColumns", "add", m);
+      removeSibling(step, "system", m);
+    }
   },
   // A connection's entry carries only the `meta` it was accepted with.
   "socket-list": ({ obj }, m) => {
     m.review(obj.props[0].keyStart, "`$socket-list` entries no longer carry `name` from `session.user_name`: give `$socket-accept` a `meta`, e.g. `{ \"name\": { \"$var\": \"session.user_name\" } }`");
   },
-  // The global validator's steps are its `do`.
+  // A schema to register or check against is `schema`, a table's registered one
+  // is `table/<name>`, and the global validator is `$query`'s, its steps its `do`.
   schema: (step, m) => {
-    const value = step.obj.props.find(p => p.key === "$schema")?.value;
-    if (value?.k === "str" && value.value === "validator") renameSibling(step, "run", "do", m);
+    const prop = step.obj.props.find(p => p.key === "$schema")!;
+    const value = opValue(step);
+    if (value === "register") {
+      renameSibling(step, "table", "schema", m);
+      if (step.obj.props.some(p => p.key === "$as")) {
+        m.review(prop.keyStart, "`$schema: \"register\"` returns the ids it registered (`table/<name>` for a table), not `{ registered }`");
+      }
+    }
+    if (value === "validator") {
+      moveOp(step, "query", "validator", m);
+      renameSibling(step, "run", "do", m);
+    }
+    if (value === "get") {
+      m.review(prop.keyStart, "`$schema: \"get\"` is gone: read the document's file with `$file` (`data: true`), or find it in `{ \"$schema\": \"list\" }`");
+    }
+    if (value !== "validate") return;
+    renameSibling(step, "document", "schema", m);
+    const table = step.obj.props.find(p => p.key === "table");
+    if (table?.value.k === "str") {
+      m.add({ start: table.keyStart, end: table.keyEnd, text: "schema" });
+      replaceString(table.value, "table/" + table.value.value, m);
+    } else if (table) {
+      m.review(table.keyStart, "`$schema: \"validate\"` names a table's schema as `schema: \"table/<name>\"`");
+    }
   },
   // The part to extract is the second operand.
   datePart: (step, m) => siblingToTuple(step, "part", m),

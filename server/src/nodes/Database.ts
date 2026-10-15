@@ -69,10 +69,6 @@ function describe(config: DatabaseConfig): ConnectionInfo {
  *
  * Raw query:
  * { "$database": "raw", "sql": "SELECT * FROM users WHERE id = ?", "bindings": [1] }
- *
- * Table operations:
- * { "$database": "tableExists", "table": "users" }
- * { "$database": "dropTable", "table": "users" }
  */
 /**
  * The DatabaseNode of the resolver a context is running in.
@@ -116,8 +112,6 @@ export class DatabaseNode extends Node {
         "connect",
         "close",
         "raw",
-        "tableExists",
-        "dropTable",
         "info",
       ],
       markdownDescription: "Manages database connections. Supports SQLite (`better-sqlite3`), MySQL (`mysql2`), and PostgreSQL (`pg`) via Knex. The operation is the primary value; each carries its own properties.",
@@ -195,20 +189,6 @@ export class DatabaseNode extends Node {
             bindings: { type: "array", description: "Positional bindings for the SQL." },
           },
         },
-        tableExists: {
-          output: "boolean",
-          markdownDescription: "Returns whether a table exists.",
-          siblings: {
-            table: { type: "string", description: "Table name." },
-          },
-        },
-        dropTable: {
-          output: "null",
-          markdownDescription: "Drops a table if it exists.",
-          siblings: {
-            table: { type: "string", description: "Table name." },
-          },
-        },
         info: {
           output: { $ref: "#/$defs/_dbConnection" },
           outputDescription: "The connection as `connect` returned it, plus `tables` (and `size` for SQLite), or `null` if no connection has that name. Carries no credentials.",
@@ -253,10 +233,6 @@ export class DatabaseNode extends Node {
           return doClose(this, def, context);
         case "raw":
           return doRaw(this, def, context);
-        case "tableExists":
-          return doTableExists(this, def, context);
-        case "dropTable":
-          return doDropTable(this, def, context);
         case "info":
           return doInfo(this, def, context);
         default:
@@ -270,8 +246,8 @@ export class DatabaseNode extends Node {
   // Static Connection Management
   // ============================================
 
-  // These take a context because their callers are OTHER nodes (QueryNode,
-  // TranslationNode) that hold one but no handle on this node. Everything inside
+  // These take a context because their callers are OTHER nodes (DatabaseQueryNode,
+  // DatabaseTableNode, TranslationNode) that hold one but no handle on this node. Everything inside
   // this module already has the node and calls the helpers below directly.
 
   /** Omit `name` to get whichever connection opened first. */
@@ -602,21 +578,6 @@ function doRaw(self: DatabaseNode, def: Record<string, unknown>, context: Contex
     const result = await (bindings ? conn.knex.raw(sql, bindings) : conn.knex.raw(sql));
     // SQLite hands back the rows; the others wrap them in a result-set array.
     return conn.info.type === "sqlite" ? result : result[0];
-  });
-}
-
-function doTableExists(self: DatabaseNode, def: Record<string, unknown>, context: Context): unknown {
-  return resolveAll([def.connection ?? null, def.table], context, async ([connectionRaw, tableRaw]) => {
-    const table = String(tableRaw);
-    return requireConnection(self, connectionRaw).knex.schema.hasTable(table);
-  });
-}
-
-function doDropTable(self: DatabaseNode, def: Record<string, unknown>, context: Context): unknown {
-  return resolveAll([def.connection ?? null, def.table], context, async ([connectionRaw, tableRaw]) => {
-    const table = String(tableRaw);
-    await requireConnection(self, connectionRaw).knex.schema.dropTableIfExists(table);
-    return null;
   });
 }
 

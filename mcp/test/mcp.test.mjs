@@ -184,7 +184,7 @@ describe("describe_op", () => {
     // These live in `allOf` branches; the flat `properties` has only empty stubs.
     const { text } = await callTool("describe_op", { op: "schema" });
     assert.match(text, /path \[only with \$schema: "register"\]/);
-    assert.match(text, /Directory of JSON schema files to load/);
+    assert.match(text, /Directory of schema documents to register/);
   });
 
   test("resolves a global step key", async () => {

@@ -5,24 +5,26 @@ import os from "node:os";
 import path from "node:path";
 import { createResolver, coreNodes } from "@jexs/core";
 import { serverNodes } from "../src/index.js";
-import { SchemaNode } from "../src/nodes/Schema.js";
+import { DatabaseTableNode } from "../src/nodes/DatabaseTable.js";
+import { DatabaseQueryNode } from "../src/nodes/DatabaseQuery.js";
 
 // The registry is the resolver's own, so lookups go through a context attached to it.
 const registry = {};
-const resolve = createResolver([...coreNodes(), ...serverNodes()], { context: registry });
+const resolve = createResolver([...coreNodes(), ...serverNodes({ root: "." })], { context: registry });
 // A file, not `:memory:`: each pooled connection would open its own empty in-memory database.
 const dir = await fs.mkdtemp(path.join(os.tmpdir(), "jexs-query-"));
-const conn = { database: "query-test" };
+const conn = { connection: "query-test" };
 
 after(async () => {
   await resolve({ $database: "close", connection: "query-test" }, {});
+  resolve.destroy();
   await fs.rm(dir, { recursive: true, force: true });
 });
 
 test("a query step runs end to end against sqlite", async () => {
   const context = {};
   await resolve({ $database: "connect", connection: "query-test", type: "sqlite", filename: path.join(dir, "test.db") }, context);
-  await resolve({ $query: "create", ...conn, schema: {
+  await resolve({ $table: "sync", ...conn, schema: {
     table: "people",
     properties: {
       id: { type: "integer", primaryKey: true, autoIncrement: true },
@@ -61,11 +63,11 @@ test("every condition in a where applies: each operator on a column, and or/and 
   await assert.rejects(names({ id: { gtt: 1 } }), /id: unknown operator "gtt"/);
 });
 
-test("validators authorize every query: global first, then the table's own", async () => {
+test("validators authorize every row query: global first, then the table's own", async () => {
   // `seen` is shared by reference with each validator's context, so their writes show here.
   const context = { seen: { global: "", table: "" } };
   const table = [{ $setVars: { "seen.table": { $concat: [{ $var: "operation" }, ":", { $var: "query.table" }] } } }];
-  await resolve({ $schema: "validator", do: [
+  await resolve({ $query: "validator", do: [
     { $setVars: { "seen.global": { $concat: [{ $var: "operation" }, ":", { $var: "schema.table" }] } } },
     { $if: { $eq: [{ $var: "operation" }, "delete"] }, then: { $error: 403, message: "no deletes" } },
     // Narrow every select on notes to one author, the way a row-level policy would.
@@ -73,13 +75,13 @@ test("validators authorize every query: global first, then the table's own", asy
       then: { $setVars: { "query.where": { author: "ada" } } } },
   ] }, context);
   try {
-    // A table being created cannot approve itself: only the global validator runs.
-    await resolve({ $query: "create", ...conn, schema: {
+    // Structure is the app's own setup, so no validator runs for it.
+    await resolve({ $table: "create", ...conn, schema: {
       table: "notes", validator: table,
       properties: { id: { type: "integer", primaryKey: true, autoIncrement: true }, author: { type: "string" } },
     } }, context);
-    assert.deepEqual(context.seen, { global: "create:notes", table: "" });
-    assert.deepEqual(SchemaNode.get(registry, "notes")?.validator, table);
+    assert.deepEqual(context.seen, { global: "", table: "" });
+    assert.deepEqual(DatabaseTableNode.get(registry, "notes")?.validator, table);
 
     await resolve({ $query: "insert", ...conn, table: "notes", data: [{ author: "ada" }, { author: "bob" }] }, context);
     assert.deepEqual(context.seen, { global: "insert:notes", table: "insert:notes" });
@@ -90,49 +92,70 @@ test("validators authorize every query: global first, then the table's own", asy
     await assert.rejects(resolve({ $query: "delete", ...conn, table: "notes", where: { author: "bob" } }, context), /no deletes/);
     assert.equal(await resolve({ $query: "count", ...conn, table: "notes", system: true }, context), 2);
   } finally {
-    await resolve({ $schema: "validator", do: null }, {});
+    await resolve({ $query: "validator", do: null }, {});
   }
 });
 
 test("create applies a composite primary key, and MySQL-only options elsewhere are ignored", async () => {
-  await resolve({ $query: "create", ...conn, system: true, schema: {
+  await resolve({ $table: "create", ...conn, schema: {
     table: "memberships", primaryKey: ["team", "person"], options: { engine: "InnoDB", charset: "utf8mb4" },
     properties: { team: { type: "string" }, person: { type: "string" } },
   } }, {});
-  await resolve({ $query: "insert", ...conn, system: true, table: "memberships", data: { team: "a", person: "ada" } }, {});
-  await assert.rejects(resolve({ $query: "insert", ...conn, system: true, table: "memberships", data: { team: "a", person: "ada" } }, {}));
-  await resolve({ $query: "insert", ...conn, system: true, table: "memberships", data: { team: "b", person: "ada" } }, {});
+  await resolve({ $query: "insert", ...conn, table: "memberships", data: { team: "a", person: "ada" } }, {});
+  await assert.rejects(resolve({ $query: "insert", ...conn, table: "memberships", data: { team: "a", person: "ada" } }, {}));
+  await resolve({ $query: "insert", ...conn, table: "memberships", data: { team: "b", person: "ada" } }, {});
 });
 
-// Schema changes return what they changed, not a status object, and a failure
-// throws instead of being recorded and passed over.
-test("create, alter and drop return what they changed, and a failure throws", async () => {
-  const table = { table: "gadgets", properties: { name: { type: "string" } } };
-  assert.deepEqual(await resolve({ $query: "create", ...conn, system: true, schema: table }, {}), ["gadgets"]);
-  assert.deepEqual(await resolve({ $query: "create", ...conn, system: true, schema: table }, {}), [], "already there");
+// Structure changes return what they changed, not a status object, and a
+// failure throws instead of being recorded and passed over.
+test("create, sync, alter and drop return what they changed, and a failure throws", async () => {
+  const schema = { table: "gadgets", properties: { name: { type: "string" } } };
+  assert.equal(await resolve({ $table: "create", ...conn, schema }, {}), "gadgets");
+  await assert.rejects(async () => resolve({ $table: "create", ...conn, schema }, {}), /already exists/);
+  assert.deepEqual(await resolve({ $table: "sync", ...conn, schema }, {}), [], "already there");
+  assert.equal(await resolve({ $table: "exists", ...conn, table: "gadgets" }, {}), true);
 
-  const alter = { $query: "alter", ...conn, system: true, table: "gadgets", addColumns: { size: { type: "integer" } } };
+  const alter = { $table: "alter", ...conn, table: "gadgets", add: { size: { type: "integer" } } };
   assert.deepEqual(await resolve(alter, {}), ["size"]);
   assert.deepEqual(await resolve(alter, {}), [], "already added");
 
-  assert.equal(await resolve({ $query: "drop", ...conn, system: true, table: "gadgets" }, {}), null);
+  assert.equal(await resolve({ $table: "drop", ...conn, table: "gadgets" }, {}), null);
+  assert.equal(await resolve({ $table: "exists", ...conn, table: "gadgets" }, {}), false);
 
   await assert.rejects(
-    async () => resolve({ $query: "create", ...conn, system: true, schema: {
+    async () => resolve({ $table: "sync", ...conn, schema: {
       table: "broken", properties: { name: { type: "string" } }, indexes: { by_missing: { columns: ["nope"] } },
     } }, {}),
     /nope/,
   );
 });
 
-test("a table document needs a name and columns to be registered", async () => {
-  await assert.rejects(resolve({ $query: "create", ...conn, system: true, schema: { table: 5, properties: {} } }, {}), /needs a `table` name and `properties`/);
-  await assert.rejects(resolve({ $schema: "register", table: { table: "halfway" } }, {}), /needs a `table` name and `properties`/);
-  assert.equal(SchemaNode.get(registry, "halfway"), undefined);
+test("sync without a document syncs what is registered: one table by name, or all of them", async () => {
+  await resolve({ $schema: "register", schema: { table: "later_a", properties: { name: { type: "string" } } } }, {});
+  await resolve({ $schema: "register", schema: { table: "later_b", properties: { name: { type: "string" } } } }, {});
+  assert.deepEqual(await resolve({ $table: "sync", ...conn, schema: "later_a" }, {}), ["later_a"]);
+  const all = await resolve({ $table: "sync", ...conn }, {}) as string[];
+  assert.ok(all.includes("later_b") && !all.includes("later_a"), all.join(", "));
+  await assert.rejects(async () => resolve({ $table: "sync", ...conn, schema: "never" }, {}), /no document registered for table "never"/);
+});
+
+test("register reads a directory: table documents by table, others by their $id", async () => {
+  const schemas = path.join(dir, "schemas");
+  await fs.mkdir(schemas);
+  await fs.writeFile(path.join(schemas, "posts.json"), JSON.stringify({ table: "posts", properties: { title: { type: "string" } } }));
+  await fs.writeFile(path.join(schemas, "address.json"), JSON.stringify({ $id: "address", type: "object", required: ["city"] }));
+  assert.deepEqual(await resolve({ $schema: "register", path: schemas }, {}), ["address", "table/posts"]);
+  assert.deepEqual(await resolve({ $table: "sync", ...conn, schema: "posts" }, {}), ["posts"]);
+});
+
+test("a schema needs an id, which a table document takes from its table", async () => {
+  await assert.rejects(resolve({ $table: "sync", ...conn, schema: { table: 5, properties: {} } }, {}), /needs a `table` name and `properties`/);
+  await assert.rejects(resolve({ $schema: "register", schema: { type: "object" } }, {}), /needs an `\$id`/);
+  await assert.rejects(resolve({ $schema: "register", schema: { $id: "x", table: "t", properties: {} } }, {}), /leave `\$id` out/);
 });
 
 test("a column's SQL default is `sqlDefault`, apart from JSON Schema's `default`", async () => {
-  await resolve({ $query: "create", ...conn, system: true, schema: {
+  await resolve({ $table: "create", ...conn, schema: {
     table: "stamps",
     properties: {
       id: { type: "integer", primaryKey: true, autoIncrement: true },
@@ -140,59 +163,86 @@ test("a column's SQL default is `sqlDefault`, apart from JSON Schema's `default`
       made: { type: "string", sqlType: "timestamp", sqlDefault: "CURRENT_TIMESTAMP" },
     },
   } }, {});
-  await resolve({ $query: "insert", ...conn, system: true, table: "stamps", data: { label: "a" } }, {});
-  const row = await resolve({ $query: "select", ...conn, system: true, table: "stamps", first: true }, {}) as { made: unknown };
+  await resolve({ $query: "insert", ...conn, table: "stamps", data: { label: "a" } }, {});
+  const row = await resolve({ $query: "select", ...conn, table: "stamps", first: true }, {}) as { made: unknown };
   assert.match(String(row.made), /^\d{4}-\d{2}-\d{2}/);
 });
 
-// The registry keeps its own copy of a table document: the one a template
-// wrote is a literal of that template, and steps may change what they read.
-test("registering a table leaves the written document unchanged", async () => {
-  const step = { $schema: "register", table: { table: "kept", properties: { name: { type: "string" } } } };
-  await resolve(step, {});
-  assert.deepEqual(step.table, { table: "kept", properties: { name: { type: "string" } } });
-  assert.deepEqual(SchemaNode.get(registry, "kept")?.properties, { name: { type: "string" } }, "no columns are added");
+// The registry keeps its own copy of a document: the one a template wrote is a
+// literal of that template, and steps may change what they read.
+test("registering leaves the written document unchanged, and list hands out copies", async () => {
+  const step = { $schema: "register", schema: { table: "kept", properties: { name: { type: "string" } } } };
+  assert.deepEqual(await resolve(step, {}), ["table/kept"]);
+  assert.deepEqual(step.schema, { table: "kept", properties: { name: { type: "string" } } });
+
+  const all = await resolve({ $schema: "list" }, {}) as Array<{ table?: string; properties: Record<string, unknown> }>;
+  all.find(doc => doc.table === "kept")!.properties.extra = { type: "string" };
+  assert.equal(DatabaseTableNode.get(registry, "kept")?.properties?.extra, undefined);
 });
 
 // A step producing the document (`$var`, a `$file` with `data: true`) resolves
 // first; what it hands back is registered like a literal.
-test("register takes a table document from a step", async () => {
+test("register takes a document from a step, and unregister forgets it", async () => {
   const doc = { table: "from_step", properties: { name: { type: "string" } } };
-  const out = await resolve({ $schema: "register", table: { $var: "doc" } }, { doc });
-  assert.deepEqual(out, { registered: ["from_step"] });
-  assert.ok(SchemaNode.get(registry, "from_step")?.properties?.name);
-});
-
-test("$schema get hands out a copy, so changing it leaves the registry alone", async () => {
-  await resolve({ $schema: "register", table: { table: "copied", properties: { name: { type: "string" } } } }, {});
-  const got = await resolve({ $schema: "get", table: "copied" }, {}) as { properties: Record<string, unknown> };
-  got.properties.extra = { type: "string" };
-  assert.equal(SchemaNode.get(registry, "copied")?.properties?.extra, undefined);
+  assert.deepEqual(await resolve({ $schema: "register", schema: { $var: "doc" } }, { doc }), ["table/from_step"]);
+  assert.ok(DatabaseTableNode.get(registry, "from_step"));
+  assert.equal(await resolve({ $schema: "unregister", id: "table/from_step" }, {}), true);
+  assert.equal(await resolve({ $schema: "unregister", id: "table/from_step" }, {}), false);
+  assert.equal(DatabaseTableNode.get(registry, "from_step"), undefined);
 });
 
 test("a validator that changes `schema` does not change the registered table", async () => {
-  await resolve({ $query: "create", ...conn, system: true, schema: {
+  await resolve({ $table: "create", ...conn, schema: {
     table: "guarded",
     properties: { id: { type: "integer", sqlType: "increments" }, name: { type: "string" } },
     validator: [{ $setVars: { "schema.properties.injected": { type: "string" } } }],
   } }, {});
   await resolve({ $query: "select", ...conn, table: "guarded" }, {});
-  assert.equal(SchemaNode.get(registry, "guarded")?.properties?.injected, undefined);
+  assert.equal(DatabaseTableNode.get(registry, "guarded")?.properties?.injected, undefined);
 });
 
-// Table documents and the global validator belong to the resolver that
-// registered them, so they never judge another resolver's queries.
-test("two resolvers keep separate table registries and global validators", async () => {
+test("validate checks a value against a registered schema by id, or one written out", async () => {
+  await resolve({ $schema: "register", schema: { table: "signups", required: ["email"], properties: { email: { type: "string" } } } }, {});
+  assert.deepEqual(await resolve({ $schema: "validate", schema: "table/signups", data: { email: "a@b.c" } }, {}), { valid: true, errors: [] });
+  const missing = await resolve({ $schema: "validate", schema: "table/signups", data: {} }, {}) as { valid: boolean };
+  assert.equal(missing.valid, false);
+
+  // A schema written out keeps its `$` keywords: `$ref` reaches a registered one.
+  const schema = { $ref: "table/signups" };
+  const viaRef = await resolve({ $schema: "validate", schema, data: { $var: "row" } }, { row: { email: 5 } }) as { valid: boolean; errors: Array<{ path: string }> };
+  assert.equal(viaRef.valid, false);
+  assert.equal(viaRef.errors[0].path, "email");
+
+  const unknown = await resolve({ $schema: "validate", schema: "nowhere", data: 1 }, {}) as { valid: boolean; errors: Array<{ message: string }> };
+  assert.match(unknown.errors[0].message, /No schema is registered as "nowhere"/);
+});
+
+// Route bodies validate against the same registered schemas.
+test("a route body can $ref a table's document", async () => {
+  await resolve({ $schema: "register", schema: { table: "members", required: ["name"], properties: { name: { type: "string" } } } }, {});
+  const routes = { methods: { POST: { body: { $ref: "table/members" }, do: [{ $concat: ["ok"] }] } } };
+  const request = (body: unknown) => ({ request: { method: "POST", path: "/", body } });
+  assert.equal(await resolve({ $routes: routes }, request({ name: "ada" })), "ok");
+  await assert.rejects(async () => resolve({ $routes: routes }, request({})), (err: { status?: number }) => err.status === 400);
+});
+
+// Schemas and the global validator belong to the resolver that registered
+// them, so they never judge another resolver's queries.
+test("two resolvers keep separate schemas and global validators", async () => {
   const a = {};
   const b = {};
   const ra = createResolver([...coreNodes(), ...serverNodes()], { context: a });
   const rb = createResolver([...coreNodes(), ...serverNodes()], { context: b });
-  await ra({ $schema: "register", table: { table: "isolated", properties: { email: { type: "string" } }, required: ["email"] } }, {});
-  await ra({ $schema: "validator", do: [{ $error: 403 }] }, {});
+  try {
+    await ra({ $schema: "register", schema: { table: "isolated", properties: { email: { type: "string" } }, required: ["email"] } }, {});
+    await ra({ $query: "validator", do: [{ $error: 403 }] }, {});
 
-  assert.ok(SchemaNode.get(a, "isolated"));
-  assert.equal(SchemaNode.get(b, "isolated"), undefined);
-  assert.equal(await rb({ $schema: "get", table: "isolated" }, {}), null);
-  assert.equal(SchemaNode.globalValidator(b), null);
-  assert.deepEqual(SchemaNode.validateInsert(b, "isolated", { name: "no email" }), { name: "no email" });
+    assert.ok(DatabaseTableNode.get(a, "isolated"));
+    assert.equal(DatabaseTableNode.get(b, "isolated"), undefined);
+    assert.deepEqual(await rb({ $schema: "list" }, {}), []);
+    assert.equal((rb.nodeFor("query") as DatabaseQueryNode).globalValidator, null);
+  } finally {
+    ra.destroy();
+    rb.destroy();
+  }
 });

@@ -9,7 +9,6 @@ import { Node, Context, resolve, resolveAll } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { isProduction } from "../env.js";
 
-/** Reusable SHA-256 helper (used by SchemaNode and QueryNode) */
 /**
  * Compare two secrets in constant time. Digested first so the two buffers are
  * always the same length: the raw comparison throws on a mismatch, and

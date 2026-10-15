@@ -932,8 +932,8 @@ function siblingDocsOf(
   commonSiblings: Record<string, JexsPropertySchema> | undefined,
 ): SiblingDoc[] {
   // Keyed by condition + name: one name routinely means different things in
-  // different operations (SchemaNode's `table` is an inline document under
-  // `register` and a table NAME under `get`), so they are separate entries.
+  // different operations (DatabaseTableNode's `table` is an inline document under
+  // `register` and a table NAME under `drop`), so they are separate entries.
   const out = new Map<string, SiblingDoc>();
 
   const add = (name: string, prop: JexsPropertySchema, when: WhenTest[], extra: Partial<SiblingDoc> = {}): void => {
