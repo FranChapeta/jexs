@@ -401,6 +401,10 @@ const RULES: Record<string, Rule> = {
       if (p.key.startsWith("on-")) retargetReads(p.value, ["wsId"], path => path.replace("wsId", "id"), m);
     }
   },
+  // A connection's entry carries only the `meta` it was accepted with.
+  "socket-list": ({ obj }, m) => {
+    m.review(obj.props[0].keyStart, "`$socket-list` entries no longer carry `name` from `session.user_name`: give `$socket-accept` a `meta`, e.g. `{ \"name\": { \"$var\": \"session.user_name\" } }`");
+  },
   // The global validator's steps are its `do`.
   schema: (step, m) => {
     const value = step.obj.props.find(p => p.key === "$schema")?.value;

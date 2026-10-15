@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, childContext, resolve, resolveAll, runStepsDetached, createHttpError } from "@jexs/core";
+import { Node, Context, NodeValue, childContext, isObject, resolve, resolveAll, runStepsDetached, createHttpError } from "@jexs/core";
 import crypto from "node:crypto";
 import type { Duplex } from "node:stream";
 import type { IncomingMessage } from "node:http";
@@ -69,6 +69,10 @@ export class WebSocketNode extends Node {
           steps: true,
           description: "Steps run once when the connection closes. `code` and `reason` are the close code and its reason text.",
         },
+        meta: {
+          type: "object",
+          description: "What `socket-list` reports for the connection beside its `id`, resolved when it is accepted, e.g. `{ \"name\": { \"$var\": \"session.name\" } }`.",
+        },
       },
     },
     "socket-send": {
@@ -134,7 +138,7 @@ export class WebSocketNode extends Node {
         items: { type: "object", properties: { id: { type: "string", description: "The connection's id." } }, additionalProperties: true },
       },
       markdownDescription: "Lists the connections in the named room.",
-      outputDescription: "One entry per connection in the room: its `id`, plus whatever meta the connection was given.",
+      outputDescription: "One entry per connection in the room: its `id`, plus the `meta` it was accepted with.",
       examples: [
         "{ \"$socket-list\": \"lobby\" }",
       ],
@@ -144,86 +148,93 @@ export class WebSocketNode extends Node {
   ["socket-accept"](def: Record<string, unknown>, context: Context): NodeValue {
     const upgrade = getUpgrade(context);
     if (upgrade.accepted) return null;
-    upgrade.accepted = true;
 
     const onOpen    = def["on-open"]    ?? null;
     const onMessage = def["on-message"] ?? null;
     const onClose   = def["on-close"]   ?? null;
 
-    upgrade.wss.handleUpgrade(upgrade.req, upgrade.socket, upgrade.head, (ws) => {
-      const path = (context.request as Record<string, unknown>)?.path as string || "/";
-      const id = crypto.randomUUID();
-
-      if (!this.paths.has(path)) this.paths.set(path, new Set());
-      this.paths.get(path)!.add(ws);
-      this.clients.set(ws, new Set());
-      this.ids.set(id, ws);
-      this.wsToId.set(ws, id);
-      const session = context.session as Record<string, unknown> | undefined;
-      this.meta.set(ws, { name: session?.user_name ?? "Anonymous" });
-
-      // The connection's own scope, under the request that opened it. Each event's
-      // steps run in a scope of their own under it, so what one handler sets with
-      // `$bubble` the connection's later handlers read.
-      const connection = childContext(context, { [WS]: ws, [WS_PATH]: path, [UPGRADE]: undefined, id });
-
-      if (onOpen) {
-        void runStepsDetached(onOpen, childContext(connection), def, "[WebSocket] on-open error:");
+    // Resolved before the upgrade is claimed, so one that fails leaves it to be refused.
+    return resolve(def.meta ?? null, context, meta => {
+      if (meta !== null && !isObject(meta)) {
+        throw new Error(`socket-accept: meta must be an object, not ${JSON.stringify(meta)}`);
       }
+      if (upgrade.accepted) return null;
+      upgrade.accepted = true;
 
-      ws.on("message", (raw: WebSocket.RawData) => {
-        if (!onMessage) return;
-        // The listener's upgrade server already refused anything over its
-        // `maxMessageSize`, so this is within the limit.
-        const rawStr = raw.toString();
+      upgrade.wss.handleUpgrade(upgrade.req, upgrade.socket, upgrade.head, (ws) => {
+        const path = (context.request as Record<string, unknown>)?.path as string || "/";
+        const id = crypto.randomUUID();
 
-        let messageData: unknown;
-        try {
-          messageData = JSON.parse(rawStr);
-        } catch {
-          ws.send(JSON.stringify({ type: "error", message: "Invalid JSON" }));
-          return;
+        if (!this.paths.has(path)) this.paths.set(path, new Set());
+        this.paths.get(path)!.add(ws);
+        this.clients.set(ws, new Set());
+        this.ids.set(id, ws);
+        this.wsToId.set(ws, id);
+        this.meta.set(ws, meta ?? {});
+
+        // The connection's own scope, under the request that opened it. Each event's
+        // steps run in a scope of their own under it, so what one handler sets with
+        // `$bubble` the connection's later handlers read.
+        const connection = childContext(context, { [WS]: ws, [WS_PATH]: path, [UPGRADE]: undefined, id });
+
+        if (onOpen) {
+          void runStepsDetached(onOpen, childContext(connection), def, "[WebSocket] on-open error:");
         }
 
-        if (typeof messageData !== "object" || messageData === null || Array.isArray(messageData)) {
-          ws.send(JSON.stringify({ type: "error", message: "Expected JSON object" }));
-          return;
-        }
+        ws.on("message", (raw: WebSocket.RawData) => {
+          if (!onMessage) return;
+          // The listener's upgrade server already refused anything over its
+          // `maxMessageSize`, so this is within the limit.
+          const rawStr = raw.toString();
 
-        void runStepsDetached(onMessage, childContext(connection, { message: messageData }), def, "[WebSocket] on-message error:");
-      });
-
-      // A client that breaks the protocol (a frame over `maxMessageSize`, invalid
-      // UTF-8, a bad opcode) makes ws emit `error` and then close the socket with
-      // the matching code, so `on-close` still runs. Without a listener the
-      // event would throw and take the process down with it.
-      ws.on("error", () => {});
-
-      ws.on("close", (code: number, reason: Buffer) => {
-        if (onClose) {
-          const closed = childContext(connection, { code, reason: reason.toString() });
-          void runStepsDetached(onClose, closed, def, "[WebSocket] on-close error:");
-        }
-
-        this.paths.get(path)?.delete(ws);
-        if (this.paths.get(path)?.size === 0) this.paths.delete(path);
-
-        const memberRooms = this.clients.get(ws);
-        if (memberRooms) {
-          for (const room of memberRooms) {
-            this.rooms.get(room)?.delete(ws);
-            if (this.rooms.get(room)?.size === 0) this.rooms.delete(room);
+          let messageData: unknown;
+          try {
+            messageData = JSON.parse(rawStr);
+          } catch {
+            ws.send(JSON.stringify({ type: "error", message: "Invalid JSON" }));
+            return;
           }
-        }
-        this.clients.delete(ws);
 
-        const wsId = this.wsToId.get(ws);
-        if (wsId) this.ids.delete(wsId);
-        this.wsToId.delete(ws);
+          if (typeof messageData !== "object" || messageData === null || Array.isArray(messageData)) {
+            ws.send(JSON.stringify({ type: "error", message: "Expected JSON object" }));
+            return;
+          }
+
+          void runStepsDetached(onMessage, childContext(connection, { message: messageData }), def, "[WebSocket] on-message error:");
+        });
+
+        // A client that breaks the protocol (a frame over `maxMessageSize`, invalid
+        // UTF-8, a bad opcode) makes ws emit `error` and then close the socket with
+        // the matching code, so `on-close` still runs. Without a listener the
+        // event would throw and take the process down with it.
+        ws.on("error", () => {});
+
+        ws.on("close", (code: number, reason: Buffer) => {
+          if (onClose) {
+            const closed = childContext(connection, { code, reason: reason.toString() });
+            void runStepsDetached(onClose, closed, def, "[WebSocket] on-close error:");
+          }
+
+          this.paths.get(path)?.delete(ws);
+          if (this.paths.get(path)?.size === 0) this.paths.delete(path);
+
+          const memberRooms = this.clients.get(ws);
+          if (memberRooms) {
+            for (const room of memberRooms) {
+              this.rooms.get(room)?.delete(ws);
+              if (this.rooms.get(room)?.size === 0) this.rooms.delete(room);
+            }
+          }
+          this.clients.delete(ws);
+
+          const wsId = this.wsToId.get(ws);
+          if (wsId) this.ids.delete(wsId);
+          this.wsToId.delete(ws);
+        });
       });
-    });
 
-    return null;
+      return null;
+    });
   }
 
   ["socket-send"](def: Record<string, unknown>, context: Context): NodeValue {

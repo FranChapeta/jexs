@@ -94,6 +94,34 @@ test("a connection's handlers share its id and what they bubble, and on-close ge
   }
 });
 
+test("socket-list reports each connection's id and the meta it was accepted with", { timeout: 5000 }, async () => {
+  const resolver = createResolver([...coreNodes(), new ServerNode(), new WebSocketNode()]);
+  const port = await resolver({
+    $listen: 0,
+    do: [{
+      "$socket-accept": true,
+      meta: { name: { $var: "request.query.name" } },
+      "on-open": [{ "$socket-join": "lobby" }],
+      "on-message": [{ "$socket-send": { "$socket-list": "lobby" } }],
+    }],
+  }, {});
+  try {
+    const ws = await new Promise<WebSocket>((resolve, reject) => {
+      const socket = new WebSocket(`ws://127.0.0.1:${port}/?name=ada`);
+      socket.once("open", () => resolve(socket));
+      socket.once("error", reject);
+    });
+    await new Promise(r => setTimeout(r, 50)); // let on-open join the room
+    const list = JSON.parse(await ask(ws)) as Array<Record<string, unknown>>;
+    assert.equal(list.length, 1);
+    assert.equal(list[0].name, "ada");
+    assert.match(String(list[0].id), /^[0-9a-f-]{36}$/);
+    ws.close();
+  } finally {
+    resolver.destroy();
+  }
+});
+
 /** The close code the server ends `ws` with after it is sent `bytes` of payload. */
 function closeCodeAfterSending(ws: WebSocket, bytes: number): Promise<number> {
   return new Promise(resolve => {

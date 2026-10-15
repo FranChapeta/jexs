@@ -151,7 +151,7 @@ test("registering a table leaves the written document unchanged", async () => {
   const step = { $schema: "register", table: { table: "kept", properties: { name: { type: "string" } } } };
   await resolve(step, {});
   assert.deepEqual(step.table, { table: "kept", properties: { name: { type: "string" } } });
-  assert.ok(SchemaNode.get(registry, "kept")?.properties?.created_at, "the registry's copy has the common columns");
+  assert.deepEqual(SchemaNode.get(registry, "kept")?.properties, { name: { type: "string" } }, "no columns are added");
 });
 
 // A step producing the document (`$var`, a `$file` with `data: true`) resolves

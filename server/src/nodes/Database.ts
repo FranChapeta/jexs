@@ -35,7 +35,6 @@ interface ConnectionInfo {
 
 // What a hosted connection dials when the step leaves a part out.
 const DEFAULT_HOST = "localhost";
-const DEFAULT_DB = "cms";
 const DEFAULT_PORT = { mysql: 3306, pg: 5432 } as const;
 const DEFAULT_USER = { mysql: "root", pg: "postgres" } as const;
 
@@ -53,7 +52,7 @@ function describe(config: DatabaseConfig): ConnectionInfo {
     host: config.host || DEFAULT_HOST,
     port: config.port || DEFAULT_PORT[config.type],
     user: config.user || DEFAULT_USER[config.type],
-    db: config.database || DEFAULT_DB,
+    db: config.database,
     ssl: Boolean(config.ssl),
   };
 }
@@ -174,7 +173,7 @@ export class DatabaseNode extends Node {
                 port: { type: "number", description: "Server port (default 3306 for MySQL, 5432 for PostgreSQL)." },
                 user: { type: "string", description: "Username." },
                 password: { type: "string", description: "Password." },
-                db: { type: "string", description: "Database name." },
+                db: { type: "string", required: true, description: "Database name." },
               },
             },
             filename: {
@@ -451,6 +450,9 @@ function driverOptions(): string {
  * Node range.
  */
 function createConnection(config: DatabaseConfig): KnexType {
+  if (config.type !== "sqlite" && !config.database) {
+    throw new Error(`A ${config.type} connection needs a database: give \`db\`, or name it in the url's path`);
+  }
   try {
     return knexFor(config);
   } catch (error) {
@@ -482,7 +484,7 @@ function knexFor(config: DatabaseConfig): KnexType {
           port: config.port || DEFAULT_PORT.mysql,
           user: config.user || DEFAULT_USER.mysql,
           password: config.password || "",
-          database: config.database || DEFAULT_DB,
+          database: config.database,
           // mysql2 feeds `ssl` straight to tls.createSecureContext, so the bare
           // `true` shorthand has to become an options object; a falsy value is
           // dropped entirely rather than sent as `false`. Knex types the field
@@ -502,7 +504,7 @@ function knexFor(config: DatabaseConfig): KnexType {
           port: config.port || DEFAULT_PORT.pg,
           user: config.user || DEFAULT_USER.pg,
           password: config.password || "",
-          database: config.database || DEFAULT_DB,
+          database: config.database,
           // pg takes the boolean and the options object as-is.
           ...(config.ssl !== undefined ? { ssl: config.ssl } : {}),
         },

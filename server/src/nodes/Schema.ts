@@ -12,7 +12,7 @@ const COMPUTE_FNS: Record<string, (value: string) => string> = { sha256 };
 const JSON_TYPES = ["string", "number", "integer", "boolean", "object", "array", "null"];
 const SQL_TYPES = [
   "integer", "int", "biginteger", "bigint", "smallint", "tinyint", "float", "double", "decimal",
-  "varchar", "string", "text", "template", "mediumtext", "longtext", "boolean", "bool",
+  "varchar", "string", "text", "mediumtext", "longtext", "boolean", "bool",
   "date", "datetime", "timestamp", "time", "json", "jsonb", "binary", "blob", "uuid",
 ];
 const REFERENTIAL = ["CASCADE", "SET NULL", "RESTRICT", "NO ACTION"];
@@ -233,22 +233,6 @@ export class SchemaNode extends Node {
   /** Cache of `required`-stripped clones used to validate partial updates. */
   private static updateSchemas: WeakMap<TableJsonSchema, object> = new WeakMap();
 
-
-  /** Columns automatically added to every table schema. */
-  private static readonly COMMON_COLUMNS: Record<string, ColumnSchema> = {
-    system:     { type: "integer", default: 0, sqlType: "boolean", sqlDefault: 0 },
-    created_at: { type: "string", sqlType: "timestamp", sqlDefault: "CURRENT_TIMESTAMP" },
-  };
-
-  private static injectCommonColumns(schema: TableJsonSchema): void {
-    if (!schema.properties) return;
-    for (const [name, col] of Object.entries(this.COMMON_COLUMNS)) {
-      if (!(name in schema.properties)) {
-        schema.properties[name] = { ...col };
-      }
-    }
-  }
-
   private root: string;
 
   constructor(root: string = "src") {
@@ -288,15 +272,13 @@ export class SchemaNode extends Node {
   /**
    * Register a table document. The registry keeps its own copy, since the
    * document is usually a template's literal or a value from context that later
-   * steps may change, and returns it. `withCommonColumns` adds the columns every
-   * table gets (`system`, `created_at`) to that copy.
+   * steps may change, and returns it.
    */
-  static register(context: Context, schema: unknown, withCommonColumns = false): TableJsonSchema {
+  static register(context: Context, schema: unknown): TableJsonSchema {
     if (!isTableDocument(schema)) {
       throw new Error("A table document needs a `table` name and `properties`.");
     }
     const own = structuredClone(schema);
-    if (withCommonColumns) this.injectCommonColumns(own);
     // Compile eagerly so a malformed schema throws at registration, not on the
     // first insert.
     getValidator(schemaFor(context).validation, own);
@@ -538,7 +520,7 @@ async function doRegister(def: Record<string, unknown>, context: Context, root: 
   // resolves to it first.
   const table = isStep(def.table) ? await resolve(def.table, context) : def.table;
   if (isObject(table)) {
-    const schema = SchemaNode.register(context, table, true);
+    const schema = SchemaNode.register(context, table);
     return { registered: [schema.table] };
   }
 
@@ -558,7 +540,7 @@ async function doRegister(def: Record<string, unknown>, context: Context, root: 
         const schema: unknown = JSON.parse(content);
         // The same keys that make the editor treat a file as a table document.
         if (isTableDocument(schema)) {
-          registered.push(SchemaNode.register(context, schema, true).table);
+          registered.push(SchemaNode.register(context, schema).table);
         }
       }
     } catch (error) {

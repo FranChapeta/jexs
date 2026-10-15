@@ -922,14 +922,6 @@ export class ServerNode extends Node {
 
       loggerFor(context).info(`Jexs running at http://${host.includes(":") ? `[${host}]` : host}:${port}`);
 
-      // Log install URL if in installer mode
-      if (context.installToken) {
-        const installUrl = `${getBaseUrl(listener)}/install?token=${context.installToken}`;
-        console.log(`\n[Install] No database configured.`);
-        console.log(`[Install] Access the installer at: ${installUrl}\n`);
-        fs.writeFileSync("install.txt", installUrl + "\n");
-      }
-
       return port;
     });
   }

@@ -833,7 +833,6 @@ function buildColumns(
         column = table.string(name, length);
         break;
       case "text":
-      case "template":
         column = table.text(name);
         break;
       case "mediumtext":
