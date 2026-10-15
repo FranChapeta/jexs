@@ -307,6 +307,24 @@ function dataRoute(v: Val, m: Codemod): void {
   else if (isRunHandler(v)) routeHandler(v, [], m);
 }
 
+/** A `where` operator's one name, by each alias it had. */
+const WHERE_OPERATORS: Record<string, string> = { ne: "neq", "!=": "neq", ">": "gt", ">=": "gte", "<": "lt", "<=": "lte" };
+
+/** Rename the operator aliases in a `where` clause, through its `or` and `and` lists. */
+function whereOperators(v: Val, m: Codemod): void {
+  if (v.k !== "obj" || isStep(v)) return;
+  for (const p of v.props) {
+    if ((p.key === "or" || p.key === "and") && p.value.k === "arr") p.value.items.forEach(item => whereOperators(item, m));
+    else if (p.value.k === "obj" && !isStep(p.value)) {
+      for (const op of p.value.props) {
+        const to = WHERE_OPERATORS[op.key];
+        // The key's span leaves out its quotes, so they stay as written.
+        if (to) m.add({ start: op.keyStart, end: op.keyEnd, text: to });
+      }
+    }
+  }
+}
+
 /** Rename the step's `from` sibling to `to`, keeping how its key is quoted. */
 function renameSibling({ obj }: Step, from: string, to: string, m: Codemod): void {
   const prop = obj.props.find(p => p.key === from);
@@ -400,6 +418,26 @@ const RULES: Record<string, Rule> = {
     for (const p of step.obj.props) {
       if (p.key.startsWith("on-")) retargetReads(p.value, ["wsId"], path => path.replace("wsId", "id"), m);
     }
+  },
+  // One name per option: `tls` and `user`.
+  database: (step, m) => {
+    const prop = step.obj.props.find(p => p.key === "$database");
+    if (prop?.value.k === "str" && prop.value.value === "connect") renameSibling(step, "ssl", "tls", m);
+  },
+  "cache-connect": (step, m) => {
+    renameSibling(step, "username", "user", m);
+    renameSibling(step, "ssl", "tls", m);
+    const ttl = step.obj.props.find(p => p.key === "defaultTtl");
+    if (ttl) m.review(ttl.keyStart, "`defaultTtl` is gone, and it never applied: drop it, and give `$cache-set` its `ttl`");
+  },
+  "email-connect": (step, m) => renameSibling(step, "ssl", "tls", m),
+  defer: ({ obj }, m) => {
+    const delay = obj.props.find(p => p.key === "delay");
+    if (delay) m.review(delay.keyStart, "`$defer`'s `delay` is gone: start the deferred steps with `{ \"$sleep\": <ms> }`");
+  },
+  query: ({ obj }, m) => {
+    const where = obj.props.find(p => p.key === "where");
+    if (where) whereOperators(where.value, m);
   },
   // A connection's entry carries only the `meta` it was accepted with.
   "socket-list": ({ obj }, m) => {

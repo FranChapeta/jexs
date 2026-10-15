@@ -6,7 +6,7 @@ import { Node, isObject } from "@jexs/core";
 /**
  * Connection strings and TLS material, shared by DatabaseNode and the cache
  * adapters so both accept the same shapes: a `url` carrying the whole endpoint,
- * and an `ssl`/`tls` value that is a boolean or an object of Node TLS options.
+ * and a `tls` value that is a boolean or an object of Node TLS options.
  */
 
 export type TlsConfig = ConnectionOptions;
@@ -18,7 +18,7 @@ export function redactUrl(raw: string): string {
 
 // ── TLS material ───────────────────────────────────────────────────────────────
 
-// The boolean spellings the `ssl`/`tls` FIELD accepts as text, for a value that
+// The boolean spellings the `tls` FIELD accepts as text, for a value that
 // reaches it from `env` as a string. Kept to the few that are actually written
 // — the schema lists exactly these as an enum, so what the editor offers and
 // what the runtime takes are the same set (the runtime also folds case).
@@ -28,10 +28,10 @@ const TLS_OFF = new Set(["false", "0", "disable"]);
 const SECURE_VERSIONS = new Set(["TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"]);
 
 /**
- * Certificate material for the `ssl` / `tls` FIELD: PEM text, never a path.
+ * Certificate material for the `tls` FIELD: PEM text, never a path.
  * Templates load the PEM the one way Jexs loads anything:
  *   [ { "$file": "/certs/ca.pem", "raw": true, "$as": "ca" },
- *     { "$database": "connect", "url": "...", "ssl": { "ca": { "$var": "ca" } } } ]
+ *     { "$database": "connect", "url": "...", "tls": { "ca": { "$var": "ca" } } } ]
  */
 function pemContent(value: unknown, field: string): string {
   const s = String(value).trim();
@@ -51,7 +51,7 @@ function pemList(value: unknown, field: string): string | string[] {
  * define as a FILE PATH — libpq reads `sslrootcert` off disk, and so does
  * `pg-connection-string`. A connection string is a foreign format we implement
  * faithfully, so paths stay paths here; they resolve against the cwd, as libpq's
- * do. The `ssl` field above is ours, and takes values instead.
+ * do. The `tls` field above is ours, and takes values instead.
  */
 function pemFile(value: string, field: string): string {
   try {
@@ -71,7 +71,7 @@ function secureVersion(value: unknown): SecureVersion {
 }
 
 /**
- * Normalize an `ssl` / `tls` value into what the drivers accept.
+ * Normalize a `tls` value into what the drivers accept.
  *
  * - `true` — TLS verifying against the system trust store. Identical to `{}`;
  *   kept because it is how pg and knex spell it (`boolean | ConnectionOptions`)
@@ -82,7 +82,7 @@ function secureVersion(value: unknown): SecureVersion {
  *   same two answers, for a value arriving from `env` as text.
  * - an object — `ca`/`cert`/`key` as PEM content, the rest passed through.
  *
- * A bare PEM string is deliberately NOT accepted. It would make `{ "ssl": {
+ * A bare PEM string is deliberately NOT accepted. It would make `{ "tls": {
  * "$var": "x" } }` mean two different things depending on the runtime type of
  * `x` — options if it held an object, a CA if it held a string — so material
  * always goes under a named key.
@@ -125,7 +125,7 @@ export function parseTls(value: unknown): boolean | TlsConfig | undefined {
   return out;
 }
 
-/** Layer an explicit `ssl`/`tls` sibling over whatever the url implied. */
+/** Layer an explicit `tls` sibling over whatever the url implied. */
 export function mergeTls(
   base: boolean | TlsConfig | undefined,
   override: boolean | TlsConfig | undefined,
@@ -258,7 +258,7 @@ function sslFromQuery(q: URLSearchParams): boolean | TlsConfig | undefined {
   if (ssl !== null) {
     // mysql2's url idiom puts a JSON object in `ssl=`; libpq-style urls use
     // `ssl=true` / `ssl=0`. Only a url carries the JSON-in-a-string form — the
-    // `ssl` FIELD takes a real object, so `parseTls` does not accept it.
+    // `tls` FIELD takes a real object, so `parseTls` does not accept it.
     const raw = ssl.trim();
     let parsed: boolean | TlsConfig | undefined;
     if (raw.startsWith("{")) {

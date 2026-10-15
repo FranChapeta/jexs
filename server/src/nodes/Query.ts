@@ -199,11 +199,11 @@ export interface WhereGroup {
 export type WhereValue =
   | unknown // Direct value for equality
   | { eq?: unknown }
-  | { neq?: unknown; ne?: unknown; "!="?: unknown }
-  | { gt?: unknown; ">"?: unknown }
-  | { gte?: unknown; ">="?: unknown }
-  | { lt?: unknown; "<"?: unknown }
-  | { lte?: unknown; "<="?: unknown }
+  | { neq?: unknown }
+  | { gt?: unknown }
+  | { gte?: unknown }
+  | { lt?: unknown }
+  | { lte?: unknown }
   | { like?: string }
   | { notLike?: string }
   | { in?: unknown[] }
@@ -980,14 +980,14 @@ function applyWhere(
   return builder;
 }
 
-/** Comparison operators by name, with the aliases each accepts. */
+/** Comparison operators by name, and the SQL each is. */
 const COMPARISONS: Record<string, string> = {
   eq: "=",
-  neq: "!=", ne: "!=", "!=": "!=",
-  gt: ">", ">": ">",
-  gte: ">=", ">=": ">=",
-  lt: "<", "<": "<",
-  lte: "<=", "<=": "<=",
+  neq: "!=",
+  gt: ">",
+  gte: ">=",
+  lt: "<",
+  lte: "<=",
 };
 
 /** Apply one column's condition: a value for equality, or an object of operators. */

@@ -70,7 +70,6 @@ export interface CacheStats {
 export interface CacheConfig {
   type: "memory" | "redis" | "memcached";
   prefix?: string;
-  defaultTtl?: number;
 
   // Redis-specific
   redis?: {

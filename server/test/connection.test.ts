@@ -156,9 +156,9 @@ test("parseTls distinguishes unset from off", () => {
 });
 
 // Certificate material only ever goes under a named key. A bare PEM string
-// would make `{"ssl": {"$var": "x"}}` mean options or a CA depending on the
+// would make `{"tls": {"$var": "x"}}` mean options or a CA depending on the
 // runtime type of `x` — one template, two meanings.
-test("the ssl field refuses a bare string that is not a boolean spelling", () => {
+test("the tls field refuses a bare string that is not a boolean spelling", () => {
   assert.throws(() => parseTls(CA_PEM), /is not a TLS setting/);
   assert.throws(() => parseTls(CA_PEM), /material goes under a key/);
   assert.throws(() => parseTls("ca.pem"), /is not a TLS setting/);
@@ -255,18 +255,18 @@ test("url and the discrete endpoint properties are alternatives, not layers", as
   );
 });
 
-// `ssl` says HOW to connect rather than WHERE, so it refines a url rather than
+// `tls` says HOW to connect rather than WHERE, so it refines a url rather than
 // contradicting it. This is the case that justifies allowing both: the url comes
 // from the provider's $env (with its own sslmode) and the CA from the deploy, and
 // since the field takes PEM content it is the ONLY channel for loaded material.
-test("ssl layers over a url instead of colliding with it", async () => {
+test("tls layers over a url instead of colliding with it", async () => {
   const r = await connect({
     $database: "connect", connection: "c3",
     url: "postgres://h/d?sslmode=no-verify",
-    ssl: { ca: CA_PEM },
+    tls: { ca: CA_PEM },
   });
   // Where it points, under `connect`'s own names, with the defaults it dialled.
-  assert.deepEqual(r, { type: "pg", host: "h", port: 5432, user: "postgres", db: "d", ssl: true });
+  assert.deepEqual(r, { type: "pg", host: "h", port: 5432, user: "postgres", db: "d", tls: true });
   const settings = DatabaseNode.getKnex(dbCtx, "c3").client.connectionSettings as Record<string, unknown>;
   // Merged key-wise. node-postgres would have the url REPLACE the ssl object.
   assert.deepEqual(settings.ssl, { rejectUnauthorized: false, ca: CA_PEM.trim() });
@@ -309,7 +309,7 @@ test("info and close act on the connection they name", async () => {
   await connect({ $database: "connect", connection: "left", url: "sqlite::memory:" });
   assert.deepEqual(
     await connect({ $database: "connect", connection: "right", url: "sqlite::memory:" }),
-    { type: "sqlite", filename: ":memory:", ssl: false },
+    { type: "sqlite", filename: ":memory:", tls: false },
     "connect returns the connection's info",
   );
   assert.equal((await connect({ $database: "info", connection: "right" }))?.filename, ":memory:");
@@ -347,7 +347,7 @@ test("cache-connect refuses a url alongside the discrete endpoint", async () => 
   assert.equal(await run({ "$cache-connect": "redis", url: "rediss://h:6379", tls: true }), "redis");
   // memcached has no url at all, so its server list is the only spelling.
   assert.equal(
-    await run({ "$cache-connect": "memcached", servers: ["h:11211"], username: "u" }),
+    await run({ "$cache-connect": "memcached", servers: ["h:11211"], user: "u" }),
     "memcached",
   );
   cacheResolve.destroy();

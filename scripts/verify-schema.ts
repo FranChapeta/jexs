@@ -242,9 +242,8 @@ const cases: Case[] = [
     expr: { "$gl-ssao": true, radius: "wide" } },
 
   // Exclusive variant siblings on other value-selected ops; Element's `tag` opts out.
-  { label: "database raw refuses connect's ssl (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
-    expr: { $database: "raw", sql: "select 1", ssl: true } },
-  { label: "cache-connect memory refuses redis's tls (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+  { label: "database raw refuses connect's tls (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $database: "raw", sql: "select 1", tls: true } },  { label: "cache-connect memory refuses redis's tls (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { "$cache-connect": "memory", tls: true } },
   { label: "tag div with an anchor's href (valid, tag is not exclusive)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $tag: "div", href: "/x" } },
@@ -384,17 +383,17 @@ const cases: Case[] = [
     expr: { "$cache-connect": "redis", host: "localhost", port: 6379 } },
 
   // `cache-connect` nests endpoint variants under each driver, the same shape as
-  // `database connect`: port/username/password/db hang off `host`, not the driver.
+  // `database connect`: port/user/password/db hang off `host`, not the driver.
   { label: "cache-connect redis via url (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { "$cache-connect": "redis", url: "rediss://u:p@h:6379/0", prefix: "app" } },
   { label: "cache-connect redis host + its own siblings (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { "$cache-connect": "redis", host: "h", port: 6379, username: "u", password: "p", db: 2 } },
+    expr: { "$cache-connect": "redis", host: "h", port: 6379, user: "u", password: "p", db: 2 } },
   { label: "cache-connect redis url + tls layers (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { "$cache-connect": "redis", url: "rediss://h:6379", tls: { ca: "certs/redis.pem" } } },
   { label: "cache-connect redis non-numeric port under host (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { "$cache-connect": "redis", host: "h", port: "nope" } },
   { label: "cache-connect memcached via servers list (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { "$cache-connect": "memcached", servers: ["h1:11211", "h2:11211"], username: "u" } },
+    expr: { "$cache-connect": "memcached", servers: ["h1:11211", "h2:11211"], user: "u" } },
   { label: "cache-connect memcached servers must be strings (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { "$cache-connect": "memcached", servers: [11211] } },
   { label: "cache-connect memory with its own siblings (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
@@ -434,10 +433,10 @@ const cases: Case[] = [
     expr: { $database: "connect", type: "pg", host: "h", port: 5432, user: "u", db: "app" } },
   { label: "database connect via filename (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $database: "connect", type: "sqlite", filename: "app/data.db" } },
-  // `ssl` is a common sibling: HOW to connect, not where, so it rides along with
+  // `tls` is a common sibling: HOW to connect, not where, so it rides along with
   // any of the three.
-  { label: "database connect url + ssl layers (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $database: "connect", url: "postgres://h/app", ssl: { ca: "certs/root.pem" } } },
+  { label: "database connect url + tls layers (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $database: "connect", url: "postgres://h/app", tls: { ca: { $var: "ca" } } } },
   // The gating is what nesting buys: `port` is type-checked only in host's scope.
   { label: "database connect host with non-numeric port (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { $database: "connect", host: "h", port: "nope" } },
@@ -445,20 +444,20 @@ const cases: Case[] = [
     expr: { $database: "connect", type: "pg", host: "h", db: "app", port: { $var: "env.PGPORT" } } },
   { label: "database connect bad type enum (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { $database: "connect", type: "oracle", host: "h" } },
-  // `ssl` is boolean | string | object, and the enum constrains only the string
+  // `tls` is boolean | string | object, and the enum constrains only the string
   // branch — so the editor rejects exactly what the runtime rejects.
-  { label: "database connect ssl true (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $database: "connect", type: "pg", host: "h", db: "app", ssl: true } },
-  { label: "database connect ssl string spelling (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $database: "connect", type: "pg", host: "h", db: "app", ssl: "require" } },
-  { label: "database connect ssl object (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $database: "connect", type: "pg", host: "h", db: "app", ssl: { rejectUnauthorized: false } } },
+  { label: "database connect tls true (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $database: "connect", type: "pg", host: "h", db: "app", tls: true } },
+  { label: "database connect tls string spelling (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $database: "connect", type: "pg", host: "h", db: "app", tls: "require" } },
+  { label: "database connect tls object (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $database: "connect", type: "pg", host: "h", db: "app", tls: { rejectUnauthorized: false } } },
   { label: "database connect by host without a db (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { $database: "connect", type: "pg", host: "h" } },
-  { label: "database connect ssl arbitrary string (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
-    expr: { $database: "connect", host: "h", ssl: "banana" } },
-  { label: "database connect ssl as a bare PEM string (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
-    expr: { $database: "connect", host: "h", ssl: "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----" } },
+  { label: "database connect tls arbitrary string (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $database: "connect", type: "pg", host: "h", db: "app", tls: "banana" } },
+  { label: "database connect tls as a bare PEM string (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $database: "connect", type: "pg", host: "h", db: "app", tls: "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----" } },
   { label: "cache-connect redis tls arbitrary string (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { "$cache-connect": "redis", host: "h", tls: "banana" } },
   { label: "storage value-mode keys (valid)", schemaRef: "$defs/exprFlat", expectValid: true,

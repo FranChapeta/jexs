@@ -187,7 +187,7 @@ export function smtpOptions(base: SmtpOptions, siblings: Record<string, unknown>
   // "upgrade if the server happens to offer it". That default is what an attacker
   // strips, and it would make a `ca` a guarantee in name only (TLS material that
   // applies just when the server feels like it), so asking for TLS requires it.
-  const tls = parseTls(siblings.tls ?? siblings.ssl);
+  const tls = parseTls(siblings.tls);
   if (tls === false) {
     options.secure = false;
     options.ignoreTLS = true;
@@ -439,7 +439,7 @@ export class EmailNode extends Node {
         tls: {
           type: ["boolean", "string", "object"],
           enum: TLS_STRINGS,
-          markdownDescription: "TLS for the connection, also spelled `ssl`, and the same knob it is on `cache-connect` and `database`. `true` encrypts and verifies against the system trust store, and **fails** rather than sending in the clear. Worth setting on any connection that is not already `secure`, because SMTP's own default is to upgrade only if the server offers to, which is exactly what an attacker strips. An object does the same with its own material: `ca`, `cert`, `key`, `passphrase`, `servername`, `rejectUnauthorized`, `minVersion`, `ciphers`. `false` refuses TLS altogether, for a local relay that has none.\n\nCertificates are PEM **content**, not paths: load the file first with `{ \"$file\": \"/certs/smtp-ca.pem\", \"raw\": true, \"$as\": \"ca\" }` and pass `{ \"$var\": \"ca\" }`.",
+          markdownDescription: "TLS for the connection, the same knob it is on `cache-connect` and `database`. `true` encrypts and verifies against the system trust store, and **fails** rather than sending in the clear. Worth setting on any connection that is not already `secure`, because SMTP's own default is to upgrade only if the server offers to, which is exactly what an attacker strips. An object does the same with its own material: `ca`, `cert`, `key`, `passphrase`, `servername`, `rejectUnauthorized`, `minVersion`, `ciphers`. `false` refuses TLS altogether, for a local relay that has none.\n\nCertificates are PEM **content**, not paths: load the file first with `{ \"$file\": \"/certs/smtp-ca.pem\", \"raw\": true, \"$as\": \"ca\" }` and pass `{ \"$var\": \"ca\" }`.",
           examples: [
             "true",
             "{ \"ca\": { \"$var\": \"ca\" }, \"servername\": \"mail.internal\" }",

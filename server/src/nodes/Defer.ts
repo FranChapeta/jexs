@@ -22,7 +22,7 @@ export class DeferNode extends Node {
   static schema: JexsNodeSchema = {
     defer: {
       output: "string",
-      markdownDescription: "Renders a placeholder immediately, then streams the resolved content to replace it via a `<script>` tag.\nUse `\"loader\"` for the placeholder expression shown while the content resolves.\nPass `\"delay\"` (ms) to add an artificial delay before resolving.",
+      markdownDescription: "Renders a placeholder immediately, then streams the resolved content to replace it via a `<script>` tag.\nUse `\"loader\"` for the placeholder expression shown while the content resolves.",
       outputDescription: "A `<div>` wrapper **string** containing the loader, returned right away. The real content resolves in the background and is streamed in to replace it (requires the response to be sent as a streaming HTML response).",
       examples: [
         "{ \"$defer\": { \"$file\": \"components/chart.json\" }, \"loader\": { \"$tag\": \"div\", \"class\": \"skeleton\" } }",
@@ -30,10 +30,6 @@ export class DeferNode extends Node {
       siblings: {
         loader: {
           description: "Placeholder expression shown while the deferred content loads.",
-        },
-        delay: {
-          type: "number",
-          description: "Milliseconds to wait before resolving (for staggered loading effects).",
         },
       },
     },
@@ -46,14 +42,12 @@ export class DeferNode extends Node {
     return resolve(loaderExpr, context, loaderResult => {
       const loaderHtml = loaderResult != null ? String(loaderResult) : "";
       const deferredContext = { ...context };
-      const delayMs = typeof def.delay === "number" ? def.delay : 0;
 
       const expr = def.$defer;
-      // Started from a promise either way, so a synchronous throw fails the part
-      // instead of escaping into the page render. The page is already on its way,
-      // so a failed part is logged and left empty.
-      const start = delayMs > 0 ? new Promise<void>(r => setTimeout(r, delayMs)) : Promise.resolve();
-      const html = start.then(() => resolve(expr, deferredContext)).then(
+      // Started from a promise, so a synchronous throw fails the part instead of
+      // escaping into the page render. The page is already on its way, so a failed
+      // part is logged and left empty.
+      const html = Promise.resolve().then(() => resolve(expr, deferredContext)).then(
         part => String(part ?? ""),
         err => {
           loggerFor(context).error(`[Defer] Error resolving ${id}:`, err);

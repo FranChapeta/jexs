@@ -77,7 +77,6 @@ export class CacheNode extends Node {
       ],
       siblings: {
         prefix:     { type: "string", description: "Key prefix applied to every operation." },
-        defaultTtl: { type: "number", description: "Default TTL in seconds when `ttl` is omitted on set." },
       },
       variants: {
         redis: {
@@ -86,7 +85,7 @@ export class CacheNode extends Node {
             tls: {
               type: ["boolean", "string", "object"],
               enum: TLS_STRINGS,
-              markdownDescription: "TLS for the connection, also spelled `ssl`. `true` encrypts AND verifies against the system trust store — the strictest setting, which fails on a private CA. An object takes `ca`, `cert`, `key`, `passphrase`, `servername`, `rejectUnauthorized`, `minVersion` and `ciphers`. The string forms (`\"true\"`, `\"1\"`, `\"require\"`, `\"false\"`, `\"0\"`, `\"disable\"`) are for a value arriving from `env` as text. Implied by a `rediss://` url.\n\nCertificates are PEM **content**, not paths: load the file first with `{ \"$file\": \"/certs/redis-ca.pem\", \"raw\": true, \"$as\": \"ca\" }` and pass `{ \"$var\": \"ca\" }`.",
+              markdownDescription: "TLS for the connection. `true` encrypts AND verifies against the system trust store — the strictest setting, which fails on a private CA. An object takes `ca`, `cert`, `key`, `passphrase`, `servername`, `rejectUnauthorized`, `minVersion` and `ciphers`. The string forms (`\"true\"`, `\"1\"`, `\"require\"`, `\"false\"`, `\"0\"`, `\"disable\"`) are for a value arriving from `env` as text. Implied by a `rediss://` url.\n\nCertificates are PEM **content**, not paths: load the file first with `{ \"$file\": \"/certs/redis-ca.pem\", \"raw\": true, \"$as\": \"ca\" }` and pass `{ \"$var\": \"ca\" }`.",
               examples: [
                 "true",
                 "{ \"ca\": { \"$var\": \"ca\" }, \"servername\": \"cache.internal\" }",
@@ -103,7 +102,7 @@ export class CacheNode extends Node {
               markdownDescription: "Redis hostname, spelling the endpoint out instead of passing a `url`.",
               siblings: {
                 port:     { type: "number", description: "Redis port (default 6379)." },
-                username: { type: "string", description: "ACL username (Redis 6+)." },
+                user:     { type: "string", description: "ACL username (Redis 6+)." },
                 password: { type: "string", description: "Auth password." },
                 db:       { type: "number", description: "Database index." },
               },
@@ -118,7 +117,7 @@ export class CacheNode extends Node {
               items: { type: "string" },
               markdownDescription: "Server list as `host:port` strings.",
               siblings: {
-                username: { type: "string", description: "SASL username." },
+                user:     { type: "string", description: "SASL username." },
                 password: { type: "string", description: "SASL password." },
               },
             },
@@ -127,7 +126,7 @@ export class CacheNode extends Node {
               markdownDescription: "Hostname of a single server, the shorthand for a one-entry `servers`.",
               siblings: {
                 port:     { type: "number", description: "Port (default 11211)." },
-                username: { type: "string", description: "SASL username." },
+                user:     { type: "string", description: "SASL username." },
                 password: { type: "string", description: "SASL password." },
               },
             },
@@ -227,7 +226,6 @@ export class CacheNode extends Node {
       const config: CacheConfig = { type };
 
       if (r.prefix) config.prefix = String(r.prefix);
-      if (r.defaultTtl) config.defaultTtl = Number(r.defaultTtl);
       requireOneEndpoint(r, type);
 
       if (type === "redis") {
@@ -237,18 +235,18 @@ export class CacheNode extends Node {
         } else {
           if (r.host) config.redis.host = String(r.host);
           if (r.port) config.redis.port = Number(r.port);
-          if (r.username) config.redis.username = String(r.username);
+          if (r.user) config.redis.username = String(r.user);
           if (r.password) config.redis.password = String(r.password);
           if (r.db) config.redis.db = Number(r.db);
         }
-        const tls = parseTls(r.tls ?? r.ssl);
+        const tls = parseTls(r.tls);
         if (tls !== undefined) config.redis.tls = tls;
       }
 
       if (type === "memcached") {
         // memjs dials over a plain socket, so silently accepting a `tls` here
         // would ship unencrypted traffic while the template says otherwise.
-        if (r.tls != null || r.ssl != null) {
+        if (r.tls != null) {
           throw createHttpError(501, "the memcached driver does not support TLS; tunnel it or use redis");
         }
         config.memcached = {};
@@ -258,7 +256,7 @@ export class CacheNode extends Node {
           const p = r.port ? Number(r.port) : 11211;
           config.memcached.servers = [`${r.host}:${p}`];
         }
-        if (r.username) config.memcached.username = String(r.username);
+        if (r.user) config.memcached.username = String(r.user);
         if (r.password) config.memcached.password = String(r.password);
       }
 
@@ -348,7 +346,7 @@ function cacheDriver(value: unknown): CacheConfig["type"] {
 // Only redis takes a `url`, so it is the only driver with a second spelling of
 // the endpoint to rule out.
 const ENDPOINT_SIBLINGS: Record<string, readonly string[]> = {
-  redis: ["host", "port", "username", "password", "db"],
+  redis: ["host", "port", "user", "password", "db"],
 };
 
 /**

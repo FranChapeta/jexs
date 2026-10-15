@@ -52,7 +52,6 @@ export class SessionNode extends Node {
       enum: [
         "load",
         "destroy",
-        "object",
       ],
       markdownDescription: "Manages request sessions stored in cache. Pass an object to set session values. Read values with `{ \"$var\": \"session.key\" }`.\r\nSession ID is stored in an HTTP-only cookie with a 24-hour TTL: `sid`, or `__Host-sid` once Secure. Its cookies are Secure in production (`NODE_ENV=production`) and whenever the app's URL is https (`BASE_URL`, or a trusted proxy's `X-Forwarded-Proto`; see `$listen`'s `trustProxy`).\r\nOn a request other than GET, HEAD or OPTIONS that carries a session cookie, every operation first checks the session's CSRF token, sent as the `_csrf` body field or the `x-csrf-token` header, and fails with 403 without it. The client runtime sends it on its own, read from the `csrf` cookie the session sets: as the header on the page's `$fetch`, and as the field on its form posts. A page served without the client gets the field rendered into its non-GET forms instead.",
       outputDescription: "The session's data, which `load` and setting values also make readable as `session`; `null` after `destroy`. The cookies are queued onto the response for you; you don't return them yourself.",

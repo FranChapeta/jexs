@@ -30,7 +30,7 @@ interface ConnectionInfo {
   db?: string;
   /** SQLite's file, in place of the four above. */
   filename?: string;
-  ssl: boolean;
+  tls: boolean;
 }
 
 // What a hosted connection dials when the step leaves a part out.
@@ -46,14 +46,14 @@ interface DatabaseConnection {
 
 /** Reduce a config to where it points, as dialled (defaults filled in), dropping the secrets. */
 function describe(config: DatabaseConfig): ConnectionInfo {
-  if (config.type === "sqlite") return { type: "sqlite", filename: config.filename || "data.db", ssl: false };
+  if (config.type === "sqlite") return { type: "sqlite", filename: config.filename || "data.db", tls: false };
   return {
     type: config.type,
     host: config.host || DEFAULT_HOST,
     port: config.port || DEFAULT_PORT[config.type],
     user: config.user || DEFAULT_USER[config.type],
     db: config.database,
-    ssl: Boolean(config.ssl),
+    tls: Boolean(config.ssl),
   };
 }
 
@@ -131,17 +131,17 @@ export class DatabaseNode extends Node {
           outputDescription: "Where the connection points, under the names `connect` takes, defaults filled in. Carries no credentials.",
           examples: [
             "{ \"$database\": \"connect\", \"connection\": \"main\", \"url\": { \"$var\": \"env.DATABASE_URL\" } }",
-            "{ \"$database\": \"connect\", \"type\": \"pg\", \"host\": \"db.example.com\", \"db\": \"app\", \"ssl\": { \"ca\": \"certs/root.pem\" } }",
+            "{ \"$database\": \"connect\", \"type\": \"pg\", \"host\": \"db.example.com\", \"db\": \"app\", \"tls\": { \"ca\": { \"$var\": \"ca\" } } }",
           ],
           // Only the properties common to every way of connecting. Each of the
           // three ways to name an endpoint is a variant below, so the properties
           // that belong to one of them are scoped to it rather than sitting
           // flat here alongside the others.
           siblings: {
-            ssl: {
+            tls: {
               type: ["boolean", "string", "object"],
               enum: TLS_STRINGS,
-              markdownDescription: "TLS for the connection (MySQL / PostgreSQL), also spelled `tls`. `true` encrypts AND verifies against the system trust store — the strictest setting, which fails on the private CAs most managed databases use. `false` forces plaintext, and is the only way to say that: every object turns TLS on. An object takes `ca`, `cert`, `key`, `passphrase`, `servername`, `rejectUnauthorized`, `minVersion` and `ciphers`. The string forms (`\"true\"`, `\"1\"`, `\"require\"`, `\"false\"`, `\"0\"`, `\"disable\"`) are for a value arriving from `env` as text.\n\nCertificates are PEM **content**, not paths: load the file first with `{ \"$file\": \"/certs/ca.pem\", \"raw\": true, \"$as\": \"ca\" }` and pass `{ \"$var\": \"ca\" }`, so one node owns file reading and one set of path rules applies. (A url's `sslrootcert=` stays a path — that is what the standard defines it as.)\n\nSays HOW to connect rather than where, so it applies to `url` and `host` alike, merging key-wise over whatever the url's `sslmode` implied.",
+              markdownDescription: "TLS for the connection (MySQL / PostgreSQL). `true` encrypts AND verifies against the system trust store — the strictest setting, which fails on the private CAs most managed databases use. `false` forces plaintext, and is the only way to say that: every object turns TLS on. An object takes `ca`, `cert`, `key`, `passphrase`, `servername`, `rejectUnauthorized`, `minVersion` and `ciphers`. The string forms (`\"true\"`, `\"1\"`, `\"require\"`, `\"false\"`, `\"0\"`, `\"disable\"`) are for a value arriving from `env` as text.\n\nCertificates are PEM **content**, not paths: load the file first with `{ \"$file\": \"/certs/ca.pem\", \"raw\": true, \"$as\": \"ca\" }` and pass `{ \"$var\": \"ca\" }`, so one node owns file reading and one set of path rules applies. (A url's `sslrootcert=` stays a path — that is what the standard defines it as.)\n\nSays HOW to connect rather than where, so it applies to `url` and `host` alike, merging key-wise over whatever the url's `sslmode` implied.",
               examples: [
                 "{ \"ca\": { \"$var\": \"ca\" } }",
                 "{ \"rejectUnauthorized\": false }",
@@ -229,11 +229,11 @@ export class DatabaseNode extends Node {
         user: { type: "string", description: "Username (MySQL / PostgreSQL)." },
         db: { type: "string", description: "Database name (MySQL / PostgreSQL)." },
         filename: { type: "string", description: "Database file (SQLite)." },
-        ssl: { type: "boolean", description: "Whether the connection uses TLS." },
+        tls: { type: "boolean", description: "Whether the connection uses TLS." },
         tables: { type: "number", description: "`info` only: how many tables the database has." },
         size: { type: "number", description: "`info` only, SQLite: the file's size in bytes." },
       },
-      required: ["type", "ssl"],
+      required: ["type", "tls"],
     },
   };
 
@@ -526,9 +526,9 @@ function doConnect(self: DatabaseNode, def: Record<string, unknown>, context: Co
     const fromUrl = r.url ? parseDbUrl(String(r.url)) : null;
     if (fromUrl) {
       // Both spellings of the endpoint at once leaves "which wins" to guesswork,
-      // and the loser fails as a connection error far from the typo. `ssl`/`tls`
-      // are exempt: they say HOW to connect, not where, and layering a local CA
-      // over a url from the environment is the point.
+      // and the loser fails as a connection error far from the typo. `tls` is
+      // exempt: it says HOW to connect, not where, and layering a local CA over a
+      // url from the environment is the point.
       const also = ENDPOINT_SIBLINGS.filter(k => r[k] != null);
       if (also.length > 0) {
         throw new Error(
@@ -569,7 +569,7 @@ function doConnect(self: DatabaseNode, def: Record<string, unknown>, context: Co
     // TLS layers over either spelling: the url may carry `sslmode`, the sibling
     // refines it. SQLite has no transport to secure, so it never reports one.
     if (type !== "sqlite") {
-      const ssl = mergeTls(config.ssl, parseTls(r.ssl ?? r.tls));
+      const ssl = mergeTls(config.ssl, parseTls(r.tls));
       if (ssl !== undefined) config.ssl = ssl;
     }
 
