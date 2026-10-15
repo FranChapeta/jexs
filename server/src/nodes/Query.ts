@@ -1,5 +1,5 @@
 import { Knex as KnexType } from "knex";
-import { Node, Context, NodeValue, isOwnedKey, isStep, resolve, resolveFields, runSteps } from "@jexs/core";
+import { Node, Context, NodeValue, isOwnedKey, isStep, loggerFor, resolve, resolveFields, runSteps } from "@jexs/core";
 import { DatabaseNode } from "./Database.js";
 import { SchemaNode } from "./Schema.js";
 import type { JexsMethodSchema, JexsNodeSchema, JexsOutput, JexsPropertySchema } from "@jexs/core";
@@ -328,8 +328,8 @@ async function execQuery(def: Record<string, unknown>, context: Context): Promis
     case "delete":  return executeDelete(knex, query) as Promise<NodeValue>;
     case "count":   return executeCount(knex, query) as Promise<NodeValue>;
     case "create":  return executeCreate(knex, query, context) as Promise<NodeValue>;
-    case "drop":    return executeDrop(knex, query) as Promise<NodeValue>;
-    case "alter":   return executeAlter(knex, query) as Promise<NodeValue>;
+    case "drop":    return executeDrop(knex, query, context) as Promise<NodeValue>;
+    case "alter":   return executeAlter(knex, query, context) as Promise<NodeValue>;
   }
 }
 
@@ -627,7 +627,7 @@ async function executeCreate(
     if (await knex.schema.hasTable(tableName)) {
       const added = await syncMissingColumns(knex, schema);
       if (added.length > 0) {
-        console.log(`[QueryNode] Table ${tableName}: added columns [${added.join(", ")}]`);
+        loggerFor(context).info(`[QueryNode] Table ${tableName}: added columns [${added.join(", ")}]`);
       }
       continue;
     }
@@ -645,7 +645,7 @@ async function executeCreate(
       if (schema.indexes) buildIndexes(table, schema.indexes);
       if (schema.foreignKeys) buildForeignKeys(table, schema.foreignKeys);
     });
-    console.log(`[QueryNode] Created table: ${tableName}`);
+    loggerFor(context).info(`[QueryNode] Created table: ${tableName}`);
     created.push(tableName);
   }
 
@@ -653,9 +653,9 @@ async function executeCreate(
 }
 
 /** Drop the table if it exists; a failure throws. */
-async function executeDrop(knex: KnexType, query: QueryDefinition): Promise<null> {
+async function executeDrop(knex: KnexType, query: QueryDefinition, context: Context): Promise<null> {
   await knex.schema.dropTableIfExists(query.table!);
-  console.log(`[QueryNode] Dropped table: ${query.table}`);
+  loggerFor(context).info(`[QueryNode] Dropped table: ${query.table}`);
   return null;
 }
 
@@ -703,6 +703,7 @@ async function syncMissingColumns(
 async function executeAlter(
   knex: KnexType,
   query: QueryDefinition,
+  context: Context,
 ): Promise<string[]> {
   const tableName = query.table!;
   const addColumns = query.addColumns;
@@ -723,7 +724,7 @@ async function executeAlter(
   }
 
   if (Object.keys(toAdd).length === 0) {
-    console.log(`[QueryNode] ALTER ${tableName}: all columns already exist`);
+    loggerFor(context).info(`[QueryNode] ALTER ${tableName}: all columns already exist`);
     return [];
   }
 
@@ -732,7 +733,7 @@ async function executeAlter(
   });
 
   const added = Object.keys(toAdd);
-  console.log(`[QueryNode] ALTER ${tableName}: added columns [${added.join(", ")}]`);
+  loggerFor(context).info(`[QueryNode] ALTER ${tableName}: added columns [${added.join(", ")}]`);
   return added;
 }
 

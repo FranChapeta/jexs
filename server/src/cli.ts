@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // jexs — the Jexs CLI.
 //
-//   jexs run <entry|package> [root] [--prod] [--watch] [-- <app args>]   run a JSON template
+//   jexs run <entry|package> [root] [--prod] [--watch] [--log=<to>] [-- <app args>]   run a JSON template
 //
 // `run` takes a file path OR an installed package name: a package is resolved via its
 // package.json `"jexs"` entry field, so a pure-JSON package (no bin, no JS) is launched with
@@ -10,11 +10,12 @@
 // Tokens after a `--` sentinel are parsed into `args` (a key/value object), letting a JSON
 // entry act as its own CLI — e.g. `jexs run @jexs/create -- my-app --env both --physics`.
 // An HTTP app is just an entry whose `listen` step(s) bind ports — one `http.Server` per `listen`.
-// `--prod` sets process.env.prod; `--watch` restarts the app when files under the app dir change.
+// `--prod` sets process.env.prod; `--watch` restarts the app when files under the app dir change;
+// `--log` sends the nodes' own messages to stderr (the default), stdout, or nowhere.
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { createResolver, coreNodes, Context } from "@jexs/core";
+import { createResolver, coreNodes, Context, type Logger } from "@jexs/core";
 import { serverNodes } from "./index.js";
 import { manifestOf } from "./manifest.js";
 import { loadNodePackages } from "./discover.js";
@@ -27,7 +28,7 @@ const [cmd, ...rest] = process.argv.slice(2);
 function usage(code: number): never {
   process.stderr.write(
     "usage:\n" +
-    "  jexs run <entry.json|package> [root] [--prod] [--watch] [-- <app args>]\n" +
+    "  jexs run <entry.json|package> [root] [--prod] [--watch] [--log=stderr|stdout|silent] [-- <app args>]\n" +
     "  jexs bundle [--watch]     build the project's browser bundle (client + discovered browser nodes)\n" +
     "  jexs schema [dir]         regenerate .jexs/combined.schema.json for a project (autocomplete + MCP)\n" +
     "  jexs build-schema [dir]   (authors) prebuild a package's dist/schema.json\n",
@@ -68,6 +69,24 @@ function parseArgs(argv: string[]): Record<string, unknown> {
   return out;
 }
 
+const LOG_TARGETS = ["stderr", "stdout", "silent"];
+
+/**
+ * Where `--log` sends the nodes' own messages. stderr by default, where a CLI's
+ * diagnostics belong, so stdout is the app's alone: a stdio protocol, or output
+ * piped to another program. `stdout` suits a platform that reads a server's log
+ * from it and takes stderr for errors; `silent` drops them.
+ */
+function cliLogger(target: string): Logger {
+  if (target === "silent") {
+    const drop = () => {};
+    return { info: drop, warn: drop, error: drop };
+  }
+  const write = target === "stdout" ? console.log : console.error;
+  const log = (message: string, error?: unknown) => (error === undefined ? write(message) : write(message, error));
+  return { info: log, warn: log, error: log };
+}
+
 async function run(args: string[]): Promise<void> {
   if (args.includes("--prod")) process.env.prod = "1";
 
@@ -82,6 +101,11 @@ async function run(args: string[]): Promise<void> {
   const [target, root] = positional;
   if (!target) usage(1);
   const entry = resolveEntry(target);
+  const logTarget = cliArgs.find((a) => a.startsWith("--log="))?.slice("--log=".length) ?? "stderr";
+  if (!LOG_TARGETS.includes(logTarget)) {
+    process.stderr.write(`jexs run: --log takes ${LOG_TARGETS.join(", ")}, not "${logTarget}"\n`);
+    process.exit(1);
+  }
 
   if (args.includes("--watch")) {
     // Supervisor: run the app in a child and restart it on changes under the app dir
@@ -123,7 +147,7 @@ async function run(args: string[]): Promise<void> {
   // project; a scaffolded project always discovers @jexs/core + @jexs/server.
   let nodes = await loadNodePackages(process.cwd(), { root: root ?? ".", env: "node" });
   if (nodes.length === 0) nodes = [...coreNodes(), ...serverNodes({ root: root ?? "." })];
-  const resolve = createResolver(nodes);
+  const resolve = createResolver(nodes, { logger: cliLogger(logTarget) });
   const context: Context = { ...entryContext(path.dirname(abs)), env: process.env as Record<string, string>, args: parseArgs(appArgs) };
   await resolve({ $file: path.basename(abs) }, context);
 }

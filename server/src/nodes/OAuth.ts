@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "crypto";
-import { Node, Context, NodeValue, resolve, resolveAll, resolveFields, randomString, isObject, createHttpError } from "@jexs/core";
+import { Node, Context, NodeValue, loggerFor, resolve, resolveAll, resolveFields, randomString, isObject, createHttpError } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { sessionValue, setSessionValue } from "./Session.js";
 import { tokensEqual } from "./Crypto.js";
@@ -249,7 +249,7 @@ export class OAuthNode extends Node {
         case "providers":
           return doListProviders(this.providers, def, context);
         default:
-          console.error(`[OAuth] Unknown operation: ${operation}`);
+          loggerFor(context).error(`[OAuth] Unknown operation: ${operation}`);
           return null;
       }
     });
@@ -307,7 +307,7 @@ function doConfigure(providers: Providers, def: Record<string, unknown>, context
       });
     }
 
-    console.log(`[OAuth] Configured provider: ${name}`);
+    loggerFor(context).info(`[OAuth] Configured provider: ${name}`);
     return null;
   });
 }

@@ -110,6 +110,8 @@ const resolve = createResolver([...coreNodes(), ...serverNodes({ root: "app" })]
 await resolve({ $file: "/index.json" }, { env: process.env });
 ```
 
+The nodes' own messages (a port bound, a cache connected, an error caught in a detached handler) go to the resolver's `logger`, the console unless you pass one: `createResolver(nodes, { logger: { info, warn, error } })`. The `jexs` CLI writes them all to stderr, so stdout carries only what the app writes; `jexs run --log=stdout` sends them to stdout instead, for a platform that reads a server's log there, and `--log=silent` drops them.
+
 Or scaffold the whole thing with [`npm create @jexs my-app`](https://github.com/FranChapeta/jexs/tree/master/create).
 
 ## License

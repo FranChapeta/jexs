@@ -1,7 +1,7 @@
 import Knex, { Knex as KnexType } from "knex";
 import fs from "node:fs";
 import path from "node:path";
-import { Node, Context, NodeValue, resolve, resolveAll, resolveFields, resolverFor } from "@jexs/core";
+import { Node, Context, NodeValue, loggerFor, resolve, resolveAll, resolveFields, resolverFor } from "@jexs/core";
 import type { JexsNodeSchema, JexsPropertySchema } from "@jexs/core";
 import {
   mergeTls, parseDbUrl, parseTls, TLS_STRINGS,
@@ -261,7 +261,7 @@ export class DatabaseNode extends Node {
         case "info":
           return doInfo(this, def, context);
         default:
-          console.error(`[DatabaseNode] Unknown operation: ${operation}`);
+          loggerFor(context).error(`[DatabaseNode] Unknown operation: ${operation}`);
           return null;
       }
     });
@@ -586,7 +586,7 @@ function doClose(self: DatabaseNode, def: Record<string, unknown>, context: Cont
     const name = connectionName(self, nameRaw);
     await closeConnection(self, name);
     if (self.defaultConnectionName === name) self.defaultConnectionName = null;
-    console.log(`[DatabaseNode] Closed connection: ${name}`);
+    loggerFor(context).info(`[DatabaseNode] Closed connection: ${name}`);
     return null;
   });
 }

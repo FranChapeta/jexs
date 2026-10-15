@@ -72,6 +72,7 @@ interface ResolverImpl extends Resolver {
   pendingLoads: Map<Loader, Promise<void>>;
   keyListeners: Set<(added: readonly string[]) => void>;
   translateFn: TranslateFn | null;
+  logger: Logger;
   /**
    * Every node registered here, including ones that lost first-wins on all of
    * their keys and so never entered `keyMap`. Teardown walks this, not `keyMap`,
@@ -213,6 +214,25 @@ function addLazy(self: ResolverImpl, keys: string[], loader: Loader): void {
     self.lazyMap.set(key, loader);
   }
   announceKeys(self, added);
+}
+
+/** Receives the nodes' own messages; see ResolverOptions' `logger`. */
+export interface Logger {
+  info(message: string): void;
+  warn(message: string): void;
+  error(message: string, error?: unknown): void;
+}
+
+const consoleLogger: Logger = {
+  info: message => console.info(message),
+  warn: message => console.warn(message),
+  error: (message, error) => (error === undefined ? console.error(message) : console.error(message, error)),
+};
+
+/** The logger of the resolver `context` belongs to, or the console for a context
+ *  no resolver has seen: an error on its way out must not fail over its logger. */
+export function loggerFor(context: Context): Logger {
+  return (context as Resolved)[RESOLVER]?.logger ?? consoleLogger;
 }
 
 export async function translate(text: string, context: Context): Promise<string> {
@@ -523,8 +543,8 @@ function isReturn(value: unknown): value is { $return: unknown } {
  *
  * The steps start synchronously, on the caller's stack; only the outcome comes
  * back as a promise. When nothing handled an error, the promise rejects, or,
- * given a `label`, the error is logged under it and the promise resolves to
- * `undefined`, since a callback has nobody left to hand it to.
+ * given a `label`, the error goes to the resolver's logger under it and the
+ * promise resolves to `undefined`, since a callback has nobody left to hand it to.
  */
 export async function runStepsDetached(
   steps: unknown,
@@ -536,7 +556,7 @@ export async function runStepsDetached(
     return await withCatch(() => runSteps(steps, context), def, context);
   } catch (err) {
     if (label === undefined) throw err;
-    console.error(label, err);
+    loggerFor(context).error(label, err);
     return undefined;
   }
 }
@@ -547,6 +567,11 @@ export async function runStepsDetached(
  */
 export interface ResolverOptions {
   translate?: TranslateFn;
+  /**
+   * Where the nodes' own messages go: a connection opened, a port bound, an
+   * error caught where nothing can throw it to. Defaults to the console.
+   */
+  logger?: Logger;
   /**
    * The root context this resolver runs in.
    *
@@ -583,6 +608,7 @@ export function createResolver(nodes: Node[], options?: ResolverOptions): Resolv
   self.pendingLoads = new Map<Loader, Promise<void>>();
   self.keyListeners = new Set();
   self.translateFn = options?.translate ?? null;
+  self.logger = options?.logger ?? consoleLogger;
   self.nodes = new Set<Node>();
   self.torndown = false;
 

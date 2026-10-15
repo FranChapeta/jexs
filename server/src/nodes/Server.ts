@@ -5,7 +5,7 @@ import path from "node:path";
 import { URL } from "node:url";
 import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
-import { CLIENT_SCRIPT, Context, Node, NodeValue, SW_SCRIPT, isHttpError, isObject, isStep, resolve, resolveAll, resolveFields, runSteps } from "@jexs/core";
+import { CLIENT_SCRIPT, Context, Node, NodeValue, SW_SCRIPT, isHttpError, isObject, isStep, loggerFor, resolve, resolveAll, resolveFields, runSteps } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { COOKIES, DEFERRED, UPGRADE, type Deferred } from "../context.js";
 import { safeRelative } from "./File.js";
@@ -200,7 +200,7 @@ async function handleUpgrade(
 
     if (!upgrade.accepted) socket.destroy();
   } catch (error) {
-    console.error("WebSocket upgrade error:", error);
+    loggerFor(listener.startupContext).error("WebSocket upgrade error:", error);
     if (!upgrade.accepted) socket.destroy();
   }
 }
@@ -309,7 +309,7 @@ async function handleRequest(
     // status left to change. Log and close, rather than raise a second error
     // about headers already sent and lose the real one.
     if (res.headersSent) {
-      console.error("Request error after the response started:", error);
+      loggerFor(listener.startupContext).error("Request error after the response started:", error);
       res.end();
       return;
     }
@@ -321,7 +321,7 @@ async function handleRequest(
       sendResponse(res, { response: error.message || `HTTP ${error.status}`, responseStatus: error.status });
       return;
     }
-    console.error("Request error:", error);
+    loggerFor(listener.startupContext).error("Request error:", error);
     sendResponse(res, { response: "Internal Server Error", responseStatus: 500 });
   }
 }
@@ -600,16 +600,10 @@ function sendResponse(res: http.ServerResponse, value: unknown, deferred: Deferr
   res.write(
     '<script>function __jexs_defer(i,h){var e=document.getElementById(i);if(!e)return;var t=document.createElement("template");t.innerHTML=h;e.replaceWith(t.content);if(window.jexs)window.jexs.hydrate()}</script>',
   );
-  const parts = deferred.map(({ id, promise }) =>
-    promise.then(
-      html => String(html ?? ""),
-      err => {
-        console.error(`[Defer] Error resolving ${id}:`, err);
-        return "";
-      },
-    ).then(html => {
+  const parts = deferred.map(({ id, html }) =>
+    html.then(part => {
       // Escaped for a JS string literal inside a script element.
-      const escaped = JSON.stringify(html).replace(/<\//g, "<\\/");
+      const escaped = JSON.stringify(part).replace(/<\//g, "<\\/");
       res.write(`<script>__jexs_defer("${id}",${escaped})</script>`);
     }),
   );
@@ -778,7 +772,7 @@ export class ServerNode extends Node {
   listen(def: Record<string, unknown>, context: Context): NodeValue {
     const steps = def.do;
     if (!Array.isArray(steps)) {
-      console.error('[ServerNode] "do" must be an array of per-request steps');
+      loggerFor(context).error('[ServerNode] "do" must be an array of per-request steps');
       return null;
     }
 
@@ -825,7 +819,7 @@ export class ServerNode extends Node {
           serveStaticDir(listener, servePath, browserDir);
           context[CLIENT_SCRIPT] = `${servePath}/client.js`;
         } else {
-          console.warn("[ServerNode] no browser bundle at ./dist/browser — run `jexs bundle` to build the client (with any browser nodes); it will not be served until then");
+          loggerFor(context).warn("[ServerNode] no browser bundle at ./dist/browser — run `jexs bundle` to build the client (with any browser nodes); it will not be served until then");
         }
       }
 
@@ -839,15 +833,15 @@ export class ServerNode extends Node {
         const fromStep = isStep(def.sw);
         const sw = fromStep ? await resolve(def.sw, context) : def.sw;
         if (!this.isObject(sw) || Object.keys(sw).length === 0) {
-          console.warn('[ServerNode] "sw" takes a config, e.g. { "precache": ["/offline.html"], "routes": [...], "events": {...} }; no service worker is registered');
+          loggerFor(context).warn('[ServerNode] "sw" takes a config, e.g. { "precache": ["/offline.html"], "routes": [...], "events": {...} }; no service worker is registered');
         } else if (!def.client) {
-          console.warn('[ServerNode] "sw" needs "client": the service worker runtime ships in the browser bundle; no service worker is registered');
+          loggerFor(context).warn('[ServerNode] "sw" needs "client": the service worker runtime ships in the browser bundle; no service worker is registered');
         } else if (browserDir) {
           const { events, ...settings } = sw;
           const resolved = fromStep ? settings : await resolveFields(settings, context, r => r);
           const eventMap = !fromStep && isStep(events) ? await resolve(events, context) : events;
           if (eventMap != null && (!this.isObject(eventMap) || isStep(eventMap))) {
-            console.warn('[ServerNode] "sw.events" must be, or resolve to, a map of event names to steps; no service worker is registered');
+            loggerFor(context).warn('[ServerNode] "sw.events" must be, or resolve to, a map of event names to steps; no service worker is registered');
           } else {
             const config = eventMap == null ? resolved : { ...resolved, events: eventMap };
             listener.sw = { path: `${servePath}/sw.js`, config: JSON.stringify(config), dir: browserDir };
@@ -890,10 +884,10 @@ export class ServerNode extends Node {
       // (the only one attached) for one that says so.
       httpServer.removeAllListeners("error");
       httpServer.on("error", (err: Error) => {
-        console.error("[Server] Server error:", err.message);
+        loggerFor(context).error("[Server] Server error:", err.message);
       });
 
-      console.log(`Jexs running at http://0.0.0.0:${port}`);
+      loggerFor(context).info(`Jexs running at http://0.0.0.0:${port}`);
 
       // Log install URL if in installer mode
       if (context.installToken) {

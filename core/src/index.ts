@@ -19,12 +19,12 @@ export {
   // Node registration takes no context, so it has no resolver to read off one:
   // it hangs off the handle (`resolver.registerNode`) or, inside a lazy loader,
   // off the resolver the loader is handed.
-  resolverFor,
+  resolverFor, loggerFor,
   // The keys the resolver owns: `$`-prefixed, the op a step dispatches on plus
   // the global step keys. Hosts that inspect or filter a call need them, to tell
   // `$as` or `$catch` from an op and either from a sibling.
   GLOBAL_KEYS, KEY_PREFIX, ownedKey, isOwnedKey, isStep,
-  type ResolverFn, type Resolver, type ResolverKeys,
+  type ResolverFn, type Resolver, type ResolverKeys, type ResolverOptions, type Logger,
 } from "./Resolver.js";
 
 // ── Error utilities ──

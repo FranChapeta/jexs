@@ -1,6 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
-import { Node, Context, NodeValue, resolve, resolveAll, isObject } from "@jexs/core";
+import { Node, Context, NodeValue, loggerFor, resolve, resolveAll, isObject } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
 const inputCss = "input.css";
@@ -128,7 +128,7 @@ export class TailwindNode extends Node {
         case "classes":
           return [...this.state.registry];
         default:
-          console.error(`[Tailwind] Unknown operation: ${operation}`);
+          loggerFor(context).error(`[Tailwind] Unknown operation: ${operation}`);
           return null;
       }
     });
@@ -208,12 +208,12 @@ function doBuild(state: TailwindState, def: Record<string, unknown>, context: Co
   return resolve(def.data ?? null, context, async dataRaw => {
     if (def.data && dataRaw) register(state, extractClasses(dataRaw));
     if (state.registry.size === 0) {
-      console.log("[Tailwind] No classes registered, skipping");
+      loggerFor(context).info("[Tailwind] No classes registered, skipping");
       return null;
     }
     await fs.mkdir(path.dirname(outputCss), { recursive: true });
     await fs.writeFile(outputCss, await stylesheet(state));
-    console.log(`[Tailwind] CSS written to ${outputCss}`);
+    loggerFor(context).info(`[Tailwind] CSS written to ${outputCss}`);
     return null;
   });
 }

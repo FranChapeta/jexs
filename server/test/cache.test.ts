@@ -75,6 +75,18 @@ test("named caches keep separate values, and the first connected is the default"
   }
 });
 
+test("connecting a cache says so through the resolver's logger", async () => {
+  const lines: string[] = [];
+  const log = (message: string) => { lines.push(message); };
+  const resolver = createResolver([...coreNodes(), new CacheNode()], { logger: { info: log, warn: log, error: log } });
+  try {
+    await resolver({ "$cache-connect": "memory", connection: "app" }, {});
+    assert.deepEqual(lines, ['[CacheNode] Connected to cache "app" (memory)']);
+  } finally {
+    resolver.destroy();
+  }
+});
+
 test("a cache name that was never connected is an error", async () => {
   const { resolver } = resolverWithCache();
   try {

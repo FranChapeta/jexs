@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, resolve } from "@jexs/core";
+import { Node, Context, NodeValue, loggerFor, resolve } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { DEFERRED } from "../context.js";
 
@@ -49,15 +49,22 @@ export class DeferNode extends Node {
       const delayMs = typeof def.delay === "number" ? def.delay : 0;
 
       const expr = def.$defer;
-      // Started from a promise either way, so a synchronous throw rejects the
-      // deferred content instead of escaping into the page render.
+      // Started from a promise either way, so a synchronous throw fails the part
+      // instead of escaping into the page render. The page is already on its way,
+      // so a failed part is logged and left empty.
       const start = delayMs > 0 ? new Promise<void>(r => setTimeout(r, delayMs)) : Promise.resolve();
-      const promise = start.then(() => resolve(expr, deferredContext));
+      const html = start.then(() => resolve(expr, deferredContext)).then(
+        part => String(part ?? ""),
+        err => {
+          loggerFor(context).error(`[Defer] Error resolving ${id}:`, err);
+          return "";
+        },
+      );
 
       // A request's context has the list, which its page streams; elsewhere there
       // is no page to stream into, so the part is only resolved.
       const deferred = context[DEFERRED];
-      if (Array.isArray(deferred)) deferred.push({ id, promise });
+      if (Array.isArray(deferred)) deferred.push({ id, html });
 
       return `<div id="${id}">${loaderHtml}</div>`;
     });

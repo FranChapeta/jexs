@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, childContext, resolve, runStepsDetached } from "@jexs/core";
+import { Node, Context, NodeValue, childContext, loggerFor, resolve, runStepsDetached } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { createInterface } from "node:readline";
 
@@ -59,7 +59,7 @@ export class StdioNode extends Node {
     "stdio-listen": {
       type: "boolean",
       output: "null",
-      markdownDescription: "Starts a newline-delimited JSON (NDJSON) listener on stdin. Each line is parsed as JSON, set as `message` in context, and `on-message` steps are run. `console.log` is redirected to stderr to keep stdout clean for protocol data. Use `stdio-write` inside the steps to send output.",
+      markdownDescription: "Starts a newline-delimited JSON (NDJSON) listener on stdin. Each line is parsed as JSON, set as `message` in context, and `on-message` steps are run. Use `stdio-write` inside the steps to send output. Keep stdout for the protocol: the `jexs` CLI writes the nodes' own messages to stderr, and a resolver of your own needs a `logger` that does the same.",
       examples: [
         "{ \"$stdio-listen\": true, \"on-message\": [{ \"$stdio-write\": { \"$var\": \"message\" } }] }",
       ],
@@ -100,23 +100,20 @@ export class StdioNode extends Node {
   };
 
   ["stdio-listen"](def: Record<string, unknown>, context: Context): NodeValue {
+    const log = loggerFor(context);
     if (def["on-message"] === undefined) {
-      console.error('[StdioNode] "on-message" needs steps');
+      log.error('[StdioNode] "on-message" needs steps');
       return null;
     }
 
     if (stdinAttached || reader) {
-      console.error("[StdioNode] stdin is already in use; ignoring stdio-listen");
+      log.error("[StdioNode] stdin is already in use; ignoring stdio-listen");
       return null;
     }
     stdinAttached = true;
 
     const steps = def["on-message"];
     const closeSteps = def["on-close"] ?? null;
-
-    console.log = (...args: unknown[]) => {
-      process.stderr.write(args.map(String).join(" ") + "\n");
-    };
 
     let buffer = "";
 
@@ -135,22 +132,16 @@ export class StdioNode extends Node {
         try {
           message = JSON.parse(line);
         } catch {
-          process.stderr.write(`[StdioNode] Invalid JSON: ${line}\n`);
+          log.error(`[StdioNode] Invalid JSON: ${line}`);
           continue;
         }
 
-        runStepsDetached(steps, childContext(context, { message }), def).catch((err: unknown) => {
-          process.stderr.write(`[StdioNode] Error: ${err}\n`);
-        });
+        void runStepsDetached(steps, childContext(context, { message }), def, "[StdioNode] on-message error:");
       }
     });
 
     process.stdin.on("close", () => {
-      if (closeSteps) {
-        runStepsDetached(closeSteps, childContext(context), def).catch((err: unknown) => {
-          process.stderr.write(`[StdioNode] on-close error: ${err}\n`);
-        });
-      }
+      if (closeSteps) void runStepsDetached(closeSteps, childContext(context), def, "[StdioNode] on-close error:");
     });
 
     process.stdin.resume();
@@ -166,7 +157,7 @@ export class StdioNode extends Node {
 
   ["stdio-prompt"](def: Record<string, unknown>, context: Context): NodeValue {
     if (stdinAttached) {
-      console.error("[StdioNode] stdin is owned by stdio-listen; stdio-prompt cannot read it");
+      loggerFor(context).error("[StdioNode] stdin is owned by stdio-listen; stdio-prompt cannot read it");
       return null;
     }
     return resolve(def["$stdio-prompt"], context, text => getReader().ask(String(text)));

@@ -1,7 +1,7 @@
 import nodemailer from "nodemailer";
 import type { Transporter, SendMailOptions } from "nodemailer";
 import type SMTPTransport from "nodemailer/lib/smtp-transport/index.js";
-import { Node, Context, NodeValue, resolveFields, createHttpError, isObject } from "@jexs/core";
+import { Node, Context, NodeValue, loggerFor, resolveFields, createHttpError, isObject } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { parseTls, redactUrl, TLS_STRINGS } from "../connection.js";
 
@@ -547,7 +547,7 @@ export class EmailNode extends Node {
       };
       if (this.preview) {
         const previewUrl = nodemailer.getTestMessageUrl(info);
-        console.log(`[EmailNode] Preview: ${previewUrl}`);
+        loggerFor(context).info(`[EmailNode] Preview: ${previewUrl}`);
         result.previewUrl = previewUrl;
       }
       return result;
