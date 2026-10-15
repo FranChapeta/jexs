@@ -3,7 +3,6 @@ import { isHttpError } from "./errors.js";
 import { isObject } from "./helpers.js";
 
 export type ResolverFn = (value: unknown, context: Context) => unknown;
-export type TranslateFn = (text: string, context: Context) => Promise<string>;
 
 /**
  * A live view of every key a resolver can dispatch. Reads the maps on access
@@ -71,7 +70,6 @@ interface ResolverImpl extends Resolver {
   lazyMap: Map<string, Loader>;
   pendingLoads: Map<Loader, Promise<void>>;
   keyListeners: Set<(added: readonly string[]) => void>;
-  translateFn: TranslateFn | null;
   logger: Logger;
   /**
    * Every node registered here, including ones that lost first-wins on all of
@@ -233,14 +231,6 @@ const consoleLogger: Logger = {
  *  no resolver has seen: an error on its way out must not fail over its logger. */
 export function loggerFor(context: Context): Logger {
   return (context as Resolved)[RESOLVER]?.logger ?? consoleLogger;
-}
-
-export async function translate(text: string, context: Context): Promise<string> {
-  const fn = resolverFor(context).translateFn;
-  if (fn && /[a-zA-Z]/.test(text)) {
-    return fn(text, context);
-  }
-  return text;
 }
 
 /**
@@ -566,7 +556,6 @@ export async function runStepsDetached(
  * The resolver interprets JSON expressions at runtime.
  */
 export interface ResolverOptions {
-  translate?: TranslateFn;
   /**
    * Where the nodes' own messages go: a connection opened, a port bound, an
    * error caught where nothing can throw it to. Defaults to the console.
@@ -607,7 +596,6 @@ export function createResolver(nodes: Node[], options?: ResolverOptions): Resolv
   self.lazyMap = new Map<string, Loader>();
   self.pendingLoads = new Map<Loader, Promise<void>>();
   self.keyListeners = new Set();
-  self.translateFn = options?.translate ?? null;
   self.logger = options?.logger ?? consoleLogger;
   self.nodes = new Set<Node>();
   self.torndown = false;

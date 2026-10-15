@@ -1,5 +1,5 @@
-import { Node, Context, NodeValue, CLIENT_SCRIPT, SW_SCRIPT, CSRF_TOKEN } from "./Node.js";
-import { resolve, resolveAll, translate, isOwnedKey, isStep } from "../Resolver.js";
+import { Node, Context, NodeValue, CLIENT_SCRIPT, SW_SCRIPT, CSRF_TOKEN, TRANSLATE, type Translator } from "./Node.js";
+import { resolve, resolveAll, isOwnedKey, isStep } from "../Resolver.js";
 import { hasVariables, interpolate } from "./Variables.js";
 import { escapeHtml, escapeScriptJson, isObject } from "../helpers.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
@@ -390,7 +390,9 @@ function renderItem(item: unknown, context: Context, shouldTranslate: boolean): 
   if (typeof item === "string") {
     if (!shouldTranslate) return item;
     const text = hasVariables(item) ? interpolate(item, context) : item;
-    return translate(text, context);
+    // Only text with letters in it has anything to translate.
+    const translator = context[TRANSLATE];
+    return typeof translator === "function" && /[a-zA-Z]/.test(text) ? (translator as Translator)(text) : text;
   }
 
   if (Array.isArray(item)) {

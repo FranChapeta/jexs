@@ -70,6 +70,10 @@ export const CLIENT_SCRIPT = Symbol("jexs.clientScript");
 export const SW_SCRIPT = Symbol("jexs.swScript");
 /** The session's CSRF token, which a form on a page without the client script carries. */
 export const CSRF_TOKEN = Symbol("jexs.csrfToken");
+/** Translates an element's literal text where it renders: a `Translator`, set
+ *  for a request by a node such as the server's `$translate`. */
+export const TRANSLATE = Symbol("jexs.translate");
+export type Translator = (text: string) => string | Promise<string>;
 
 /**
  * Derive a child scope from `parent`, linked back via PARENT so `$setVars` / `$as`
