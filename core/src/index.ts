@@ -5,20 +5,16 @@ export {
 } from "./nodes/Node.js";
 
 // ── Schema types ──
+// What a node declares its schema in. The tooling that builds JSON Schema from
+// node classes is `@jexs/core/schema`.
 export type {
   JexsType, JexsOutput, JexsPropertySchema, JexsMethodSchema, JexsNodeSchema,
 } from "./schema.js";
 
-export {
-  buildPackageSchema, mergePackageSchemas,
-  type PackageSchema, type CombinedSchema, type EmittedSchema, type SiblingDoc,
-  type ValueDoc, type WhenTest, type EmittedMethodSchema, type EmittedNodeSchema, type SchemaBuildOptions,
-} from "./schema-gen.js";
-
 // ── Resolver ──
 export {
   createResolver, resolve, resolveAll, resolveFields,
-  runSteps, handleErr, runStepsDetached,
+  runSteps, handleError, runStepsDetached,
   // Node registration takes no context, so it has no resolver to read off one:
   // it hangs off the handle (`resolver.registerNode`) or, inside a lazy loader,
   // off the resolver the loader is handed.
@@ -36,7 +32,7 @@ export type { HttpError, ErrorBindings, ErrorResponse } from "./errors.js";
 
 // ── Core nodes ──
 export { TimerNode } from "./nodes/Timer.js";
-export { FetchNode, pageCsrfToken } from "./nodes/FetchNode.js";
+export { FetchNode, pageCsrfToken } from "./nodes/Fetch.js";
 
 // Dynamic forwarder — construct with (keys, forwardFn) and registerNode() it to
 // proxy those keys to a remote resolver (e.g. Electron main over IPC). Not a
@@ -56,7 +52,7 @@ import { TimerNode } from "./nodes/Timer.js";
 import { DateNode } from "./nodes/Date.js";
 
 import { ErrorNode } from "./nodes/Error.js";
-import { FetchNode } from "./nodes/FetchNode.js";
+import { FetchNode } from "./nodes/Fetch.js";
 
 /**
  * Core nodes — pure logic plus global-fetch HTTP; no DOM or Node.js APIs. Safe
@@ -84,10 +80,9 @@ export function coreNodes(): Node[] {
   ];
 }
 
-/** Discovery alias: the `"jexs".nodes` manifest entry points at this module, and
- *  node discovery consumes `mod.default ?? mod.nodes` — invoking it, since it's a
- *  factory. Same as {@link coreNodes}. */
-export const nodes = coreNodes;
+/** For node discovery: the `"jexs".nodes` manifest entry points at this module,
+ *  and discovery invokes its default export, since it's a factory. */
+export default coreNodes;
 
 // ── Helpers ──
 export { randomString, collectTransferables, isObject, operands } from "./helpers.js";

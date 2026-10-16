@@ -11,10 +11,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
-import {
-  buildPackageSchema, mergePackageSchemas,
-  type Node, type PackageSchema, type SiblingDoc,
-} from "@jexs/core";
+import type { Node } from "@jexs/core";
+import { buildPackageSchema, mergePackageSchemas, type PackageSchema, type SiblingDoc } from "@jexs/core/schema";
 import { walkJexsPackages, enumerateNodeClasses, type DiscoveredPackage } from "./discover.js";
 
 /** Collect Node classes exported by a module (and by any exported instance arrays). */

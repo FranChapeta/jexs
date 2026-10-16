@@ -6,7 +6,7 @@ import type { Context } from "../src/index.js";
 const tick = () => new Promise((r) => setTimeout(r, 20));
 
 // `then` and runStepsDetached are different mechanisms that happen to share
-// handleErr: `then` makes ONE STEP fire-and-forget inside a running sequence,
+// handleError: `then` makes ONE STEP fire-and-forget inside a running sequence,
 // while runStepsDetached runs a whole array from outside any sequence at all.
 // A detached run starts from a context the resolver already owns, so each test
 // hands it over through createResolver's `context` option.
@@ -26,7 +26,7 @@ test("a `then` step inside detached steps still does not block the sequence", as
   assert.deepEqual(order, ["returned"]);
 });
 
-test("handleErr reads `$catch` only, so a `then` sibling cannot be mistaken for one", async () => {
+test("handleError reads `$catch` only, so a `then` sibling cannot be mistaken for one", async () => {
   const ctx: Context = {};
   createResolver(coreNodes(), { context: ctx });
   const withThen = { do: [{ $error: 500, message: "boom" }], $then: [{ $concat: ["x"] }] };

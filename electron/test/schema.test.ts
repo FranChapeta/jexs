@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import Ajv2020 from "ajv/dist/2020.js";
-import { buildPackageSchema, mergePackageSchemas, coreNodes, stepFields } from "@jexs/core";
+import { coreNodes, stepFields } from "@jexs/core";
+import { buildPackageSchema, mergePackageSchemas } from "@jexs/core/schema";
 import { clientNodes } from "@jexs/client";
 import { serverNodes } from "@jexs/server";
 import {

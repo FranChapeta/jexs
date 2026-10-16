@@ -28,6 +28,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./schema": {
+      "import": "./dist/schema-gen.js",
+      "types": "./dist/schema-gen.d.ts"
     }
   },
   "files": [

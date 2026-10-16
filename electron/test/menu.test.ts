@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { childContext, createResolver, coreNodes, handleErr } from "@jexs/core";
+import { childContext, createResolver, coreNodes, handleError } from "@jexs/core";
 import type { Context } from "@jexs/core";
 import { buildMenuTemplate } from "../src/nodes/Menu.js";
 
@@ -137,7 +137,7 @@ test("a submenu can come from an expression too", async () => {
 
 // A menu click fires long after the step that built the menu returned, so the
 // resolver is no longer wrapped around the call and a plain .catch would only
-// log. Routing through handleErr gives the item's own `$catch` the same meaning
+// log. Routing through handleError gives the item's own `$catch` the same meaning
 // it would have inline, with `error` bound.
 test("a menu item's $catch receives the failure with error bound", async () => {
   const raw = {
@@ -156,7 +156,7 @@ test("a menu item's $catch receives the failure with error bound", async () => {
   const ctx = childContext(ctxIn(), { menuLabel: "Boom" });
   const out = await Promise.resolve()
     .then(() => resolver(raw.do, ctx))
-    .catch((err: unknown) => handleErr(err, raw, ctx));
+    .catch((err: unknown) => handleError(err, raw, ctx));
   assert.equal(out, "caught: nope");
 });
 
@@ -167,7 +167,7 @@ test("without a catch, a deferred failure still rejects rather than vanishing", 
   await assert.rejects(
     Promise.resolve()
       .then(() => resolver(raw.do, ctx))
-      .catch((err: unknown) => handleErr(err, raw, ctx)),
+      .catch((err: unknown) => handleError(err, raw, ctx)),
     /unhandled/,
   );
 });

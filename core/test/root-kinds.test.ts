@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import Ajv2020 from "ajv/dist/2020.js";
-import { Node, buildPackageSchema, mergePackageSchemas, coreNodes } from "../src/index.js";
+import { Node, coreNodes } from "../src/index.js";
+import { buildPackageSchema, mergePackageSchemas } from "../src/schema-gen.js";
 
 // AJV 2020's default export is a namespace under NodeNext resolution.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

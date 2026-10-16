@@ -118,7 +118,7 @@ function adopt<T extends Context>(self: ResolverImpl, context: T): T {
 }
 
 /** The resolver a context is running in. Throws if it has never been adopted. */
-export function resolverFor(context: Context): ResolverImpl {
+export function resolverFor(context: Context): Resolver {
   const self = (context as Resolved)[RESOLVER];
   if (self === undefined) {
     throw new Error(
@@ -254,7 +254,7 @@ function storeAs(step: Record<string, unknown>, value: unknown, context: Context
  * `resolve` flow (e.g. the fire-and-forget `thread` node) reuse the same
  * `$catch`/`error` semantics.
  */
-export function handleErr(err: unknown, value: unknown, context: Context): unknown {
+export function handleError(err: unknown, value: unknown, context: Context): unknown {
   if (isObject(value) && value.$catch !== undefined) {
     // Bound as `error`, so `{ "$var": "error.message" }` reads the message.
     // HTTP errors carry a status; any other thrown/rejected error (e.g. a worker
@@ -288,7 +288,9 @@ export function handleErr(err: unknown, value: unknown, context: Context): unkno
 export function resolve(value: unknown, context: Context): unknown;
 export function resolve<T>(value: unknown, context: Context, cont: (v: unknown) => T): T | Promise<T>;
 export function resolve(value: unknown, context: Context, cont?: (v: unknown) => unknown): unknown {
-  const r = walk(resolverFor(context), value, context);
+  // Every resolver is a ResolverImpl (createResolver makes them all); the
+  // public type leaves the internals this module works on out.
+  const r = walk(resolverFor(context) as ResolverImpl, value, context);
   return cont ? andThen(r, cont) : r;
 }
 
@@ -309,7 +311,7 @@ function andThen<V, T>(v: V | Promise<V>, f: (v: V) => T): T | Promise<T> {
  */
 export function resolveFields<T>(def: Record<string, unknown>, context: Context, then: (r: Record<string, unknown>) => T): T | Promise<T> {
   const keys = Object.keys(def).filter(key => !(isOwnedKey(key) && GLOBAL_KEYS.has(key.slice(1))));
-  return andThen(resolveKeys(resolverFor(context), def, keys, {}, context), then);
+  return andThen(resolveKeys(resolverFor(context) as ResolverImpl, def, keys, {}, context), then);
 }
 
 /**
@@ -319,7 +321,7 @@ export function resolveFields<T>(def: Record<string, unknown>, context: Context,
  * On the async path: waits for all async values via Promise.all, then calls then(values).
  */
 export function resolveAll<T>(values: unknown[], context: Context, then: (args: unknown[]) => T): T | Promise<T> {
-  return andThen(resolveItems(resolverFor(context), values, values, context), then);
+  return andThen(resolveItems(resolverFor(context) as ResolverImpl, values, values, context), then);
 }
 
 /**
@@ -412,7 +414,7 @@ function walk(self: ResolverImpl, value: unknown, context: Context): unknown {
     void Promise.resolve()
       .then(() => callNode(self, obj, op, context))
       .then(result => runSteps(then, childContext(context, { result })))
-      .catch(err => handleErr(err, obj, context));
+      .catch(err => handleError(err, obj, context));
     r = null;
   } else if (obj.$catch === undefined) {
     r = callNode(self, obj, op, context);
@@ -451,9 +453,9 @@ function withCatch(fn: () => unknown, step: unknown, context: Context): unknown 
   try {
     r = fn();
   } catch (err) {
-    return handleErr(err, step, context);
+    return handleError(err, step, context);
   }
-  return r instanceof Promise ? r.catch(err => handleErr(err, step, context)) : r;
+  return r instanceof Promise ? r.catch(err => handleError(err, step, context)) : r;
 }
 
 /** Hand a step to the node registered for its op, loading a lazy module first. */
@@ -498,7 +500,7 @@ function callNode(self: ResolverImpl, step: Record<string, unknown>, op: string,
  * up as a sequence: `["Hello"]` where `"Hello"` was meant.
  */
 export function runSteps(steps: unknown, context: Context): unknown {
-  const self = resolverFor(context);
+  const self = resolverFor(context) as ResolverImpl;
   if (!Array.isArray(steps)) return walk(self, steps, context);
   const run = (from: number): unknown => {
     let v: unknown;
