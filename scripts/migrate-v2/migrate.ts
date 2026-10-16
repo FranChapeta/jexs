@@ -88,19 +88,19 @@ function lastSlotToSibling({ op, obj }: Step, slot: number, name: string, m: Cod
 
 /**
  * Move a sibling into a tuple with the op's value: `{ "$op": a, "<name>": b }`
- * becomes `{ "$op": [a, b] }`. Only a literal sibling after another key moves,
- * as it is rewritten from its value; anything else is left for review.
+ * becomes `{ "$op": [a, b] }`. Only a plain sibling (see `isPlain`) after
+ * another key moves; anything else is left for review.
  */
 function siblingToTuple({ op, obj }: Step, name: string, m: Codemod): void {
   const value = obj.props.find(p => p.key === "$" + op)?.value;
   const at = obj.props.findIndex(p => p.key === name);
   const sibling = obj.props[at];
   if (!value || !sibling) return;
-  if (at === 0 || (sibling.value.k !== "str" && sibling.value.k !== "lit")) {
+  if (at === 0 || !isPlain(sibling.value)) {
     m.review(sibling.keyStart, `\`$${op}\` takes \`[<value>, <${name}>]\` now: move \`${name}\` into the tuple`);
     return;
   }
-  const close = `, ${JSON.stringify(sibling.value.value)}]`;
+  const close = `, ${m.text(sibling.value.start, sibling.value.end)}]`;
   const before = obj.props[at - 1].value.end;
   m.add({ start: value.start, end: value.start, text: "[" });
   // Right after the op's value, closing the tuple and dropping the sibling are one edit.
@@ -360,6 +360,35 @@ function renameSibling({ obj }: Step, from: string, to: string, m: Codemod): voi
   if (prop) m.add({ start: prop.keyStart, end: prop.keyEnd, text: prop.shorthand ? `${to}: ${from}` : to });
 }
 
+/** Remove the step's `name` sibling, with the comma that joined it. */
+function removeSibling({ obj }: Step, name: string, m: Codemod): void {
+  const at = obj.props.findIndex(p => p.key === name);
+  if (at === -1) return;
+  const prop = obj.props[at];
+  const keyStart = (p: typeof prop) => p.keyStart - (p.keyQuoted ? 1 : 0);
+  if (at > 0) m.add({ start: obj.props[at - 1].value.end, end: prop.value.end, text: "" });
+  else if (obj.props[at + 1]) m.add({ start: keyStart(prop), end: keyStart(obj.props[at + 1]), text: "" });
+}
+
+/**
+ * `ws-close` and `ws-status` take the connection's name as their value, in place
+ * of `true` and a `name` sibling: the sibling's value moves up, or `"default"`
+ * stands for the unnamed connection.
+ */
+function connectionNameValue(step: Step, m: Codemod): void {
+  const value = step.obj.props.find(p => p.key === "$" + step.op)?.value;
+  if (value?.k !== "lit" || value.value !== true) return;
+  const name = step.obj.props.find(p => p.key === "name");
+  if (!name) {
+    m.add({ start: value.start, end: value.end, text: '"default"' });
+  } else if (!isPlain(name.value)) {
+    m.review(name.keyStart, `\`$${step.op}\` takes the connection's name as its value now: move \`name\` there`);
+  } else {
+    m.add({ start: value.start, end: value.end, text: m.text(name.value.start, name.value.end) });
+    removeSibling(step, "name", m);
+  }
+}
+
 /**
  * Move the step to another op: `{ "$<op>": "<from>" }` becomes
  * `{ "$<node>": "<to>" }`, keeping how its key is quoted.
@@ -468,6 +497,13 @@ const RULES: Record<string, Rule> = {
   },
   // Client handlers read what they are handed by its role, as the server's do.
   "ws-connect": (step, m) => handlerReads(step, { wsMessage: "message", wsCode: "code", wsReason: "reason", wsClean: "clean" }, m),
+  "ws-close": connectionNameValue,
+  "ws-status": connectionNameValue,
+  // Storage reads like the cache: `storage-set` takes `value`, and removing is `storage-delete`.
+  "storage-set": (step, m) => tupleToSiblings(step, ["value"], m),
+  "storage-remove": (step, m) => renameOp(step, "storage-delete", m),
+  // A level's name and value are its two operands.
+  "audio-volume": (step, m) => siblingToTuple(step, "volume", m),
   rtc: (step, m) => handlerReads(step, { rtcSignal: "signal", rtcPeerId: "peer", rtcInbound: "inbound", rtcMessage: "message", rtcChannel: "channel" }, m),
   // The selection is one `selected`, and `on-change` no longer hands over the
   // tree serialized: it is `$stringify` of the tree's path.

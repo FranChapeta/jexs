@@ -364,9 +364,15 @@ const cases: Case[] = [
   { label: "ws-connect invalid binaryType (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { "$ws-connect": "/feed", binaryType: "buffer" } },
   { label: "string-slot accepts ws-status (string-output) (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $foreach: [1], item: { "$ws-status": true }, do: "y" } },
+    expr: { $foreach: [1], item: { "$ws-status": "default" }, do: "y" } },
   { label: "ws-close with code and reason (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { "$ws-close": true, name: "feed", code: 4001, reason: "signed out" } },
+    expr: { "$ws-close": "feed", code: 4001, reason: "signed out" } },
+  { label: "ws-close takes the name, not v1's true and name (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "$ws-close": true, name: "feed" } },
+  { label: "storage-set needs a value (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "$storage-set": "prefs" } },
+  { label: "audio-volume takes [name, level] (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { "$audio-volume": "music", volume: 0.3 } },
 
   // WebRTCNode: signalling is a seam, so `listen` carries the sink and the
   // handshake ops it replaced are gone.
@@ -596,7 +602,7 @@ const cases: Case[] = [
   { label: "op plus global keys (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $concat: ["a"], $as: "x", $catch: [{ $var: "error.message" }] } },
   { label: "two hyphenated ops in one step (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
-    expr: { "$storage-get": "a", "$storage-set": ["b", 1] } },
+    expr: { "$storage-get": "a", "$storage-set": "b", value: 1 } },
 
   // `map: true, type: ["object", "array"]`: query `data` is the one slot whose
   // runtime takes a row map OR a list of them.

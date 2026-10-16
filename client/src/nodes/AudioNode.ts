@@ -176,18 +176,16 @@ export class AudioNode extends Node {
       ],
     },
     "audio-volume": {
-      type: "string",
+      tuple: 2,
+      prefixItems: [
+        { type: "string", description: "The name the level is for." },
+        { type: "number", description: "The level, 0 to 1." },
+      ],
       output: "null",
       markdownDescription: "Sets the level for a name: what is playing under it changes without restarting, and so does everything played under it afterwards. That makes it the thing to wire a settings slider to, and it works before anything has played.\n\nIt multiplies rather than replaces: the level, the `volume` on each `audio-play`, and `audio-master` all apply, so a deliberately quiet shot stays quiet relative to whatever level the player chose.",
       examples: [
-        "{ \"$audio-volume\": \"shoot\", \"volume\": 0.3 }",
+        "{ \"$audio-volume\": [\"shoot\", 0.3] }",
       ],
-      siblings: {
-        volume: {
-          type: "number",
-          description: "New gain value 0–1.",
-        },
-      },
     },
     "audio-master": {
       type: "number",
@@ -281,8 +279,10 @@ export class AudioNode extends Node {
   }
 
   ["audio-volume"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["$audio-volume"], def["volume"]], context, ([name, vol]: unknown[]) => {
-      levelFor(this, this.toString(name)).gain.value = Number(vol);
+    return resolve(def["$audio-volume"], context, args => {
+      if (!Array.isArray(args) || args.length !== 2) throw new Error("audio-volume takes [name, level]");
+      const [name, level] = args;
+      levelFor(this, this.toString(name)).gain.value = Number(level);
       return null;
     });
   }

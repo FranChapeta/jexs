@@ -131,7 +131,7 @@ test("audio-volume: one level for the name, shared by every sound under it", asy
   await load("shoot");
   await resolve({ "$audio-play": "shoot", volume: 1 }, {});
   await resolve({ "$audio-play": "shoot", volume: 1 }, {});
-  await resolve({ "$audio-volume": "shoot", volume: 0.25 }, {});
+  await resolve({ "$audio-volume": ["shoot", 0.25] }, {});
 
   const [first, second] = FakeSource.playing();
   assert.equal(levelOf(first), levelOf(second));
@@ -142,14 +142,14 @@ test("audio-volume: one level for the name, shared by every sound under it", asy
 // before anything plays, and used to do nothing at all.
 test("audio-volume: set before anything plays, and it still applies", async () => {
   await load("music");
-  await resolve({ "$audio-volume": "music", volume: 0.3 }, {});
+  await resolve({ "$audio-volume": ["music", 0.3] }, {});
   await resolve({ "$audio-play": "music" }, {});
   assert.equal(levelOf(FakeSource.playing()[0]).gain.value, 0.3);
 });
 
 test("audio-volume: the level and the per-play volume multiply, they do not replace", async () => {
   await load("shoot");
-  await resolve({ "$audio-volume": "shoot", volume: 0.5 }, {});
+  await resolve({ "$audio-volume": ["shoot", 0.5] }, {});
   await resolve({ "$audio-play": "shoot", volume: 0.8 }, {});
   const source = FakeSource.playing()[0];
   // A deliberately quiet shot stays quiet relative to the chosen level: the
@@ -160,7 +160,7 @@ test("audio-volume: the level and the per-play volume multiply, they do not repl
 
 test("audio-volume: a level survives the sounds it was set for", async () => {
   await load("shoot");
-  await resolve({ "$audio-volume": "shoot", volume: 0.4 }, {});
+  await resolve({ "$audio-volume": ["shoot", 0.4] }, {});
   await resolve({ "$audio-play": "shoot" }, {});
   await resolve({ "$audio-stop": "shoot" }, {});
   await resolve({ "$audio-play": "shoot" }, {});
@@ -195,7 +195,7 @@ test("audio-load: needs one of url or content, and content must be bytes", async
 // under generated names grows for its whole life.
 test("audio-unload: forgets the sounds, the buffer and the level", async () => {
   await load("shoot");
-  await resolve({ "$audio-volume": "shoot", volume: 0.4 }, {});
+  await resolve({ "$audio-volume": ["shoot", 0.4] }, {});
   await resolve({ "$audio-play": "shoot" }, {});
   await resolve({ "$audio-unload": "shoot" }, {});
   assert.equal(FakeSource.playing().length, 0);
@@ -215,7 +215,7 @@ test("dispose: closes the context and drops everything it held", async () => {
   const own = createResolver([...coreNodes(), node]);
   stubFetch("RIFFdata");
   await own({ "$audio-load": "theme", url: "/audio/theme.wav" }, {});
-  await own({ "$audio-volume": "theme", volume: 0.5 }, {});
+  await own({ "$audio-volume": ["theme", 0.5] }, {});
   await own({ "$audio-play": "theme", loop: true }, {});
 
   const graph = node.graph;

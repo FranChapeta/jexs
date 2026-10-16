@@ -69,6 +69,15 @@ function absoluteUrl(url: string): string {
   return proto + "//" + location.host + url;
 }
 
+/** The connection an op names by its value. Only a name, so v1's `true` with a
+ *  `name` sibling fails here instead of addressing a connection called "true". */
+function connectionName(op: string, value: unknown): string {
+  if (typeof value !== "string" || value === "") {
+    throw new Error(`${op} takes the connection's name, "${DEFAULT}" for one opened without a \`name\`; got ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
 function run(conn: Conn, key: string, extra: Record<string, unknown>): void {
   const body = conn.def[key];
   if (body === undefined) return;
@@ -96,7 +105,7 @@ export class WsNode extends Node {
     "ws-connect": {
       type: "string",
       output: "null",
-      markdownDescription: "Opens a WebSocket connection and resolves once it is open, so a server that never answers reaches an enclosing `$catch` rather than failing silently. Pass `$then` instead if the sequence should carry on without waiting.\n\nRelative URLs are prefixed with `ws://` or `wss://` to match the page. Pass `on-open`, `on-message` and `on-close` step arrays. After a successful open the connection reconnects on its own with exponential backoff; `retry` controls that.\n\nName the connection to hold more than one at a time. The unnamed connection is the default, and is the one `ws-send`, `ws-close` and `ws-status` act on when they name none.",
+      markdownDescription: "Opens a WebSocket connection and resolves once it is open, so a server that never answers reaches an enclosing `$catch` rather than failing silently. Pass `$then` instead if the sequence should carry on without waiting.\n\nRelative URLs are prefixed with `ws://` or `wss://` to match the page. Pass `on-open`, `on-message` and `on-close` step arrays. After a successful open the connection reconnects on its own with exponential backoff; `retry` controls that.\n\nName the connection to hold more than one at a time. The unnamed connection is `\"default\"`: the one `ws-send` acts on when it names none, and the name `ws-close` and `ws-status` take for it.",
       examples: [
         "{ \"$ws-connect\": \"/ws\", \"on-message\": [{ \"$var\": \"message\" }] }",
         "{ \"$ws-connect\": \"/feed\", \"name\": \"feed\", \"retry\": 3, \"$catch\": [{ \"$var\": \"error.message\" }] }",
@@ -148,17 +157,14 @@ export class WsNode extends Node {
       },
     },
     "ws-close": {
+      type: "string",
       output: "null",
-      markdownDescription: "Closes a connection and stops it reconnecting. Pass `code` and `reason` to tell the server why; the defaults are a normal closure.",
+      markdownDescription: "Closes the named connection, `\"default\"` for one opened without a `name`, and stops it reconnecting. Pass `code` and `reason` to tell the server why; the defaults are a normal closure.",
       examples: [
-        "{ \"$ws-close\": true }",
-        "{ \"$ws-close\": true, \"name\": \"feed\", \"code\": 4001, \"reason\": \"signed out\" }",
+        "{ \"$ws-close\": \"default\" }",
+        "{ \"$ws-close\": \"feed\", \"code\": 4001, \"reason\": \"signed out\" }",
       ],
       siblings: {
-        name: {
-          type: "string",
-          description: "Which connection to close (default: the unnamed one).",
-        },
         code: {
           type: "number",
           description: "Close code (default `1000`, a normal closure). Application codes are 4000-4999.",
@@ -170,19 +176,14 @@ export class WsNode extends Node {
       },
     },
     "ws-status": {
+      type: "string",
       output: "string",
-      markdownDescription: "Reports the state of a connection, for showing whether the page is live.",
+      markdownDescription: "Reports the state of the named connection, `\"default\"` for one opened without a `name`, for showing whether the page is live.",
       outputDescription: "`\"open\"`, `\"connecting\"`, `\"closing\"`, `\"closed\"`, or `\"none\"` when nothing by that name was ever opened.",
       examples: [
-        "{ \"$ws-status\": true }",
-        "{ \"$ws-status\": true, \"name\": \"feed\" }",
+        "{ \"$ws-status\": \"default\" }",
+        "{ \"$ws-status\": \"feed\" }",
       ],
-      siblings: {
-        name: {
-          type: "string",
-          description: "Which connection to report on (default: the unnamed one).",
-        },
-      },
     },
   };
 
@@ -248,10 +249,10 @@ export class WsNode extends Node {
   }
 
   ["ws-close"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def.name, def.code, def.reason], context, ([nameRaw, code, reason]) => {
+    return resolveAll([def["$ws-close"], def.code, def.reason], context, ([name, code, reason]) => {
       closeConnection(
         this,
-        this.toString(nameRaw) || DEFAULT,
+        connectionName("ws-close", name),
         code == null ? 1000 : this.toNumber(code),
         reason == null ? "" : this.toString(reason),
       );
@@ -260,9 +261,7 @@ export class WsNode extends Node {
   }
 
   ["ws-status"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.name, context, name =>
-      statusOf(this, this.toString(name) || DEFAULT),
-    );
+    return resolve(def["$ws-status"], context, name => statusOf(this, connectionName("ws-status", name)));
   }
 
   /**

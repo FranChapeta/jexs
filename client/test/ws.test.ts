@@ -87,7 +87,7 @@ async function connect(def: Record<string, unknown>, ctx: Record<string, unknown
 test("ws-connect: resolves once open, and makes the url absolute against the page", async () => {
   const socket = await connect({ "$ws-connect": "/ws" });
   assert.equal(socket.url, "wss://app.test/ws");
-  assert.equal(resolve({ "$ws-status": true }, {}), "open");
+  assert.equal(resolve({ "$ws-status": "default" }, {}), "open");
 });
 
 // The step used to return before the socket settled, so a server that never
@@ -100,23 +100,27 @@ test("ws-connect: a connection that never opens reaches catch", async () => {
   FakeSocket.last().drop(1006, "");
   assert.match(await pending as string, /^caught: WebSocket to wss:\/\/app\.test\/ws failed to open \(code 1006\)/);
   // Nothing is left behind for a later step to find.
-  assert.equal(resolve({ "$ws-status": true }, {}), "none");
+  assert.equal(resolve({ "$ws-status": "default" }, {}), "none");
 });
 
 test("ws-connect: two named connections coexist", async () => {
   await connect({ "$ws-connect": "/chat", name: "chat" });
   await connect({ "$ws-connect": "/feed", name: "feed" });
   assert.equal(FakeSocket.live.length, 2);
-  assert.equal(resolve({ "$ws-status": true, name: "chat" }, {}), "open");
-  assert.equal(resolve({ "$ws-status": true, name: "feed" }, {}), "open");
+  assert.equal(resolve({ "$ws-status": "chat" }, {}), "open");
+  assert.equal(resolve({ "$ws-status": "feed" }, {}), "open");
 
   await resolve({ "$ws-send": { hello: 1 }, name: "chat" }, {});
   assert.deepEqual(FakeSocket.live[0].sent, ["{\"hello\":1}"]);
   assert.deepEqual(FakeSocket.live[1].sent, []);
 
-  await resolve({ "$ws-close": true, name: "chat" }, {});
-  assert.equal(resolve({ "$ws-status": true, name: "chat" }, {}), "none");
-  assert.equal(resolve({ "$ws-status": true, name: "feed" }, {}), "open");
+  await resolve({ "$ws-close": "chat" }, {});
+  assert.equal(resolve({ "$ws-status": "chat" }, {}), "none");
+  assert.equal(resolve({ "$ws-status": "feed" }, {}), "open");
+});
+
+test("ws-close and ws-status take the connection's name, not v1's placeholder", () => {
+  assert.throws(() => resolve({ "$ws-status": true }, {}), /ws-status takes the connection's name, "default" for one opened without a `name`; got true/);
 });
 
 test("ws-connect: protocols and binaryType reach the socket", async () => {
@@ -198,7 +202,7 @@ test("on-close: the code and reason reach the steps", async () => {
 
 test("ws-close: the code and reason reach the server", async () => {
   const socket = await connect({ "$ws-connect": "/ws" });
-  await resolve({ "$ws-close": true, code: 4002, reason: "signed out" }, {});
+  await resolve({ "$ws-close": "default", code: 4002, reason: "signed out" }, {});
   assert.deepEqual(socket.closedWith, { code: 4002, reason: "signed out" });
 });
 
@@ -239,12 +243,12 @@ test("ws-send: binary goes as a frame, objects as JSON", async () => {
 });
 
 test("ws-status: reports every state, and none for a name never opened", async () => {
-  assert.equal(resolve({ "$ws-status": true, name: "nope" }, {}), "none");
+  assert.equal(resolve({ "$ws-status": "nope" }, {}), "none");
   const pending = resolve({ "$ws-connect": "/ws" }, {}) as Promise<unknown>;
-  assert.equal(resolve({ "$ws-status": true }, {}), "connecting");
+  assert.equal(resolve({ "$ws-status": "default" }, {}), "connecting");
   FakeSocket.last().accept();
   await pending;
-  assert.equal(resolve({ "$ws-status": true }, {}), "open");
+  assert.equal(resolve({ "$ws-status": "default" }, {}), "open");
 });
 
 // The node used to sniff `{ type: "welcome" }` off the wire to bind `wsId`, and
@@ -283,5 +287,5 @@ test("two nodes keep their own connections", async () => {
 
   other.dispose();
   assert.equal(other.connections.size, 0);
-  assert.equal(resolve({ "$ws-status": true }, {}), "open");
+  assert.equal(resolve({ "$ws-status": "default" }, {}), "open");
 });

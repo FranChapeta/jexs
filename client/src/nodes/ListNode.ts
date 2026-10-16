@@ -26,6 +26,7 @@ export class ListNode extends Node {
       siblings: {
         template: {
           type: "string",
+          required: true,
           description: "CSS selector of the `<template>` element to clone.",
         },
       },
@@ -55,10 +56,12 @@ export class ListNode extends Node {
       siblings: {
         template: {
           type: "string",
+          required: true,
           description: "CSS selector of the `<template>` element to clone.",
         },
         from: {
           type: "string",
+          required: true,
           description: "CSS selector of the hidden input containing serialized JSON.",
         },
         fields: {
@@ -88,6 +91,7 @@ export class ListNode extends Node {
       siblings: {
         to: {
           type: "string",
+          required: true,
           description: "CSS selector of the hidden input to write to.",
         },
         fields: {

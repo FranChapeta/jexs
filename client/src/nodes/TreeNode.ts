@@ -113,12 +113,14 @@ export class TreeNode extends Node {
       siblings: {
         target: {
           type: "string",
+          required: true,
           description: "CSS selector of the container element.",
         },
         data: {
           description: "Initial data array or expression. If omitted, adopts any array already at the context path.",
         },
         row: {
+          required: true,
           description: "JSON row template resolved per tree node.",
         },
         "on-change": {
@@ -177,6 +179,7 @@ export class TreeNode extends Node {
       siblings: {
         key: {
           type: "string",
+          required: true,
           description: "Key to update on the selected node.",
         },
         value: {
@@ -252,6 +255,7 @@ export class TreeNode extends Node {
       ],
       siblings: {
         delta: {
+          required: true,
           description: "TreeDelta object to apply.",
         },
       },

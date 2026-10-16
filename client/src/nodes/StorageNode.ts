@@ -26,27 +26,38 @@ export class StorageNode extends Node {
       ],
     },
     "storage-set": {
-      tuple: 2,
-      prefixItems: [
-        { type: "string", description: "The storage key." },
-        { description: "The value to store. Non-string values are JSON-encoded." },
-      ],
-      markdownDescription: "Writes a value under a key. Pass `[\"key\", value]`. Non-string values are JSON-encoded. Returns the stored value.",
+      type: "string",
+      markdownDescription: "Writes the `value` sibling under the given key. Non-string values are JSON-encoded.",
+      outputDescription: "The stored value.",
       examples: [
-        "{ \"$storage-set\": [\"username\", \"Alice\"] }",
-        "{ \"$storage-set\": [\"prefs\", { \"theme\": \"dark\" }] }",
+        "{ \"$storage-set\": \"username\", \"value\": \"Alice\" }",
+        "{ \"$storage-set\": \"prefs\", \"value\": { \"theme\": \"dark\" } }",
       ],
+      siblings: {
+        value: { required: true, description: "The value to store. Non-string values are JSON-encoded." },
+      },
     },
-    "storage-remove": {
+    "storage-delete": {
       type: "string",
       output: "boolean",
-      markdownDescription: "Deletes the entry under `key`. Returns `true`.",
+      markdownDescription: "Removes the entry under the given key.",
+      outputDescription: "`true` if the key existed and was removed, otherwise `false`.",
       examples: [
-        "{ \"$storage-remove\": \"username\" }",
+        "{ \"$storage-delete\": \"username\" }",
+      ],
+    },
+    "storage-has": {
+      type: "string",
+      output: "boolean",
+      markdownDescription: "Checks whether the given key is present.",
+      outputDescription: "`true` if the key is present, otherwise `false`, even when the stored value is the string `\"null\"`.",
+      examples: [
+        "{ \"$storage-has\": \"username\" }",
       ],
     },
     // Keyless bulk ops fold into the bare `storage` key (value-mode); the keyed
-    // CRUD (`storage-get`/`set`/`remove`) keeps its prefix. Both honor `session`.
+    // ones (`storage-get`/`set`/`delete`/`has`, as `cache-*` names them) keep
+    // their prefix. All honor `session`.
     storage: {
       type: "string",
       enum: ["clear", "keys"],
@@ -77,21 +88,26 @@ export class StorageNode extends Node {
   }
 
   ["storage-set"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["$storage-set"], def.session], context, ([argsRaw, sessionRaw]) => {
-      if (!Array.isArray(argsRaw) || argsRaw.length < 2) return null;
-      const [keyRaw, value] = argsRaw;
-      const store = pickStore(sessionRaw);
-      store.setItem(String(keyRaw), encode(value));
+    if (!("value" in def)) throw new Error("storage-set needs a `value` to store");
+    return resolveAll([def["$storage-set"], def.value, def.session], context, ([keyRaw, value, sessionRaw]) => {
+      pickStore(sessionRaw).setItem(String(keyRaw), encode(value));
       return value;
     });
   }
 
-  ["storage-remove"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["$storage-remove"], def.session], context, ([keyRaw, sessionRaw]) => {
+  ["storage-delete"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def["$storage-delete"], def.session], context, ([keyRaw, sessionRaw]) => {
       const store = pickStore(sessionRaw);
-      store.removeItem(String(keyRaw));
-      return true;
+      const key = String(keyRaw);
+      const existed = store.getItem(key) !== null;
+      store.removeItem(key);
+      return existed;
     });
+  }
+
+  ["storage-has"](def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def["$storage-has"], def.session], context, ([keyRaw, sessionRaw]) =>
+      pickStore(sessionRaw).getItem(String(keyRaw)) !== null);
   }
 
   ["storage"](def: Record<string, unknown>, context: Context): NodeValue {

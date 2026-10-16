@@ -157,7 +157,7 @@ export class CacheNode extends Node {
         "{ \"$cache-set\": \"user:42\", \"value\": { \"$var\": \"user\" }, \"ttl\": 3600 }",
       ],
       siblings: {
-        value: { description: "Value to store." },
+        value: { required: true, description: "Value to store." },
         ttl:   { type: "number", description: "Time-to-live in seconds." },
       },
     },

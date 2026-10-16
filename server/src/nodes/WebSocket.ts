@@ -90,7 +90,7 @@ export class WebSocketNode extends Node {
         "{ \"$socket-send-to\": { \"$var\": \"peerId\" }, \"data\": { \"hello\": true } }",
       ],
       siblings: {
-        data: { description: "Payload to send to the target peer." },
+        data: { required: true, description: "Payload to send to the target peer." },
       },
     },
     "socket-broadcast": {
