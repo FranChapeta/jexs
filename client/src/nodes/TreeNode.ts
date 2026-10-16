@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue } from "@jexs/core";
+import { Node, Context, NodeValue, childContext } from "@jexs/core";
 import { resolve, resolveAll, runSteps, runStepsDetached, isStep } from "@jexs/core";
 import {
   resolvePath, adjustPathAfterRemoval, getChildArrayKey,
@@ -106,7 +106,7 @@ export class TreeNode extends Node {
     "tree-init": {
       type: "string",
       output: "null",
-      markdownDescription: "Initializes a JSON tree editor. The primary key value is a context dot-path (`editor`) where the tree data is stored, so you read it back with `{ \"$var\": \"editor\" }`. Also pass `target` (CSS selector), `data` (array; if omitted, adopts any array already at the path), and `row` (JSON template).\nThe `row` template is resolved per node with context vars: `path`, `type`, `summary`, `depth`, `selected`, `expanded`.\nHook `on-change` steps receive `delta` and `editorData`; `on-select` receives `selectedPath` and `selectedNode`.",
+      markdownDescription: "Initializes a JSON tree editor. The primary key value is a context dot-path (`editor`) where the tree data is stored, so you read it back with `{ \"$var\": \"editor\" }`. Also pass `target` (CSS selector), `data` (array; if omitted, adopts any array already at the path), and `row` (JSON template).\nThe `row` template is resolved per node with context vars: `path`, `type`, `summary`, `depth`, `selected`, `expanded`.\nHook `on-change` steps receive `delta`; `on-select` receives `selected` (`{ path, node, editMode }`, or `null` when nothing is). The tree's data is at the path throughout, so `{ \"$stringify\": { \"$var\": \"editor\" } }` serializes it.",
       examples: [
         "{ \"$tree-init\": \"editor\", \"target\": \"#editor\", \"data\": [], \"row\": { \"$tag\": \"div\", \"content\": [{ \"$var\": \"path\" }] }, \"on-change\": [] }",
       ],
@@ -123,11 +123,11 @@ export class TreeNode extends Node {
         },
         "on-change": {
           steps: true,
-          description: "Steps run on each mutation with `delta` and `editorData`.",
+          description: "Steps run on each mutation with `delta`.",
         },
         "on-select": {
           steps: true,
-          description: "Steps run on selection change with `selectedPath` and `selectedNode`.",
+          description: "Steps run on selection change with `selected`: `{ path, node, editMode }`, or `null` when nothing is.",
         },
       },
     },
@@ -218,7 +218,7 @@ export class TreeNode extends Node {
     },
     "tree-select": {
       type: "string",
-      markdownDescription: "Selects a node by path, firing `on-select` steps with `selectedPath` and `selectedNode`.\nPass `path: null` to deselect. Returns the selected node data.",
+      markdownDescription: "Selects a node by path, firing `on-select` steps with `selected`.\nPass `path: null` to deselect. Returns the selected node data.",
       examples: [
         "{ \"$tree-select\": \"editor\", \"path\": \"0.content.1\" }",
       ],
@@ -776,22 +776,14 @@ function findNode(rt: TreeRuntime, path: string): HTMLElement | null {
 
 function fireChange(rt: TreeRuntime, delta: TreeDelta): void {
   if (!rt.onChangeSteps) return;
-  void runStepsDetached(rt.onChangeSteps, {
-    ...rt.context,
-    delta,
-    editorData: JSON.stringify(getData(rt), null, 2),
-  }, null, "[TreeNode] onChange error:");
+  void runStepsDetached(rt.onChangeSteps, childContext(rt.context, { delta }), null, "[TreeNode] onChange error:");
 }
 
 function fireSelect(rt: TreeRuntime): unknown {
   if (!rt.onSelectSteps) return;
   const node = rt.selectedPath ? resolvePath(getData(rt), rt.selectedPath) : null;
-  return runSteps(rt.onSelectSteps, {
-    ...rt.context,
-    selectedPath: rt.selectedPath,
-    selectedNode: node,
-    selectedEditMode: node ? getEditMode(node) : null,
-  });
+  const selected = rt.selectedPath ? { path: rt.selectedPath, node, editMode: node ? getEditMode(node) : null } : null;
+  return runSteps(rt.onSelectSteps, childContext(rt.context, { selected }));
 }
 
 // ══════════════════════════════════════════════

@@ -423,7 +423,7 @@ test("sw-post replies to the sender of a message, and broadcasts elsewhere", asy
   windows = [{ url: abs("/"), focused: false, navigatedTo: null, inbox: [], controlled: true }];
   startServiceWorker({
     events: {
-      message: { "$sw-post": { "got": { "$var": "data" } } },
+      message: { "$sw-post": { "got": { "$var": "message" } } },
       activate: { "$sw-post": "updated" },
     },
   });
@@ -438,7 +438,7 @@ test("a step list runs in order", async () => {
   startServiceWorker({
     events: {
       message: [
-        { "$concat": [{ "$var": "data" }, "!"], "$as": "loud" },
+        { "$concat": [{ "$var": "message" }, "!"], "$as": "loud" },
         { "$sw-post": { "$var": "loud" } },
       ],
     },

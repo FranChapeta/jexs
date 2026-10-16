@@ -144,12 +144,12 @@ test("ws-connect: retry takes booleans and counts, and refuses anything else", a
   }
 });
 
-// $wsMessage used to be written onto the captured context, so it outlived the
+// The message used to be written onto the captured context, so it outlived the
 // handler and leaked into everything else sharing that context.
 test("on-message: binds in a child scope, leaving the outer context alone", async () => {
-  const ctx: Record<string, unknown> = { wsMessage: "mine", seen: null };
+  const ctx: Record<string, unknown> = { message: "mine", seen: null };
   const pending = resolve(
-    { "$ws-connect": "/ws", "on-message": [{ $setVars: { seen: { $var: "wsMessage" } }, $bubble: true }] },
+    { "$ws-connect": "/ws", "on-message": [{ $setVars: { seen: { $var: "message" } }, $bubble: true }] },
     ctx,
   ) as Promise<unknown>;
   FakeSocket.last().accept();
@@ -159,7 +159,7 @@ test("on-message: binds in a child scope, leaving the outer context alone", asyn
   await new Promise(done => setTimeout(done, 10));
 
   assert.deepEqual(ctx.seen, { hello: "there" });
-  assert.equal(ctx.wsMessage, "mine");
+  assert.equal(ctx.message, "mine");
 });
 
 // The `steps` schema def has always accepted a lone expression, but the runtime
@@ -167,7 +167,7 @@ test("on-message: binds in a child scope, leaving the outer context alone", asyn
 test("a handler may be a single expression, not only an array", async () => {
   const ctx: Record<string, unknown> = { seen: null };
   const pending = resolve(
-    { "$ws-connect": "/ws", "on-message": { $setVars: { seen: { $var: "wsMessage" } }, $bubble: true } },
+    { "$ws-connect": "/ws", "on-message": { $setVars: { seen: { $var: "message" } }, $bubble: true } },
     ctx,
   ) as Promise<unknown>;
   FakeSocket.last().accept();
@@ -184,7 +184,7 @@ test("on-close: the code and reason reach the steps", async () => {
     {
       "$ws-connect": "/ws",
       retry: false,
-      "on-close": [{ $setVars: { why: { $concat: [{ $var: "wsCode" }, " ", { $var: "wsReason" }, " ", { $var: "wsClean" }] } }, $bubble: true }],
+      "on-close": [{ $setVars: { why: { $concat: [{ $var: "code" }, " ", { $var: "reason" }, " ", { $var: "clean" }] } }, $bubble: true }],
     },
     ctx,
   ) as Promise<unknown>;
@@ -255,7 +255,7 @@ test("no protocol of its own: a message is passed through untouched", async () =
   const ctx: Record<string, unknown> = {};
   await connect({
     "$ws-connect": "/ws",
-    "on-message": [{ $setVars: { seen: { $var: "wsMessage" } }, $bubble: true }],
+    "on-message": [{ $setVars: { seen: { $var: "message" } }, $bubble: true }],
   }, ctx);
 
   const socket = FakeSocket.last();

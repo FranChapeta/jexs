@@ -119,7 +119,7 @@ const resolve = createResolver([...coreNodes(), rtcNode]);
 const tick = (): Promise<void> => new Promise(done => { setTimeout(done, 0); });
 
 /** The whole transport: append every emitted payload to `sent`, in place. */
-const RECORD = { $push: [{ $var: "sent" }, { $var: "rtcSignal" }] };
+const RECORD = { $push: [{ $var: "sent" }, { $var: "signal" }] };
 
 interface Ctx extends Record<string, unknown> { sent: unknown[]; seen: unknown[] }
 const base = (): Ctx => ({ sent: [], seen: [] });
@@ -202,7 +202,7 @@ test("an inbound offer is answered with no signalling logic in the template", as
 
 test("on-peer refuses by resolving falsy: nothing is signalled back", async () => {
   const ctx = base();
-  await listen(ctx, { "on-peer": { $push: [{ $var: "seen" }, { $var: "rtcPeerId" }] } });
+  await listen(ctx, { "on-peer": { $push: [{ $var: "seen" }, { $var: "peer" }] } });
   // `push` returns the array, which is truthy, so the peer above is admitted.
   await resolve({ "$rtc-signal": "A", data: OFFER }, ctx);
   await tick();
@@ -220,7 +220,7 @@ test("on-peer refuses by resolving falsy: nothing is signalled back", async () =
 // the node still believes only the `from` its transport vouched for.
 test("from comes from the sibling, never from inside the payload", async () => {
   const ctx = base();
-  await listen(ctx, { "on-open": { $push: [{ $var: "seen" }, { $var: "rtcPeerId" }] } });
+  await listen(ctx, { "on-open": { $push: [{ $var: "seen" }, { $var: "peer" }] } });
 
   const forged = { ...OFFER, from: "victim", to: "victim" };
   await resolve({ "$rtc-signal": "attacker", data: forged }, ctx);
@@ -296,7 +296,7 @@ test("on-message binds the message, the peer and the channel it came over", asyn
   await listen(ctx, {
     "on-message": {
       $push: [{ $var: "seen" }, { $concat: [
-        { $var: "rtcPeerId" }, "/", { $var: "rtcChannel" }, "/", { $var: "rtcMessage.n" },
+        { $var: "peer" }, "/", { $var: "channel" }, "/", { $var: "message.n" },
       ] }],
     },
   });
@@ -415,7 +415,7 @@ test("trickle on by default emits each candidate as it is found", async () => {
 
 test("on-close fires for a peer that opened, and not for one that never did", async () => {
   const ctx = base();
-  await listen(ctx, { "on-close": { $push: [{ $var: "seen" }, { $var: "rtcPeerId" }] } });
+  await listen(ctx, { "on-close": { $push: [{ $var: "seen" }, { $var: "peer" }] } });
 
   // Never opened: the rejected dial is the report, so nothing is announced.
   await resolve({ "$rtc-connect": "doomed", timeout: 20, $catch: [{ $var: "error.message" }] }, ctx);
@@ -473,7 +473,7 @@ test("two nodes negotiate end to end with nothing between them", async () => {
   const runB = createResolver([...coreNodes(), b]);
   const ctxA = base();
   const ctxB = base();
-  const OPENED = { $push: [{ $var: "seen" }, { $concat: [{ $var: "rtcPeerId" }, "/", { $var: "rtcInbound" }] }] };
+  const OPENED = { $push: [{ $var: "seen" }, { $concat: [{ $var: "peer" }, "/", { $var: "inbound" }] }] };
 
   await runA({ $rtc: "listen", "on-signal": RECORD, "on-open": OPENED }, ctxA);
   await runB({ $rtc: "listen", "on-signal": RECORD, "on-open": OPENED }, ctxB);

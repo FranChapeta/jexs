@@ -51,7 +51,7 @@ export class WebRTCNode extends Node {
       enum: RTC_OPS,
       markdownDescription: "The two WebRTC operations that name no peer. Everything peer-scoped has its own key: `rtc-connect`, `rtc-signal`, `rtc-send`, `rtc-broadcast`, `rtc-close`, `rtc-status`.\nThe node never touches a socket: it hands each signalling payload to your `on-signal` steps to deliver however you like (a WebSocket, `fetch`, `window-run`, even a copy-paste box), and you hand replies back with `rtc-signal`.",
       examples: [
-        "{ \"$rtc\": \"listen\", \"on-signal\": { \"$ws-send\": { \"$var\": \"rtcSignal\" } } }",
+        "{ \"$rtc\": \"listen\", \"on-signal\": { \"$ws-send\": { \"$var\": \"signal\" } } }",
         "{ \"$rtc\": \"close-all\" }",
       ],
       variants: {
@@ -59,7 +59,7 @@ export class WebRTCNode extends Node {
           output: "null",
           markdownDescription: "Registers the signalling sink and the peer handlers, and configures ICE. Run by **both** sides: the answering peer never calls `rtc-connect`, so this is its only chance to supply them.\nCreates nothing by itself. A second `listen` replaces the first.",
           examples: [
-            "{ \"$rtc\": \"listen\", \"on-signal\": { \"$ws-send\": { \"type\": \"peer-signal\", \"to\": { \"$var\": \"rtcPeerId\" }, \"sig\": { \"$var\": \"rtcSignal\" } } } }",
+            "{ \"$rtc\": \"listen\", \"on-signal\": { \"$ws-send\": { \"type\": \"peer-signal\", \"to\": { \"$var\": \"peer\" }, \"sig\": { \"$var\": \"signal\" } } } }",
           ],
           siblings: {
             iceServers: {
@@ -87,23 +87,23 @@ export class WebRTCNode extends Node {
             "on-signal": {
               steps: true,
               required: true,
-              markdownDescription: "Steps that deliver one signalling payload, with `rtcSignal` (the payload, opaque) and `rtcPeerId` (who it is for) in scope. Required: without it an offer has nowhere to go.",
+              markdownDescription: "Steps that deliver one signalling payload, with `signal` (the payload, opaque) and `peer` (who it is for) in scope. Required: without it an offer has nowhere to go.",
             },
             "on-peer": {
               steps: true,
-              markdownDescription: "Steps run when a peer offers us a connection, **before** anything is answered, with `rtcPeerId` in scope. Resolve to a falsy value to refuse: nothing is signalled back and the peer is dropped. This is the only point at which refusing is still possible.",
+              markdownDescription: "Steps run when a peer offers us a connection, **before** anything is answered, with `peer` in scope. Resolve to a falsy value to refuse: nothing is signalled back and the peer is dropped. This is the only point at which refusing is still possible.",
             },
             "on-open": {
               steps: true,
-              markdownDescription: "Steps run when a peer's channels are open and `send` is safe, with `rtcPeerId` and `rtcInbound` in scope. Fires for peers arriving from either direction, which makes it the answering side's only way to learn this.",
+              markdownDescription: "Steps run when a peer's channels are open and `send` is safe, with `peer` and `inbound` (whether the peer dialed us) in scope. Fires for peers arriving from either direction, which makes it the answering side's only way to learn this.",
             },
             "on-message": {
               steps: true,
-              markdownDescription: "Steps run on each incoming message, with `rtcMessage`, `rtcPeerId` and `rtcChannel` (`\"data\"` or `\"fast\"`) in scope.",
+              markdownDescription: "Steps run on each incoming message, with `message`, `peer` and `channel` (`\"data\"` or `\"fast\"`) in scope.",
             },
             "on-close": {
               steps: true,
-              markdownDescription: "Steps run when a peer that had opened goes away, with `rtcPeerId` in scope. A refused offer or a dial that timed out never opened, and is reported by that step instead.",
+              markdownDescription: "Steps run when a peer that had opened goes away, with `peer` in scope. A refused offer or a dial that timed out never opened, and is reported by that step instead.",
             },
           },
         },
@@ -135,7 +135,7 @@ export class WebRTCNode extends Node {
       output: "null",
       markdownDescription: "Feeds one received signalling payload back in. **The value is the peer it came FROM**, not one to send to: this is the counterpart to `on-signal`, and the only way anything reaches the node from another peer.\nThat peer is read only from here and never from inside `data`, so a relay that stamps it from the connection stays the authority on identity. `data` is the payload verbatim: a session description (`{ type, sdp }`) or an ICE candidate (`{ candidate, sdpMid, sdpMLineIndex }`).",
       examples: [
-        "{ \"$rtc-signal\": { \"$var\": \"wsMessage.from\" }, \"data\": { \"$var\": \"wsMessage.sig\" } }",
+        "{ \"$rtc-signal\": { \"$var\": \"message.from\" }, \"data\": { \"$var\": \"message.sig\" } }",
       ],
       siblings: {
         data: { required: true, description: "The signalling payload, exactly as it was emitted." },
@@ -200,7 +200,7 @@ export class WebRTCNode extends Node {
   /** Peers that actually reached open, so `on-close` fires only for those. */
   readonly opened = new Set<string>();
 
-  /** Peers that dialed us, for `rtcInbound`. */
+  /** Peers that dialed us, for `inbound`. */
   readonly inbound = new Set<string>();
 
   /** Registered by `listen`, replaced wholesale by the next one. */
@@ -363,10 +363,10 @@ function fireHandler(node: WebRTCNode, key: HandlerKey, extra: Record<string, un
   if (running) running.catch((e: unknown) => console.error(`[WebRTC] ${key} error:`, e));
 }
 
-/** Hand one payload to the template to deliver. `rtcPeerId` addresses it, so an
+/** Hand one payload to the template to deliver. `peer` addresses it, so an
  *  envelope can be routed without the payload being opened. */
 function emitSignal(node: WebRTCNode, peerId: string, payload: unknown): void {
-  fireHandler(node, "on-signal", { rtcSignal: payload, rtcPeerId: peerId });
+  fireHandler(node, "on-signal", { signal: payload, peer: peerId });
 }
 
 function createPeer(node: WebRTCNode, peerId: string): RTCPeerConnection {
@@ -476,7 +476,7 @@ function channelOpened(node: WebRTCNode, peerId: string): void {
     node.pendingOpens.delete(peerId);
     pending.settle(peerId);
   }
-  fireHandler(node, "on-open", { rtcPeerId: peerId, rtcInbound: node.inbound.has(peerId) });
+  fireHandler(node, "on-open", { peer: peerId, inbound: node.inbound.has(peerId) });
 }
 
 /** One of the two native signalling shapes. A description carries `type`; a
@@ -548,7 +548,7 @@ async function doSignal(node: WebRTCNode, data: unknown, from: string): Promise<
 async function acceptOffer(node: WebRTCNode, from: string, description: RTCSessionDescriptionInit): Promise<void> {
   // The gate runs before anything is answered: once an answer is out, refusing
   // would cost a connection the other side already believes in.
-  const verdict = runHandler(node, "on-peer", { rtcPeerId: from });
+  const verdict = runHandler(node, "on-peer", { peer: from });
   if (verdict && !Node.toBooleanValue(await verdict)) return;
 
   const pc = createPeer(node, from);
@@ -692,7 +692,7 @@ function scheduleFastCoalesceFlush(node: WebRTCNode): void {
 }
 
 function dispatchRtcMessage(node: WebRTCNode, peerId: string, data: unknown, channel: ChannelKind): void {
-  fireHandler(node, "on-message", { rtcMessage: data, rtcPeerId: peerId, rtcChannel: channel });
+  fireHandler(node, "on-message", { message: data, peer: peerId, channel });
 }
 
 function closePeer(node: WebRTCNode, peerId: string): void {
@@ -727,7 +727,7 @@ function closePeer(node: WebRTCNode, peerId: string): void {
 
   // Only a peer that actually opened is announced, so a refused offer or a dial
   // that timed out is reported once, by the step that asked for it.
-  if (node.opened.delete(peerId)) fireHandler(node, "on-close", { rtcPeerId: peerId });
+  if (node.opened.delete(peerId)) fireHandler(node, "on-close", { peer: peerId });
 }
 
 function closeAll(node: WebRTCNode): null {

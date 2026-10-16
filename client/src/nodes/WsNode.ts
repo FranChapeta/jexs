@@ -73,7 +73,7 @@ function run(conn: Conn, key: string, extra: Record<string, unknown>): void {
   const body = conn.def[key];
   if (body === undefined) return;
   // A child scope per event, not a write onto the captured context: the handler
-  // outlives the step, so binding into the parent would leak `wsMessage` into
+  // outlives the step, so binding into the parent would leak `message` into
   // everything else sharing that context and leave the last one behind for good.
   void runStepsDetached(body, childContext(conn.context, extra), conn.def, `[WS] ${key} error:`);
 }
@@ -98,7 +98,7 @@ export class WsNode extends Node {
       output: "null",
       markdownDescription: "Opens a WebSocket connection and resolves once it is open, so a server that never answers reaches an enclosing `$catch` rather than failing silently. Pass `$then` instead if the sequence should carry on without waiting.\n\nRelative URLs are prefixed with `ws://` or `wss://` to match the page. Pass `on-open`, `on-message` and `on-close` step arrays. After a successful open the connection reconnects on its own with exponential backoff; `retry` controls that.\n\nName the connection to hold more than one at a time. The unnamed connection is the default, and is the one `ws-send`, `ws-close` and `ws-status` act on when they name none.",
       examples: [
-        "{ \"$ws-connect\": \"/ws\", \"on-message\": [{ \"$var\": \"wsMessage\" }] }",
+        "{ \"$ws-connect\": \"/ws\", \"on-message\": [{ \"$var\": \"message\" }] }",
         "{ \"$ws-connect\": \"/feed\", \"name\": \"feed\", \"retry\": 3, \"$catch\": [{ \"$var\": \"error.message\" }] }",
       ],
       siblings: {
@@ -112,11 +112,11 @@ export class WsNode extends Node {
         },
         "on-message": {
           steps: true,
-          markdownDescription: "Steps to run on each incoming message, with `wsMessage` in scope: parsed as JSON when it parses, otherwise the raw value. The node reads nothing out of a message itself, so any protocol on top of the socket, an id handed out on connect included, is yours to read here.",
+          markdownDescription: "Steps to run on each incoming message, with `message` in scope: parsed as JSON when it parses, otherwise the raw value. The node reads nothing out of a message itself, so any protocol on top of the socket, an id handed out on connect included, is yours to read here.",
         },
         "on-close": {
           steps: true,
-          markdownDescription: "Steps to run when the connection closes, with `wsCode`, `wsReason` and `wsClean` in scope. A dropped connection lands here too, before the reconnect.",
+          markdownDescription: "Steps to run when the connection closes, with `code`, `reason` and `clean` in scope. A dropped connection lands here too, before the reconnect.",
         },
         retry: {
           type: ["boolean", "number"],
@@ -316,7 +316,7 @@ function openSocket(conn: Conn, protocols?: string | string[], binaryType?: Bina
       } catch {
         data = e.data;
       }
-      run(conn, "on-message", { wsMessage: data });
+      run(conn, "on-message", { message: data });
     };
 
     socket.onclose = (e: CloseEvent) => {
@@ -331,7 +331,7 @@ function openSocket(conn: Conn, protocols?: string | string[], binaryType?: Bina
         ));
         return;
       }
-      run(conn, "on-close", { wsCode: e.code, wsReason: e.reason, wsClean: e.wasClean });
+      run(conn, "on-close", { code: e.code, reason: e.reason, clean: e.wasClean });
       if (!conn.closing && conn.attempts < conn.retries) scheduleReconnect(conn);
       else if (!conn.closing) conn.node.connections.delete(conn.name);
     };

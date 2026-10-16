@@ -1,6 +1,10 @@
 import { Node, Context, NodeValue, resolve, resolveAll, resolveFields } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
+/** The event a handler runs for, on its context for the sw-* ops. A symbol, so no
+ *  template can read or set it. */
+export const SW_EVENT = Symbol("jexs.swEvent");
+
 /** The service worker global scope. Throws anywhere else, so a stray op fails loudly. */
 export function swScope(): ServiceWorkerGlobalScope {
   const g: object = globalThis;
@@ -130,7 +134,7 @@ export class ServiceWorkerNode extends Node {
     return resolveAll([def["$sw-open"], def.navigate ?? false], context, async ([raw, navigate]) => {
       const sw = swScope();
       const target = new URL(typeof raw === "string" && raw ? raw : "/", sw.registration.scope).href;
-      notificationOf(context._event)?.close();
+      notificationOf(Reflect.get(context, SW_EVENT))?.close();
 
       const windows = await sw.clients.matchAll({ type: "window", includeUncontrolled: true });
       const open = windows.find(c => c.url === target);
@@ -154,7 +158,7 @@ export class ServiceWorkerNode extends Node {
 
   ["sw-post"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["$sw-post"], context, async message => {
-      const source = messageSourceOf(context._event);
+      const source = messageSourceOf(Reflect.get(context, SW_EVENT));
       if (source) {
         source.postMessage(message);
         return null;

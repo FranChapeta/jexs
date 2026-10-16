@@ -89,7 +89,7 @@ Every handler sees `version`, the worker's version (the hash the server generate
 |---|---|
 | `push` | `data`: the payload as JSON, or text, or `null` |
 | `notificationclick`, `notificationclose` | `notification`: `{ title, body, tag, icon, badge, image, actions, timestamp, requireInteraction, silent, data }`, and `action` (the button clicked) |
-| `message` | `data`: the message a page sent; `source`: that page as `{ id, url, type }`, or `null` |
+| `message` | `message`: the message a page sent; `source`: that page as `{ id, url, type }`, or `null` |
 | `sync` | `tag`, and `lastChance`: true on the browser's final retry |
 | `periodicsync` | `tag` |
 | `pushsubscriptionchange` | `oldSubscription`, `newSubscription`: each `{ endpoint, keys }` or `null` |

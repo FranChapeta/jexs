@@ -159,6 +159,15 @@ function retargetReads(v: Val, roots: string[], to: (path: string) => string, m:
   walk(v);
 }
 
+/** Rename the variables a step's `on-*` handlers read, `{ old: new }`, keeping
+ *  the path below each. */
+function handlerReads({ obj }: Step, names: Record<string, string>, m: Codemod): void {
+  const roots = Object.keys(names);
+  for (const p of obj.props) {
+    if (p.key.startsWith("on-")) retargetReads(p.value, roots, path => path.replace(/^[^.]+/, root => names[root] ?? root), m);
+  }
+}
+
 /**
  * `$tick` and `$cron` are both `$interval` now; their steps read `interval.*`,
  * with `cron.runCount` now `count`. Reads elsewhere are not found, since the
@@ -455,9 +464,29 @@ const RULES: Record<string, Rule> = {
   // A connection's handlers: `on-connect` is `on-open`, and its id is `id`.
   "socket-accept": (step, m) => {
     renameSibling(step, "on-connect", "on-open", m);
-    for (const p of step.obj.props) {
-      if (p.key.startsWith("on-")) retargetReads(p.value, ["wsId"], path => path.replace("wsId", "id"), m);
-    }
+    handlerReads(step, { wsId: "id" }, m);
+  },
+  // Client handlers read what they are handed by its role, as the server's do.
+  "ws-connect": (step, m) => handlerReads(step, { wsMessage: "message", wsCode: "code", wsReason: "reason", wsClean: "clean" }, m),
+  rtc: (step, m) => handlerReads(step, { rtcSignal: "signal", rtcPeerId: "peer", rtcInbound: "inbound", rtcMessage: "message", rtcChannel: "channel" }, m),
+  // The selection is one `selected`, and `on-change` no longer hands over the
+  // tree serialized: it is `$stringify` of the tree's path.
+  "tree-init": (step, m) => {
+    handlerReads(step, { selectedPath: "selected.path", selectedNode: "selected.node", selectedEditMode: "selected.editMode" }, m);
+    const path = opValue(step);
+    const walk = (x: Val): void => {
+      if (x.k === "arr") x.items.forEach(walk);
+      if (x.k !== "obj") return;
+      const only = x.props.length === 1 ? x.props[0] : undefined;
+      if (only?.key === "$var" && only.value.k === "str" && only.value.value === "editorData") {
+        if (path === undefined) m.review(only.keyStart, "`editorData` is gone: give `{ \"$stringify\": { \"$var\": <the tree's path> }, \"indent\": 2 }`");
+        else m.add({ start: x.start, end: x.end, text: `{ "$stringify": { "$var": ${JSON.stringify(path)} }, "indent": 2 }` });
+        return;
+      }
+      for (const p of x.props) walk(p.value);
+    };
+    const onChange = step.obj.props.find(p => p.key === "on-change")?.value;
+    if (onChange) walk(onChange);
   },
   // One name per option: `tls` and `user`.
   // A table's structure is `$table`'s.

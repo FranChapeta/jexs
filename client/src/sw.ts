@@ -1,5 +1,5 @@
 import { createResolver, coreNodes, isObject } from "@jexs/core";
-import { ServiceWorkerNode, swScope } from "./nodes/ServiceWorkerNode.js";
+import { SW_EVENT, ServiceWorkerNode, swScope } from "./nodes/ServiceWorkerNode.js";
 
 export interface ServiceWorkerOptions {
   /** Names the cache (`jexs-<version>`). A new version installs into a fresh
@@ -64,7 +64,7 @@ export function startServiceWorker(input: unknown, options: ServiceWorkerOptions
   const events = config.events;
 
   const run = (type: string, event: ExtendableEvent): unknown =>
-    resolver(events[type], { ...eventContext(type, event), version, _event: event });
+    resolver(events[type], { ...eventContext(type, event), version, [SW_EVENT]: event });
 
   // A fallback is served exactly when the network is gone, so it is only any use
   // cached: every route's fallback is precached along with `precache`. `addAll`
@@ -238,7 +238,7 @@ async function answer(route: CompiledRoute, event: FetchEvent, name: string): Pr
 }
 
 /** Plain-data context for an event, chosen by its type. The raw event rides
- *  along as `_event` for the sw-* ops. */
+ *  along under `SW_EVENT` for the sw-* ops. */
 function eventContext(type: string, event: ExtendableEvent): Record<string, unknown> {
   switch (type) {
     case "push":
@@ -249,7 +249,7 @@ function eventContext(type: string, event: ExtendableEvent): Record<string, unkn
       return { notification: notificationData(event.notification), action: event.action ?? "" };
     case "message":
       if (!(event instanceof ExtendableMessageEvent)) return {};
-      return { data: event.data ?? null, source: clientData(event.source) };
+      return { message: event.data ?? null, source: clientData(event.source) };
     case "sync":
       return {
         tag: "tag" in event && typeof event.tag === "string" ? event.tag : "",
