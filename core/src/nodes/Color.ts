@@ -233,20 +233,17 @@ function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n));
 }
 
-/** Parse `#rgb` / `#rgba` / `#rrggbb` / `#rrggbbaa` into rgba (0..1). Invalid
- *  channels fall back to 0 (alpha to 1). */
+/** Parse `#rgb` / `#rgba` / `#rrggbb` / `#rrggbbaa` into rgba (0..1). Anything
+ *  else is an error rather than a color made up from what did parse. */
 function parseHex(hex: string): Rgba {
   let h = hex.trim();
   if (h.charCodeAt(0) === 35) h = h.slice(1); // strip leading '#'
-  if (h.length === 3 || h.length === 4) {
-    h = h.split("").map(ch => ch + ch).join(""); // expand shorthand
+  if (!/^(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(h)) {
+    throw new Error(`${JSON.stringify(hex)} is not a hex color: use #rgb, #rgba, #rrggbb or #rrggbbaa`);
   }
-  const channel = (i: number, fallback: number): number => {
-    if (h.length < i + 2) return fallback;
-    const n = parseInt(h.slice(i, i + 2), 16);
-    return Number.isNaN(n) ? fallback : n / 255;
-  };
-  return [channel(0, 0), channel(2, 0), channel(4, 0), channel(6, 1)];
+  if (h.length <= 4) h = h.split("").map(ch => ch + ch).join(""); // expand shorthand
+  const channel = (i: number): number => parseInt(h.slice(i, i + 2), 16) / 255;
+  return [channel(0), channel(2), channel(4), h.length === 8 ? channel(6) : 1];
 }
 
 /** Format rgba (0..1) as `#rrggbb`, or `#rrggbbaa` when alpha is below 1. */

@@ -1,6 +1,7 @@
 import { Node, Context, NodeValue } from "./Node.js";
 import { resolve, resolveAll } from "../Resolver.js";
 import { parseInterval } from "./Timer.js";
+import { operands } from "../helpers.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
 
 /** The output format the timestamp-producing ops share: `ms` stays a number, the
@@ -42,7 +43,7 @@ export class DateNode extends Node {
         { type: "string", description: "The interval to add, e.g. `\"500ms\"`, `\"30s\"`, `\"5m\"`, `\"1h\"`, `\"7d\"`." },
       ],
       markdownDescription: "Adds a duration to a Unix-ms timestamp. Interval formats: `\"500ms\"`, `\"30s\"`, `\"5m\"`, `\"1h\"`, `\"7d\"`.",
-      outputDescription: "The shifted timestamp in the `format` (default `ms`): a **number** for `ms`, else a formatted **string**. `null` if fewer than two args are given.",
+      outputDescription: "The shifted timestamp in the `format` (default `ms`): a **number** for `ms`, else a formatted **string**.",
       examples: [
         "{ \"$dateAdd\": [{ \"$dateNow\": \"ms\" }, \"7d\"], \"format\": \"iso\" }",
       ],
@@ -63,7 +64,7 @@ export class DateNode extends Node {
     dateParse: {
       output: "number",
       markdownDescription: "Parses a date string into a Unix-ms timestamp, the inverse of `dateFormat`. Accepts anything `Date.parse` understands (ISO-8601 recommended). A number passes through unchanged.",
-      outputDescription: "A **number** (Unix milliseconds), or `null` if the value cannot be parsed.",
+      outputDescription: "A **number** (Unix milliseconds). A value that cannot be parsed is an error.",
       examples: [
         "{ \"$dateParse\": \"2026-07-01T12:00:00Z\" }",
       ],
@@ -76,7 +77,7 @@ export class DateNode extends Node {
       ],
       output: "number",
       markdownDescription: "Difference between two Unix-ms timestamps as `[from, to]`, in whole `unit`s (default `ms`). Positive when `to` is later than `from`. Units are fixed-length: `\"ms\"`, `\"second\"`, `\"minute\"`, `\"hour\"`, `\"day\"`, `\"week\"` (calendar months/years are not supported; extract parts with `datePart`).",
-      outputDescription: "A **number** of whole units, truncated toward zero and signed. `null` if fewer than two args are given or the unit is unknown.",
+      outputDescription: "A **number** of whole units, truncated toward zero and signed.",
       examples: [
         "{ \"$dateDiff\": [{ \"$var\": \"start\" }, { \"$var\": \"end\" }], \"unit\": \"day\" }",
       ],
@@ -108,7 +109,7 @@ export class DateNode extends Node {
       ],
       output: "number",
       markdownDescription: "Extracts a single component from a Unix-ms timestamp, in UTC: `[timestamp, part]`.",
-      outputDescription: "A **number**: `month` is 1-12, `day` is 1-31, `weekday` is 0-6 (0 = Sunday). `null` if the part is unknown.",
+      outputDescription: "A **number**: `month` is 1-12, `day` is 1-31, `weekday` is 0-6 (0 = Sunday).",
       examples: [
         "{ \"$datePart\": [{ \"$var\": \"ts\" }, \"weekday\"] }",
       ],
@@ -225,10 +226,8 @@ export class DateNode extends Node {
   }
 
   dateAdd(def: Record<string, unknown>, context: Context): NodeValue {
-    const args = this.toArray(def.$dateAdd);
-    if (args.length < 2) return null;
     return resolve(def.$dateAdd, context, resolvedArgs => {
-      const a = this.toArray(resolvedArgs);
+      const a = operands("dateAdd", resolvedArgs, 2);
       const base = this.toNumber(a[0]);
       const interval = String(a[1]);
       const result = base + parseInterval(interval);
@@ -246,15 +245,14 @@ export class DateNode extends Node {
     return resolve(def.$dateParse, context, v => {
       if (typeof v === "number") return v;
       const ms = Date.parse(String(v));
-      return Number.isNaN(ms) ? null : ms;
+      if (Number.isNaN(ms)) throw new Error(`$dateParse: ${JSON.stringify(v)} is not a date`);
+      return ms;
     });
   }
 
   dateDiff(def: Record<string, unknown>, context: Context): NodeValue {
-    const args = this.toArray(def.$dateDiff);
-    if (args.length < 2) return null;
     return resolve(def.$dateDiff, context, resolvedArgs => {
-      const a = this.toArray(resolvedArgs);
+      const a = operands("dateDiff", resolvedArgs, 2);
       const from = this.toNumber(a[0]);
       const to = this.toNumber(a[1]);
       if (!def.unit) return diff(from, to, "ms");
@@ -264,7 +262,7 @@ export class DateNode extends Node {
 
   datePart(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$datePart, context, args => {
-      const a = this.toArray(args);
+      const a = operands("datePart", args, 2);
       return extractPart(this.toNumber(a[0]), String(a[1]));
     });
   }
@@ -314,11 +312,10 @@ export class DateNode extends Node {
       });
   }
 
-  /** Emit a computed timestamp through the `format` sibling (or a default). */
 }
 
-function emitDate(ms: number | null, def: Record<string, unknown>, context: Context, fallback: string): NodeValue {
-  if (ms === null) return null;
+/** Emit a computed timestamp through the `format` sibling (or a default). */
+function emitDate(ms: number, def: Record<string, unknown>, context: Context, fallback: string): NodeValue {
   if (!def.format) return formatDate(ms, fallback);
   return resolve(def.format, context, fmt => formatDate(ms, String(fmt)));
 }
@@ -359,13 +356,13 @@ function pickRelUnit(deltaSec: number): { unit: Intl.RelativeTimeFormatUnit; val
   return { unit: "second", value: deltaSec };
 }
 
-function diff(from: number, to: number, unit: string): number | null {
+function diff(from: number, to: number, unit: string): number {
   const ms = UNIT_MS[unit];
-  if (!ms) return null;
+  if (!ms) throw new Error(`$dateDiff: unknown unit ${JSON.stringify(unit)}; it takes ${Object.keys(UNIT_MS).join(", ")}`);
   return Math.trunc((to - from) / ms);
 }
 
-function extractPart(ms: number, part: string): number | null {
+function extractPart(ms: number, part: string): number {
   const d = new Date(ms);
   switch (part) {
     case "year": return d.getUTCFullYear();
@@ -376,12 +373,12 @@ function extractPart(ms: number, part: string): number | null {
     case "second": return d.getUTCSeconds();
     case "ms": return d.getUTCMilliseconds();
     case "weekday": return d.getUTCDay();
-    default: return null;
+    default: throw new Error(`$datePart: unknown part ${JSON.stringify(part)}`);
   }
 }
 
 /** Start (or end) boundary of the UTC calendar unit containing `ms`. */
-function boundary(ms: number, unit: string, end: boolean): number | null {
+function boundary(ms: number, unit: string, end: boolean): number {
   const d = new Date(ms);
   const y = d.getUTCFullYear();
   const mo = d.getUTCMonth();
@@ -416,6 +413,6 @@ function boundary(ms: number, unit: string, end: boolean): number | null {
       const start = Date.UTC(y, mo, da, h, mi, s);
       return end ? start + 1000 - 1 : start;
     }
-    default: return null;
+    default: throw new Error(`$date${end ? "EndOf" : "StartOf"}: unknown unit ${JSON.stringify(unit)}`);
   }
 }

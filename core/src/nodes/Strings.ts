@@ -126,8 +126,8 @@ export class StringNode extends Node {
       // Typed for the same reason as `fromBase64`: this reads text that already
       // IS JSON rather than stringifying whatever arrives.
       type: "string",
-      markdownDescription: "Parses a JSON string; returns `null` on invalid input.",
-      outputDescription: "The parsed value, which can be any JSON type (object, array, number, string, boolean, or `null`). Returns `null` if the input isn't valid JSON, so it's indistinguishable from a literal `null`.",
+      markdownDescription: "Parses a JSON string. Text that is not valid JSON is an error, which `$catch` can handle.",
+      outputDescription: "The parsed value, which can be any JSON type (object, array, number, string, boolean, or `null`).",
       examples: [
         "{ \"$parseJSON\": { \"$var\": \"raw\" } }",
       ],
@@ -458,7 +458,11 @@ export class StringNode extends Node {
 
   parseJSON(d: Record<string, unknown>, c: Context) {
     return resolve(d.$parseJSON, c, v => {
-      try { return JSON.parse(this.toString(v)); } catch { return null; }
+      try {
+        return JSON.parse(this.toString(v));
+      } catch (e) {
+        throw new Error(`$parseJSON: ${e instanceof Error ? e.message : String(e)}`);
+      }
     });
   }
 

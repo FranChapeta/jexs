@@ -1,5 +1,6 @@
 import { Node, Context } from "./Node.js";
 import { resolve, resolveAll, resolverFor } from "../Resolver.js";
+import { operands } from "../helpers.js";
 import type { JexsNodeSchema } from "../schema.js";
 
 // ── Seeded PRNG (mulberry32) ─────────────────────────────────────────────────
@@ -32,6 +33,12 @@ function hashString(str: string): number {
     h = Math.imul(31, h) + str.charCodeAt(i) | 0;
   }
   return h;
+}
+
+/** A parsed number, or an error naming what could not be read as one. */
+function parsed(op: string, input: string, n: number): number {
+  if (Number.isNaN(n)) throw new Error(`$${op}: ${JSON.stringify(input)} does not start with a number`);
+  return n;
 }
 
 // English ordinal suffixes keyed by Intl.PluralRules ordinal category. The
@@ -87,14 +94,14 @@ export class MathNode extends Node {
     },
     parseInt: {
       output: "number",
-      markdownDescription: "Parses a string to an integer (base 10); returns `0` on failure.",
+      markdownDescription: "Parses the integer (base 10) a string starts with, so `\"42px\"` is `42`. A string that does not start with one is an error.",
       examples: [
         "{ \"$parseInt\": \"42px\" }",
       ],
     },
     parseFloat: {
       output: "number",
-      markdownDescription: "Parses a string to a float; returns `0` on failure.",
+      markdownDescription: "Parses the number a string starts with, so `\"3.14rem\"` is `3.14`. A string that does not start with one is an error.",
       examples: [
         "{ \"$parseFloat\": \"3.14rem\" }",
       ],
@@ -281,7 +288,7 @@ export class MathNode extends Node {
         { type: "number", description: "The divisor (returns `0` when zero)." },
       ],
       output: "number",
-      markdownDescription: "Divides the first value by the second; returns `0` on division by zero.",
+      markdownDescription: "Divides the first value by the second. Dividing by zero is an error.",
       examples: [
         "{ \"$divide\": [10, 4] }",
       ],
@@ -293,7 +300,7 @@ export class MathNode extends Node {
         { type: "number", description: "The divisor (`b`; returns `0` when zero)." },
       ],
       output: "number",
-      markdownDescription: "Remainder of `a % b`; returns `0` if `b` is zero.",
+      markdownDescription: "Remainder of `a % b`. A `b` of zero is an error.",
       examples: [
         "{ \"$mod\": [10, 3] }",
       ],
@@ -449,10 +456,16 @@ export class MathNode extends Node {
     return resolve(d.$ceil, c, v => Math.ceil(this.toNumber(v)));
   }
   parseInt(d: Record<string, unknown>, c: Context) {
-    return resolve(d.$parseInt, c, v => globalThis.parseInt(this.toString(v), 10) || 0);
+    return resolve(d.$parseInt, c, v => {
+      const s = this.toString(v);
+      return parsed("parseInt", s, globalThis.parseInt(s, 10));
+    });
   }
   parseFloat(d: Record<string, unknown>, c: Context) {
-    return resolve(d.$parseFloat, c, v => globalThis.parseFloat(this.toString(v)) || 0);
+    return resolve(d.$parseFloat, c, v => {
+      const s = this.toString(v);
+      return parsed("parseFloat", s, globalThis.parseFloat(s));
+    });
   }
   sin(d: Record<string, unknown>, c: Context) {
     return resolve(d.$sin, c, v => Math.sin(this.toNumber(v) * Math.PI / 180));
@@ -497,8 +510,7 @@ export class MathNode extends Node {
 
   lerp(def: Record<string, unknown>, c: Context) {
     return resolve(def.$lerp, c, values => {
-      const a = this.toArray(values);
-      if (a.length < 3) return 0;
+      const a = operands("lerp", values, 3);
       const start = this.toNumber(a[0]);
       const end = this.toNumber(a[1]);
       return start + (end - start) * this.toNumber(a[2]);
@@ -507,8 +519,7 @@ export class MathNode extends Node {
 
   mapRange(def: Record<string, unknown>, c: Context) {
     return resolveAll([def.$mapRange, def.clamp], c, ([values, clampRaw]) => {
-      const a = this.toArray(values);
-      if (a.length < 5) return 0;
+      const a = operands("mapRange", values, 5);
       const value = this.toNumber(a[0]);
       const inMin = this.toNumber(a[1]);
       const inMax = this.toNumber(a[2]);
@@ -554,26 +565,25 @@ export class MathNode extends Node {
 
   divide(def: Record<string, unknown>, c: Context) {
     return resolve(def.$divide, c, values => {
-      const arr = this.toArray(values);
-      if (arr.length < 2) return 0;
+      const arr = operands("divide", values, 2);
       const divisor = this.toNumber(arr[1]);
-      return divisor === 0 ? 0 : this.toNumber(arr[0]) / divisor;
+      if (divisor === 0) throw new Error("$divide by zero");
+      return this.toNumber(arr[0]) / divisor;
     });
   }
 
   mod(def: Record<string, unknown>, c: Context) {
     return resolve(def.$mod, c, values => {
-      const arr = this.toArray(values);
-      if (arr.length < 2) return 0;
+      const arr = operands("mod", values, 2);
       const b = this.toNumber(arr[1]);
-      return b === 0 ? 0 : this.toNumber(arr[0]) % b;
+      if (b === 0) throw new Error("$mod by zero");
+      return this.toNumber(arr[0]) % b;
     });
   }
 
   power(def: Record<string, unknown>, c: Context) {
     return resolve(def.$power, c, values => {
-      const arr = this.toArray(values);
-      if (arr.length < 2) return 0;
+      const arr = operands("power", values, 2);
       return Math.pow(this.toNumber(arr[0]), this.toNumber(arr[1]));
     });
   }
@@ -594,8 +604,7 @@ export class MathNode extends Node {
 
   clamp(def: Record<string, unknown>, c: Context) {
     return resolve(def.$clamp, c, values => {
-      const arr = this.toArray(values);
-      if (arr.length < 3) return 0;
+      const arr = operands("clamp", values, 3);
       return Math.max(this.toNumber(arr[1]), Math.min(this.toNumber(arr[2]), this.toNumber(arr[0])));
     });
   }
@@ -627,8 +636,7 @@ export class MathNode extends Node {
 
   atan2(def: Record<string, unknown>, c: Context) {
     return resolve(def.$atan2, c, values => {
-      const arr = this.toArray(values);
-      if (arr.length < 2) return 0;
+      const arr = operands("atan2", values, 2);
       return Math.atan2(this.toNumber(arr[0]), this.toNumber(arr[1])) * 180 / Math.PI;
     });
   }

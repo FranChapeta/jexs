@@ -119,7 +119,7 @@ export class FetchNode extends Node {
     fetch: {
       type: "string",
       output: "any",
-      markdownDescription: "Makes an HTTP request to the URL in `fetch`. Defaults to GET; pass `method` and `body` for writes, and `headers` for auth or content negotiation.\n\nResponse decoding takes the first of these that applies:\n1. The `type` sibling, when set.\n2. URL extension: `.json`/`.gltf` → JSON, text-like extensions → string,\n   known binary extensions (`.glb`, `.bin`, `.png`, etc.) → ArrayBuffer.\n3. Response Content-Type: `application/json` (or a `+json` suffix) → JSON, `text/*` → string,\n   everything else → ArrayBuffer.\n\nA non-2xx status throws an HTTP error carrying that status. An enclosing `$catch` gets the usual `$error` (`{ status, message }`) plus `response`, the failing response in the same shape `full` returns, so `{ \"$var\": \"response.body.message\" }` reads the server's error body. Pass `throw: false` for a step that never interrupts the sequence (no failure throws, a timeout included), and `full` to get the headers and status alongside the body.\n\nIn a page served by a Jexs server, a POST, PUT, PATCH or DELETE to the page's own origin carries the session's CSRF token (`x-csrf-token`, from the `csrf` cookie) on its own.",
+      markdownDescription: "Makes an HTTP request to the URL in `fetch`. Defaults to GET; pass `method` and `body` for writes, and `headers` for auth or content negotiation.\n\nResponse decoding takes the first of these that applies:\n1. The `type` sibling, when set.\n2. URL extension: `.json`/`.gltf` → JSON, text-like extensions → string,\n   known binary extensions (`.glb`, `.bin`, `.png`, etc.) → ArrayBuffer.\n3. Response Content-Type: `application/json` (or a `+json` suffix) → JSON, `text/*` → string,\n   everything else → ArrayBuffer.\n\nA non-2xx status throws an HTTP error carrying that status. An enclosing `$catch` gets the usual `$error` (`{ status, message }`) plus `response`, the failing response in the same shape `full` returns, so `{ \"$var\": \"response.body.message\" }` reads the server's error body; a request that never completed (a timeout, a refused connection) reaches `$catch` without one. Pass `full` to get the headers and status alongside the body.\n\nIn a page served by a Jexs server, a POST, PUT, PATCH or DELETE to the page's own origin carries the session's CSRF token (`x-csrf-token`, from the `csrf` cookie) on its own.",
       outputDescription: "The decoded response body: a parsed value for JSON, a string for text, an ArrayBuffer (or a Blob with `type: \"blob\"`) for binary. A `204`/`205` response and any HEAD request resolve to `null`.",
       examples: [
         "{ \"$fetch\": \"/api/users\", \"method\": \"POST\", \"body\": { \"name\": { \"$var\": \"name\" } } }\n{ \"$fetch\": \"/api/me\", \"headers\": { \"Authorization\": { \"$concat\": [\"Bearer \", { \"$var\": \"token\" }] } } }\n{ \"$fetch\": \"/api/flaky\", \"timeout\": 5000, \"$catch\": [{ \"$concat\": [\"failed: \", { \"$var\": \"error.status\" }] }] }\n{ \"$fetch\": \"/models/Duck.glb\", \"$as\": \"buf\" }",
@@ -151,16 +151,9 @@ export class FetchNode extends Node {
             text: { output: "string", markdownDescription: "Decode the body as text." },
           },
         },
-        throw: {
-          type: "boolean",
-          markdownDescription: "Set `false` and the step never interrupts the sequence: not for a non-2xx status, and not for a request that never completed (a timeout, a refused connection).\n\nPair with `full` when you need to distinguish whether nothing arrived or the body was empty.",
-          examples: [
-            "{ \"$fetch\": \"/api/login\", \"method\": \"POST\", \"throw\": false, \"full\": true, \"$as\": \"res\" }",
-          ],
-        },
         timeout: {
           type: "number",
-          markdownDescription: "Abort the request after this many milliseconds and throw a `408` HTTP error (or resolve, under `throw: false`). `0` (the default) waits indefinitely.",
+          markdownDescription: "Abort the request after this many milliseconds and throw a `408` HTTP error. `0` (the default) waits indefinitely.",
         },
         credentials: {
           type: "string",
@@ -176,7 +169,7 @@ export class FetchNode extends Node {
           type: "string",
           enum: REDIRECTS,
           default: "follow",
-          markdownDescription: "How to treat a 3xx: follow it (default), throw, or with `\"manual\"` hand it back to you. Outside Node the browser opaque-filters a manual redirect: `status` comes back `0` with no headers, and only the fact that it redirected survives.",
+          markdownDescription: "How to treat a 3xx: follow it (default), throw, or with `\"manual\"` hand it back to you as the result rather than an error (pair with `full` to read its `location`). Outside Node the browser opaque-filters a manual redirect: `status` comes back `0` with no headers, and only the fact that it redirected survives.",
         },
         cache: {
           type: "string",
@@ -188,7 +181,7 @@ export class FetchNode extends Node {
         full: {
           type: "boolean",
           output: { $ref: "#/$defs/_fetchResponse" },
-          markdownDescription: "Resolves to the whole response instead of the bare body: for a response header such as an `ETag`, or to tell a `201` from a `200`. Shape only: a non-2xx still throws unless you also pass `throw: false`, which is what reading a `redirect: \"manual\"` 3xx takes.",
+          markdownDescription: "Resolves to the whole response instead of the bare body: for a response header such as an `ETag`, to tell a `201` from a `200`, or to read a `redirect: \"manual\"` 3xx. Shape only: a non-2xx still throws, and `$catch` gets the response in the same shape as `response`.",
           outputDescription: "The whole response: `status`, `ok`, `headers`, the decoded `body` and the final `url`.",
           examples: [
             "{ \"$fetch\": \"/api/thing\", \"full\": true, \"$as\": \"res\" }",
@@ -220,7 +213,6 @@ export class FetchNode extends Node {
       body: def.body ?? null,
       type: def.type ?? null,
       full: def.full,
-      throw: def.throw,
       timeout: def.timeout,
     };
     for (const [key] of PASSTHROUGH) opts[key] = def[key] ?? null;
@@ -260,17 +252,13 @@ export class FetchNode extends Node {
       const timeout = this.toNumber(o.timeout);
       if (timeout > 0) options.signal = AbortSignal.timeout(timeout);
 
-      const shouldThrow = this.toBoolean(o.throw ?? true);
       let response: Response;
       try {
         response = await fetch(url, options);
       } catch (err) {
-        const timedOut = timeout > 0 && err instanceof Error && err.name === "TimeoutError";
-        const reason = timedOut
-          ? `${method} ${url} timed out after ${timeout}ms`
-          : err instanceof Error ? err.message : String(err);
-        if (!shouldThrow) return full ? { status: 0, ok: false, headers: {}, body: null, url } : null;
-        if (timedOut) throw createHttpError(408, reason);
+        if (timeout > 0 && err instanceof Error && err.name === "TimeoutError") {
+          throw createHttpError(408, `${method} ${url} timed out after ${timeout}ms`);
+        }
         throw err;
       }
 
@@ -278,7 +266,11 @@ export class FetchNode extends Node {
       // defines the property, and a Response-like that omits it (a polyfill, a
       // stub) would otherwise read as a failure and throw on a perfectly good 200.
       const ok = response.status >= 200 && response.status < 300;
-      if (!ok && shouldThrow) {
+      // A manual redirect asked for the 3xx (an opaque one in the browser), so it
+      // is the answer rather than a failure.
+      const redirected = options.redirect === "manual"
+        && ((response.status >= 300 && response.status < 400) || response.type === "opaqueredirect");
+      if (!ok && !redirected) {
         const text = await response.text().catch(() => "");
         const reason = excerpt(text) || response.statusText;
         throw createHttpError(

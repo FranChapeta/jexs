@@ -499,6 +499,22 @@ const RULES: Record<string, Rule> = {
   "ws-connect": (step, m) => handlerReads(step, { wsMessage: "message", wsCode: "code", wsReason: "reason", wsClean: "clean" }, m),
   "ws-close": connectionNameValue,
   "ws-status": connectionNameValue,
+  // `throw: false` is gone: the step's `$catch` yields what it used to, the
+  // failing response (`full`) or its body. A request that never connected used
+  // to yield a stand-in; under `$catch` it has no `response`.
+  fetch: (step, m) => {
+    const prop = step.obj.props.find(p => p.key === "throw");
+    if (!prop) return;
+    if (prop.value.k === "lit" && prop.value.value === true) return removeSibling(step, "throw", m);
+    if (prop.value.k !== "lit" || prop.value.value !== false || step.obj.props.some(p => p.key === "$catch")) {
+      m.review(prop.keyStart, "`$fetch`'s `throw` is gone: a failure throws, and `$catch` on the step gets the failing `response`");
+      return;
+    }
+    const full = step.obj.props.find(p => p.key === "full");
+    const read = full?.value.k === "lit" && full.value.value === true ? "response" : "response.body";
+    const q = prop.keyQuoted ? '"' : "";
+    m.add({ start: prop.keyStart, end: prop.value.end, text: `$catch${q}: [{ ${q}$var${q}: "${read}" }]` });
+  },
   // Storage reads like the cache: `storage-set` takes `value`, and removing is `storage-delete`.
   "storage-set": (step, m) => tupleToSiblings(step, ["value"], m),
   "storage-remove": (step, m) => renameOp(step, "storage-delete", m),

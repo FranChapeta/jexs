@@ -74,12 +74,12 @@ export class VariablesNode extends Node {
       // A step resolves to an object whose keys are all written at once.
       if (isStep(vars)) {
         return resolve(vars, context, values => {
-          if (!this.isObject(values)) return null;
+          if (!this.isObject(values)) throw new Error(`$setVars: the step must resolve to an object of names and values, got ${JSON.stringify(values)}`);
           for (const key of Object.keys(values)) Node.setContextValue(context, key, values[key], bubble);
           return null;
         });
       }
-      if (!this.isObject(vars)) return null;
+      if (!this.isObject(vars)) throw new Error(`$setVars takes an object of names and values, got ${JSON.stringify(vars)}`);
       // A literal map is written in order, so a later value can read an earlier one.
       const data = this.toBoolean(dataRaw);
       const keys = Object.keys(vars);

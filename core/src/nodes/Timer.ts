@@ -24,9 +24,9 @@ const TIMER_ID: JexsPropertySchema = {
 // `start` takes the timer's inputs; stop/pause/resume take only `id`, and inherit
 // the method's `output: "null"`.
 const LIFECYCLE_OPS: Record<string, JexsMethodSchema> = {
-  stop:   { markdownDescription: "Stops the timer and clears its state." },
-  pause:  { markdownDescription: "Pauses the timer; its state is kept so `resume` continues where it left off." },
-  resume: { markdownDescription: "Resumes a paused timer." },
+  stop:   { output: "boolean", markdownDescription: "Stops the timer and clears its state.", outputDescription: "`true` if a timer by that id was running, otherwise `false`." },
+  pause:  { output: "null", markdownDescription: "Pauses the timer; its state is kept so `resume` continues where it left off. An unknown id is an error." },
+  resume: { output: "null", markdownDescription: "Resumes a paused timer. An unknown id is an error." },
 };
 
 // ─── Shared state ───────────────────────────────────────────────────────────
@@ -132,9 +132,7 @@ export class TimerNode extends Node {
         case "stop": return stop(def, context, this.timers);
         case "pause": return pause(def, context, this.timers);
         case "resume": return resume(def, context, this.timers);
-        default:
-          console.error(`[interval] Unknown operation: ${String(op)}`);
-          return null;
+        default: throw new Error(`$interval: unknown operation ${JSON.stringify(op)}`);
       }
     });
   }
@@ -154,21 +152,30 @@ function timerId(raw: unknown): string {
 
 // ─── stop / pause / resume ──────────────────────────────────────────────────
 
+/** A timer that `pause` or `resume` acts on, which must be running. */
+function running(registry: Map<string, TimerState>, raw: unknown, op: string): TimerState {
+  const id = timerId(raw);
+  const state = registry.get(id);
+  if (!state) throw new Error(`$interval ${op}: no timer "${id}" is running`);
+  return state;
+}
+
+/** Stopping is a removal, so a timer that is not running is reported, not an error. */
 function stop(def: Record<string, unknown>, context: Context, registry: Map<string, TimerState>): unknown {
   return resolve(def.id, context, raw => {
     const id = timerId(raw);
     const state = registry.get(id);
-    if (!state) return null;
+    if (!state) return false;
     if (state.timerId != null) clearTimeout(state.timerId);
     registry.delete(id);
-    return null;
+    return true;
   });
 }
 
 function pause(def: Record<string, unknown>, context: Context, registry: Map<string, TimerState>): unknown {
   return resolve(def.id, context, raw => {
-    const state = registry.get(timerId(raw));
-    if (!state || state.paused) return null;
+    const state = running(registry, raw, "pause");
+    if (state.paused) return null;
     state.paused = true;
     state.pausedAt = Date.now();
     return null;
@@ -177,8 +184,8 @@ function pause(def: Record<string, unknown>, context: Context, registry: Map<str
 
 function resume(def: Record<string, unknown>, context: Context, registry: Map<string, TimerState>): unknown {
   return resolve(def.id, context, raw => {
-    const state = registry.get(timerId(raw));
-    if (!state || !state.paused) return null;
+    const state = running(registry, raw, "resume");
+    if (!state.paused) return null;
     if (state.pausedAt != null) state.pausedTotal += Date.now() - state.pausedAt;
     state.paused = false;
     state.pausedAt = null;

@@ -207,13 +207,12 @@ test("fetch: full alone still throws on a failing status", async () => {
   );
 });
 
-test("fetch: throw false resolves the failing body, with or without full", async () => {
+test("fetch: $catch gets the failing response, its body decoded", async () => {
   stubFetch(() => new Response("{\"message\":\"gone\"}", {
     status: 404,
     headers: { "content-type": "application/json", "x-request-id": "r1" },
   }));
-  assert.deepEqual(await resolve({ $fetch: "/api/thing", throw: false }, {}), { message: "gone" });
-  const out = await resolve({ $fetch: "/api/thing", throw: false, full: true }, {}) as Record<string, unknown>;
+  const out = await resolve({ $fetch: "/api/thing", $catch: [{ $var: "response" }] }, {}) as Record<string, unknown>;
   assert.equal(out.status, 404);
   assert.equal(out.ok, false);
   assert.deepEqual(out.body, { message: "gone" });
@@ -272,20 +271,6 @@ test("fetch: timeout aborts the request and throws a 408", async () => {
   assert.equal(out, "408 GET /api/slow timed out after 20ms");
 });
 
-// `throw: false` promises the step won't interrupt the sequence. A timeout that
-// still threw would make the promise worthless: you'd need the catch anyway.
-test("fetch: throw false covers a timeout too, not just a bad status", async () => {
-  stubHang();
-  assert.equal(await resolve({ $fetch: "/api/slow", timeout: 20, throw: false }, {}), null);
-  stubHang();
-  // `status: 0` is what marks "no response arrived": the platform's own
-  // convention, and the one thing a bare null cannot tell you.
-  assert.deepEqual(
-    await resolve({ $fetch: "/api/slow", timeout: 20, throw: false, full: true }, {}),
-    { status: 0, ok: false, headers: {}, body: null, url: "/api/slow" },
-  );
-});
-
 // `ok` is derived from the status, not read off the response, so a Response-like
 // that omits the property (a polyfill, a hand-rolled stub) is not read as failed.
 test("fetch: a response without an ok property is judged by its status", async () => {
@@ -300,13 +285,13 @@ test("fetch: a response without an ok property is judged by its status", async (
   assert.equal(out.ok, true);
 });
 
-test("fetch: a manual redirect is readable with throw false", async () => {
+test("fetch: a manual redirect is the result, not a failure", async () => {
   const { calls } = stubFetch(() => new Response(null, {
     status: 302,
     headers: { location: "/dest" },
   }));
   const out = await resolve(
-    { $fetch: "/go", redirect: "manual", throw: false, full: true },
+    { $fetch: "/go", redirect: "manual", full: true },
     {},
   ) as Record<string, unknown>;
   assert.equal(calls[0].init.redirect, "manual");
@@ -315,11 +300,13 @@ test("fetch: a manual redirect is readable with throw false", async () => {
   assert.equal((out.headers as Record<string, string>).location, "/dest");
 });
 
-test("fetch: throw false covers a request that never connects", async () => {
+test("fetch: a request that never connects reaches $catch, without a response", async () => {
   globalThis.fetch = (() => Promise.reject(new TypeError("fetch failed"))) as typeof fetch;
-  const out = await resolve({ $fetch: "/api/gone", throw: false, full: true }, {}) as Record<string, unknown>;
-  assert.equal(out.status, 0);
-  assert.equal(out.ok, false);
+  const out = await resolve(
+    { $fetch: "/api/gone", $catch: [{ $concat: [{ $var: "error.message" }, " ", { $typeof: { $var: "response" } }] }] },
+    {},
+  );
+  assert.equal(out, "fetch failed undefined");
 });
 
 test("fetch: request options pass through", async () => {

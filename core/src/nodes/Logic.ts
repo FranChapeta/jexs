@@ -1,6 +1,6 @@
 import { Node, Context, NodeValue, childContext } from "./Node.js";
 import { resolve, resolveAll, isStep, runSteps } from "../Resolver.js";
-import { hasAnyKey, isObject } from "../helpers.js";
+import { hasAnyKey, isObject, operands } from "../helpers.js";
 import type { JexsNodeSchema } from "../schema.js";
 
 export class LogicNode extends Node {
@@ -316,52 +316,51 @@ export class LogicNode extends Node {
 
   eq(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$eq, context, ops => {
-      const [a, b] = this.toArray(ops);
+      const [a, b] = operands("eq", ops, 2);
       return a === b;
     });
   }
 
   neq(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$neq, context, ops => {
-      const [a, b] = this.toArray(ops);
+      const [a, b] = operands("neq", ops, 2);
       return a !== b;
     });
   }
 
   gt(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$gt, context, ops => {
-      const [a, b] = this.toArray(ops);
+      const [a, b] = operands("gt", ops, 2);
       return this.toNumber(a) > this.toNumber(b);
     });
   }
 
   gte(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$gte, context, ops => {
-      const [a, b] = this.toArray(ops);
+      const [a, b] = operands("gte", ops, 2);
       return this.toNumber(a) >= this.toNumber(b);
     });
   }
 
   lt(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$lt, context, ops => {
-      const [a, b] = this.toArray(ops);
+      const [a, b] = operands("lt", ops, 2);
       return this.toNumber(a) < this.toNumber(b);
     });
   }
 
   lte(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$lte, context, ops => {
-      const [a, b] = this.toArray(ops);
+      const [a, b] = operands("lte", ops, 2);
       return this.toNumber(a) <= this.toNumber(b);
     });
   }
 
   between(def: Record<string, unknown>, context: Context): NodeValue {
-    const arr = this.toArray(def.$between);
-    if (arr.length < 3) return false;
-    return resolveAll([arr[0], arr[1], arr[2]], context, ([value, min, max]) =>
-      this.toNumber(value) >= this.toNumber(min) && this.toNumber(value) <= this.toNumber(max)
-    );
+    return resolve(def.$between, context, ops => {
+      const [value, min, max] = operands("between", ops, 3);
+      return this.toNumber(value) >= this.toNumber(min) && this.toNumber(value) <= this.toNumber(max);
+    });
   }
 
   typeof(def: Record<string, unknown>, context: Context): NodeValue {

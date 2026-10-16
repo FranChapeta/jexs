@@ -308,6 +308,14 @@ export function toArrayValue(value: unknown): unknown[] {
   return [value];
 }
 
+/** An op's tuple as an array of at least `count` operands: a short one is a
+ *  mistake to report, not a default to compute with. */
+export function operands(op: string, value: unknown, count: number): unknown[] {
+  const values = toArrayValue(value);
+  if (values.length < count) throw new Error(`$${op} takes ${count} operands, got ${values.length}`);
+  return values;
+}
+
 /**
  * Check if a value is empty (null, undefined, empty string, empty array, empty object)
  */

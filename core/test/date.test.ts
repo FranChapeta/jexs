@@ -18,8 +18,8 @@ test("dateParse: a number passes through unchanged", () => {
   assert.equal(resolve({ $dateParse: 12345 }, {}), 12345);
 });
 
-test("dateParse: unparseable input is null", () => {
-  assert.equal(resolve({ $dateParse: "not a date" }, {}), null);
+test("dateParse: unparseable input is an error", () => {
+  assert.throws(() => resolve({ $dateParse: "not a date" }, {}), /\$dateParse: "not a date" is not a date/);
 });
 
 test("dateParse round-trips dateFormat(iso)", () => {
@@ -47,9 +47,9 @@ test("dateDiff: negative when `to` precedes `from`, truncated toward zero", () =
   assert.equal(resolve({ $dateDiff: [0, 90_000_000], unit: "day" }, {}), 1);
 });
 
-test("dateDiff: fewer than two args or unknown unit is null", () => {
-  assert.equal(resolve({ $dateDiff: [123] }, {}), null);
-  assert.equal(resolve({ $dateDiff: [0, 1000], unit: "month" }, {}), null);
+test("dateDiff: fewer than two args or an unknown unit is an error", () => {
+  assert.throws(() => resolve({ $dateDiff: [123] }, {}), /\$dateDiff takes 2 operands, got 1/);
+  assert.throws(() => resolve({ $dateDiff: [0, 1000], unit: "month" }, {}), /unknown unit "month"/);
 });
 
 // ── datePart — UTC component extraction ──
@@ -65,9 +65,9 @@ test("datePart: extracts each component in UTC", () => {
   assert.equal(resolve({ $datePart: [TS, "weekday"] }, {}), 3); // Wednesday
 });
 
-test("datePart: missing or unknown part is null", () => {
-  assert.equal(resolve({ $datePart: TS }, {}), null);
-  assert.equal(resolve({ $datePart: [TS, "fortnight"] }, {}), null);
+test("datePart: a missing or unknown part is an error", () => {
+  assert.throws(() => resolve({ $datePart: TS }, {}), /\$datePart takes 2 operands, got 1/);
+  assert.throws(() => resolve({ $datePart: [TS, "fortnight"] }, {}), /unknown part "fortnight"/);
 });
 
 test("datePart: the whole [timestamp, part] can come from an expression", () => {
