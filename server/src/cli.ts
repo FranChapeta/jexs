@@ -15,6 +15,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
 import { createResolver, coreNodes, Context, type Logger } from "@jexs/core";
 import { serverNodes } from "./index.js";
 import { manifestOf } from "./manifest.js";
@@ -25,28 +26,47 @@ import { entryContext } from "./nodes/File.js";
 
 const [cmd, ...rest] = process.argv.slice(2);
 
+const USAGE =
+  "usage:\n" +
+  "  jexs run <entry.json|package> [root] [--prod] [--watch] [--log stderr|stdout|silent] [-- <app args>]\n" +
+  "                                run a JSON app; [root] anchors `/` paths (default: the current directory)\n" +
+  "  jexs bundle [--watch]         build the project's browser bundle (client + discovered browser nodes)\n" +
+  "  jexs schema [dir]             regenerate .jexs/ for a project (autocomplete + MCP)\n" +
+  "  jexs schema --package [dir]   (package authors) prebuild a package's dist/schema.json\n" +
+  "  jexs --help | --version\n";
+
+/** Print the usage: asked for, to stdout; after a mistake, to stderr with a failing code. */
 function usage(code: number): never {
-  process.stderr.write(
-    "usage:\n" +
-    "  jexs run <entry.json|package> [root] [--prod] [--watch] [--log=stderr|stdout|silent] [-- <app args>]\n" +
-    "  jexs bundle [--watch]     build the project's browser bundle (client + discovered browser nodes)\n" +
-    "  jexs schema [dir]         regenerate .jexs/combined.schema.json for a project (autocomplete + MCP)\n" +
-    "  jexs build-schema [dir]   (authors) prebuild a package's dist/schema.json\n",
-  );
+  (code === 0 ? process.stdout : process.stderr).write(USAGE);
   process.exit(code);
+}
+
+/**
+ * A command's own flags and positionals. Strict, so a misspelled flag or one
+ * missing its value stops the command with a message naming it instead of
+ * being ignored; `--log stdout` and `--log=stdout` both work.
+ */
+function flagsOf<T extends ParseArgsOptionsConfig>(command: string, args: string[], options: T) {
+  try {
+    return parseArgs({ args, options, allowPositionals: true });
+  } catch (error) {
+    process.stderr.write(`jexs ${command}: ${error instanceof Error ? error.message : String(error)}\n`);
+    return usage(1);
+  }
 }
 
 // Parse an app's argument list (the tokens after the `--` sentinel) into a
 // key/value object, seeded as `args` so a JSON entry can read its flags
 // order-independently (`args.env`, `args.css`, ...). Named flags are the point
-// here — the values are interchangeable in position. Supported forms:
+// here — the values are interchangeable in position. Unlike the CLI's own flags,
+// any name is accepted, since the app decides what it takes. Supported forms:
 //   --key value    -> { key: "value" }   (next token consumed unless it's a flag)
 //   --key=value    -> { key: "value" }
 //   --flag         -> { flag: true }     (no value follows)
 //   --no-flag      -> { flag: false }
 //   value          -> pushed onto `_` (bare positionals, e.g. a project name)
 // All values are strings; the entry coerces (e.g. `{ "$eq": [{ "$var": "args.physics" }, "true"] }`).
-function parseArgs(argv: string[]): Record<string, unknown> {
+function appArgsOf(argv: string[]): Record<string, unknown> {
   const out: Record<string, unknown> = { _: [] as string[] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -88,11 +108,6 @@ function cliLogger(target: string): Logger {
 }
 
 async function run(args: string[]): Promise<void> {
-  if (args.includes("--prod")) {
-    process.env.prod = "1";
-    process.env.NODE_ENV = "production";
-  }
-
   // Everything after the first `--` belongs to the JSON app, not the jexs CLI:
   // it's parsed into `args` and never treated as jexs positionals/flags (so an
   // app's `--env both` can't be mistaken for a `root` positional).
@@ -100,17 +115,24 @@ async function run(args: string[]): Promise<void> {
   const cliArgs = sep === -1 ? args : args.slice(0, sep);
   const appArgs = sep === -1 ? [] : args.slice(sep + 1);
 
-  const positional = cliArgs.filter((a) => !a.startsWith("--"));
-  const [target, root] = positional;
-  if (!target) usage(1);
-  const entry = resolveEntry(target);
-  const logTarget = cliArgs.find((a) => a.startsWith("--log="))?.slice("--log=".length) ?? "stderr";
-  if (!LOG_TARGETS.includes(logTarget)) {
-    process.stderr.write(`jexs run: --log takes ${LOG_TARGETS.join(", ")}, not "${logTarget}"\n`);
+  const { values, positionals } = flagsOf("run", cliArgs, {
+    prod: { type: "boolean" },
+    watch: { type: "boolean" },
+    log: { type: "string", default: "stderr" },
+  });
+  const [target, root, ...extra] = positionals;
+  if (!target || extra.length > 0) usage(1);
+  if (!LOG_TARGETS.includes(values.log)) {
+    process.stderr.write(`jexs run: --log takes ${LOG_TARGETS.join(", ")}, not "${values.log}"\n`);
     process.exit(1);
   }
+  if (values.prod) {
+    process.env.prod = "1";
+    process.env.NODE_ENV = "production";
+  }
+  const entry = resolveEntry(target);
 
-  if (args.includes("--watch")) {
+  if (values.watch) {
     // Supervisor: run the app in a child and restart it on changes under the app dir
     // (templates are read at runtime, so a restart re-resolves them). Kept out of the
     // child — which runs `run` without --watch — so a bound port is fully released before
@@ -150,8 +172,8 @@ async function run(args: string[]): Promise<void> {
   // project; a scaffolded project always discovers @jexs/core + @jexs/server.
   let nodes = await loadNodePackages(process.cwd(), { root: root ?? ".", env: "node" });
   if (nodes.length === 0) nodes = [...coreNodes(), ...serverNodes({ root: root ?? "." })];
-  const resolve = createResolver(nodes, { logger: cliLogger(logTarget) });
-  const context: Context = { ...entryContext(path.dirname(abs)), env: process.env as Record<string, string>, args: parseArgs(appArgs) };
+  const resolve = createResolver(nodes, { logger: cliLogger(values.log) });
+  const context: Context = { ...entryContext(path.dirname(abs)), env: process.env as Record<string, string>, args: appArgsOf(appArgs) };
   await resolve({ $file: path.basename(abs) }, context);
 }
 
@@ -179,17 +201,25 @@ function resolveEntry(target: string): string {
 if (cmd === "run") {
   await run(rest);
 } else if (cmd === "bundle") {
-  await bundleClient(process.cwd(), { watch: rest.includes("--watch") });
+  const { values } = flagsOf("bundle", rest, { watch: { type: "boolean" } });
+  await bundleClient(process.cwd(), { watch: values.watch });
 } else if (cmd === "schema") {
-  // Regenerate project-local autocomplete + MCP schema from installed packages.
-  const dir = rest.find((a) => !a.startsWith("-")) ?? process.cwd();
-  const { packages } = await buildProjectSchema(path.resolve(dir));
-  console.log(`jexs schema: merged ${packages} package(s) → ${path.join(dir, ".jexs", "combined.schema.json")}`);
-} else if (cmd === "build-schema") {
-  // Optional author-side prebuild of a single package's dist/schema.json.
-  const dir = rest.find((a) => !a.startsWith("-")) ?? process.cwd();
-  const { nodes, methods } = await buildPackageSchemaFile(path.resolve(dir));
-  console.log(`jexs build-schema: ${nodes} nodes, ${methods} methods → ${path.join(dir, "dist", "schema.json")}`);
+  const { values, positionals } = flagsOf("schema", rest, { package: { type: "boolean" } });
+  const dir = positionals[0] ?? process.cwd();
+  if (values.package) {
+    // A package author's prebuild of the package's own dist/schema.json.
+    const { nodes, methods } = await buildPackageSchemaFile(path.resolve(dir));
+    console.log(`jexs schema: ${nodes} nodes, ${methods} methods → ${path.join(dir, "dist", "schema.json")}`);
+  } else {
+    // Regenerate project-local autocomplete + MCP schema from installed packages.
+    const { packages } = await buildProjectSchema(path.resolve(dir));
+    console.log(`jexs schema: merged ${packages} package(s) → ${path.join(dir, ".jexs", "combined.schema.json")}`);
+  }
+} else if (cmd === "--version" || cmd === "-v") {
+  const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
+  console.log(pkg.version);
+} else if (cmd === "--help" || cmd === "-h" || cmd === "help") {
+  usage(0);
 } else {
   usage(1);
 }

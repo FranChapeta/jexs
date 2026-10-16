@@ -291,7 +291,7 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean, useElectron: bo
     if (useTailwind) {
       lines.push(`- \`npm run build\`: compiles Tailwind (minified). There is no JS build, the app is JSON run by \`jexs run\`.`);
     }
-    lines.push(`- \`npm start\`: \`jexs run src/index.json src --prod\`. Run from the project root so FileNode and the static server find \`src/\` and \`public/\`. The \`--prod\` flag sets \`process.env.prod = "1"\`, so JSON templates can branch on \`{ "$var": "env.prod" }\` (e.g. picking port 80 in prod vs 3000 in dev).`);
+    lines.push(`- \`npm start\`: \`jexs run src/index.json src --prod\`. Run from the project root so FileNode and the static server find \`src/\` and \`public/\`. The \`--prod\` flag sets \`NODE_ENV=production\` and \`process.env.prod = "1"\`, so JSON templates can branch on \`{ "$var": "env.prod" }\` (e.g. picking port 80 in prod vs 3000 in dev).`);
     lines.push(`- \`npm run format\`: Prettier sweep over JSON templates.`);
     lines.push(``);
   }

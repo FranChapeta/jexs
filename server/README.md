@@ -100,11 +100,13 @@ These are on without any configuration:
 - **Source maps.** `.map` files in `public/` are not served, so a deploy can't hand out the app's own sources; the client bundle's maps still are.
 - **Values are data.** Request bodies, rows and anything read with `$var` render as values; steps inside them never run.
 
-Run with the `jexs` CLI — it resolves the entry as steps, and each `listen` step in it binds a port (add more `listen` steps to serve more ports):
+Run with the `jexs` CLI — it resolves the entry as steps, and each `listen` step in it binds a port (add more `listen` steps to serve more ports). The second argument is the root a `/`-prefixed path anchors at; without it, the current directory:
 
 ```bash
 jexs run app/index.json app
 ```
+
+`jexs schema` writes the project's `.jexs/` schemas for editor autocomplete and the MCP server, and `jexs schema --package` prebuilds a node package's own `dist/schema.json`. `jexs --help` lists every command.
 
 Or programmatically — build a resolver and resolve the entry; an HTTP app is just an entry with `listen` step(s):
 

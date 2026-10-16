@@ -150,7 +150,7 @@ export async function buildProjectSchema(projectDir: string): Promise<{ packages
 }
 
 /**
- * Optional prebuild for a single package (`jexs build-schema`): emit
+ * Optional prebuild for a single package (`jexs schema --package`): emit
  * `<pkgDir>/dist/schema.json` from its own compiled node classes. Only needed by
  * authors of packages that can't be enumerated at consume-time, or who prefer
  * shipping static JSON. Collisions throw (a package's own set should be clean).
@@ -158,7 +158,7 @@ export async function buildProjectSchema(projectDir: string): Promise<{ packages
 export async function buildPackageSchemaFile(pkgDir: string): Promise<{ nodes: number; methods: number }> {
   const nodesDir = path.join(pkgDir, "dist", "nodes");
   if (!existsSync(nodesDir)) {
-    throw new Error(`jexs build-schema: ${nodesDir} not found — run \`tsc -b\` first.`);
+    throw new Error(`jexs schema --package: ${nodesDir} not found; run \`tsc -b\` first.`);
   }
   const classes = await enumerateNodeClasses(nodesDir);
   const pkg = JSON.parse(readFileSync(path.join(pkgDir, "package.json"), "utf8")) as { name?: string };
