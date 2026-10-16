@@ -84,7 +84,7 @@ export class ElementNode extends Node {
             if: { type: "array" },
             then: { items: { $ref: "#/$defs/exprFlat" } },
             else: { $ref: "#/$defs/exprFlat" },
-            description: "Steps to run when the event fires (`event`, `target` in context). A single expression is also accepted.",
+            description: "Steps to run when the event fires, in a scope of their own holding `event`, `target`, `value` and, inside a tree row, the row's `path`, `type`, `editMode` and `depth`. A write meant as page state, for later handlers to read, takes `$bubble`. A single expression is also accepted.",
           },
           preventDefault: { $ref: "#/$defs/boolOrExpr", description: "Call `preventDefault()` on the event." },
           stopPropagation: { $ref: "#/$defs/boolOrExpr", description: "Call `stopPropagation()` on the event." },

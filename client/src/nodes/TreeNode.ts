@@ -649,9 +649,7 @@ async function buildNodeEl(
   if (isString) el.setAttribute("data-string", "true");
   if (editMode) el.setAttribute("data-edit-mode", editMode);
 
-  // Store render-time context so event handlers can access $path, $type, etc.
-  // without DOM traversal (closest + getAttr boilerplate)
-  el.setAttribute("data-jexs-tree-ctx", JSON.stringify({
+  el.setAttribute("data-jexs-scope", JSON.stringify({
     path, type, editMode, depth,
   }));
 

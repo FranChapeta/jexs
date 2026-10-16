@@ -190,6 +190,26 @@ function toInterval(step: Step, m: Codemod): void {
 const rawItem = (v: Val) => (v.k === "obj" && v.props.length === 1 && v.props[0].key === "raw" ? v.props[0].value : undefined);
 
 /**
+ * An element's event handlers run in a scope of their own, so a write meant as
+ * page state needs `$bubble`. Which writes are page state cannot be told from
+ * the template, so each is left for review.
+ */
+function eventScopes(obj: Extract<Val, { k: "obj" }>, m: Codemod): void {
+  const events = obj.props.find(p => p.key === "events")?.value;
+  if (events?.k !== "obj" || events.props.some(p => p.key.startsWith("$"))) return;
+  const walk = (x: Val): void => {
+    if (x.k === "arr") x.items.forEach(walk);
+    if (x.k !== "obj") return;
+    const write = x.props.find(p => p.key === "$as" || p.key === "$setVars");
+    if (write && !x.props.some(p => p.key === "$bubble")) {
+      m.review(write.keyStart, "An event handler runs in a scope of its own now: if this write is page state that later handlers read, add `\"$bubble\": true`");
+    }
+    for (const p of x.props) walk(p.value);
+  };
+  for (const handler of events.props) walk(handler.value);
+}
+
+/**
  * An element whose content is one `{ "raw": "text" }` item becomes
  * `"content": "text", "raw": true`. One mixed in with other content is left for
  * review: giving it an element of its own would change the markup.
@@ -421,7 +441,10 @@ const RULES: Record<string, Rule> = {
     m.review(prop.keyStart, "`$merge` merges objects only now: if this concatenates arrays, use `$flatten` with `depth: 1`");
   },
   // Literal content is the element's `raw: true`, not an object with a `raw` key.
-  tag: ({ obj }, m) => rawContent(obj, m),
+  tag: ({ obj }, m) => {
+    rawContent(obj, m);
+    eventScopes(obj, m);
+  },
   // A request's response is what its steps yield.
   listen: listenSteps,
   // Handlers run `do`, and read params from `request.params`.

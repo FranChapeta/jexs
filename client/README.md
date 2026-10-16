@@ -131,7 +131,11 @@ hydrate();              // scan the whole document
 hydrate(myElement);     // or just a subtree
 ```
 
-The client shares its event context across handlers (so `value`, `target`, `event` from the previous click are still available in the next), which lets you compose chains of handlers naturally.
+Each firing of a handler runs in a scope of its own on top of the page's context, holding `event`, `target`, `value` and, inside a tree row, the row's `path`, `type`, `editMode` and `depth`. A value from an earlier event never lingers into the next, and two handlers awaiting at once each keep their own. A handler reads page state as any step does; a write meant as page state, for later handlers to read, takes `$bubble`:
+
+```json
+{ "$setVars": { "count": { "$add": [{ "$var": "count" }, 1] } }, "$bubble": true }
+```
 
 ## License
 

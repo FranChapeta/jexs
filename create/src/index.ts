@@ -248,6 +248,7 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean, useElectron: bo
   lines.push(`  \`\`\`json`);
   lines.push(`  { "$tag": "button", "events": { "click": { "do": [...] } }, "content": "Run" }`);
   lines.push(`  \`\`\``);
+  lines.push(`  Each firing runs in a scope of its own holding \`event\`, \`target\` and \`value\`, so a write meant as page state, for later handlers to read, takes \`"$bubble": true\`.`);
   lines.push(``);
 
   lines.push(`## Layout`);
