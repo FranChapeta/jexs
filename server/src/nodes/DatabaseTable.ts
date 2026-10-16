@@ -1,6 +1,6 @@
 import { Knex as KnexType } from "knex";
-import { Node, Context, NodeValue, isObject, loggerFor, resolve, resolveAll } from "@jexs/core";
-import { DatabaseNode } from "./Database.js";
+import { Node, Context, NodeValue, childContext, isObject, loggerFor, resolve, resolveAll, resolveFields, resolverFor, runSteps } from "@jexs/core";
+import { DatabaseNode, listTables } from "./Database.js";
 import { sha256 } from "./Crypto.js";
 import { SchemaNode, isTableDocument, requireSchemaNode, schemaArg, tableId } from "./Schema.js";
 import type { JexsNodeSchema } from "@jexs/core";
@@ -99,7 +99,12 @@ export interface TableJsonSchema {
 
 const tableName = { type: "string", required: true, description: "The table's name." } as const;
 const connection = { type: "string", description: "Named database connection (default if omitted)." } as const;
+const system = { type: "boolean", description: "Skip the `$table` validator: for the app's own changes, such as building its tables at startup." } as const;
 const tableNames = { type: "array", items: { type: "string" } } as const;
+const names = (description: string) => ({ type: "array", items: { type: "string" }, description }) as const;
+
+/** What `alter` can change, in the order it applies them. */
+const ALTERATIONS = ["dropIndexes", "add", "rename", "change", "drop", "addIndexes"] as const;
 
 export class DatabaseTableNode extends Node {
   /** `tableSchema` is a table document: JSON Schema for its rows, beside the
@@ -112,22 +117,10 @@ export class DatabaseTableNode extends Node {
       properties: {
         type:       { const: "object" },
         required:   { ...strings, description: "Columns every row must have." },
-        properties: { type: "object", additionalProperties: { $ref: "#/$defs/_tableColumn" }, description: "The columns, by name." },
+        properties: { $ref: "#/$defs/_tableColumns", description: "The columns, by name." },
         table:      { type: "string", description: "The table's name." },
         primaryKey: { ...strings, description: "A composite primary key. A single-column key is set on its column instead." },
-        indexes: {
-          type: "object",
-          description: "Indexes, by name.",
-          additionalProperties: {
-            type: "object",
-            required: ["columns"],
-            additionalProperties: false,
-            properties: {
-              type:    { enum: ["index", "unique", "fulltext"], default: "index" },
-              columns: { anyOf: [{ type: "string" }, strings] },
-            },
-          },
-        },
+        indexes:    { $ref: "#/$defs/_tableIndexes", description: "Indexes, by name." },
         foreignKeys: {
           type: "object",
           description: "Foreign keys, by name.",
@@ -155,6 +148,19 @@ export class DatabaseTableNode extends Node {
           properties: { engine: { type: "string" }, charset: { type: "string" }, collate: { type: "string" } },
         },
         validator: { $ref: "#/$defs/steps", description: "Steps run before each query on this table, after the global validator, with `operation`, `schema` and `query`." },
+      },
+    },
+    _tableColumns: { type: "object", additionalProperties: { $ref: "#/$defs/_tableColumn" } },
+    _tableIndexes: {
+      type: "object",
+      additionalProperties: {
+        type: "object",
+        required: ["columns"],
+        additionalProperties: false,
+        properties: {
+          type:    { enum: ["index", "unique", "fulltext"], default: "index" },
+          columns: { anyOf: [{ type: "string" }, strings] },
+        },
       },
     },
     _tableColumn: {
@@ -193,8 +199,8 @@ export class DatabaseTableNode extends Node {
   static schema: JexsNodeSchema = {
     table: {
       type: "string",
-      enum: ["create", "sync", "alter", "drop", "exists"],
-      markdownDescription: "A database's tables. A table document declares a table's columns as JSON Schema, registered with `$schema` as `table/<name>` (`create` and `sync` register the one they are given); once registered, every `$query` write to the table is checked against it.",
+      enum: ["create", "sync", "alter", "rename", "drop", "exists", "list", "validator"],
+      markdownDescription: "A database's tables. A table document declares a table's columns as JSON Schema, registered with `$schema` as `table/<name>` (`create` and `sync` register the one they are given); once registered, every `$query` write to the table is checked against it. `alter`, `rename` and `drop` change the database only: the registered document stays as it is, for `$schema: \"register\"` to replace.",
       examples: [
         "{ \"$table\": \"sync\", \"schema\": { \"$file\": \"db/users.json\", \"data\": true } }",
         "{ \"$table\": \"alter\", \"table\": \"users\", \"add\": { \"email\": { \"type\": \"string\" } } }",
@@ -208,6 +214,7 @@ export class DatabaseTableNode extends Node {
           siblings: {
             schema: { $ref: "#/$defs/_tableSchemaSlot", literal: true, required: true, description: "A table document, kept as written so its `validator` stays steps (load a file with `$file` and `data: true`), or the name of a registered table." },
             connection,
+            system,
           },
         },
         sync: {
@@ -217,33 +224,77 @@ export class DatabaseTableNode extends Node {
           siblings: {
             schema: { $ref: "#/$defs/_tableSchemaSlot", literal: true, description: "A table document (kept as written, as for `create`), a registered table's name, or `\"*\"` for every registered table, the default." },
             connection,
+            system,
           },
         },
         alter: {
-          output: tableNames,
-          outputDescription: "The names of the columns it added.",
-          markdownDescription: "Changes a table's structure: `add` adds the columns it lacks, described as a document's columns are. The registered document, if any, is not changed.",
+          output: "null",
+          markdownDescription: "Changes a table's structure, applying in this order: `dropIndexes`, `add`, `rename`, `change`, `drop`, `addIndexes`. Each is done as given, so adding a column that exists or dropping one that does not is an error. To make a column NOT NULL once its rows have a value, `change` it with its name in `required`. A failure partway leaves the earlier changes made; on PostgreSQL and SQLite, wrap the step in `$database: \"transaction\"` to apply all or none.",
+          examples: [
+            "{ \"$table\": \"alter\", \"table\": \"users\", \"change\": { \"email\": { \"type\": \"string\" } }, \"required\": [\"email\"] }",
+            "{ \"$table\": \"alter\", \"table\": \"users\", \"rename\": { \"mail\": \"email\" }, \"drop\": [\"legacy_id\"] }",
+          ],
           siblings: {
             table: tableName,
-            add: { type: "object", required: true, description: "Columns to add, by name, each described as in a table document (`type`, `sqlType`, `sqlDefault`, ...)." },
+            add: { $ref: "#/$defs/_tableColumns", description: "Columns to add, by name, each described as in a table document (`type`, `sqlType`, `sqlDefault`, ...)." },
+            rename: { map: true, description: "Columns to rename: `{ \"old\": \"new\" }`." },
+            change: { $ref: "#/$defs/_tableColumns", description: "Columns to change, by name (after `rename`), each described in full as in a table document: what the description leaves out, such as a default, the column loses." },
+            drop: names("Columns to drop."),
+            required: names("Which columns of `add` and `change` are NOT NULL."),
+            addIndexes: { $ref: "#/$defs/_tableIndexes", description: "Indexes to add, by name, as in a table document's `indexes`." },
+            dropIndexes: names("Indexes to drop, by name."),
             connection,
+            system,
+          },
+        },
+        rename: {
+          output: "string",
+          outputDescription: "The table's new name.",
+          markdownDescription: "Renames a table.",
+          siblings: {
+            table: tableName,
+            to: { type: "string", required: true, description: "The table's new name." },
+            connection,
+            system,
           },
         },
         drop: {
           output: "null",
           markdownDescription: "Drops the table if it exists. Its registered document, if any, stays registered; `unregister` forgets it.",
-          siblings: { table: tableName, connection },
+          siblings: { table: tableName, connection, system },
         },
         exists: {
           output: "boolean",
           markdownDescription: "Whether the table exists in the database.",
           siblings: { table: tableName, connection },
         },
+        list: {
+          output: tableNames,
+          outputDescription: "The names of the database's tables, sorted.",
+          markdownDescription: "Lists the tables in the database, whether or not a document is registered for them.",
+          siblings: { connection },
+        },
+        validator: {
+          output: "null",
+          markdownDescription: "Sets the validator for structure: steps run before every `create`, `sync` (once per table), `alter`, `rename` and `drop` to authorize it. They see `operation`, `table`, the table's document as `schema` (the one being applied for `create` and `sync`, else the registered one, if any) and, for `alter` and `rename`, what they change as `changes`. Refuse with `{ \"$error\": 403 }`. Steps with `system: true` skip it. Row queries have their own, `$query: \"validator\"`.",
+          siblings: {
+            do: { steps: true, description: "Steps run before each change to a table's structure." },
+          },
+        },
       },
     },
   };
 
+  /** The steps `{ "$table": "validator" }` set, run before every change to a
+   *  table's structure. An instance field, so one resolver's policy never
+   *  judges another's changes. */
+  validator: unknown = null;
+
   table(def: Record<string, unknown>, context: Context): NodeValue {
+    if (def.$table === "validator") {
+      this.validator = def.do ?? null;
+      return null;
+    }
     return resolve(def.$table, context, op => {
       switch (op) {
         case "create":
@@ -252,8 +303,16 @@ export class DatabaseTableNode extends Node {
           return doSync(def, context);
         case "alter":
           return doAlter(def, context);
+        case "rename":
+          return resolveAll([def.table, def.to, def.connection ?? null, def.system ?? null], context, async ([table, to, name, system]) => {
+            await authorize(context, system, "rename", String(table), { changes: { to } });
+            await knexOf(context, name).schema.renameTable(String(table), String(to));
+            loggerFor(context).info(`[DatabaseTable] Renamed table ${String(table)} to ${String(to)}`);
+            return String(to);
+          });
         case "drop":
-          return resolveAll([def.table, def.connection ?? null], context, async ([table, name]) => {
+          return resolveAll([def.table, def.connection ?? null, def.system ?? null], context, async ([table, name, system]) => {
+            await authorize(context, system, "drop", String(table));
             await knexOf(context, name).schema.dropTableIfExists(String(table));
             loggerFor(context).info(`[DatabaseTable] Dropped table: ${String(table)}`);
             return null;
@@ -261,6 +320,8 @@ export class DatabaseTableNode extends Node {
         case "exists":
           return resolveAll([def.table, def.connection ?? null], context, ([table, name]) =>
             knexOf(context, name).schema.hasTable(String(table)));
+        case "list":
+          return resolve(def.connection ?? null, context, name => listTables(knexOf(context, name)));
         default:
           throw new Error(`$table: unknown operation ${JSON.stringify(op)}`);
       }
@@ -281,25 +342,51 @@ function knexOf(context: Context, name: unknown): KnexType {
 }
 
 /**
- * The table documents a `create` or `sync` names in `schema`: a document, which
- * is registered first; a registered table's name; or, for `sync` only, `"*"` or
- * nothing for every registered table.
+ * Run the `$table` validator, if one is set and the step is not `system`, before
+ * a change to `table`. It sees the table's document as `schema` (a copy, so the
+ * registered one stays as registered) unless `extra` gives the one being
+ * applied, and refuses by throwing.
  */
-async function documentsOf(def: Record<string, unknown>, context: Context, all: boolean): Promise<TableJsonSchema[]> {
-  const schema = await schemaArg(def.schema, context);
+async function authorize(
+  context: Context, system: unknown, operation: string, table: string,
+  extra: { schema?: TableJsonSchema; changes?: Record<string, unknown> } = {},
+): Promise<void> {
+  const node = resolverFor(context).nodeFor("table");
+  const steps = node instanceof DatabaseTableNode ? node.validator : null;
+  if (steps == null || system === true) return;
+  const schema = extra.schema ?? DatabaseTableNode.get(context, table);
+  await runSteps(steps, childContext(context, {
+    operation, table, schema: schema && structuredClone(schema), changes: extra.changes,
+  }));
+}
+
+/**
+ * The table documents a `create` or `sync` names in `schema`, each authorized by
+ * the `$table` validator: a document, which is registered once authorized; a
+ * registered table's name; or, for `sync` only, `"*"` or nothing for every
+ * registered table.
+ */
+async function documentsOf(def: Record<string, unknown>, context: Context, operation: "create" | "sync"): Promise<TableJsonSchema[]> {
+  const [schema, system] = await Promise.all([schemaArg(def.schema, context), resolve(def.system ?? null, context)]);
   const schemas = requireSchemaNode(context);
   if (isObject(schema)) {
     if (!isTableDocument(schema)) throw new Error("A table document needs a `table` name and `properties`.");
+    await authorize(context, system, operation, schema.table, { schema: schema as TableJsonSchema });
     SchemaNode.register(schemas, schema);
     return [DatabaseTableNode.get(context, schema.table)!];
   }
+  let documents: TableJsonSchema[];
   if (typeof schema === "string" && schema !== "*") {
     const found = DatabaseTableNode.get(context, schema);
     if (!found) throw new Error(`$table: no document registered for table "${schema}"`);
-    return [found];
+    documents = [found];
+  } else if (operation === "sync") {
+    documents = SchemaNode.all(schemas, tableId("")).filter(isTableDocument) as TableJsonSchema[];
+  } else {
+    throw new Error("$table create needs `schema`: a table document, or a registered table's name");
   }
-  if (!all) throw new Error("$table create needs `schema`: a table document, or a registered table's name");
-  return SchemaNode.all(schemas, tableId("")).filter(isTableDocument) as TableJsonSchema[];
+  for (const doc of documents) await authorize(context, system, operation, doc.table);
+  return documents;
 }
 
 /** Create the table a document declares. */
@@ -321,7 +408,7 @@ async function createTable(knex: KnexType, schema: TableJsonSchema): Promise<voi
 
 /** `create`: create a table from its document. One that exists is an error. */
 async function doCreate(def: Record<string, unknown>, context: Context): Promise<string> {
-  const [schema] = await documentsOf(def, context, false);
+  const [schema] = await documentsOf(def, context, "create");
   const knex = knexOf(context, await resolve(def.connection ?? null, context));
   if (await knex.schema.hasTable(schema.table)) {
     throw new Error(`$table create: table "${schema.table}" already exists; \`sync\` adds what it lacks`);
@@ -337,7 +424,7 @@ async function doCreate(def: Record<string, unknown>, context: Context): Promise
  * startup that cannot build its tables stops there.
  */
 async function doSync(def: Record<string, unknown>, context: Context): Promise<string[]> {
-  const schemas = await documentsOf(def, context, true);
+  const schemas = await documentsOf(def, context, "sync");
   const knex = knexOf(context, await resolve(def.connection ?? null, context));
   const created: string[] = [];
   for (const schema of schemas) {
@@ -394,32 +481,69 @@ async function syncMissingColumns(
 }
 
 /**
- * `alter`: add the given columns the table lacks. Returns the names of those it
- * added; columns already there are skipped.
+ * `alter`: apply each change the step gives, in `ALTERATIONS` order, one
+ * statement group at a time, so a later change sees the columns an earlier one
+ * added or renamed.
  */
 function doAlter(def: Record<string, unknown>, context: Context): unknown {
-  return resolveAll([def.table, def.add ?? null, def.connection ?? null], context, async ([tableRaw, add, name]) => {
-    const tableName = String(tableRaw);
-    if (!isObject(add) || Object.keys(add).length === 0) {
-      throw new Error("$table alter needs `add`: the columns to add, by name");
+  return resolveFields(def, context, async r => {
+    const tableName = String(r.table);
+    const changes = Object.fromEntries(ALTERATIONS.filter(k => r[k] != null).map(k => [k, r[k]]));
+    if (Object.keys(changes).length === 0) {
+      throw new Error(`$table alter needs a change: ${ALTERATIONS.map(k => `\`${k}\``).join(", ")}`);
     }
-    const knex = knexOf(context, name);
-    const existingNames = new Set(Object.keys(await knex(tableName).columnInfo()));
-    const toAdd = Object.fromEntries(Object.entries(add).filter(([col]) => !existingNames.has(col))) as Record<string, ColumnSchema>;
-
-    if (Object.keys(toAdd).length === 0) {
-      loggerFor(context).info(`[DatabaseTable] ALTER ${tableName}: all columns already exist`);
-      return [];
+    for (const key of ["add", "rename", "change", "addIndexes"] as const) {
+      if (r[key] != null && !isObject(r[key])) throw new Error(`$table alter: \`${key}\` must be an object, by name`);
     }
+    for (const key of ["drop", "dropIndexes", "required"] as const) {
+      if (r[key] != null && !Array.isArray(r[key])) throw new Error(`$table alter: \`${key}\` must be an array of names`);
+    }
+    await authorize(context, r.system, "alter", tableName, { changes });
 
-    await knex.schema.alterTable(tableName, (table) => {
-      buildColumns(table, toAdd, new Set(), knex);
-    });
+    const required = new Set((r.required as string[] | undefined) ?? []);
+    const { add, rename, change, drop, addIndexes, dropIndexes } = changes as {
+      add?: Record<string, ColumnSchema>; rename?: Record<string, unknown>; change?: Record<string, ColumnSchema>;
+      drop?: string[]; addIndexes?: Record<string, IndexDef>; dropIndexes?: string[];
+    };
+    const knex = knexOf(context, r.connection);
+    checkColumns(tableName, Object.keys(await knex(tableName).columnInfo()), add, rename, change, drop);
+    const alter = (build: (table: KnexType.CreateTableBuilder) => void) => knex.schema.alterTable(tableName, build);
+    if (dropIndexes) await alter(table => { for (const index of dropIndexes) table.dropIndex([], index); });
+    if (add) await alter(table => { buildColumns(table, add, required, knex); });
+    if (rename) await alter(table => { for (const [from, to] of Object.entries(rename)) table.renameColumn(from, String(to)); });
+    if (change) await alter(table => { for (const column of buildColumns(table, change, required, knex)) column.alter(); });
+    if (drop) await alter(table => { table.dropColumns(...drop); });
+    if (addIndexes) await alter(table => { buildIndexes(table, addIndexes); });
 
-    const added = Object.keys(toAdd);
-    loggerFor(context).info(`[DatabaseTable] ALTER ${tableName}: added columns [${added.join(", ")}]`);
-    return added;
+    loggerFor(context).info(`[DatabaseTable] Altered table ${tableName}: ${Object.keys(changes).join(", ")}`);
+    return null;
   });
+}
+
+/**
+ * Refuse an `alter` that names a column wrongly, before it changes anything:
+ * one to add must be new, and one to rename, change or drop must exist by then.
+ * Checked here because SQLite's rebuild skips a missing column without a word.
+ */
+function checkColumns(
+  tableName: string, existing: string[],
+  add?: object, rename?: Record<string, unknown>, change?: object, drop?: string[],
+): void {
+  const columns = new Set(existing);
+  const need = (name: string, present: boolean, what: string) => {
+    if (columns.has(name) !== present) {
+      throw new Error(`$table alter: ${present ? "no" : "a"} column "${name}" ${present ? "to" : "already exists, so cannot"} ${what} in "${tableName}"`);
+    }
+  };
+  for (const name of Object.keys(add ?? {})) { need(name, false, "add"); columns.add(name); }
+  for (const [from, to] of Object.entries(rename ?? {})) {
+    need(from, true, "rename");
+    need(String(to), false, "rename to");
+    columns.delete(from);
+    columns.add(String(to));
+  }
+  for (const name of Object.keys(change ?? {})) need(name, true, "change");
+  for (const name of drop ?? []) { need(name, true, "drop"); columns.delete(name); }
 }
 
 /**
@@ -442,16 +566,17 @@ function jsonTypeToSql(type: string | string[] | undefined): string {
 }
 
 /**
- * Build columns from a JSON Schema `properties` map. Reads JSON Schema keywords
- * (`type`, `maxLength`) and the SQL keys beside them. NOT NULL is derived from
- * membership in `required`.
+ * Build columns from a JSON Schema `properties` map, returning their builders.
+ * Reads JSON Schema keywords (`type`, `maxLength`) and the SQL keys beside them.
+ * NOT NULL is derived from membership in `required`.
  */
 function buildColumns(
   table: KnexType.CreateTableBuilder,
   properties: Record<string, ColumnSchema>,
   required: Set<string>,
   knex: KnexType,
-): void {
+): KnexType.ColumnBuilder[] {
+  const columns: KnexType.ColumnBuilder[] = [];
   for (const [name, col] of Object.entries(properties)) {
     const sqlType = (col.sqlType ?? jsonTypeToSql(col.type)).toLowerCase();
     const length = col.maxLength ?? col.length ?? 255;
@@ -550,11 +675,14 @@ function buildColumns(
       }
     }
     if (col.comment) column.comment(col.comment);
+    columns.push(column);
   }
+  return columns;
 }
 
 /**
- * Build indexes from schema
+ * Build indexes from schema. A unique one is an index rather than a constraint
+ * on PostgreSQL too, so `dropIndexes` drops either kind by name.
  */
 function buildIndexes(
   table: KnexType.CreateTableBuilder,
@@ -565,7 +693,7 @@ function buildIndexes(
 
     switch (idx.type) {
       case "unique":
-        table.unique(cols, { indexName: name });
+        table.unique(cols, { indexName: name, useConstraint: false });
         break;
       default:
         table.index(cols, name);

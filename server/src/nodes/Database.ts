@@ -1,7 +1,7 @@
 import Knex, { Knex as KnexType } from "knex";
 import fs from "node:fs";
 import path from "node:path";
-import { Node, Context, NodeValue, loggerFor, resolve, resolveAll, resolveFields, resolverFor } from "@jexs/core";
+import { Node, Context, NodeValue, childContext, loggerFor, resolve, resolveAll, resolveFields, resolverFor, runSteps } from "@jexs/core";
 import type { JexsNodeSchema, JexsPropertySchema } from "@jexs/core";
 import {
   mergeTls, parseDbUrl, parseTls, TLS_STRINGS,
@@ -43,6 +43,10 @@ interface DatabaseConnection {
   knex: KnexType;
   info: ConnectionInfo;
 }
+
+/** The transactions open around a step, by connection name. A symbol, so no
+ *  template can read or set it; `childContext` carries it into nested steps. */
+const TRANSACTIONS = Symbol("transactions");
 
 /** Reduce a config to where it points, as dialled (defaults filled in), dropping the secrets. */
 function describe(config: DatabaseConfig): ConnectionInfo {
@@ -113,6 +117,7 @@ export class DatabaseNode extends Node {
         "close",
         "raw",
         "info",
+        "transaction",
       ],
       markdownDescription: "Manages database connections. Supports SQLite (`better-sqlite3`), MySQL (`mysql2`), and PostgreSQL (`pg`) via Knex. The operation is the primary value; each carries its own properties.",
       examples: [
@@ -194,6 +199,16 @@ export class DatabaseNode extends Node {
           outputDescription: "The connection as `connect` returned it, plus `tables` (and `size` for SQLite), or `null` if no connection has that name. Carries no credentials.",
           markdownDescription: "Reports where a connection points, whether TLS is on, and how many tables it has.",
         },
+        transaction: {
+          outputDescription: "The last step's value.",
+          markdownDescription: "Runs `do` in a transaction on the connection: every `$query`, `$table` and `raw` step inside it that uses the connection joins it. It commits when the steps finish, and rolls back and rethrows when one throws. Inside another transaction on the same connection it is a savepoint. The steps run in a scope of their own, so their writes need `$bubble` to reach outside it. MySQL commits on any change to a table's structure, so there `$table` steps cannot be rolled back.",
+          examples: [
+            "{ \"$database\": \"transaction\", \"do\": [{ \"$query\": \"update\", \"table\": \"accounts\", \"where\": { \"id\": 1 }, \"decrement\": { \"balance\": 10 } }, { \"$query\": \"update\", \"table\": \"accounts\", \"where\": { \"id\": 2 }, \"increment\": { \"balance\": 10 } }] }",
+          ],
+          siblings: {
+            do: { steps: true, required: true, description: "Steps run in the transaction." },
+          },
+        },
       },
     },
   };
@@ -235,6 +250,8 @@ export class DatabaseNode extends Node {
           return doRaw(this, def, context);
         case "info":
           return doInfo(this, def, context);
+        case "transaction":
+          return doTransaction(this, def, context);
         default:
           loggerFor(context).error(`[DatabaseNode] Unknown operation: ${operation}`);
           return null;
@@ -250,9 +267,10 @@ export class DatabaseNode extends Node {
   // DatabaseTableNode, TranslationNode) that hold one but no handle on this node. Everything inside
   // this module already has the node and calls the helpers below directly.
 
-  /** Omit `name` to get whichever connection opened first. */
+  /** Omit `name` to get whichever connection opened first. Inside a
+   *  `transaction` step on that connection, the transaction. */
   static getKnex(context: Context, name?: string): KnexType {
-    return requireConnection(databaseFor(context), name).knex;
+    return knexIn(databaseFor(context), context, name);
   }
 
   /** Type, target and TLS state. Carries no credentials — none are kept. */
@@ -276,14 +294,29 @@ export class DatabaseNode extends Node {
   static getDefaultConnection(context: Context): string | null {
     return databaseFor(context).defaultConnectionName;
   }
+}
 
-  static async transaction<T>(
-    context: Context,
-    name: string,
-    callback: (trx: KnexType.Transaction) => Promise<T>,
-  ): Promise<T> {
-    return requireConnection(databaseFor(context), name).knex.transaction(callback);
-  }
+/** The names of a database's tables, sorted. */
+export async function listTables(knex: KnexType): Promise<string[]> {
+  const dialect = knex.client.dialect;
+  const rows: Array<{ name: string }> = dialect === "sqlite3"
+    ? await knex("sqlite_master").select("name").where("type", "table").andWhereNot("name", "like", "sqlite_%")
+    : await knex("information_schema.tables").select({ name: "table_name" })
+      .where("table_type", "BASE TABLE")
+      .andWhere("table_schema", knex.raw(dialect === "mysql" ? "database()" : "current_schema()"));
+  return rows.map(row => row.name).sort();
+}
+
+/** The knex a step on connection `nameRaw` runs on: the transaction open
+ *  around it on that connection, else the connection itself. */
+function knexIn(self: DatabaseNode, context: Context, nameRaw?: unknown): KnexType {
+  const name = connectionName(self, nameRaw);
+  return transactionsIn(context).get(name) ?? requireConnection(self, name).knex;
+}
+
+function transactionsIn(context: Context): Map<string, KnexType.Transaction> {
+  const open = Reflect.get(context, TRANSACTIONS);
+  return open instanceof Map ? open : new Map();
 }
 
 /** Open `name`, replacing any connection already under it. */
@@ -571,13 +604,28 @@ function doClose(self: DatabaseNode, def: Record<string, unknown>, context: Cont
 
 function doRaw(self: DatabaseNode, def: Record<string, unknown>, context: Context): unknown {
   return resolveAll([def.connection ?? null, def.sql, def.bindings ?? null], context, async ([connectionRaw, sqlRaw, bindingsRaw]) => {
-    const conn = requireConnection(self, connectionRaw);
+    const knex = knexIn(self, context, connectionRaw);
     const sql = String(sqlRaw);
     const bindings = toBindings(bindingsRaw);
     // knex has no "bindings: undefined" overload — omitted means the 1-arg call.
-    const result = await (bindings ? conn.knex.raw(sql, bindings) : conn.knex.raw(sql));
+    const result = await (bindings ? knex.raw(sql, bindings) : knex.raw(sql));
     // SQLite hands back the rows; the others wrap them in a result-set array.
-    return conn.info.type === "sqlite" ? result : result[0];
+    return requireConnection(self, connectionRaw).info.type === "sqlite" ? result : result[0];
+  });
+}
+
+/** Run `do` in a transaction on the connection, as a savepoint of one already
+ *  open on it. knex commits when the callback's promise settles, and rolls back
+ *  when it rejects. The callback is async because knex hands back a thenable of
+ *  its own, which `$catch` would not recognize as a promise. */
+function doTransaction(self: DatabaseNode, def: Record<string, unknown>, context: Context): unknown {
+  if (def.do === undefined) throw new Error("$database transaction needs `do` steps");
+  return resolve(def.connection ?? null, context, async nameRaw => {
+    const name = connectionName(self, nameRaw);
+    return knexIn(self, context, name).transaction(async trx => {
+      const open = new Map(transactionsIn(context)).set(name, trx);
+      return await runSteps(def.do, childContext(context, { [TRANSACTIONS]: open }));
+    });
   });
 }
 
@@ -597,16 +645,7 @@ function doInfo(self: DatabaseNode, def: Record<string, unknown>, context: Conte
     }
 
     try {
-      if (conn.info.type === "sqlite") {
-        const tables = await conn.knex.raw("SELECT count(*) as count FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'");
-        result.tables = tables[0]?.count ?? 0;
-      } else if (conn.info.type === "mysql") {
-        const tables = await conn.knex.raw("SELECT count(*) as count FROM information_schema.tables WHERE table_schema = database()");
-        result.tables = tables[0]?.[0]?.count ?? 0;
-      } else if (conn.info.type === "pg") {
-        const tables = await conn.knex.raw("SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'");
-        result.tables = parseInt(tables.rows?.[0]?.count ?? "0", 10);
-      }
+      result.tables = (await listTables(conn.knex)).length;
     } catch { /* ignore */ }
 
     return result;

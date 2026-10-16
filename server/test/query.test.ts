@@ -108,7 +108,7 @@ test("create applies a composite primary key, and MySQL-only options elsewhere a
 
 // Structure changes return what they changed, not a status object, and a
 // failure throws instead of being recorded and passed over.
-test("create, sync, alter and drop return what they changed, and a failure throws", async () => {
+test("create, sync, alter, rename and drop return what they changed, and a failure throws", async () => {
   const schema = { table: "gadgets", properties: { name: { type: "string" } } };
   assert.equal(await resolve({ $table: "create", ...conn, schema }, {}), "gadgets");
   await assert.rejects(async () => resolve({ $table: "create", ...conn, schema }, {}), /already exists/);
@@ -116,11 +116,16 @@ test("create, sync, alter and drop return what they changed, and a failure throw
   assert.equal(await resolve({ $table: "exists", ...conn, table: "gadgets" }, {}), true);
 
   const alter = { $table: "alter", ...conn, table: "gadgets", add: { size: { type: "integer" } } };
-  assert.deepEqual(await resolve(alter, {}), ["size"]);
-  assert.deepEqual(await resolve(alter, {}), [], "already added");
+  assert.equal(await resolve(alter, {}), null);
+  await assert.rejects(async () => resolve(alter, {}), /size/, "a column that exists is an error");
+  await assert.rejects(async () => resolve({ $table: "alter", ...conn, table: "gadgets" }, {}), /alter needs a change/);
 
-  assert.equal(await resolve({ $table: "drop", ...conn, table: "gadgets" }, {}), null);
-  assert.equal(await resolve({ $table: "exists", ...conn, table: "gadgets" }, {}), false);
+  assert.equal(await resolve({ $table: "rename", ...conn, table: "gadgets", to: "widgets" }, {}), "widgets");
+  const tables = await resolve({ $table: "list", ...conn }, {}) as string[];
+  assert.ok(tables.includes("widgets") && !tables.includes("gadgets"), tables.join(", "));
+
+  assert.equal(await resolve({ $table: "drop", ...conn, table: "widgets" }, {}), null);
+  assert.equal(await resolve({ $table: "exists", ...conn, table: "widgets" }, {}), false);
 
   await assert.rejects(
     async () => resolve({ $table: "sync", ...conn, schema: {
@@ -128,6 +133,114 @@ test("create, sync, alter and drop return what they changed, and a failure throw
     } }, {}),
     /nope/,
   );
+});
+
+// The migration a schema change needs: add a column as optional, fill it, then
+// make it NOT NULL; and rename, drop and reindex along the way.
+test("alter adds, renames, changes and drops columns and indexes, in order", async () => {
+  const info = async () => Object.fromEntries(
+    (await resolve({ $database: "raw", ...conn, sql: "PRAGMA table_info(accounts)" }, {}) as Array<{ name: string; notnull: number }>)
+      .map(c => [c.name, c.notnull]),
+  );
+  await resolve({ $table: "create", ...conn, schema: {
+    table: "accounts",
+    properties: { id: { type: "integer", primaryKey: true, autoIncrement: true }, mail: { type: "string" }, legacy: { type: "string" } },
+    indexes: { by_mail: { type: "unique", columns: "mail" } },
+  } }, {});
+  await resolve({ $query: "insert", ...conn, table: "accounts", data: { mail: "ada@x", legacy: "1" } }, {});
+
+  await resolve({ $table: "alter", ...conn, table: "accounts", add: { nick: { type: "string" } } }, {});
+  await resolve({ $database: "raw", ...conn, sql: "UPDATE accounts SET nick = 'ada'" }, {});
+  await resolve({ $table: "alter", ...conn, table: "accounts",
+    dropIndexes: ["by_mail"],
+    rename: { mail: "email" },
+    change: { nick: { type: "string" } }, required: ["nick"],
+    drop: ["legacy"],
+    addIndexes: { by_email: { type: "unique", columns: "email" } },
+  }, {});
+
+  const { email, nick, legacy } = await info();
+  assert.deepEqual({ email, nick, legacy }, { email: 0, nick: 1, legacy: undefined });
+  const row = await resolve({ $query: "select", ...conn, table: "accounts", first: true }, {});
+  assert.deepEqual(row, { id: 1, email: "ada@x", nick: "ada" });
+  const insert = (data: object) => resolve({ $database: "raw", ...conn, sql: "INSERT INTO accounts (email, nick) VALUES (?, ?)", bindings: Object.values(data) }, {});
+  await assert.rejects(insert({ email: "ada@x", nick: "b" }), /UNIQUE/);
+  await assert.rejects(insert({ email: "b@x", nick: null }), /NOT NULL/);
+
+  // A column named wrongly is refused before anything changes, on every database.
+  const alter = (changes: object) => resolve({ $table: "alter", ...conn, table: "accounts", ...changes }, {});
+  await assert.rejects(alter({ drop: ["nowhere"] }), /no column "nowhere" to drop in "accounts"/);
+  await assert.rejects(alter({ add: { nick: { type: "string" } } }), /a column "nick" already exists, so cannot add/);
+  await assert.rejects(alter({ rename: { email: "mail" }, change: { email: { type: "string" } } }), /no column "email" to change/);
+
+  // In a transaction an alter is all or nothing: the index fails, so the rename
+  // and the change (a table rebuild on SQLite) before it are undone.
+  await assert.rejects(resolve({ $database: "transaction", ...conn, do: [{ $table: "alter", ...conn, table: "accounts",
+    rename: { email: "mail" }, change: { nick: { type: "string" } }, addIndexes: { broken: { columns: "nowhere" } },
+  }] }, {}), /nowhere/);
+  const after = await info();
+  assert.deepEqual({ email: after.email, mail: after.mail, nick: after.nick }, { email: 0, mail: undefined, nick: 1 });
+});
+
+test("a transaction commits its steps together, or rolls them all back", async () => {
+  await resolve({ $table: "create", ...conn, schema: {
+    table: "ledger", properties: { id: { type: "integer", primaryKey: true, autoIncrement: true }, amount: { type: "integer" } },
+  } }, {});
+  const insert = (amount: number) => ({ $query: "insert", ...conn, table: "ledger", data: { amount } });
+  const count = () => resolve({ $query: "count", ...conn, table: "ledger" }, {});
+
+  assert.equal(await resolve({ $database: "transaction", ...conn, do: [insert(1), insert(2), { $concat: ["done"] }] }, {}), "done");
+  assert.equal(await count(), 2);
+
+  await assert.rejects(resolve({ $database: "transaction", ...conn, do: [insert(3), { $error: 500, message: "boom" }] }, {}), /boom/);
+  assert.equal(await count(), 2, "rolled back");
+
+  // A nested transaction is a savepoint: its failure, caught, undoes only its own steps.
+  await resolve({ $database: "transaction", ...conn, do: [
+    insert(4),
+    { $database: "transaction", ...conn, do: [insert(5), { $error: 500 }], $catch: [{ $concat: ["caught"] }] },
+  ] }, {});
+  assert.deepEqual(
+    (await resolve({ $query: "select", ...conn, table: "ledger", orderBy: { id: "asc" } }, {}) as Array<{ amount: number }>).map(r => r.amount),
+    [1, 2, 4],
+  );
+
+  // Structure changes join it too.
+  await assert.rejects(resolve({ $database: "transaction", ...conn, do: [
+    { $table: "alter", ...conn, table: "ledger", add: { note: { type: "string" } } },
+    { $error: 500 },
+  ] }, {}));
+  assert.equal(Object.keys(await resolve({ $query: "select", ...conn, table: "ledger", first: true }, {}) as object).includes("note"), false);
+});
+
+test("the $table validator authorizes each change to a table's structure", async () => {
+  // `seen` is appended to in place, so the validator's records show here.
+  const context = { seen: [] as unknown[], allow: false };
+  await resolve({ $table: "validator", do: [
+    { $push: [{ $var: "seen" }, { $concat: [{ $var: "operation" }, " ", { $var: "table" }, " ", { $var: "schema.table" }, " ", { $stringify: { $var: "changes" } }] }] },
+    { $if: { $not: { $var: "allow" } }, then: { $error: 403, message: "structure is admin-only" } },
+  ] }, context);
+  try {
+    const schema = { table: "audited", properties: { name: { type: "string" } } };
+    await assert.rejects(resolve({ $table: "create", ...conn, schema }, context), /admin-only/);
+    assert.equal(DatabaseTableNode.get(registry, "audited"), undefined, "a refused document is not registered");
+    assert.equal(await resolve({ $table: "exists", ...conn, table: "audited" }, context), false);
+
+    assert.equal(await resolve({ $table: "create", ...conn, schema, system: true }, context), "audited");
+    context.allow = true;
+    await resolve({ $table: "alter", ...conn, table: "audited", add: { age: { type: "integer" } } }, context);
+    await resolve({ $table: "rename", ...conn, table: "audited", to: "audited2" }, context);
+    await resolve({ $table: "drop", ...conn, table: "audited2" }, context);
+    await resolve({ $table: "list", ...conn }, context);
+    assert.deepEqual(context.seen, [
+      "create audited audited ",
+      "alter audited audited {\"add\":{\"age\":{\"type\":\"integer\"}}}",
+      "rename audited audited {\"to\":\"audited2\"}",
+      "drop audited2  ",
+    ]);
+  } finally {
+    await resolve({ $table: "validator", do: null }, {});
+  }
 });
 
 test("sync without a document syncs what is registered: one table by name, or all of them", async () => {

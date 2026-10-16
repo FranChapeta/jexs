@@ -331,16 +331,6 @@ function renameSibling({ obj }: Step, from: string, to: string, m: Codemod): voi
   if (prop) m.add({ start: prop.keyStart, end: prop.keyEnd, text: prop.shorthand ? `${to}: ${from}` : to });
 }
 
-/** Remove the step's `name` sibling, with the comma that joined it. */
-function removeSibling({ obj }: Step, name: string, m: Codemod): void {
-  const at = obj.props.findIndex(p => p.key === name);
-  if (at === -1) return;
-  const prop = obj.props[at];
-  const keyStart = (p: typeof prop) => p.keyStart - (p.keyQuoted ? 1 : 0);
-  if (at > 0) m.add({ start: obj.props[at - 1].value.end, end: prop.value.end, text: "" });
-  else if (obj.props[at + 1]) m.add({ start: keyStart(prop), end: keyStart(obj.props[at + 1]), text: "" });
-}
-
 /**
  * Move the step to another op: `{ "$<op>": "<from>" }` becomes
  * `{ "$<node>": "<to>" }`, keeping how its key is quoted.
@@ -466,7 +456,7 @@ const RULES: Record<string, Rule> = {
     if (delay) m.review(delay.keyStart, "`$defer`'s `delay` is gone: start the deferred steps with `{ \"$sleep\": <ms> }`");
   },
   // `$query` is rows: creating, altering and dropping a table are `$table`'s,
-  // which no validator guards, and the connection is `connection`.
+  // and the connection is `connection`.
   query: (step, m) => {
     const where = step.obj.props.find(p => p.key === "where");
     if (where) whereOperators(where.value, m);
@@ -475,7 +465,10 @@ const RULES: Record<string, Rule> = {
     if (value === "create" || value === "drop" || value === "alter") {
       moveOp(step, "table", value === "create" ? "sync" : value, m);
       renameSibling(step, "addColumns", "add", m);
-      removeSibling(step, "system", m);
+    }
+    if (value === "alter") {
+      const prop = step.obj.props.find(p => p.key === "$query")!;
+      m.review(prop.keyStart, "`$table: \"alter\"` adds every column in `add` and returns `null`: one that exists is an error rather than skipped, so where this runs on every start, use `$table: \"sync\"` with the table's document");
     }
   },
   // A connection's entry carries only the `meta` it was accepted with.
@@ -496,6 +489,7 @@ const RULES: Record<string, Rule> = {
     if (value === "validator") {
       moveOp(step, "query", "validator", m);
       renameSibling(step, "run", "do", m);
+      m.review(prop.keyStart, "The global validator now runs for row queries only: to authorize creating, altering and dropping tables, give `$table: \"validator\"` steps too");
     }
     if (value === "get") {
       m.review(prop.keyStart, "`$schema: \"get\"` is gone: read the document's file with `$file` (`data: true`), or find it in `{ \"$schema\": \"list\" }`");
