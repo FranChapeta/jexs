@@ -133,6 +133,7 @@ test("create, sync, alter, rename and drop return what they changed, and a failu
     } }, {}),
     /nope/,
   );
+  await resolve({ $schema: "unregister", id: "table/broken" }, {});
 });
 
 // The migration a schema change needs: add a column as optional, fill it, then
@@ -240,6 +241,35 @@ test("the $table validator authorizes each change to a table's structure", async
     ]);
   } finally {
     await resolve({ $table: "validator", do: null }, {});
+  }
+});
+
+test("sync adds the columns and indexes a table lacks, and warns about what only alter may change", async () => {
+  const warnings: string[] = [];
+  const logger = { info: () => {}, warn: (message: string) => { warnings.push(message); }, error: () => {} };
+  const own = createResolver([...coreNodes(), ...serverNodes({ root: "." })], { logger });
+  const at = { connection: "sync-test" };
+  try {
+    await own({ $database: "connect", ...at, type: "sqlite", filename: path.join(dir, "sync.db") }, {});
+    await own({ $table: "create", ...at, schema: { table: "pets", properties: { name: { type: "string" }, legacy: { type: "string" } } } }, {});
+    await own({ $query: "insert", ...at, table: "pets", data: { name: "rex" } }, {});
+
+    await own({ $table: "sync", ...at, schema: {
+      table: "pets", required: ["name", "owner"],
+      properties: { name: { type: "string" }, owner: { type: "string" }, born: { type: "string", sqlType: "timestamp", sqlDefault: "CURRENT_TIMESTAMP" } },
+      indexes: { by_owner: { columns: "owner" } },
+    } }, {});
+
+    const indexes = await own({ $database: "raw", ...at, sql: "PRAGMA index_list(pets)" }, {}) as Array<{ name: string }>;
+    assert.deepEqual(indexes.map(i => i.name), ["by_owner"]);
+    const columns = await own({ $database: "raw", ...at, sql: "PRAGMA table_info(pets)" }, {}) as Array<{ name: string; notnull: number }>;
+    assert.deepEqual(columns.map(c => [c.name, c.notnull]), [["name", 0], ["legacy", 0], ["owner", 0], ["born", 0]]);
+    assert.equal(warnings.length, 2, warnings.join("\n"));
+    assert.match(warnings[0], /added required columns \[owner\] as nullable/);
+    assert.match(warnings[1], /columns \[legacy\] are not in its document/);
+  } finally {
+    await own({ $database: "close", ...at }, {});
+    own.destroy();
   }
 });
 

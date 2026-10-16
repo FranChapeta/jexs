@@ -1,5 +1,5 @@
 import { Knex as KnexType } from "knex";
-import { Node, Context, NodeValue, childContext, isObject, loggerFor, resolve, resolveAll, resolveFields, resolverFor, runSteps } from "@jexs/core";
+import { Node, Context, NodeValue, childContext, isObject, loggerFor, resolve, resolveAll, resolveFields, resolverFor, runSteps, type Logger } from "@jexs/core";
 import { DatabaseNode, listTables } from "./Database.js";
 import { sha256 } from "./Crypto.js";
 import { SchemaNode, isTableDocument, requireSchemaNode, schemaArg, tableId } from "./Schema.js";
@@ -220,7 +220,7 @@ export class DatabaseTableNode extends Node {
         sync: {
           output: tableNames,
           outputDescription: "The names of the tables it created.",
-          markdownDescription: "Makes the database match table documents: it creates the tables that are missing and adds the columns an existing table lacks. It never changes or drops what is there. Given a `schema` document, it registers it first; given a table's name, it syncs that registered table; without one, or with `\"*\"`, every registered table.",
+          markdownDescription: "Makes the database match table documents, adding only: it creates the tables that are missing, and adds the columns and named indexes an existing table lacks. A required column added to a table with rows is nullable until an `alter` makes it NOT NULL. It never changes, renames or drops what is there, since that could lose data; it warns about columns the document lacks, for an `alter` to deal with. Given a `schema` document, it registers it first; given a table's name, it syncs that registered table; without one, or with `\"*\"`, every registered table.",
           siblings: {
             schema: { $ref: "#/$defs/_tableSchemaSlot", literal: true, description: "A table document (kept as written, as for `create`), a registered table's name, or `\"*\"` for every registered table, the default." },
             connection,
@@ -419,9 +419,9 @@ async function doCreate(def: Record<string, unknown>, context: Context): Promise
 }
 
 /**
- * `sync`: create each table that is missing and add the columns an existing
- * one lacks. Returns the names of the tables it created; a failure throws, so a
- * startup that cannot build its tables stops there.
+ * `sync`: create each table that is missing, and bring each existing one up to
+ * its document additively. Returns the names of the tables it created; a
+ * failure throws, so a startup that cannot build its tables stops there.
  */
 async function doSync(def: Record<string, unknown>, context: Context): Promise<string[]> {
   const schemas = await documentsOf(def, context, "sync");
@@ -430,10 +430,7 @@ async function doSync(def: Record<string, unknown>, context: Context): Promise<s
   for (const schema of schemas) {
     const tableName = schema.table;
     if (await knex.schema.hasTable(tableName)) {
-      const added = await syncMissingColumns(knex, schema);
-      if (added.length > 0) {
-        loggerFor(context).info(`[DatabaseTable] Table ${tableName}: added columns [${added.join(", ")}]`);
-      }
+      await syncTable(knex, schema, loggerFor(context));
       continue;
     }
     await createTable(knex, schema);
@@ -444,40 +441,59 @@ async function doSync(def: Record<string, unknown>, context: Context): Promise<s
 }
 
 /**
- * Auto-detect and add missing columns to an existing table
+ * Add the columns and named indexes an existing table lacks, and warn about
+ * what differs that only `alter` may change: a required column added as
+ * nullable, since the rows already there have no value for it, and columns the
+ * document does not have. Changing or dropping a column could lose data, and a
+ * renamed column looks the same as one dropped and one added, so `sync` leaves
+ * those to an `alter` the app writes.
  */
-async function syncMissingColumns(
-  knex: KnexType,
-  schema: TableJsonSchema,
-): Promise<string[]> {
+async function syncTable(knex: KnexType, schema: TableJsonSchema, log: Logger): Promise<void> {
   const tableName = schema.table;
-  const existingCols = await knex(tableName).columnInfo();
-  const existingNames = new Set(Object.keys(existingCols));
-  const missing: [string, ColumnSchema][] = [];
-
-  for (const [name, col] of Object.entries(schema.properties)) {
-    if (!existingNames.has(name)) {
-      // Strip non-constant defaults (e.g. CURRENT_TIMESTAMP) — SQLite rejects
-      // these on ALTER TABLE. notNull is not applied (empty required set below),
-      // since existing rows already have NULL.
-      const safeDef: ColumnSchema = { ...col };
-      if (typeof safeDef.sqlDefault === "string" && /current_timestamp/i.test(safeDef.sqlDefault)) {
-        delete safeDef.sqlDefault;
-      }
-      if (typeof safeDef.default === "string" && /current_timestamp/i.test(safeDef.default)) {
-        delete safeDef.default;
-      }
-      missing.push([name, safeDef]);
+  const existing = Object.keys(await knex(tableName).columnInfo());
+  const missing = Object.keys(schema.properties).filter(name => !existing.includes(name));
+  if (missing.length > 0) {
+    // SQLite refuses a non-constant default such as CURRENT_TIMESTAMP when
+    // adding a column, so it is left out.
+    const columns = Object.fromEntries(missing.map(name => {
+      const col: ColumnSchema = { ...schema.properties[name] };
+      if (typeof col.sqlDefault === "string" && /current_timestamp/i.test(col.sqlDefault)) delete col.sqlDefault;
+      if (typeof col.default === "string" && /current_timestamp/i.test(col.default)) delete col.default;
+      return [name, col];
+    }));
+    await knex.schema.alterTable(tableName, table => { buildColumns(table, columns, new Set(), knex); });
+    log.info(`[DatabaseTable] Table ${tableName}: added columns [${missing.join(", ")}]`);
+    const nullable = missing.filter(name => schema.required?.includes(name));
+    if (nullable.length > 0) {
+      log.warn(`[DatabaseTable] Table ${tableName}: added required columns [${nullable.join(", ")}] as nullable; once every row has a value, \`alter\` can \`change\` them with \`required\``);
     }
   }
+  const extra = existing.filter(name => !(name in schema.properties));
+  if (extra.length > 0) {
+    log.warn(`[DatabaseTable] Table ${tableName}: columns [${extra.join(", ")}] are not in its document; \`alter\` can \`rename\` or \`drop\` them`);
+  }
 
-  if (missing.length === 0) return [];
+  const indexes = new Set(await indexNames(knex, tableName));
+  const newIndexes = Object.entries(schema.indexes ?? {}).filter(([name]) => !indexes.has(name));
+  if (newIndexes.length > 0) {
+    await knex.schema.alterTable(tableName, table => { buildIndexes(table, Object.fromEntries(newIndexes)); });
+    log.info(`[DatabaseTable] Table ${tableName}: added indexes [${newIndexes.map(([name]) => name).join(", ")}]`);
+  }
+}
 
-  await knex.schema.alterTable(tableName, (table) => {
-    buildColumns(table, Object.fromEntries(missing), new Set(), knex);
-  });
-
-  return missing.map(([name]) => name);
+/** The names of a table's indexes. */
+async function indexNames(knex: KnexType, tableName: string): Promise<string[]> {
+  const dialect = knex.client.dialect;
+  if (dialect === "sqlite3") {
+    const rows: Array<{ name: string }> = await knex.raw("PRAGMA index_list(??)", [tableName]);
+    return rows.map(row => row.name);
+  }
+  const rows: Array<{ name: string }> = dialect === "mysql"
+    ? await knex("information_schema.statistics").distinct({ name: "index_name" })
+      .where("table_schema", knex.raw("database()")).andWhere("table_name", tableName)
+    : await knex("pg_indexes").select({ name: "indexname" })
+      .where("schemaname", knex.raw("current_schema()")).andWhere("tablename", tableName);
+  return rows.map(row => row.name);
 }
 
 /**
