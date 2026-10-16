@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, childContext } from "@jexs/core";
+import { Node, Context, NodeValue, PARENT, childContext, isObject } from "@jexs/core";
 import { resolve, resolveAll, runSteps, runStepsDetached, isStep } from "@jexs/core";
 import {
   resolvePath, adjustPathAfterRemoval, getChildArrayKey,
@@ -6,6 +6,7 @@ import {
 } from "../treeUtils.js";
 import type { JexsNodeSchema } from "@jexs/core";
 import { hydrate } from "../events.js";
+import { getElement } from "../dom.js";
 
 /** Delta describes a single tree mutation */
 export interface TreeDelta {
@@ -47,16 +48,27 @@ function setRuntime(context: Context, path: string, rt: TreeRuntime): void {
   byPath.set(path, rt);
 }
 
-// Note: tree ops are expected to run against the context that owns the tree
-// (the client's single shared context). A derived context (e.g. inside a map)
-// would not find the runtime — tree mutation belongs in event steps, not loops.
 /** A tree's context path, `"default"` when none is given or it resolves to nothing. */
 function treePath(raw: unknown): string {
   return String(raw ?? "default");
 }
 
-function getRuntime(context: Context, path: string): TreeRuntime | undefined {
-  return stores.get(context)?.get(path);
+/**
+ * The tree at `pathRaw` that an op acts on. It is kept with the context
+ * `tree-init` ran in, so a child scope of that context (an event handler, a
+ * hook, a loop) finds it by walking up to its parent; a context with none
+ * above it is an error.
+ */
+function runtimeOf(op: string, context: Context, pathRaw: unknown): TreeRuntime {
+  const path = treePath(pathRaw);
+  let scope: Context | undefined = context;
+  while (scope) {
+    const rt = stores.get(scope)?.get(path);
+    if (rt) return rt;
+    const parent: unknown = Reflect.get(scope, PARENT);
+    scope = isObject(parent) ? parent : undefined;
+  }
+  throw new Error(`$${op}: no tree at "${path}"; tree-init sets one up`);
 }
 
 /** Read a value at a normalized dot-path in the context. */
@@ -271,8 +283,8 @@ export class TreeNode extends Node {
     const rawRow = def.row;
 
     return resolveAll([def["$tree-init"], def.target, def.data ?? null], context, async ([pathRaw, target, data]) => {
-      const targetEl = document.querySelector(String(target)) as HTMLElement;
-      if (!targetEl) return null;
+      const targetEl = getElement(target, "tree-init");
+      if (!(targetEl instanceof HTMLElement)) throw new Error(`$tree-init: target ${JSON.stringify(target)} is not an HTML element`);
 
       const path = treePath(pathRaw);
 
@@ -282,7 +294,9 @@ export class TreeNode extends Node {
       let dataArr: unknown[] = [];
       if (data != null) {
         if (typeof data === "string") {
-          try { dataArr = JSON.parse(data); } catch { dataArr = []; }
+          const parsed: unknown = JSON.parse(data);
+          if (!Array.isArray(parsed)) throw new Error("$tree-init: `data` given as text must be a JSON array");
+          dataArr = parsed;
         } else if (Array.isArray(data)) {
           dataArr = data;
         } else {
@@ -314,8 +328,7 @@ export class TreeNode extends Node {
 
   ["tree-render"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll([def["$tree-render"], def.path ?? null], context, async ([pathRaw, path]) => {
-      const rt = getRuntime(context, treePath(pathRaw));
-      if (!rt) return null;
+      const rt = runtimeOf("tree-render", context, pathRaw);
       const p = path != null ? String(path) : "";
       if (!p) {
         await renderTree(rt);
@@ -336,8 +349,7 @@ export class TreeNode extends Node {
     const rawValue = def.value;
 
     return resolveAll([def["$tree-insert"], def.path ?? null], context, ([pathRaw, path]) => {
-      const rt = getRuntime(context, treePath(pathRaw));
-      if (!rt) return null;
+      const rt = runtimeOf("tree-insert", context, pathRaw);
 
       const doInsert = async (valueResolved: unknown) => {
         let value = valueResolved;
@@ -382,8 +394,9 @@ export class TreeNode extends Node {
 
   ["tree-remove"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["$tree-remove"], context, async pathRaw => {
-      const rt = getRuntime(context, treePath(pathRaw));
-      if (!rt || !rt.selectedPath) return null;
+      const rt = runtimeOf("tree-remove", context, pathRaw);
+      // A removal: with nothing selected there is nothing to remove, which is reported.
+      if (!rt.selectedPath) return null;
 
       const parts = rt.selectedPath.split(".");
       const index = parseInt(parts[parts.length - 1]);
@@ -408,11 +421,11 @@ export class TreeNode extends Node {
 
   ["tree-update"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll([def["$tree-update"], def.key, def.value ?? null], context, async ([pathRaw, key, value]) => {
-      const rt = getRuntime(context, treePath(pathRaw));
-      if (!rt || !rt.selectedPath) return null;
+      const rt = runtimeOf("tree-update", context, pathRaw);
+      if (!rt.selectedPath) throw new Error("$tree-update acts on the selected node, and nothing is selected");
 
       const node = resolvePath(getData(rt), rt.selectedPath);
-      if (!this.isObject(node)) return null;
+      if (!this.isObject(node)) throw new Error(`$tree-update: the node at "${rt.selectedPath}" has no keys to set`);
 
       const k = String(key);
 
@@ -435,13 +448,12 @@ export class TreeNode extends Node {
       [def["$tree-move"], def.direction ?? null, def.to ?? null, def.index ?? null, def.from ?? null],
       context,
       async ([pathRaw, direction, to, index, from]) => {
-        const rt = getRuntime(context, treePath(pathRaw));
-        if (!rt) return null;
+        const rt = runtimeOf("tree-move", context, pathRaw);
 
         // Relocation: move a node to any parent-list path (+ index; default append).
         if (to != null) {
           const sourcePath = from != null ? String(from) : rt.selectedPath;
-          if (!sourcePath) return null;
+          if (!sourcePath) throw new Error("$tree-move moves `from` or the selected node, and neither is given");
           const toParent = String(to);
           const toArr = resolvePath(getData(rt), toParent);
           const toIndex = index != null ? this.toNumber(index) : (Array.isArray(toArr) ? toArr.length : 0);
@@ -449,7 +461,7 @@ export class TreeNode extends Node {
         }
 
         // Reorder: shift the selected node up/down among its siblings.
-        if (!rt.selectedPath) return null;
+        if (!rt.selectedPath) throw new Error("$tree-move reorders the selected node, and nothing is selected");
         const dir = String(direction);
         const parts = rt.selectedPath.split(".");
         const idx = parseInt(parts[parts.length - 1]);
@@ -480,8 +492,7 @@ export class TreeNode extends Node {
 
   ["tree-select"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll([def["$tree-select"], def.path ?? null], context, async ([pathRaw, path]) => {
-      const rt = getRuntime(context, treePath(pathRaw));
-      if (!rt) return null;
+      const rt = runtimeOf("tree-select", context, pathRaw);
 
       const oldPath = rt.selectedPath;
       rt.selectedPath = path != null ? String(path) : null;
@@ -503,8 +514,7 @@ export class TreeNode extends Node {
 
   ["tree-toggle"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll([def["$tree-toggle"], def.path], context, async ([pathRaw, path]) => {
-      const rt = getRuntime(context, treePath(pathRaw));
-      if (!rt) return null;
+      const rt = runtimeOf("tree-toggle", context, pathRaw);
 
       const p = String(path);
       if (rt.collapsed.has(p)) {
@@ -520,11 +530,10 @@ export class TreeNode extends Node {
 
   ["tree-apply"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll([def["$tree-apply"], def.delta], context, async ([pathRaw, delta]) => {
-      const rt = getRuntime(context, treePath(pathRaw));
-      if (!rt) return null;
+      const rt = runtimeOf("tree-apply", context, pathRaw);
 
       const d = delta as TreeDelta;
-      if (!d || !d.action) return null;
+      if (!this.isObject(d) || !d.action) throw new Error("$tree-apply needs a `delta` with an `action`");
 
       switch (d.action) {
         case "insert": {
@@ -574,6 +583,8 @@ export class TreeNode extends Node {
           await renderTree(rt);
           break;
         }
+        default:
+          throw new Error(`$tree-apply: unknown action ${JSON.stringify(d.action)}`);
       }
 
       return null;

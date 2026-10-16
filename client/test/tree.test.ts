@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createResolver, coreNodes } from "@jexs/core";
+import { createResolver, coreNodes, childContext } from "@jexs/core";
 import { installDom } from "./dom.js";
 import { TreeNode } from "../src/nodes/TreeNode.js";
 
@@ -31,4 +31,21 @@ test("on-select hands over `selected`, and on-change `delta`, each in a scope of
   assert.equal(action, "set");
   assert.equal(cleared, null);
   for (const name of ["selected", "delta", "editorData"]) assert.equal(name in ctx, false, `${name} stays in the hook's scope`);
+});
+
+// A row's event handler runs in a child scope of the context the tree was set
+// up in, and must still find the tree.
+test("a tree op from a child scope finds the tree, and one with no tree is an error", async () => {
+  window.document.body.innerHTML = '<div id="t"></div>';
+  const resolve = createResolver([...coreNodes(), new TreeNode()]);
+  const ctx: Record<string, unknown> = { doc: [{ $tag: "p" }] };
+  await resolve({ "$tree-init": "editor", target: "#t", data: { $var: "doc" }, row: { $tag: "div" } }, ctx);
+
+  const handlerScope = childContext(childContext(ctx, { event: null }));
+  assert.equal(((await resolve({ "$tree-select": "editor", path: "0" }, handlerScope)) as { $tag: string }).$tag, "p");
+
+  await assert.rejects(async () => resolve({ "$tree-select": "other" }, ctx), /\$tree-select: no tree at "other"/);
+  await assert.rejects(async () => resolve({ "$tree-init": "x", target: "#nope", row: {} }, {}), /\$tree-init: no element matches "#nope"/);
+  await resolve({ "$tree-select": "editor", path: null }, ctx);
+  await assert.rejects(async () => resolve({ "$tree-update": "editor", key: "class", value: "x" }, ctx), /nothing is selected/);
 });

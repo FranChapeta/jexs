@@ -108,7 +108,7 @@ export class ServiceWorkerNode extends Node {
   ["sw-notify"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveFields(def, context, async r => {
       const title = r["$sw-notify"] == null ? "" : String(r["$sw-notify"]);
-      if (!title) return null;
+      if (!title) throw new Error("$sw-notify needs a title");
       const opts: NotificationOptions & { image?: string; actions?: { action: string; title: string; icon?: string }[] } = {};
       if (r.body != null) opts.body = String(r.body);
       if (r.icon != null) opts.icon = String(r.icon);

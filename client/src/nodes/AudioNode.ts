@@ -234,7 +234,7 @@ export class AudioNode extends Node {
       ([nameRaw, volumeRaw, loopRaw, restartRaw]: unknown[]) => {
         const name = String(nameRaw);
         const buffer = this.buffers.get(name);
-        if (!buffer) { console.warn("[Audio] Buffer not loaded:", name); return null; }
+        if (!buffer) throw new Error(`$audio-play: no sound "${name}" is loaded; audio-load it first`);
 
         const volume = Number(volumeRaw ?? 1);
         const loop = this.toBoolean(loopRaw);

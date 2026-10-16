@@ -1,6 +1,6 @@
 // ── Node system ──
 export {
-  Node, childContext, CLIENT_SCRIPT, SW_SCRIPT, CSRF_TOKEN, TRANSLATE,
+  Node, childContext, PARENT, CLIENT_SCRIPT, SW_SCRIPT, CSRF_TOKEN, TRANSLATE,
   type Context, type NodeValue, type Translator,
 } from "./nodes/Node.js";
 
@@ -90,7 +90,7 @@ export function coreNodes(): Node[] {
 export const nodes = coreNodes;
 
 // ── Helpers ──
-export { randomString, collectTransferables, isObject } from "./helpers.js";
+export { randomString, collectTransferables, isObject, operands } from "./helpers.js";
 
 // ── Generic worker offload (run units over SABs; one worker, many units) ──
 // The SAB/Atomics control-block handshake is private to this module; only the

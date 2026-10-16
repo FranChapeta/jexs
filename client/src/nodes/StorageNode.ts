@@ -67,7 +67,7 @@ export class StorageNode extends Node {
         "{ \"$storage\": \"clear\", \"session\": true }",
       ],
       variants: {
-        clear: { output: "boolean", markdownDescription: "Clears every entry in the selected store. Returns `true`." },
+        clear: { output: "null", markdownDescription: "Clears every entry in the selected store." },
         keys:  { output: { type: "array", items: { type: "string" } }, markdownDescription: "Returns all keys present in the selected store as a string array." },
       },
     },
@@ -116,7 +116,7 @@ export class StorageNode extends Node {
       switch (op) {
         case "clear":
           store.clear();
-          return true;
+          return null;
         case "keys": {
           const keys: string[] = [];
           for (let i = 0; i < store.length; i++) {
@@ -126,7 +126,7 @@ export class StorageNode extends Node {
           return keys;
         }
         default:
-          return null;
+          throw new Error(`$storage: unknown operation ${JSON.stringify(op)}`);
       }
     });
   }

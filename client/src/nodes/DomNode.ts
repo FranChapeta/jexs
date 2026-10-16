@@ -1,8 +1,31 @@
 import { Node, Context, NodeValue } from "@jexs/core";
-import { resolve, resolveAll } from "@jexs/core";
+import { operands, resolve, resolveAll } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { hydrate } from "../events.js";
 import { getElement, isHtmlOrSvg } from "../dom.js";
+
+/** Call `name` on `target` for `op`; a target without it is an error naming both,
+ *  rather than a step that quietly does nothing. */
+function callMethod(op: string, target: object, name: string, ...args: unknown[]): unknown {
+  const fn: unknown = Reflect.get(target, name);
+  if (typeof fn !== "function") {
+    const what = target instanceof Element ? `<${target.tagName.toLowerCase()}>` : "this browser";
+    throw new Error(`$${op}: ${what} has no ${name}()`);
+  }
+  return fn.apply(target, args);
+}
+
+/** The event a handler runs for, which `preventDefault` and `stopPropagation` act on. */
+function eventOf(op: string, context: Context): Event {
+  if (!(context.event instanceof Event)) throw new Error(`$${op} runs in an event handler, where there is an event`);
+  return context.event;
+}
+
+/** The page's clipboard, which only a secure page has. */
+function clipboard(op: string): Clipboard {
+  if (!navigator.clipboard) throw new Error(`$${op}: no clipboard here; it needs a secure (https or localhost) page`);
+  return navigator.clipboard;
+}
 
 // Live DOM properties addressable by getProp/setProp, used to constrain the
 // property slot of each tuple. Read-only metrics are gettable only, so they're
@@ -47,7 +70,7 @@ export class DomNode extends Node {
       anyOf: [
         {
           type: "string",
-          description: "A CSS selector, naming the first element that matches it: `#email` for an id, `.card` for a class, `form input[name=\"q\"]` for anything more specific. A bare id is not enough: `\"email\"` looks for an `<email>` tag.",
+          description: "A CSS selector, naming the first element that matches it: `#email` for an id, `.card` for a class, `form input[name=\"q\"]` for anything more specific. A bare id is not enough: `\"email\"` looks for an `<email>` tag. When nothing matches, an op that reads from the element (`getAttr`, `getValue`, ...) answers null, as the lookups do, while one that acts on it is an error; check first with `$querySelector`, which `$if` reads as false when nothing matches.",
         },
         { $ref: "#/$defs/_element" },
       ],
@@ -164,7 +187,7 @@ export class DomNode extends Node {
         { type: "string", description: "The attribute name." },
       ],
       output: "string",
-      markdownDescription: "Gets an attribute value from an element. Pass `[selectorOrElement, attrName]`.",
+      markdownDescription: "Gets an attribute value from an element. Pass `[selectorOrElement, attrName]`. `null` when the element or the attribute is missing.",
     },
     getProp: {
       tuple: 2,
@@ -173,7 +196,7 @@ export class DomNode extends Node {
         { $ref: "#/$defs/_gettableProp", description: "The DOM property to read, or a dot-path to a nested one (e.g. \"style.color\")." },
       ],
       output: "any",
-      markdownDescription: "Reads a live DOM property from an element (the JS property, not the HTML attribute), e.g. `scrollTop`, `scrollHeight`, `checked`. Supports dot-paths for nested props, e.g. `style.color`. Pass `[selectorOrElement, propName]`.",
+      markdownDescription: "Reads a live DOM property from an element (the JS property, not the HTML attribute), e.g. `scrollTop`, `scrollHeight`, `checked`. Supports dot-paths for nested props, e.g. `style.color`. Pass `[selectorOrElement, propName]`. A missing property reads as `undefined`, and a missing element as `null`.",
       examples: [
         "{ \"$getProp\": [\"#log\", \"scrollTop\"] }",
         "{ \"$getProp\": [\"#box\", \"style.color\"] }",
@@ -210,7 +233,7 @@ export class DomNode extends Node {
     },
     getClipboard: {
       output: "string",
-      outputDescription: "The clipboard's text, or `\"\"` when it is empty or the read was denied.",
+      outputDescription: "The clipboard's text, `\"\"` when it is empty. A denied read is an error.",
       markdownDescription: "Reads text from the clipboard. Requires a secure context, and the browser may prompt for permission the first time.",
       examples: [
         "{ \"$getClipboard\": true, \"$as\": \"clip\" }",
@@ -252,7 +275,7 @@ export class DomNode extends Node {
     querySelector: {
       type: "string",
       output: { $ref: "#/$defs/_element" },
-      markdownDescription: "Returns the first element matching a CSS selector.",
+      markdownDescription: "Returns the first element matching a CSS selector, or `null` when none does: the way to check for an element that may be absent before acting on it.",
     },
     querySelectorAll: {
       type: "string",
@@ -266,7 +289,7 @@ export class DomNode extends Node {
         { type: "string", description: "The ancestor selector to match." },
       ],
       output: { $ref: "#/$defs/_element" },
-      markdownDescription: "Walks up from an element to the nearest ancestor matching a selector. Pass `[element, selector]`.",
+      markdownDescription: "Walks up from an element to the nearest ancestor matching a selector. Pass `[element, selector]`. `null` when there is no such ancestor, or no element to start from.",
     },
     getBoundingClientRect: {
       $ref: "#/$defs/_elementRef",
@@ -279,7 +302,7 @@ export class DomNode extends Node {
           bottom: { type: "number" }, left: { type: "number" },
         },
       },
-      outputDescription: "A plain object of numbers, in CSS pixels relative to the viewport.",
+      outputDescription: "A plain object of numbers, in CSS pixels relative to the viewport, or `null` when no element matches.",
       markdownDescription: "Returns the element's size and viewport position via `Element.getBoundingClientRect()`, as a plain serializable object. Accepts a CSS selector or HTMLElement.",
       examples: [
         "{ \"$getBoundingClientRect\": \"#box\" }",
@@ -298,7 +321,7 @@ export class DomNode extends Node {
           offset: { type: "number", description: "The caret's character offset within `offsetNode`." },
         },
       },
-      outputDescription: "Where the caret lands, or null if the point misses the document or no supporting API exists.",
+      outputDescription: "Where the caret lands, or null if the point misses the document. A browser with neither API is an error.",
       markdownDescription: "Finds the caret position at a viewport point, returning `{ offsetNode, offset }`. Uses the standards-track `Document.caretPositionFromPoint` (Firefox, modern Chromium) and falls back to the WebKit/Blink `Document.caretRangeFromPoint` (Safari, older Chromium), so it works across browsers. Pass `[x, y]`.",
       examples: [
         "{ \"$caretFromPoint\": [120, 40] }",
@@ -307,7 +330,7 @@ export class DomNode extends Node {
     getValue: {
       $ref: "#/$defs/_elementRef",
       output: "string",
-      markdownDescription: "Gets the current `.value` of an input element.",
+      markdownDescription: "Gets the current `.value` of an input element: `\"\"` for an element without one, `null` when no element matches.",
     },
     setValue: {
       tuple: 2,
@@ -374,8 +397,9 @@ export class DomNode extends Node {
     },
     removeEl: {
       $ref: "#/$defs/_elementRef",
-      output: "null",
-      markdownDescription: "Removes an element from the DOM via `Element.remove()`. Accepts a CSS selector or HTMLElement. (Named `removeEl` because `remove` is ArrayNode's element-removal op.)",
+      output: "boolean",
+      markdownDescription: "Removes an element from the DOM via `Element.remove()`. Accepts a CSS selector or HTMLElement. A removal, so one that is not there is reported rather than an error. (Named `removeEl` because `remove` is ArrayNode's element-removal op.)",
+      outputDescription: "`true` if there was an element to remove, otherwise `false`.",
     },
     scrollTo: {
       $ref: "#/$defs/_elementRef",
@@ -436,21 +460,21 @@ export class DomNode extends Node {
 
   show(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$show, context, v => {
-      const el = getElement(v);
+      const el = getElement(v, "show");
       if (isHtmlOrSvg(el)) el.style.display = "";
       return el;
     });
   }
   hide(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$hide, context, v => {
-      const el = getElement(v);
+      const el = getElement(v, "hide");
       if (isHtmlOrSvg(el)) el.style.display = "none";
       return el;
     });
   }
   toggle(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$toggle, context, v => {
-      const el = getElement(v);
+      const el = getElement(v, "toggle");
       if (isHtmlOrSvg(el)) el.style.display = el.style.display === "none" ? "" : "none";
       return el;
     });
@@ -471,96 +495,83 @@ export class DomNode extends Node {
   }
   enable(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$enable, context, v => {
-      const el = getElement(v);
-      if (el && "disabled" in el) el.disabled = false;
+      const el = getElement(v, "enable");
+      if ("disabled" in el) el.disabled = false;
       return el;
     });
   }
   disable(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$disable, context, v => {
-      const el = getElement(v);
-      if (el && "disabled" in el) el.disabled = true;
+      const el = getElement(v, "disable");
+      if ("disabled" in el) el.disabled = true;
       return el;
     });
   }
   addClass(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$addClass, context, args => {
-      if (Array.isArray(args) && args.length >= 2) {
-        const el = getElement(args[0]);
-        if (el) el.classList.add(String(args[1]));
-        return el;
-      }
-      return null;
+      const [ref, name] = operands("addClass", args, 2);
+      const el = getElement(ref, "addClass");
+      el.classList.add(String(name));
+      return el;
     });
   }
   removeClass(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$removeClass, context, args => {
-      if (Array.isArray(args) && args.length >= 2) {
-        const el = getElement(args[0]);
-        if (el) el.classList.remove(String(args[1]));
-        return el;
-      }
-      return null;
+      const [ref, name] = operands("removeClass", args, 2);
+      const el = getElement(ref, "removeClass");
+      el.classList.remove(String(name));
+      return el;
     });
   }
   toggleClass(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$toggleClass, context, args => {
-      if (Array.isArray(args) && args.length >= 2) {
-        const el = getElement(args[0]);
-        if (el) el.classList.toggle(String(args[1]));
-        return el;
-      }
-      return null;
+      const [ref, name] = operands("toggleClass", args, 2);
+      const el = getElement(ref, "toggleClass");
+      el.classList.toggle(String(name));
+      return el;
     });
   }
   setAttr(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$setAttr, context, args => {
-      if (Array.isArray(args) && args.length >= 3) {
-        const el = getElement(args[0]);
-        if (el) el.setAttribute(String(args[1]), String(args[2]));
-        return el;
-      }
-      return null;
+      const [ref, name, value] = operands("setAttr", args, 3);
+      const el = getElement(ref, "setAttr");
+      el.setAttribute(String(name), String(value));
+      return el;
     });
   }
+  // The reads answer null for a missing element, as the lookups do; only acting
+  // on one is an error.
   getAttr(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$getAttr, context, args => {
-      if (Array.isArray(args) && args.length >= 2) {
-        const el = getElement(args[0]);
-        if (el) return el.getAttribute(String(args[1]));
-      }
-      return null;
+      const [ref, name] = operands("getAttr", args, 2);
+      return getElement(ref)?.getAttribute(String(name)) ?? null;
     });
   }
   getProp(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$getProp, context, args => {
-      if (Array.isArray(args) && args.length >= 2) {
-        const el = getElement(args[0]);
-        if (el) return getPropPath(el, String(args[1]));
-      }
-      return null;
+      const [ref, name] = operands("getProp", args, 2);
+      const el = getElement(ref);
+      return el ? getPropPath(el, String(name)) : null;
     });
   }
   setProp(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$setProp, context, args => {
-      if (Array.isArray(args) && args.length >= 3) {
-        const el = getElement(args[0]);
-        if (el) setPropPath(el, String(args[1]), args[2]);
-        return el;
-      }
-      return null;
+      const [ref, name, value] = operands("setProp", args, 3);
+      const el = getElement(ref, "setProp");
+      setPropPath(el, String(name), value);
+      return el;
     });
   }
   focus(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$focus, context, v => {
-      const el = getElement(v);
+      const el = getElement(v, "focus");
       if (isHtmlOrSvg(el)) el.focus();
       return el;
     });
   }
   blur(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$blur, context, v => {
-      const el = getElement(v);
+      const el = getElement(v, "blur");
       if (isHtmlOrSvg(el)) el.blur();
       return el;
     });
@@ -575,8 +586,8 @@ export class DomNode extends Node {
   }
   caretFromPoint(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$caretFromPoint, context, args => {
-      if (!Array.isArray(args) || args.length < 2) return null;
-      const x = Number(args[0]), y = Number(args[1]);
+      const [xRaw, yRaw] = operands("caretFromPoint", args, 2);
+      const x = Number(xRaw), y = Number(yRaw);
       // Standards-track path (Firefox, modern Chromium).
       if (typeof document.caretPositionFromPoint === "function") {
         const pos = document.caretPositionFromPoint(x, y);
@@ -585,127 +596,103 @@ export class DomNode extends Node {
       // WebKit/Blink fallback (Safari, older Chromium): a collapsed Range whose
       // start is the same node/offset a CaretPosition would report. Non-standard
       // and deprecated in the typed signature, so reach for it via Reflect.
-      const fn = Reflect.get(document, "caretRangeFromPoint");
-      if (typeof fn !== "function") return null;
-      const range = fn.call(document, x, y);
+      const range = callMethod("caretFromPoint", document, "caretRangeFromPoint", x, y);
       if (!range || typeof range !== "object") return null;
       return { offsetNode: Reflect.get(range, "startContainer"), offset: Reflect.get(range, "startOffset") };
     });
   }
   setRangeText(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$setRangeText, context, args => {
-      if (!Array.isArray(args) || args.length < 2) return null;
-      const el = getElement(args[0]);
-      if (!el) return null;
-      const fn = Reflect.get(el, "setRangeText");
-      if (typeof fn !== "function") return null;
-      const replacement = String(args[1] ?? "");
-      if (args.length >= 4) {
-        const mode = typeof args[4] === "string" ? args[4] : "preserve";
-        fn.call(el, replacement, Number(args[2]), Number(args[3]), mode);
+      const a = operands("setRangeText", args, 2);
+      const el = getElement(a[0], "setRangeText");
+      const replacement = String(a[1] ?? "");
+      if (a.length >= 4) {
+        const mode = typeof a[4] === "string" ? a[4] : "preserve";
+        callMethod("setRangeText", el, "setRangeText", replacement, Number(a[2]), Number(a[3]), mode);
       } else {
-        fn.call(el, replacement);
+        callMethod("setRangeText", el, "setRangeText", replacement);
       }
       return el;
     });
   }
   preventDefault(_def: Record<string, unknown>, context: Context): NodeValue {
-    const event = context.event;
-    if (event instanceof Event) event.preventDefault();
+    eventOf("preventDefault", context).preventDefault();
     return null;
   }
   stopPropagation(_def: Record<string, unknown>, context: Context): NodeValue {
-    const event = context.event;
-    if (event instanceof Event) event.stopPropagation();
+    eventOf("stopPropagation", context).stopPropagation();
     return null;
   }
   click(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$click, context, v => {
-      const el = getElement(v);
+      const el = getElement(v, "click");
       if (el instanceof HTMLElement) el.click();
       return el;
     });
   }
+  /** A removal, so an element that is not there is reported rather than an error. */
   removeEl(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$removeEl, context, v => {
       const el = getElement(v);
-      if (el) el.remove();
-      return null;
+      el?.remove();
+      return el !== null;
     });
   }
   select(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$select, context, v => {
-      const el = getElement(v);
-      if (!el) return null;
-      const fn = Reflect.get(el, "select");
-      if (typeof fn === "function") fn.call(el);
+      const el = getElement(v, "select");
+      callMethod("select", el, "select");
       return el;
     });
   }
   copy(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$copy, context, text => {
       const str = String(text ?? "");
-      const clip = navigator.clipboard;
-      if (!clip) return null;
-      return clip.writeText(str).then(() => str);
+      return clipboard("copy").writeText(str).then(() => str);
     });
   }
   getClipboard(_def: Record<string, unknown>, _context: Context): NodeValue {
-    const clip = navigator.clipboard;
-    if (!clip?.readText) return "";
-    // A denied permission is a normal outcome, not a failure worth throwing:
-    // the step sequence continues with an empty string.
-    return clip.readText().catch(() => "");
+    // A denied permission rejects, and reaches `$catch` like any failure.
+    return clipboard("getClipboard").readText();
   }
   showModal(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$showModal, context, v => {
-      const el = getElement(v);
-      if (!el) return null;
-      const fn = Reflect.get(el, "showModal");
-      if (typeof fn === "function") fn.call(el);
+      const el = getElement(v, "showModal");
+      callMethod("showModal", el, "showModal");
       return el;
     });
   }
   closeModal(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$closeModal, context, v => {
-      const el = getElement(v);
-      if (!el) return null;
-      const fn = Reflect.get(el, "close");
-      if (typeof fn === "function") fn.call(el);
+      const el = getElement(v, "closeModal");
+      callMethod("closeModal", el, "close");
       return el;
     });
   }
   play(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$play, context, v => {
-      const el = getElement(v);
-      if (!el) return null;
-      const fn = Reflect.get(el, "play");
-      if (typeof fn === "function") {
-        const r = fn.call(el);
-        if (r && typeof r.then === "function") r.catch(() => { /* autoplay policy may reject */ });
-      }
-      return el;
+      const el = getElement(v, "play");
+      // An autoplay policy refusing rejects, and reaches `$catch`.
+      const started = callMethod("play", el, "play");
+      return started instanceof Promise ? started.then(() => el) : el;
     });
   }
   pause(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$pause, context, v => {
-      const el = getElement(v);
-      if (!el) return null;
-      const fn = Reflect.get(el, "pause");
-      if (typeof fn === "function") fn.call(el);
+      const el = getElement(v, "pause");
+      callMethod("pause", el, "pause");
       return el;
     });
   }
   submit(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$submit, context, val => {
-      const target = context.target as HTMLElement | undefined;
-      if (val === "form" && target) {
-        const form = target.closest("form") as HTMLFormElement | null;
-        if (form) form.submit();
-      } else {
-        const form = getElement(val);
-        if (form && form instanceof HTMLFormElement) form.submit();
+      const form = val === "form"
+        ? (context.target instanceof Element ? context.target.closest("form") : null)
+        : getElement(val, "submit");
+      if (!(form instanceof HTMLFormElement)) {
+        throw new Error(val === "form" ? '$submit "form": the event\'s target is in no form' : `$submit: ${JSON.stringify(val)} is not a form`);
       }
+      form.submit();
       return null;
     });
   }
@@ -720,12 +707,15 @@ export class DomNode extends Node {
   }
   closest(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$closest, context, args => {
-      if (!Array.isArray(args) || args.length < 2) return null;
-      return getElement(args[0])?.closest(String(args[1])) ?? null;
+      const [ref, selector] = operands("closest", args, 2);
+      return getElement(ref)?.closest(String(selector)) ?? null;
     });
   }
   getValue(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$getValue, context, v => {
+      // A read: a missing element reads as null and one without a value as
+      // empty, as `getProp` reads a missing property as undefined. Writing one
+      // is an error (`setValue`).
       const el = getElement(v);
       if (!el) return null;
       return "value" in el ? el.value ?? "" : "";
@@ -733,63 +723,51 @@ export class DomNode extends Node {
   }
   setValue(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$setValue, context, args => {
-      if (Array.isArray(args) && args.length >= 2) {
-        const el = getElement(args[0]);
-        if (el && "value" in el) el.value = String(args[1] ?? "");
-        return el;
-      }
-      return null;
+      const [ref, value] = operands("setValue", args, 2);
+      const el = getElement(ref, "setValue");
+      if (!("value" in el)) throw new Error(`$setValue: ${JSON.stringify(ref)} has no value`);
+      el.value = String(value ?? "");
+      return el;
     });
   }
   setHtml(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$setHtml, context, args => {
-      if (Array.isArray(args) && args.length >= 2) {
-        const el = getElement(args[0]);
-        if (el) {
-          el.innerHTML = String(args[1] ?? "");
-          // Bind data-jexs-events on the inserted content against the current
-          // context (loaded templates carry their loading context this way).
-          hydrate(el, context);
-        }
-        return el;
-      }
-      return null;
+      const [ref, html] = operands("setHtml", args, 2);
+      const el = getElement(ref, "setHtml");
+      el.innerHTML = String(html ?? "");
+      // Bind data-jexs-events on the inserted content against the current
+      // context (loaded templates carry their loading context this way).
+      hydrate(el, context);
+      return el;
     });
   }
   setText(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$setText, context, args => {
-      if (Array.isArray(args) && args.length >= 2) {
-        const el = getElement(args[0]);
-        if (el) el.textContent = String(args[1] ?? "");
-        return el;
-      }
-      return null;
+      const [ref, text] = operands("setText", args, 2);
+      const el = getElement(ref, "setText");
+      el.textContent = String(text ?? "");
+      return el;
     });
   }
   append(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$append, context, args => {
-      if (Array.isArray(args) && args.length >= 2) {
-        const el = getElement(args[0]);
-        if (el) {
-          el.insertAdjacentHTML("beforeend", String(args[1] ?? ""));
-          el.scrollTop = el.scrollHeight;
-        }
-        return el;
-      }
-      return null;
+      const [ref, html] = operands("append", args, 2);
+      const el = getElement(ref, "append");
+      el.insertAdjacentHTML("beforeend", String(html ?? ""));
+      el.scrollTop = el.scrollHeight;
+      return el;
     });
   }
   scrollTo(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$scrollTo, context, v => {
-      const el = getElement(v);
-      if (el) el.scrollTop = el.scrollHeight;
+      const el = getElement(v, "scrollTo");
+      el.scrollTop = el.scrollHeight;
       return el;
     });
   }
   scrollIntoView(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll([def.$scrollIntoView, def.block ?? null, def.behavior ?? null], context, ([target, blockRaw, behaviorRaw]) => {
-      const el = getElement(target);
-      if (!el) return null;
+      const el = getElement(target, "scrollIntoView");
       const block = (typeof blockRaw === "string" ? blockRaw : "center") as ScrollLogicalPosition;
       const behavior = (typeof behaviorRaw === "string" ? behaviorRaw : "auto") as ScrollBehavior;
       el.scrollIntoView({ block, behavior });
@@ -798,8 +776,7 @@ export class DomNode extends Node {
   }
   pointerLock(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$pointerLock, context, v => {
-      const el = getElement(v);
-      if (!el) return null;
+      const el = getElement(v, "pointerLock");
       // Typed `Promise<void>` by lib.dom, but that is Pointer Lock 2.0 and not
       // yet universal: Chrome, Edge and Firefox return a promise that rejects
       // when the browser refuses, Safari returns undefined. So the promise is
@@ -836,13 +813,14 @@ function getPropPath(obj: object, path: string): unknown {
 
 // Write a property by name or dot-path. Walks EXISTING objects only — never
 // creates intermediates (unlike setVars), since DOM sub-objects like `style`
-// already exist; a broken path is a no-op.
+// already exist; a broken path is an error naming where it breaks.
 function setPropPath(obj: object, path: string, value: unknown): void {
   const keys = path.split(".");
-  let cur: unknown = obj;
+  let cur: object = obj;
   for (let i = 0; i < keys.length - 1; i++) {
-    if (!isTraversable(cur)) return;
-    cur = Reflect.get(cur, keys[i]);
+    const next: unknown = Reflect.get(cur, keys[i]);
+    if (!isTraversable(next)) throw new Error(`$setProp: "${keys.slice(0, i + 1).join(".")}" is not an object to set "${keys.slice(i + 1).join(".")}" on`);
+    cur = next;
   }
-  if (isTraversable(cur)) Reflect.set(cur, keys[keys.length - 1], value);
+  Reflect.set(cur, keys[keys.length - 1], value);
 }

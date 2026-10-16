@@ -44,15 +44,17 @@ test("unsubscribe drops the subscription whose endpoint matches", async () => {
 
 // What these return today; each is a candidate to throw instead (see the v2
 // plan), so these pin the behaviour that changes.
-test("without support, permission, a key or a matching subscription, the ops return null or false", async () => {
-  assert.equal(await run({ "$push-subscribe": "BAAA" }), null, "no service worker");
+// Subscribing without support, a key or permission is an error; unsubscribing
+// is a removal, so having nothing to unsubscribe is reported as false.
+test("subscribing without support, permission or a key is an error; unsubscribing nothing is false", async () => {
+  await assert.rejects(async () => run({ "$push-subscribe": "BAAA" }), /this browser has no Web Push/);
   assert.equal(await run({ "$push-unsubscribe": json }), false, "no service worker");
 
   supportPush("denied");
-  assert.equal(await run({ "$push-subscribe": "BAAA" }), null, "permission denied");
+  await assert.rejects(async () => run({ "$push-subscribe": "BAAA" }), /notification permission is denied/);
 
   supportPush("granted");
-  assert.equal(await run({ "$push-subscribe": "" }), null, "empty key");
+  await assert.rejects(async () => run({ "$push-subscribe": "" }), /needs the server's VAPID public key/);
   assert.equal(await run({ "$push-unsubscribe": json }), false, "no subscription");
 
   supportPush("granted", { endpoint: "https://push.example/other" });

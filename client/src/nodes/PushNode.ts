@@ -22,7 +22,7 @@ export class PushNode extends Node {
     "push-subscribe": {
       type: "string",
       output: { $ref: "#/$defs/_pushSubscription" },
-      markdownDescription: "Requests notification permission and subscribes to Web Push using the given VAPID public key.\nReturns the `PushSubscription` JSON, which you send to your server to enable push delivery.\nRequires a registered service worker with `PushManager` support.",
+      markdownDescription: "Requests notification permission and subscribes to Web Push using the given VAPID public key.\nReturns the `PushSubscription` JSON, which you send to your server to enable push delivery.\nRequires a registered service worker with `PushManager` support. A browser without it, a missing key, or a permission not granted is an error.",
       examples: [
         "{ \"$push-subscribe\": { \"$var\": \"vapidPublicKey\" } }",
       ],
@@ -37,12 +37,14 @@ export class PushNode extends Node {
   };
 
   ["push-subscribe"](def: Record<string, unknown>, context: Context): NodeValue {
-    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return null;
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+      throw new Error("$push-subscribe: this browser has no Web Push (it needs a service worker and PushManager)");
+    }
     return resolve(def["$push-subscribe"], context, async vapidKeyRaw => {
-      const permission = await Notification.requestPermission();
-      if (permission !== "granted") return null;
       const vapidKey = String(vapidKeyRaw ?? "");
-      if (!vapidKey) return null;
+      if (!vapidKey) throw new Error("$push-subscribe needs the server's VAPID public key");
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") throw new Error(`$push-subscribe: notification permission is ${permission}`);
       const registration = await navigator.serviceWorker.ready;
       const subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,

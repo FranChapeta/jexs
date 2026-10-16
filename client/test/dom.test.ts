@@ -81,7 +81,7 @@ test("finding elements", async () => {
   assert.equal((await run({ $querySelectorAll: ".item" }) as unknown[]).length, 2);
   assert.equal(await run({ $getElementById: "name" }), $("#name"));
   assert.equal(await run({ $closest: [$(".item"), "#box"] }), $("#box"));
-  assert.equal(await run({ $removeEl: ".item" }), null);
+  assert.equal(await run({ $removeEl: ".item" }), true);
   assert.equal(document.querySelectorAll(".item").length, 1);
 });
 
@@ -106,15 +106,20 @@ test("submit \"form\" submits the event target's form", async (t) => {
   assert.equal(submit.mock.callCount(), 1);
 });
 
-// What these return today when there is nothing to act on. Each is a candidate
-// to throw instead (see the v2 plan), so these pin the behaviour that changes.
-test("a missing element or a short tuple returns null, and a missing clipboard is quiet", async () => {
-  assert.equal(await run({ $hide: "#missing" }), null);
-  assert.equal(await run({ $addClass: ["#box"] }), null);
-  assert.equal(await run({ $getAttr: ["#missing", "id"] }), null);
-  assert.equal(await run({ $setValue: "#name" }), null);
-  assert.equal(await run({ $getValue: "#missing" }), null);
-  assert.equal(await run({ $caretFromPoint: [1] }), null);
-  assert.equal(await run({ $copy: "text" }), null);
-  assert.equal(await run({ $getClipboard: true }), "");
+// Acting on nothing is an error that reaches $catch; reading from nothing answers
+// null, as the lookups do; removing nothing is reported.
+test("acting on a missing element, a short tuple, a missing method or clipboard is an error", async () => {
+  await assert.rejects(async () => run({ $hide: "#missing" }), /\$hide: no element matches "#missing"/);
+  await assert.rejects(async () => run({ $addClass: ["#box"] }), /\$addClass takes 2 operands, got 1/);
+  for (const read of [{ $getAttr: ["#missing", "id"] }, { $getProp: ["#missing", "id"] }, { $getValue: "#missing" },
+    { $getBoundingClientRect: "#missing" }, { $closest: ["#missing", "div"] }, { $querySelector: "#missing" }]) {
+    assert.equal(await run(read), null, JSON.stringify(read));
+  }
+  await assert.rejects(async () => run({ $setValue: ["#box", "x"] }), /\$setValue: "#box" has no value/);
+  await assert.rejects(async () => run({ $caretFromPoint: [1] }), /\$caretFromPoint takes 2 operands, got 1/);
+  await assert.rejects(async () => run({ $showModal: "#box" }), /\$showModal: <div> has no showModal\(\)/);
+  await assert.rejects(async () => run({ $setProp: ["#box", "nope.deeper", 1] }), /\$setProp: "nope" is not an object to set "deeper" on/);
+  await assert.rejects(async () => run({ $preventDefault: true }), /\$preventDefault runs in an event handler/);
+  await assert.rejects(async () => run({ $copy: "text" }), /\$copy: no clipboard here/);
+  assert.equal(await run({ $removeEl: "#missing" }), false);
 });

@@ -200,8 +200,8 @@ test("audio-unload: forgets the sounds, the buffer and the level", async () => {
   await resolve({ "$audio-unload": "shoot" }, {});
   assert.equal(FakeSource.playing().length, 0);
 
-  // The buffer is gone, so playing again does nothing at all.
-  await resolve({ "$audio-play": "shoot" }, {});
+  // The buffer is gone, so playing again is an error and plays nothing.
+  await assert.rejects(async () => resolve({ "$audio-play": "shoot" }, {}), /no sound "shoot" is loaded/);
   assert.equal(FakeSource.playing().length, 0);
 
   // And the level went with it: a reload starts at full, not at 0.4.

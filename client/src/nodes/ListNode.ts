@@ -4,6 +4,20 @@ import type { JexsNodeSchema } from "@jexs/core";
 import { hydrate } from "../events.js";
 import { getElement } from "../dom.js";
 
+/** The `<template>` an op clones its rows from. */
+function templateOf(op: string, ref: unknown): HTMLTemplateElement {
+  const el = getElement(ref, op);
+  if (!(el instanceof HTMLTemplateElement)) throw new Error(`$${op}: ${JSON.stringify(ref)} is not a <template>`);
+  return el;
+}
+
+/** The `[data-list-item]` a move acts on, around its target. */
+function itemOf(op: string, ref: unknown): HTMLElement {
+  const item = getElement(ref, op).closest("[data-list-item]");
+  if (!(item instanceof HTMLElement)) throw new Error(`$${op}: ${JSON.stringify(ref)} is in no [data-list-item]`);
+  return item;
+}
+
 /**
  * ListNode — Client-side list management.
  *
@@ -33,22 +47,26 @@ export class ListNode extends Node {
     },
     "list-remove": {
       type: "string",
-      output: "null",
-      markdownDescription: "Removes the closest `[data-list-item]` ancestor of the target element or selector.",
+      output: "boolean",
+      markdownDescription: "Removes the closest `[data-list-item]` ancestor of the target element or selector. A removal, so one that is not there is reported rather than an error.",
+      outputDescription: "`true` if there was an item to remove, otherwise `false`.",
     },
     "list-move-up": {
       type: "string",
-      output: "null",
-      markdownDescription: "Moves the closest `[data-list-item]` ancestor one position up by swapping with its previous sibling.",
+      output: "boolean",
+      markdownDescription: "Moves the closest `[data-list-item]` ancestor one position up by swapping with its previous sibling. A target in no item is an error.",
+      outputDescription: "`true` if it moved, `false` when it was already first.",
     },
     "list-move-down": {
       type: "string",
-      output: "null",
-      markdownDescription: "Moves the closest `[data-list-item]` ancestor one position down by swapping with its next sibling.",
+      output: "boolean",
+      markdownDescription: "Moves the closest `[data-list-item]` ancestor one position down by swapping with its next sibling. A target in no item is an error.",
+      outputDescription: "`true` if it moved, `false` when it was already last.",
     },
     "list-init": {
       type: "string",
-      output: "null",
+      output: "array",
+      outputDescription: "The items it added.",
       markdownDescription: "Pre-populates a list from JSON stored in a hidden input. Reads `list` (selector), `template`,\n`from` (hidden input selector), and `fields` (array of `data-field` names to fill per row).",
       examples: [
         "{ \"$list-init\": \"#items\", \"template\": \"#item-tpl\", \"from\": \"#hidden-input\", \"fields\": [\"value\", \"label\"] }",
@@ -83,7 +101,8 @@ export class ListNode extends Node {
     },
     "list-serialize": {
       type: "string",
-      output: "null",
+      output: "array",
+      outputDescription: "The items it wrote.",
       markdownDescription: "Serializes all `[data-list-item]` rows into a JSON array and writes it to a hidden input.\nPass `list-serialize` (selector), `to` (hidden input selector), and `fields` (data-field names to collect).",
       examples: [
         "{ \"$list-serialize\": \"#items\", \"to\": \"#hidden-input\", \"fields\": [\"value\", \"label\"] }",
@@ -107,66 +126,45 @@ export class ListNode extends Node {
 
   ["list-add"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveFields(def, context, r => {
-      const list = document.querySelector(String(r["$list-add"]));
-      const tmpl = document.querySelector(String(r.template)) as HTMLTemplateElement;
-      if (list && tmpl && tmpl.content) {
-        const clone = tmpl.content.cloneNode(true) as DocumentFragment;
-        const firstEl = clone.firstElementChild as HTMLElement;
-        list.appendChild(clone);
-        if (firstEl) hydrate(firstEl, context);
-        return firstEl;
-      }
-      return null;
+      const list = getElement(r["$list-add"], "list-add");
+      const clone = templateOf("list-add", r.template).content.cloneNode(true) as DocumentFragment;
+      const firstEl = clone.firstElementChild as HTMLElement;
+      list.appendChild(clone);
+      if (firstEl) hydrate(firstEl, context);
+      return firstEl;
     });
   }
+  /** A removal, so a target or item that is not there is reported rather than an error. */
   ["list-remove"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["$list-remove"], context, ref => {
-      const el = getElement(ref);
-      if (el) {
-        const item = el.closest("[data-list-item]");
-        if (item) item.remove();
-        return true;
-      }
-      return false;
+      const item = getElement(ref)?.closest("[data-list-item]");
+      item?.remove();
+      return item != null;
     });
   }
   ["list-move-up"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["$list-move-up"], context, ref => {
-      const el = getElement(ref);
-      if (el) {
-        const item = el.closest("[data-list-item]") as HTMLElement;
-        if (item && item.previousElementSibling) {
-          item.parentElement!.insertBefore(item, item.previousElementSibling);
-          return true;
-        }
-      }
-      return false;
+      const item = itemOf("list-move-up", ref);
+      if (!item.previousElementSibling) return false;
+      item.parentElement!.insertBefore(item, item.previousElementSibling);
+      return true;
     });
   }
   ["list-move-down"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["$list-move-down"], context, ref => {
-      const el = getElement(ref);
-      if (el) {
-        const item = el.closest("[data-list-item]") as HTMLElement;
-        if (item && item.nextElementSibling) {
-          item.parentElement!.insertBefore(item.nextElementSibling, item);
-          return true;
-        }
-      }
-      return false;
+      const item = itemOf("list-move-down", ref);
+      if (!item.nextElementSibling) return false;
+      item.parentElement!.insertBefore(item.nextElementSibling, item);
+      return true;
     });
   }
   ["list-init"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveFields(def, context, r => {
-      const listSel = String(r["$list-init"]);
-      const tmplSel = String(r.template);
-      const fromSel = String(r.from);
       const fields = (r.fields as string[]) || [];
-
-      const list = document.querySelector(listSel);
-      const tmpl = document.querySelector(tmplSel) as HTMLTemplateElement;
-      const source = document.querySelector(fromSel) as HTMLInputElement;
-      if (!list || !tmpl || !source) return null;
+      const list = getElement(r["$list-init"], "list-init");
+      const tmpl = templateOf("list-init", r.template);
+      const source = getElement(r.from, "list-init");
+      if (!(source instanceof HTMLInputElement)) throw new Error(`$list-init: "from" ${JSON.stringify(r.from)} is not an input`);
 
       const raw = source.value.trim();
       if (!raw) return [];
@@ -206,8 +204,8 @@ export class ListNode extends Node {
   }
   ["list-sortable"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["$list-sortable"], context, listSelRaw => {
-      const list = document.querySelector(String(listSelRaw)) as HTMLElement;
-      if (!list) return null;
+      const list = getElement(listSelRaw, "list-sortable");
+      if (!(list instanceof HTMLElement)) throw new Error(`$list-sortable: ${JSON.stringify(listSelRaw)} is not an HTML element`);
 
       let dragItem: HTMLElement | null = null;
 
@@ -257,13 +255,10 @@ export class ListNode extends Node {
   }
   ["list-serialize"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveFields(def, context, r => {
-      const listSel = String(r["$list-serialize"]);
-      const hiddenSel = String(r.to);
       const fields = (r.fields as string[]) || [];
-
-      const list = document.querySelector(listSel);
-      const hidden = document.querySelector(hiddenSel) as HTMLInputElement;
-      if (!list || !hidden) return null;
+      const list = getElement(r["$list-serialize"], "list-serialize");
+      const hidden = getElement(r.to, "list-serialize");
+      if (!(hidden instanceof HTMLInputElement)) throw new Error(`$list-serialize: "to" ${JSON.stringify(r.to)} is not an input`);
 
       const items: Record<string, string>[] = [];
       list.querySelectorAll("[data-list-item]").forEach((row) => {

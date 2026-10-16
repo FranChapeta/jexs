@@ -40,7 +40,7 @@ test("keys lists the store, has finds an entry, and delete and clear empty it", 
   assert.equal(await run({ "$storage-delete": "a" }), false, "nothing left to delete");
   assert.equal(await run({ "$storage-has": "a" }), false);
   assert.deepEqual(await run({ $storage: "keys" }), ["b"]);
-  assert.equal(await run({ $storage: "clear" }), true);
+  assert.equal(await run({ $storage: "clear" }), null);
   assert.deepEqual(await run({ $storage: "keys" }), []);
 });
 
@@ -48,8 +48,6 @@ test("set needs a value", () => {
   assert.throws(() => run({ "$storage-set": "only-key" }), /storage-set needs a `value`/);
 });
 
-// What this returns today; it is a candidate to throw instead (see the v2
-// plan), so this pins the behaviour that changes.
-test("an unknown bulk op returns null", async () => {
-  assert.equal(await run({ $storage: "nope" }), null);
+test("an unknown bulk op is an error", () => {
+  assert.throws(() => run({ $storage: "nope" }), /\$storage: unknown operation "nope"/);
 });
