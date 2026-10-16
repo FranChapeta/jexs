@@ -115,8 +115,8 @@ function rank(name: string): number {
 /**
  * Discover and instantiate every node package that applies to the given runtime
  * `env` (`"node"` or `"browser"`). Imports each package's `nodes` entry, taking
- * `mod.default ?? mod.nodes` (a `Node[]` or a `(opts) => Node[]` factory invoked
- * with `{ root }`). One broken/host-incompatible package warns and is skipped.
+ * its default export (a `Node[]` or a `(opts) => Node[]` factory invoked with
+ * `{ root }`). One broken/host-incompatible package warns and is skipped.
  */
 export async function loadNodePackages(
   projectDir: string,
@@ -129,8 +129,10 @@ export async function loadNodePackages(
     try {
       const modPath = path.join(pkg.dir, pkg.manifest.nodes!);
       const mod = (await import(pathToFileURL(modPath).href)) as Record<string, unknown>;
-      const contribution = mod.default ?? mod.nodes;
-      if (!contribution) continue;
+      const contribution = mod.default;
+      if (contribution === undefined) {
+        throw new Error(`${pkg.manifest.nodes} has no default export: export the node factory, or the array of nodes, as default`);
+      }
       const nodes =
         typeof contribution === "function"
           ? await (contribution as (o: { root: string }) => Node[] | Promise<Node[]>)({ root })

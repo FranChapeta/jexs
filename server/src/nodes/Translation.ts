@@ -1,6 +1,6 @@
 import { Node, Context, NodeValue, TRANSLATE, isObject, resolveFields, type Translator } from "@jexs/core";
 import { DatabaseNode } from "./Database.js";
-import { cacheFor, optionalName } from "./Cache.js";
+import { CacheNode, optionalName } from "./Cache.js";
 import { sha256 } from "./Crypto.js";
 import type { JexsNodeSchema } from "@jexs/core";
 
@@ -87,7 +87,7 @@ async function translateText(text: string, config: TranslationConfig, context: C
   const hash = sha256(text);
   const cacheKey = `t:${to}:${hash}`;
 
-  const cache = cacheFor(context, config.cache);
+  const cache = CacheNode.cacheFor(context, config.cache);
   const cached = await cache.get(cacheKey);
   if (cached !== undefined && cached !== null) return String(cached);
 

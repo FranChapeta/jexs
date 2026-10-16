@@ -644,7 +644,7 @@ export class ServerNode extends Node {
    * instance field rather than a method, so `handlerKeys` (which reads the
    * prototype) never sees it as an op.
    */
-  readonly listeners: Listener[] = [];
+  private readonly listeners: Listener[] = [];
 
   /**
    * Release what this resolver holds: the ports it bound, the sockets its

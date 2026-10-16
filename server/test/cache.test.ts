@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createResolver, coreNodes } from "@jexs/core";
 import { COOKIES } from "../src/context.js";
-import { CacheNode, cacheFor } from "../src/nodes/Cache.js";
+import { CacheNode } from "../src/nodes/Cache.js";
 import { SessionNode } from "../src/nodes/Session.js";
 import { TranslationNode } from "../src/nodes/Translation.js";
 import { sha256 } from "../src/nodes/Crypto.js";
@@ -25,7 +25,7 @@ test("two resolvers keep separate caches", async () => {
 
     await b.resolver({ $cache: "clear" }, {});
     assert.equal(await a.resolver({ "$cache-get": "greeting" }, {}), "hi");
-    assert.notEqual(cacheFor(a.context), cacheFor(b.context));
+    assert.notEqual(CacheNode.cacheFor(a.context), CacheNode.cacheFor(b.context));
   } finally {
     a.resolver.destroy();
     b.resolver.destroy();

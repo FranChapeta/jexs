@@ -11,7 +11,7 @@ import { CacheNode } from "./nodes/Cache.js";
 import { TailwindNode } from "./nodes/Tailwind.js";
 import { OAuthNode } from "./nodes/OAuth.js";
 import { EmailNode } from "./nodes/Email.js";
-import { WebPushNode } from "./nodes/PushNode.js";
+import { WebPushNode } from "./nodes/WebPush.js";
 import { ServerNode } from "./nodes/Server.js";
 import { SchemaNode } from "./nodes/Schema.js";
 import { TranslationNode } from "./nodes/Translation.js";
@@ -65,10 +65,9 @@ export function serverNodes({ root = "src" }: ServerNodesOptions = {}): Node[] {
   ];
 }
 
-/** Discovery alias: the `"jexs".nodes` manifest entry points at this module, and
- *  node discovery consumes `mod.default ?? mod.nodes` — invoking it with `{ root }`
- *  since it's a factory. Same as {@link serverNodes}. */
-export const nodes = serverNodes;
+/** For node discovery: the `"jexs".nodes` manifest entry points at this module,
+ *  and discovery invokes its default export with `{ root }`, since it's a factory. */
+export default serverNodes;
 
 export { makePhysicsWorker } from "./physicsWorker.js";
 export { DatabaseNode } from "./nodes/Database.js";
@@ -83,16 +82,16 @@ export { FileNode } from "./nodes/File.js";
 export { RouterNode } from "./nodes/Router.js";
 export { OAuthNode } from "./nodes/OAuth.js";
 export { EmailNode } from "./nodes/Email.js";
-export { WebPushNode } from "./nodes/PushNode.js";
+export { WebPushNode } from "./nodes/WebPush.js";
 export { ServerNode } from "./nodes/Server.js";
 export { TailwindNode } from "./nodes/Tailwind.js";
 export { DeferNode } from "./nodes/Defer.js";
 export { CacheNode } from "./nodes/Cache.js";
 export { StdioNode } from "./nodes/Stdio.js";
 
-// ── Discovery + schema tooling (shared by the CLI, the electron runner, and any
-//    host that builds its own resolver from installed packages) ──
-export { walkJexsPackages, loadNodePackages, enumerateNodeClasses, type DiscoveredPackage } from "./discover.js";
-export { buildProjectSchema, collectPackageSchemas } from "./schema-build.js";
+// What a host running an entry needs beside the nodes: FileNode's entry context
+// and path check, and the nodes of every installed Jexs package, which the CLI
+// and the electron runner build their resolvers from. Package discovery's other
+// parts and the schema build are the CLI's own.
 export { entryContext, safeRelative } from "./nodes/File.js";
-export { manifestOf, contributesNodes, type JexsManifest, type JexsEnv } from "./manifest.js";
+export { loadNodePackages } from "./discover.js";

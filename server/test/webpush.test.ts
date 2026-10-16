@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import webpush from "web-push";
 import { createResolver, coreNodes } from "@jexs/core";
-import { WebPushNode } from "../src/nodes/PushNode.js";
+import { WebPushNode } from "../src/nodes/WebPush.js";
 
 const resolver = createResolver([...coreNodes(), new WebPushNode()]);
 

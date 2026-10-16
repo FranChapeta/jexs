@@ -30,4 +30,5 @@ export function electronNodes(_opts: { root: string } = { root: "." }): Node[] {
   ];
 }
 
-export const nodes = electronNodes;
+/** For node discovery, which invokes the default export with `{ root }`. */
+export default electronNodes;

@@ -242,7 +242,7 @@ const resolve = createResolver([...coreNodes(), new DatabaseNode()], { context: 
 const connect = async (step: Record<string, unknown>): Promise<Record<string, unknown>> =>
   await Promise.resolve(resolve(step, {})) as Record<string, unknown>;
 
-after(async () => { await DatabaseNode.closeAll(dbCtx); });
+after(() => resolve.destroy());
 
 test("url and the discrete endpoint properties are alternatives, not layers", async () => {
   await assert.rejects(

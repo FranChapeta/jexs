@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { CSRF_TOKEN, createResolver, coreNodes, type Context } from "@jexs/core";
 import { COOKIES } from "../src/context.js";
-import { CacheNode, cacheFor } from "../src/nodes/Cache.js";
+import { CacheNode } from "../src/nodes/Cache.js";
 import { SessionNode } from "../src/nodes/Session.js";
 import { ServerNode } from "../src/nodes/Server.js";
 
@@ -33,7 +33,7 @@ async function started(): Promise<{ resolver: Resolver; context: Context; sid: s
 }
 
 const stored = async (context: Context, sid: string) =>
-  (await cacheFor(context).get<{ data: Record<string, unknown> }>(`session:${sid}`))?.data;
+  (await CacheNode.cacheFor(context).get<{ data: Record<string, unknown> }>(`session:${sid}`))?.data;
 
 test("a POST with the session cookie and no token is refused by every session op", async () => {
   const { resolver, context, sid } = await started();
@@ -128,7 +128,7 @@ test("a POST without a session cookie is not checked", async () => {
 test("a request that loaded its session writes to it without reading the cache again", async t => {
   const { resolver, context, sid, token } = await started();
   try {
-    const get = t.mock.method(cacheFor(context), "get");
+    const get = t.mock.method(CacheNode.cacheFor(context), "get");
     const ctx = request("POST", { sid }, { body: { _csrf: token } });
     await resolver([{ $session: "load" }, { $session: { a: 1 } }, { $session: { b: 2 } }], ctx);
     assert.equal(get.mock.callCount(), 1);

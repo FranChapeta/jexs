@@ -2,7 +2,7 @@ import { randomUUID, randomBytes } from "crypto";
 import { CSRF_TOKEN, Node, Context, NodeValue, resolveAll, createHttpError, isObject } from "@jexs/core";
 import { COOKIES } from "../context.js";
 import { isProduction } from "../env.js";
-import { cacheFor, optionalName } from "./Cache.js";
+import { CacheNode, optionalName } from "./Cache.js";
 import { tokensEqual } from "./Crypto.js";
 import type { CacheAdapter } from "../cache/CacheAdapter.js";
 import type { JexsNodeSchema } from "@jexs/core";
@@ -106,7 +106,7 @@ export async function setSessionValue(context: Context, key: string, value: unkn
 function sessionCache(context: Context, name?: string): CacheAdapter {
   const request = context.request;
   if (name !== undefined && request) chosenCache.set(request, name);
-  return cacheFor(context, name ?? (request ? chosenCache.get(request) : undefined));
+  return CacheNode.cacheFor(context, name ?? (request ? chosenCache.get(request) : undefined));
 }
 
 function newToken(): string {

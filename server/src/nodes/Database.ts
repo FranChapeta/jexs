@@ -258,41 +258,14 @@ export class DatabaseNode extends Node {
     });
   }
 
-  // ============================================
-  // Static Connection Management
-  // ============================================
-
-  // These take a context because their callers are OTHER nodes (DatabaseQueryNode,
-  // DatabaseTableNode, TranslationNode) that hold one but no handle on this node. Everything inside
-  // this module already has the node and calls the helpers below directly.
-
-  /** The connection a step names in `name` (its resolved `connection`), or with
+  /** For the other nodes that query a connection (DatabaseQueryNode,
+   *  DatabaseTableNode, TranslationNode), which hold a context but no handle on
+   *  this node; a static, since every method on a Node registers as an op.
+   *  The connection a step names in `name` (its resolved `connection`), or with
    *  none whichever opened first. Inside a `transaction` step on that
    *  connection, the transaction. */
   static getKnex(context: Context, name?: unknown): KnexType {
     return knexIn(databaseFor(context), context, name);
-  }
-
-  /** Type, target and TLS state. Carries no credentials — none are kept. */
-  static getInfo(context: Context, name?: string): ConnectionInfo | null {
-    return infoOf(databaseFor(context), name);
-  }
-
-  static async closeConnection(context: Context, name: string): Promise<void> {
-    await closeConnection(databaseFor(context), name);
-  }
-
-  static async closeAll(context: Context): Promise<void> {
-    const self = databaseFor(context);
-    for (const conn of self.connections.values()) {
-      await conn.knex.destroy();
-    }
-    self.connections.clear();
-    self.defaultConnectionName = null;
-  }
-
-  static getDefaultConnection(context: Context): string | null {
-    return databaseFor(context).defaultConnectionName;
   }
 }
 
