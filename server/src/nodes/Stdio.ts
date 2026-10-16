@@ -101,14 +101,9 @@ export class StdioNode extends Node {
 
   ["stdio-listen"](def: Record<string, unknown>, context: Context): NodeValue {
     const log = loggerFor(context);
-    if (def["on-message"] === undefined) {
-      log.error('[StdioNode] "on-message" needs steps');
-      return null;
-    }
-
+    if (def["on-message"] === undefined) throw new Error('$stdio-listen needs "on-message" steps');
     if (stdinAttached || reader) {
-      log.error("[StdioNode] stdin is already in use; ignoring stdio-listen");
-      return null;
+      throw new Error("$stdio-listen: stdin is already read by an earlier stdio-listen or stdio-prompt");
     }
     stdinAttached = true;
 
@@ -156,10 +151,7 @@ export class StdioNode extends Node {
   }
 
   ["stdio-prompt"](def: Record<string, unknown>, context: Context): NodeValue {
-    if (stdinAttached) {
-      loggerFor(context).error("[StdioNode] stdin is owned by stdio-listen; stdio-prompt cannot read it");
-      return null;
-    }
+    if (stdinAttached) throw new Error("$stdio-prompt: stdin is read by stdio-listen, so it cannot prompt");
     return resolve(def["$stdio-prompt"], context, text => getReader().ask(String(text)));
   }
 

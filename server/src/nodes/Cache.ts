@@ -4,6 +4,7 @@ import { MemoryCache } from "../cache/MemoryCache.js";
 import { RedisCache } from "../cache/RedisCache.js";
 import { MemcachedCache } from "../cache/MemcachedCache.js";
 import { parseTls, TLS_STRINGS } from "../connection.js";
+import { isProduction } from "../env.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "@jexs/core";
 
 /** One of the resolver's caches, which its sessions and translations use too.
@@ -37,8 +38,10 @@ export class CacheNode extends Node {
   private defaultName: string | null = null;
 
   /**
-   * The cache under `name`, or the default without one. The default is an
-   * in-memory cache until `$cache-connect` opens another; a named cache must have
+   * The cache under `name`, or the default without one. In development the
+   * default is an in-memory cache until `$cache-connect` opens another; in
+   * production it must be connected, since sessions kept in one process's memory
+   * are lost on restart and not shared between instances. A named cache must have
    * been connected. Static, since every method on a Node registers as an op.
    */
   static adapterOf(node: CacheNode, context: Context, name?: string): CacheAdapter {
@@ -47,6 +50,9 @@ export class CacheNode extends Node {
     if (adapter) return adapter;
     if (name !== undefined) {
       throw new Error(`Cache "${name}" is not connected. Open it with { "$cache-connect": "memory", "connection": "${name}" }`);
+    }
+    if (isProduction()) {
+      throw new Error('No cache is connected. In production, connect one, e.g. { "$cache-connect": "redis", "url": ... }, or { "$cache-connect": "memory" } to keep it in this process on purpose');
     }
     loggerFor(context).warn("[Cache] Not connected, using memory cache");
     const fallback = new MemoryCache();

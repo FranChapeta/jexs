@@ -306,22 +306,22 @@ export class DatabaseTableNode extends Node {
         case "rename":
           return resolveAll([def.table, def.to, def.connection ?? null, def.system ?? null], context, async ([table, to, name, system]) => {
             await authorize(context, system, "rename", String(table), { changes: { to } });
-            await knexOf(context, name).schema.renameTable(String(table), String(to));
+            await DatabaseNode.getKnex(context, name).schema.renameTable(String(table), String(to));
             loggerFor(context).info(`[DatabaseTable] Renamed table ${String(table)} to ${String(to)}`);
             return String(to);
           });
         case "drop":
           return resolveAll([def.table, def.connection ?? null, def.system ?? null], context, async ([table, name, system]) => {
             await authorize(context, system, "drop", String(table));
-            await knexOf(context, name).schema.dropTableIfExists(String(table));
+            await DatabaseNode.getKnex(context, name).schema.dropTableIfExists(String(table));
             loggerFor(context).info(`[DatabaseTable] Dropped table: ${String(table)}`);
             return null;
           });
         case "exists":
           return resolveAll([def.table, def.connection ?? null], context, ([table, name]) =>
-            knexOf(context, name).schema.hasTable(String(table)));
+            DatabaseNode.getKnex(context, name).schema.hasTable(String(table)));
         case "list":
-          return resolve(def.connection ?? null, context, name => listTables(knexOf(context, name)));
+          return resolve(def.connection ?? null, context, name => listTables(DatabaseNode.getKnex(context, name)));
         default:
           throw new Error(`$table: unknown operation ${JSON.stringify(op)}`);
       }
@@ -334,11 +334,6 @@ export class DatabaseTableNode extends Node {
     const doc = requireSchemaNode(context).documents.get(tableId(tableName));
     return isTableDocument(doc) ? doc as TableJsonSchema : undefined;
   }
-}
-
-/** The connection a `$table` op works on: the one it names, else the default. */
-function knexOf(context: Context, name: unknown): KnexType {
-  return DatabaseNode.getKnex(context, name == null ? undefined : String(name));
 }
 
 /**
@@ -409,7 +404,7 @@ async function createTable(knex: KnexType, schema: TableJsonSchema): Promise<voi
 /** `create`: create a table from its document. One that exists is an error. */
 async function doCreate(def: Record<string, unknown>, context: Context): Promise<string> {
   const [schema] = await documentsOf(def, context, "create");
-  const knex = knexOf(context, await resolve(def.connection ?? null, context));
+  const knex = DatabaseNode.getKnex(context, await resolve(def.connection ?? null, context));
   if (await knex.schema.hasTable(schema.table)) {
     throw new Error(`$table create: table "${schema.table}" already exists; \`sync\` adds what it lacks`);
   }
@@ -425,7 +420,7 @@ async function doCreate(def: Record<string, unknown>, context: Context): Promise
  */
 async function doSync(def: Record<string, unknown>, context: Context): Promise<string[]> {
   const schemas = await documentsOf(def, context, "sync");
-  const knex = knexOf(context, await resolve(def.connection ?? null, context));
+  const knex = DatabaseNode.getKnex(context, await resolve(def.connection ?? null, context));
   const created: string[] = [];
   for (const schema of schemas) {
     const tableName = schema.table;
@@ -521,7 +516,7 @@ function doAlter(def: Record<string, unknown>, context: Context): unknown {
       add?: Record<string, ColumnSchema>; rename?: Record<string, unknown>; change?: Record<string, ColumnSchema>;
       drop?: string[]; addIndexes?: Record<string, IndexDef>; dropIndexes?: string[];
     };
-    const knex = knexOf(context, r.connection);
+    const knex = DatabaseNode.getKnex(context, r.connection);
     checkColumns(tableName, Object.keys(await knex(tableName).columnInfo()), add, rename, change, drop);
     const alter = (build: (table: KnexType.CreateTableBuilder) => void) => knex.schema.alterTable(tableName, build);
     if (dropIndexes) await alter(table => { for (const index of dropIndexes) table.dropIndex([], index); });
@@ -669,10 +664,7 @@ function buildColumns(
         column = table.uuid(name);
         break;
       default:
-        console.warn(
-          `[DatabaseTable] Unknown column type: ${sqlType}, using string`,
-        );
-        column = table.string(name, length);
+        throw new Error(`$table: column "${name}" has an unknown sqlType "${sqlType}"; it takes ${SQL_TYPES.join(", ")}`);
     }
 
     // Apply modifiers

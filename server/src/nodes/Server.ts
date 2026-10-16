@@ -5,7 +5,7 @@ import path from "node:path";
 import { URL } from "node:url";
 import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
-import { CLIENT_SCRIPT, Context, Node, NodeValue, SW_SCRIPT, isHttpError, isObject, isStep, loggerFor, resolve, resolveAll, resolveFields, runSteps } from "@jexs/core";
+import { CLIENT_SCRIPT, Context, Node, NodeValue, SW_SCRIPT, createHttpError, isHttpError, isObject, isStep, loggerFor, resolve, resolveAll, resolveFields, runSteps } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { COOKIES, DEFERRED, UPGRADE, type Deferred } from "../context.js";
 import { safeRelative } from "./File.js";
@@ -321,10 +321,6 @@ async function handleRequest(
       res.end();
       return;
     }
-    if (error instanceof Error && error.message === "Body too large") {
-      sendResponse(res, { response: "Request body too large", responseStatus: 413 });
-      return;
-    }
     if (isHttpError(error)) {
       sendResponse(res, { response: error.message || `HTTP ${error.status}`, responseStatus: error.status });
       return;
@@ -384,7 +380,7 @@ async function parseBody(req: http.IncomingMessage, listener: Listener): Promise
       totalSize += chunk.length;
       if (totalSize > listener.maxBodySize) {
         req.destroy();
-        reject(new Error("Body too large"));
+        reject(createHttpError(413, "Request body too large"));
         return;
       }
       chunks.push(chunk);
@@ -403,7 +399,7 @@ async function parseBody(req: http.IncomingMessage, listener: Listener): Promise
         try {
           resolveBody(JSON.parse(body));
         } catch {
-          resolveBody({});
+          reject(createHttpError(400, "Malformed JSON body"));
         }
       } else if (contentType.includes("application/x-www-form-urlencoded")) {
         resolveBody(Object.fromEntries(new URLSearchParams(body)));
@@ -797,10 +793,7 @@ export class ServerNode extends Node {
 
   listen(def: Record<string, unknown>, context: Context): NodeValue {
     const steps = def.do;
-    if (!Array.isArray(steps)) {
-      loggerFor(context).error('[ServerNode] "do" must be an array of per-request steps');
-      return null;
-    }
+    if (!Array.isArray(steps)) throw new Error('$listen needs "do": an array of the steps each request runs');
 
     const options = [def.maxBodySize, def.maxMessageSize, def.trustedOrigins, def.host, def.trustProxy, def.system].map(o => o ?? null);
     return resolveAll([def.$listen, ...options], context, async ([portRaw, maxBodyRaw, maxMessageRaw, originsRaw, hostRaw, trustProxy, system]) => {
@@ -866,20 +859,21 @@ export class ServerNode extends Node {
         const fromStep = isStep(def.sw);
         const sw = fromStep ? await resolve(def.sw, context) : def.sw;
         if (!this.isObject(sw) || Object.keys(sw).length === 0) {
-          loggerFor(context).warn('[ServerNode] "sw" takes a config, e.g. { "precache": ["/offline.html"], "routes": [...], "events": {...} }; no service worker is registered');
-        } else if (!def.client) {
-          loggerFor(context).warn('[ServerNode] "sw" needs "client": the service worker runtime ships in the browser bundle; no service worker is registered');
-        } else if (browserDir) {
+          throw new Error('$listen "sw" takes a config, e.g. { "precache": ["/offline.html"], "routes": [...], "events": {...} }');
+        }
+        if (!def.client) {
+          throw new Error('$listen "sw" needs "client": the service worker runtime ships in the browser bundle');
+        }
+        if (browserDir) {
           const { events, ...settings } = sw;
           const resolved = fromStep ? settings : await resolveFields(settings, context, r => r);
           const eventMap = !fromStep && isStep(events) ? await resolve(events, context) : events;
           if (eventMap != null && (!this.isObject(eventMap) || isStep(eventMap))) {
-            loggerFor(context).warn('[ServerNode] "sw.events" must be, or resolve to, a map of event names to steps; no service worker is registered');
-          } else {
-            const config = eventMap == null ? resolved : { ...resolved, events: eventMap };
-            listener.sw = { path: `${servePath}/sw.js`, config: JSON.stringify(config), dir: browserDir };
-            context[SW_SCRIPT] = listener.sw.path;
+            throw new Error('$listen "sw.events" must be, or resolve to, a map of event names to steps');
           }
+          const config = eventMap == null ? resolved : { ...resolved, events: eventMap };
+          listener.sw = { path: `${servePath}/sw.js`, config: JSON.stringify(config), dir: browserDir };
+          context[SW_SCRIPT] = listener.sw.path;
         }
       }
 

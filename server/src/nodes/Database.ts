@@ -253,8 +253,7 @@ export class DatabaseNode extends Node {
         case "transaction":
           return doTransaction(this, def, context);
         default:
-          loggerFor(context).error(`[DatabaseNode] Unknown operation: ${operation}`);
-          return null;
+          throw new Error(`$database: unknown operation ${JSON.stringify(operation)}`);
       }
     });
   }
@@ -267,9 +266,10 @@ export class DatabaseNode extends Node {
   // DatabaseTableNode, TranslationNode) that hold one but no handle on this node. Everything inside
   // this module already has the node and calls the helpers below directly.
 
-  /** Omit `name` to get whichever connection opened first. Inside a
-   *  `transaction` step on that connection, the transaction. */
-  static getKnex(context: Context, name?: string): KnexType {
+  /** The connection a step names in `name` (its resolved `connection`), or with
+   *  none whichever opened first. Inside a `transaction` step on that
+   *  connection, the transaction. */
+  static getKnex(context: Context, name?: unknown): KnexType {
     return knexIn(databaseFor(context), context, name);
   }
 

@@ -249,8 +249,7 @@ export class OAuthNode extends Node {
         case "providers":
           return doListProviders(this.providers, def, context);
         default:
-          loggerFor(context).error(`[OAuth] Unknown operation: ${operation}`);
-          return null;
+          throw new Error(`$oauth: unknown operation ${JSON.stringify(operation)}`);
       }
     });
   }

@@ -117,7 +117,7 @@ export class SchemaNode extends Node {
         validate: {
           output: result,
           outputDescription: "Whether the data is valid, and why not when it isn't.",
-          markdownDescription: "Checks `data` against a schema: a registered one by id, or one written out. Returns the result rather than throwing, so the caller decides what a failure means; an unknown id or a schema that does not compile is reported the same way.",
+          markdownDescription: "Checks `data` against a schema: a registered one by id, or one written out. Returns the result rather than throwing for invalid data, so the caller decides what that means. An unknown id or a schema that does not compile is the caller's mistake, and an error.",
           siblings: {
             schema: { $ref: "#/$defs/_schemaOrId", literal: true, required: true, description: "A registered schema's id, or a schema. One written out compiles once per distinct schema, inline or by `$var`." },
             data: { description: "The value to check." },
@@ -343,14 +343,9 @@ async function check(node: SchemaNode, def: Record<string, unknown>, context: Co
     if (typeof schema !== "string" && !isObject(schema)) {
       throw new Error("$schema validate needs `schema`: a registered schema's id, or a schema");
     }
-    // An unknown id or a schema that won't compile is the caller's mistake,
-    // not the data's, so it is reported in the same shape rather than thrown.
-    try {
-      return validateDetailed(node, schema, data);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { valid: false, errors: [{ path: "", message: `invalid schema: ${message}`, keyword: "schema" }] };
-    }
+    // An unknown id or a schema that won't compile is the caller's mistake, not
+    // the data's, so it throws rather than reading as invalid data.
+    return validateDetailed(node, schema, data);
   });
 }
 
@@ -364,6 +359,12 @@ async function documentsOf(def: Record<string, unknown>, context: Context, root:
   if (typeof dir !== "string") throw new Error("$schema register needs a `schema` or a `path`");
   const dirPath = path.resolve(root, dir);
   const files = (await fs.readdir(dirPath)).filter(f => f.endsWith(".json")).sort();
-  const contents = await Promise.all(files.map(file => fs.readFile(path.join(dirPath, file), "utf-8")));
-  return contents.map(content => JSON.parse(content) as unknown);
+  return Promise.all(files.map(async file => {
+    const content = await fs.readFile(path.join(dirPath, file), "utf-8");
+    try {
+      return JSON.parse(content) as unknown;
+    } catch (error) {
+      throw new Error(`$schema register: ${path.join(dir, file)} is not valid JSON: ${(error as Error).message}`);
+    }
+  }));
 }

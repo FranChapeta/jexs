@@ -128,8 +128,7 @@ export class TailwindNode extends Node {
         case "classes":
           return [...this.state.registry];
         default:
-          loggerFor(context).error(`[Tailwind] Unknown operation: ${operation}`);
-          return null;
+          throw new Error(`$tailwind: unknown operation ${JSON.stringify(operation)}`);
       }
     });
   }

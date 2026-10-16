@@ -100,9 +100,11 @@ test("events from a step resolve to the map; a literal map's steps are left alon
     assert.deepEqual(JSON.parse(call[1]), { events: swEvents });
 
     const ctx: Context = {};
-    await other({ $listen: 0, client: true, sw: { events: { $concat: ["no", "map"] } }, do: [] }, ctx);
+    await assert.rejects(
+      async () => other({ $listen: 0, client: true, sw: { events: { $concat: ["no", "map"] } }, do: [] }, ctx),
+      /"sw\.events" must be, or resolve to, a map/,
+    );
     assert.equal(ctx[SW_SCRIPT], undefined);
-    assert.ok(warnings.some(w => w.includes('"sw.events"')), warnings.join("\n"));
   } finally {
     other.destroy();
   }
@@ -126,19 +128,15 @@ test("sw from a step resolves to the config, which is data: nothing in it resolv
   }
 });
 
-test("an empty sw, or one without client, warns and registers nothing", async () => {
+test("an empty sw, or one without client, is an error and registers nothing", async () => {
   const other = createResolver([...coreNodes(), new ServerNode()]);
   try {
     const ctxEmpty: Context = {};
-    await other({ $listen: 0, client: true, sw: {}, do: [{ $tag: "head" }] }, ctxEmpty);
+    await assert.rejects(async () => other({ $listen: 0, client: true, sw: {}, do: [{ $tag: "head" }] }, ctxEmpty), /"sw" takes a config/);
     const ctxNoClient: Context = {};
-    const noClient = await other({ $listen: 0, sw: config, do: [{ response: "routed" }] }, ctxNoClient);
-
+    await assert.rejects(async () => other({ $listen: 0, sw: config, do: [{ response: "routed" }] }, ctxNoClient), /"sw" needs "client"/);
     assert.equal(ctxEmpty[SW_SCRIPT], undefined);
     assert.equal(ctxNoClient[SW_SCRIPT], undefined);
-    assert.ok(warnings.some(w => w.includes('"sw" takes a config')), warnings.join("\n"));
-    assert.ok(warnings.some(w => w.includes('"sw" needs "client"')), warnings.join("\n"));
-    assert.equal(await (await fetch(`${at(noClient)}/jexs/sw.js`)).text(), "routed");
   } finally {
     other.destroy();
   }

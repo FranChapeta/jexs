@@ -1,7 +1,7 @@
 [
   { "$as": "pkg", "$file": "../package.json", "data": true },
-  { "$as": "schema", "$file": "/.jexs/schema.json", "data": true },
-  { "$as": "combined", "$file": "/.jexs/combined.schema.json", "data": true },
+  { "$as": "schema", "$file": "/.jexs/schema.json", "data": true, "$catch": [] },
+  { "$as": "combined", "$file": "/.jexs/combined.schema.json", "data": true, "$catch": [] },
   { "$as": "byNode", "$coalesce": [{ "$var": "schema.byNode" }, {}] },
   { "$as": "byKey", "$coalesce": [{ "$var": "schema.byKey" }, {}] },
   { "$as": "extraDefs", "$coalesce": [{ "$var": "schema.extraDefs" }, {}] },
@@ -395,7 +395,7 @@
                   }
                 ],
                 "inspect_file": [
-                  { "$as": "box", "$fromEntries": [["node", { "$file": { "$concat": ["/", { "$var": "args.filePath" }] }, "data": true }]] },
+                  { "$as": "box", "$fromEntries": [["node", { "$file": { "$concat": ["/", { "$var": "args.filePath" }] }, "data": true, "$catch": [] }]] },
                   {
                     "$if": { "$empty": { "$var": "box.node" } },
                     "then": { "content": [{ "type": "text", "text": { "$concat": [{ "$var": "banner" }, "Error: could not read or parse ", { "$var": "args.filePath" }, " (missing, empty, or not JSON)."] } }], "isError": true },
@@ -436,7 +436,7 @@
                   }
                 ],
                 "validate_file": [
-                  { "$as": "box", "$fromEntries": [["node", { "$file": { "$concat": ["/", { "$var": "args.filePath" }] }, "data": true }]] },
+                  { "$as": "box", "$fromEntries": [["node", { "$file": { "$concat": ["/", { "$var": "args.filePath" }] }, "data": true, "$catch": [] }]] },
                   {
                     "$if": { "$empty": { "$var": "box.node" } },
                     "then": { "content": [{ "type": "text", "text": { "$concat": [{ "$var": "banner" }, "Error: could not read or parse ", { "$var": "args.filePath" }, " (missing, empty, or not JSON)."] } }], "isError": true },

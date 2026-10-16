@@ -72,7 +72,7 @@ export class FileNode extends Node {
       type: "string",
       output: "any",
       markdownDescription: "Loads a JSON file and resolves it as a Jexs expression. Paths resolve like a filesystem: relative to the file doing the loading (`\"nav.json\"`, `\"../shared/x.json\"`), while a leading `/` anchors at the resolver root (`\"/data/site.json\"`).\nArrays are executed as step sequences; objects are resolved as a single expression.\nPass `\"data\": true` to skip resolution and get the raw parsed JSON (use for data files, route trees, and anywhere you want the resolver to leave the file alone).\nPass `\"raw\": true` for the raw string content with no JSON parse.\nPass `\"params\"` to merge scoped variables into the file's resolution context, or `\"write\"` to write data to the file.",
-      outputDescription: "Default: the file resolved as a Jexs expression (a JSON array runs as steps → its last value; a JSON object resolves to its value). With `data: true`, the raw parsed JSON; with `raw: true`, the file as a string; non-JSON text files return their string and binaries a Buffer. `null` if the file can't be read or parsed.",
+      outputDescription: "Default: the file resolved as a Jexs expression (a JSON array runs as steps → its last value; a JSON object resolves to its value). With `data: true`, the raw parsed JSON; with `raw: true`, the file as a string; non-JSON text files return their string and binaries a Buffer. A file that can't be read, or a `.json` file that isn't valid JSON, is an error; `exists` asks first without one.",
       examples: [
         "{ \"$file\": \"pages/home.json\", \"params\": { \"title\": \"Home\" } }",
       ],
@@ -92,8 +92,8 @@ export class FileNode extends Node {
       },
       variants: {
         write: {
-          output: "boolean",
-          markdownDescription: "Writes data to the file (strings verbatim, otherwise JSON). Returns `true`/`false` for success.",
+          output: "null",
+          markdownDescription: "Writes data to the file (strings verbatim, otherwise JSON). A failure is an error.",
         },
         exists: {
           type: "boolean",
@@ -112,22 +112,23 @@ export class FileNode extends Node {
               isDirectory: { type: "boolean" },
             },
           },
-          markdownDescription: "Reports file metadata without reading the contents.",
-          outputDescription: "The file's metadata, or `null` if the path cannot be read.",
+          markdownDescription: "Reports file metadata without reading the contents. A path that cannot be read is an error.",
+          outputDescription: "The file's metadata.",
         },
         delete: {
           type: "boolean",
           output: "boolean",
-          markdownDescription: "Deletes the file. Already absent counts as success, so cleanup steps are repeatable. Refuses directories, since there is deliberately no recursive delete.",
+          markdownDescription: "Deletes the file. An absent one is not an error, so cleanup steps are repeatable. Refuses directories, since there is deliberately no recursive delete.",
+          outputDescription: "`true` if the file existed and was deleted, otherwise `false`.",
         },
         copy: {
           type: "string",
-          output: "boolean",
+          output: "null",
           markdownDescription: "Copies the file to another path, overwriting any file already there. The destination resolves the same way the source does.",
         },
         move: {
           type: "string",
-          output: "boolean",
+          output: "null",
           markdownDescription: "Moves or renames the file, overwriting any file already there. The destination resolves the same way the source does.\nFalls back to copy-then-delete when the destination is on another drive or mount, which a plain rename cannot cross.",
         },
       },
@@ -147,7 +148,7 @@ export class FileNode extends Node {
         },
       },
       markdownDescription: "Lists directory contents. The path resolves relative to the file doing the loading; a leading `/` anchors at the resolver root. Lists files by default; pass `\"subdirectories\": true` to list the folders instead.",
-      outputDescription: "One entry per file by default, or per subdirectory when `subdirectories` is set (filtered by `extension` when given); `[]` if the directory can't be read.",
+      outputDescription: "One entry per file by default, or per subdirectory when `subdirectories` is set (filtered by `extension` when given). A directory that can't be read is an error.",
       examples: [
         "{ \"$directory\": \"data/posts\", \"extension\": \"json\", \"recursive\": true }",
         "{ \"$directory\": \"node_modules/@jexs\", \"subdirectories\": true }",
@@ -168,8 +169,8 @@ export class FileNode extends Node {
       variants: {
         create: {
           type: "boolean",
-          output: "boolean",
-          markdownDescription: "Creates the directory, auto-creating any missing parent directories (no error if it already exists). Returns `true`/`false` for success.",
+          output: "null",
+          markdownDescription: "Creates the directory, auto-creating any missing parent directories (no error if it already exists).",
         },
       },
     },
@@ -180,7 +181,7 @@ export class FileNode extends Node {
         properties: { total: { type: "number" }, free: { type: "number" }, used: { type: "number" } },
       },
       markdownDescription: "Reports disk usage for a path. Pass a path string or `true` to use the current working directory.",
-      outputDescription: "Disk usage in bytes, or `null` on error.",
+      outputDescription: "Disk usage in bytes.",
       examples: [
         "{ \"$disk\": true }",
       ],
@@ -216,28 +217,12 @@ export class FileNode extends Node {
         const recursive = toBoolean(recursiveRaw);
         const subdirs = toBoolean(subdirsRaw);
         const dirPath = resolvePath(dirPathValue, this.rootAbs, getFileDir(context));
-
-        try {
-          const entries = await listDir(dirPath, recursive, subdirs);
-
-          if (extensionValue) {
-            const exts = Array.isArray(extensionValue)
-              ? extensionValue.map((e) => String(e))
-              : [String(extensionValue)];
-            return entries.filter((e) =>
-              exts.some((ext) => e.name.endsWith(`.${ext}`)),
-            );
-          }
-
-          return entries;
-        } catch (error) {
-          const e = error as Error;
-          console.error(
-            `[FileNode] Error reading directory ${dirPath}:`,
-            e.message,
-          );
-          return [];
-        }
+        const entries = await listDir(dirPath, recursive, subdirs);
+        if (!extensionValue) return entries;
+        const exts = Array.isArray(extensionValue)
+          ? extensionValue.map((e) => String(e))
+          : [String(extensionValue)];
+        return entries.filter((e) => exts.some((ext) => e.name.endsWith(`.${ext}`)));
       },
     );
   }
@@ -247,15 +232,11 @@ export class FileNode extends Node {
       const target = diskPath && diskPath !== true ? String(diskPath) : process.cwd();
 
       // Async statfs keeps the event loop free during the syscall; the resolve
-      // family propagates the returned promise. Error semantics preserved.
+      // family propagates the returned promise.
       return fs.statfs(target).then(stats => {
         const total = stats.bsize * stats.blocks;
         const free = stats.bsize * stats.bavail;
         return { total, free, used: total - free };
-      }).catch(error => {
-        const e = error as Error;
-        console.error(`[FileNode] Error getting disk info:`, e.message);
-        return null;
       });
     });
   }
@@ -298,31 +279,20 @@ function loadFile(
     const kind = classifyExt(filePath);
     const wantBuffer = kind === "binary" && !raw;
 
-    // Narrow try: only catch file I/O failures here. Errors thrown by the
-    // loaded file's own steps (e.g. HttpError from a 404 route) must
-    // propagate to the caller, not be swallowed as a "file load error".
-    let content: string | Buffer;
-    try {
-      content = wantBuffer
-        ? await fs.readFile(filePath)
-        : await fs.readFile(filePath, "utf-8");
-    } catch (error) {
-      console.error(`[FileNode] Error loading file ${filePath}:`, (error as Error).message);
-      return null;
-    }
+    // A read failure carries the path in fs's own message (ENOENT: ..., open '<path>').
+    const content = wantBuffer
+      ? await fs.readFile(filePath)
+      : await fs.readFile(filePath, "utf-8");
 
     if (wantBuffer) return content;
     if (raw) return content;
     if (kind === "text") return content;
 
-    // JSON parse is also FileNode's concern — narrow catch so a malformed file
-    // doesn't surface as a 500 from somewhere downstream.
     let parsed: unknown;
     try {
       parsed = JSON.parse(content as string);
     } catch (error) {
-      console.error(`[FileNode] Error parsing JSON in ${filePath}:`, (error as Error).message);
-      return null;
+      throw new Error(`$file: ${filePath} is not valid JSON: ${(error as Error).message}`);
     }
 
     if (data) return parsed;
@@ -358,24 +328,15 @@ function writeFile(
 ): unknown {
   return resolveAll([def.$file, def.write], context, async ([filePathValue, data]) => {
     const filePath = resolvePath(filePathValue, rootAbs, getFileDir(context));
-
-    try {
-      const content =
-        typeof data === "string" ? data : JSON.stringify(data, null, 2);
-      await fs.writeFile(filePath, content);
-      return true;
-    } catch (error) {
-      const e = error as Error;
-      console.error(`[FileNode] Error writing file ${filePath}:`, e.message);
-      return false;
-    }
+    await fs.writeFile(filePath, typeof data === "string" ? data : JSON.stringify(data, null, 2));
+    return null;
   });
 }
 
 /**
  * `exists` and `stat` share a path because both only ask the filesystem about a
- * file rather than reading it. A failed stat is the ANSWER for `exists`, so it is
- * not logged; for `stat` it is a real failure and returns null.
+ * file rather than reading it. A failed stat is the ANSWER for `exists`; for
+ * `stat` it is a real failure, and throws.
  */
 function statFile(
   def: Record<string, unknown>,
@@ -386,13 +347,8 @@ function statFile(
   return resolve(def.$file, context, async filePathValue => {
     const filePath = resolvePath(filePathValue, rootAbs, getFileDir(context));
 
-    let info: Awaited<ReturnType<typeof fs.stat>>;
-    try {
-      info = await fs.stat(filePath);
-    } catch {
-      return mode === "exists" ? false : null;
-    }
-    if (mode === "exists") return true;
+    if (mode === "exists") return fs.stat(filePath).then(() => true, () => false);
+    const info = await fs.stat(filePath);
 
     return {
       size: info.size,
@@ -411,17 +367,15 @@ function deleteFile(
 ): unknown {
   return resolve(def.$file, context, async filePathValue => {
     const filePath = resolvePath(filePathValue, rootAbs, getFileDir(context));
-
+    // An absent file is reported rather than an error: a cleanup step should be
+    // repeatable, and "it is not there" is the outcome the caller wanted. No
+    // `recursive`, so a directory is an error rather than a silent tree wipe.
     try {
-      // `force` makes an already-absent file a success: a cleanup step should be
-      // repeatable, and "it is not there" is the outcome the caller wanted. No
-      // `recursive`, so a directory is an error rather than a silent tree wipe.
-      await fs.rm(filePath, { force: true });
+      await fs.rm(filePath);
       return true;
     } catch (error) {
-      const e = error as Error;
-      console.error(`[FileNode] Error deleting file ${filePath}:`, e.message);
-      return false;
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
     }
   });
 }
@@ -439,27 +393,20 @@ function transferFile(
     // target lands next to the file that asked for the move, not next to `from`.
     const to = resolvePath(toValue, rootAbs, fileDir);
 
-    try {
-      if (mode === "copy") {
-        await fs.copyFile(from, to);
-        return true;
-      }
-      try {
-        await fs.rename(from, to);
-      } catch (error) {
-        // EXDEV: rename cannot cross a drive or mount point, which on a desktop
-        // is an ordinary move (C: to D:, or onto a USB stick) rather than a bug.
-        if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
-        await fs.copyFile(from, to);
-        await fs.rm(from, { force: true });
-      }
-      return true;
-    } catch (error) {
-      const e = error as Error;
-      const verb = mode === "copy" ? "copying" : "moving";
-      console.error(`[FileNode] Error ${verb} ${from} to ${to}:`, e.message);
-      return false;
+    if (mode === "copy") {
+      await fs.copyFile(from, to);
+      return null;
     }
+    try {
+      await fs.rename(from, to);
+    } catch (error) {
+      // EXDEV: rename cannot cross a drive or mount point, which on a desktop
+      // is an ordinary move (C: to D:, or onto a USB stick) rather than a bug.
+      if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
+      await fs.copyFile(from, to);
+      await fs.rm(from, { force: true });
+    }
+    return null;
   });
 }
 
@@ -469,16 +416,8 @@ function createDir(
   rootAbs: string,
 ): unknown {
   return resolve(def.$directory, context, async dirPathValue => {
-    const dirPath = resolvePath(dirPathValue, rootAbs, getFileDir(context));
-
-    try {
-      await fs.mkdir(dirPath, { recursive: true });
-      return true;
-    } catch (error) {
-      const e = error as Error;
-      console.error(`[FileNode] Error creating directory ${dirPath}:`, e.message);
-      return false;
-    }
+    await fs.mkdir(resolvePath(dirPathValue, rootAbs, getFileDir(context)), { recursive: true });
+    return null;
   });
 }
 

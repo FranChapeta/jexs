@@ -173,6 +173,7 @@ test("alter adds, renames, changes and drops columns and indexes, in order", asy
   await assert.rejects(alter({ drop: ["nowhere"] }), /no column "nowhere" to drop in "accounts"/);
   await assert.rejects(alter({ add: { nick: { type: "string" } } }), /a column "nick" already exists, so cannot add/);
   await assert.rejects(alter({ rename: { email: "mail" }, change: { email: { type: "string" } } }), /no column "email" to change/);
+  await assert.rejects(alter({ add: { odd: { sqlType: "nope" } } }), /column "odd" has an unknown sqlType "nope"/);
 
   // In a transaction an alter is all or nothing: the index fails, so the rename
   // and the change (a table rebuild on SQLite) before it are undone.
@@ -337,7 +338,7 @@ test("register takes a document from a step, and unregister forgets it", async (
 test("a validator that changes `schema` does not change the registered table", async () => {
   await resolve({ $table: "create", ...conn, schema: {
     table: "guarded",
-    properties: { id: { type: "integer", sqlType: "increments" }, name: { type: "string" } },
+    properties: { id: { type: "integer", primaryKey: true, autoIncrement: true }, name: { type: "string" } },
     validator: [{ $setVars: { "schema.properties.injected": { type: "string" } } }],
   } }, {});
   await resolve({ $query: "select", ...conn, table: "guarded" }, {});
@@ -356,8 +357,8 @@ test("validate checks a value against a registered schema by id, or one written 
   assert.equal(viaRef.valid, false);
   assert.equal(viaRef.errors[0].path, "email");
 
-  const unknown = await resolve({ $schema: "validate", schema: "nowhere", data: 1 }, {}) as { valid: boolean; errors: Array<{ message: string }> };
-  assert.match(unknown.errors[0].message, /No schema is registered as "nowhere"/);
+  // An unknown id is the caller's mistake, not invalid data.
+  await assert.rejects(async () => resolve({ $schema: "validate", schema: "nowhere", data: 1 }, {}), /No schema is registered as "nowhere"/);
 });
 
 // Route bodies validate against the same registered schemas.

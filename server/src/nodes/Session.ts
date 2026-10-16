@@ -79,7 +79,7 @@ export class SessionNode extends Node {
       const cache = sessionCache(context, optionalName(cacheName));
       if (op === "load") return loadSession(context, cache);
       if (op === "destroy") return destroySession(context, cache);
-      if (!this.isObject(op)) return null;
+      if (!this.isObject(op)) throw new Error(`$session takes "load", "destroy" or a map of values to set, got ${JSON.stringify(op)}`);
       return regenerate === true ? regenerateSession(op, context, cache) : setSessionValues(op, context, cache);
     });
   }

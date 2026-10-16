@@ -6,15 +6,6 @@ export function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Check if an array is associative (object-like with string keys)
- */
-export function isAssociativeArray(
-  value: unknown,
-): value is Record<string, unknown> {
-  return isObject(value);
-}
-
-/**
  * Split a dot-path into its segments, memoized.
  *
  * `getNestedValue` / `setNestedValue` / `Node.setContextValue` run this on the

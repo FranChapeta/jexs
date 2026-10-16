@@ -151,12 +151,6 @@ function op(output: JexsOutput, markdown: string, clauses: string[], rowsWhenRet
   };
 }
 
-/** The resolver's own DatabaseQueryNode, which holds its global validator. */
-function queryFor(context: Context): DatabaseQueryNode | undefined {
-  const node = resolverFor(context).nodeFor("query");
-  return node instanceof DatabaseQueryNode ? node : undefined;
-}
-
 export class DatabaseQueryNode extends Node {
   /** The steps `{ "$query": "validator" }` set, run before every query. An
    *  instance field, so one resolver's policy never judges another's queries. */
@@ -220,7 +214,7 @@ async function execQuery(def: Record<string, unknown>, context: Context): Promis
   const query = toQuery(r);
   // Omitted `connection` falls back to whichever opened first; getKnex owns
   // that chain, so this does not repeat it.
-  const knex = DatabaseNode.getKnex(context, r.connection == null ? undefined : String(r.connection));
+  const knex = DatabaseNode.getKnex(context, r.connection);
 
   if (!r.system) await runValidators(query, context);
 
@@ -251,7 +245,9 @@ function documentOf(query: QueryDefinition, context: Context): TableJsonSchema {
 async function runValidators(query: QueryDefinition, context: Context): Promise<void> {
   if (Reflect.get(context, VALIDATING) === true) return;
   const operation = query.type === "count" ? "select" : query.type;
-  const global = queryFor(context)?.globalValidator;
+  // The resolver's own node holds its global validator.
+  const node = resolverFor(context).nodeFor("query");
+  const global = node instanceof DatabaseQueryNode ? node.globalValidator : null;
   const schema = documentOf(query, context);
   const own = schema.validator;
   if (global == null && own == null) return;

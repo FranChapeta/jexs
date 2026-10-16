@@ -23,9 +23,11 @@ function getUpgrade(context: Context): UpgradeContext {
   return upgrade;
 }
 
-function currentSocket(context: Context): WebSocket | null {
+/** The connection a socket handler runs for, which an op acting on it needs. */
+function handlerSocket(op: string, context: Context): WebSocket {
   const ws = context[WS];
-  return ws instanceof WebSocket ? ws : null;
+  if (!(ws instanceof WebSocket)) throw new Error(`$${op} runs in a socket's handlers, where there is a connection to act on`);
+  return ws;
 }
 
 function currentPath(context: Context): string {
@@ -113,7 +115,8 @@ export class WebSocketNode extends Node {
     },
     "socket-leave": {
       type: "string",
-      output: "null",
+      output: "boolean",
+      outputDescription: "`true` if the connection was in the room, otherwise `false`.",
       markdownDescription: "Removes the current connection from the named room.",
     },
     "socket-close": {
@@ -239,8 +242,8 @@ export class WebSocketNode extends Node {
 
   ["socket-send"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["$socket-send"], context, data => {
-      const ws = currentSocket(context);
-      if (!ws || ws.readyState !== WebSocket.OPEN) return null;
+      const ws = handlerSocket("socket-send", context);
+      if (ws.readyState !== WebSocket.OPEN) throw new Error("$socket-send: the connection is closed");
       ws.send(encodePayload(data));
       return null;
     });
@@ -249,7 +252,9 @@ export class WebSocketNode extends Node {
   ["socket-send-to"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll([def["$socket-send-to"], def.data], context, ([idRaw, data]) => {
       const target = this.ids.get(String(idRaw));
-      if (!target || target.readyState !== WebSocket.OPEN) return null;
+      if (!target || target.readyState !== WebSocket.OPEN) {
+        throw new Error(`$socket-send-to: no open connection "${String(idRaw)}"`);
+      }
       target.send(encodePayload(data));
       return null;
     });
@@ -258,7 +263,8 @@ export class WebSocketNode extends Node {
   ["socket-broadcast"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll([def["$socket-broadcast"], def.room ?? null], context, ([data, roomRaw]) => {
       const payload = encodePayload(data);
-      const sender = currentSocket(context);
+      // Outside a handler there is no sender to skip, and nothing in a room matches undefined.
+      const sender = context[WS];
 
       const recipients: Set<WebSocket> | undefined = def.room && roomRaw != null
         ? this.rooms.get(String(roomRaw))
@@ -276,8 +282,7 @@ export class WebSocketNode extends Node {
 
   ["socket-join"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["$socket-join"], context, roomRaw => {
-      const ws = currentSocket(context);
-      if (!ws) return null;
+      const ws = handlerSocket("socket-join", context);
       const room = String(roomRaw);
       if (!this.rooms.has(room)) this.rooms.set(room, new Set());
       this.rooms.get(room)!.add(ws);
@@ -288,19 +293,17 @@ export class WebSocketNode extends Node {
 
   ["socket-leave"](def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def["$socket-leave"], context, roomRaw => {
-      const ws = currentSocket(context);
-      if (!ws) return null;
+      const ws = handlerSocket("socket-leave", context);
       const room = String(roomRaw);
-      this.rooms.get(room)?.delete(ws);
+      const was = this.rooms.get(room)?.delete(ws) ?? false;
       if (this.rooms.get(room)?.size === 0) this.rooms.delete(room);
       this.clients.get(ws)?.delete(room);
-      return null;
+      return was;
     });
   }
 
   ["socket-close"](_def: Record<string, unknown>, context: Context): NodeValue {
-    const ws = currentSocket(context);
-    if (ws) ws.close();
+    handlerSocket("socket-close", context).close();
     return null;
   }
 
