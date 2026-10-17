@@ -5,16 +5,16 @@
 // resolver @jexs/client builds rather than each getting their own). The
 // server prefers this local bundle over @jexs/client's prebuilt one when present.
 
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import * as esbuild from "esbuild";
 import { walkJexsPackages } from "./discover.js";
 import { contributesNodes } from "./manifest.js";
 
-/** Directory of the installed @jexs/client compiled output (dist/), for worker entries. */
-function clientDistDir(): string {
-  return path.dirname(fileURLToPath(import.meta.resolve("@jexs/client")));
+/** A worker script @jexs/client exports (`sw`, `resolver-worker`, `physics-worker`), as a path for esbuild. */
+function clientFile(subpath: string): string {
+  return fileURLToPath(import.meta.resolve(`@jexs/client/${subpath}`));
 }
 
 /** Whether an optional package is installed in this project. */
@@ -29,11 +29,11 @@ function isInstalled(pkg: string): boolean {
 
 /**
  * Bundle the project's browser runtime into `dist/browser`. Generates an entry
- * that boots @jexs/client (which wires core/client/physics/gl) and then registers
+ * that boots @jexs/client (which wires core/client/physics/gl) with the nodes of
  * every discovered `browser`/`both` third-party node package — @jexs/* packages
- * are skipped since @jexs/client already wires them. esbuild config mirrors
- * @jexs/client's own `build:browser` (ESM + splitting + the shared workers), so
- * the worker/service-worker cross-references resolve in the output dir.
+ * are skipped since @jexs/client already wires them. The workers and the service
+ * worker are entries beside the page's, so their cross-references resolve in
+ * the output dir.
  *
  * Emits only compiled output (no HTML): pages are JSON templates in `src/`,
  * resolved to HTML at runtime. The @jexs/server SSR path renders them directly,
@@ -44,44 +44,48 @@ export async function bundleClient(
   projectDir: string,
   { outDir, watch = false }: { outDir?: string; watch?: boolean } = {},
 ): Promise<esbuild.BuildContext | void> {
-  const clientDist = clientDistDir();
   const out = outDir ?? path.join(projectDir, "dist", "browser");
 
   const pkgs = walkJexsPackages(projectDir).filter(
     (p) => contributesNodes(p.manifest, "browser") && !p.name.startsWith("@jexs/"),
   );
 
-  // Registration hangs off the resolver, not a module-scope function, so the
-  // entry asks @jexs/client for the page resolver it built on import.
-  const imports = [`import { getResolver } from "@jexs/client";`];
-  const regs: string[] = [];
+  // Each package's nodes module, as discovery loads it: its default export is a
+  // factory or an array of nodes. They go to boot(), which registers them before
+  // hydrating, so a `load` handler can use them.
+  const imports = [`import { boot } from "@jexs/client";`];
+  const lists: string[] = [];
   pkgs.forEach((p, i) => {
-    imports.push(`import { nodes as n${i} } from ${JSON.stringify(p.name)};`);
-    regs.push(`register(r, n${i});`);
+    const modPath = path.join(p.dir, p.manifest.nodes!).split(path.sep).join("/");
+    imports.push(`import n${i} from ${JSON.stringify(modPath)};`);
+    lists.push(`...list(n${i})`);
   });
   const entrySrc =
     `${imports.join("\n")}\n` +
-    `function register(r, c){ const list = typeof c === "function" ? c({}) : c; if (Array.isArray(list)) for (const n of list) r.registerNode(n); }\n` +
-    // @jexs/client creates the resolver synchronously on import (when window exists),
-    // so getResolver() is ready before these registrations run.
-    `if (typeof window !== "undefined") { const r = getResolver(); ${regs.join(" ")} }\n`;
+    `const list = (c) => typeof c === "function" ? c({}) : c;\n` +
+    `boot({ nodes: [${lists.join(", ")}] });\n`;
 
-  const jexsDir = path.join(projectDir, ".jexs");
-  mkdirSync(jexsDir, { recursive: true });
-  const entryPath = path.join(jexsDir, "browser-entry.js");
-  writeFileSync(entryPath, entrySrc);
+  // The page's entry exists only in memory: a plugin answers for its name with
+  // the source above, resolving its imports from the project.
+  const pageEntry: esbuild.Plugin = {
+    name: "jexs-page-entry",
+    setup(build) {
+      build.onResolve({ filter: /^jexs:page$/ }, () => ({ path: "page", namespace: "jexs" }));
+      build.onLoad({ filter: /.*/, namespace: "jexs" }, () => ({ contents: entrySrc, resolveDir: projectDir, loader: "js" }));
+    },
+  };
 
   const entryPoints: Record<string, string> = {
-    client: entryPath,
-    "sw-runtime": path.join(clientDist, "sw.js"),
-    resolverWorker: path.join(clientDist, "resolverWorker.js"),
+    client: "jexs:page",
+    "sw-runtime": clientFile("sw"),
+    resolverWorker: clientFile("resolver-worker"),
   };
   // The physics worker STATICALLY imports @jexs/physics, so unlike the lazy
   // registrations it cannot be rescued by a `.catch()` — listing it as an entry
   // in an app without physics fails the entire bundle. Nothing references the
   // emitted file unless a physics op runs, which needs the package anyway.
   if (isInstalled("@jexs/physics")) {
-    entryPoints.physicsWorker = path.join(clientDist, "physicsWorker.js");
+    entryPoints.physicsWorker = clientFile("physics-worker");
   }
 
   const buildOptions: esbuild.BuildOptions = {
@@ -95,6 +99,7 @@ export async function bundleClient(
     minify: true,
     target: "es2022",
     absWorkingDir: projectDir,
+    plugins: [pageEntry],
   };
 
   if (watch) {

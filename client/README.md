@@ -104,7 +104,7 @@ Every handler sees `version`, the worker's version (the hash the server generate
 
 ## Usage from HTML
 
-Drop the bundle in a page and Jexs auto-initializes on `DOMContentLoaded`:
+`jexs bundle` builds the page's bundle, which boots Jexs when it loads:
 
 ```html
 <script type="module" src="/jexs/client.js"></script>
@@ -118,18 +118,23 @@ Drop the bundle in a page and Jexs auto-initializes on `DOMContentLoaded`:
 }]'>Like</button>
 ```
 
-Importing `@jexs/client` in the browser builds the resolver and auto-hydrates the page. It also exposes `window.jexs = { context, hydrate }` — `context` for inspecting/seeding shared state, `hydrate` for (re)binding events after you inject content.
+Booting builds the resolver, hydrates the page, and registers the service worker the server named. It also exposes `window.jexs = { context, hydrate, resolver }` — `context` for inspecting/seeding shared state, `hydrate` for (re)binding events after you inject content.
 
 On a page served by a Jexs server with sessions, a POST, PUT, PATCH or DELETE to the page's own origin, by `$fetch` like the one above or by a form, carries the session's CSRF token on its own, read from the `csrf` cookie. Nothing in the template needs to send it.
 
 ## Usage from JS
 
-```ts
-import { hydrate } from "@jexs/client";
+Importing `@jexs/client` starts nothing on its own. Boot the page once, with any nodes of your own; they are registered before the page hydrates, so a `load` handler can use them:
 
-hydrate();              // scan the whole document
-hydrate(myElement);     // or just a subtree
+```ts
+import { boot, hydrate } from "@jexs/client";
+
+const resolver = boot({ nodes: [new MyNode()] });
+
+hydrate(myElement);     // bind events in content you inject later
 ```
+
+`jexs bundle` writes this entry for you, with the nodes of every browser node package the project has installed.
 
 Each firing of a handler runs in a scope of its own on top of the page's context, holding `event`, `target`, `value` and, inside a tree row, the row's `path`, `type`, `editMode` and `depth`. A value from an earlier event never lingers into the next, and two handlers awaiting at once each keep their own. A handler reads page state as any step does; a write meant as page state, for later handlers to read, takes `$bubble`:
 

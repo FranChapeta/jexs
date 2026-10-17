@@ -63,11 +63,9 @@ export function clientNodes(): Node[] {
 }
 
 export { hydrate, pageContext };
-
-// Re-export every node class so tools that want the full set of schemas
-// (docs sites, validators, MCP introspection) can pull them without depending
-// on internal paths. `clientNodes` above is the eager subset the runtime
-// registers immediately; the rest are lazy-loaded in the browser branch below.
+// Every node class, for wiring a resolver by hand rather than through `boot()`,
+// which registers the eager three itself and loads the rest on first use. A
+// bundle drops the ones it does not import, so the page pays nothing for these.
 export { DomNode, AudioNode, StorageNode };
 export { TreeNode } from "./nodes/TreeNode.js";
 export { ListNode } from "./nodes/ListNode.js";
@@ -76,29 +74,25 @@ export { PushNode } from "./nodes/PushNode.js";
 export { WebRTCNode } from "./nodes/WebRTCNode.js";
 export { ServiceWorkerNode } from "./nodes/ServiceWorkerNode.js";
 
+let booted = false;
+
 /**
- * The page's resolver, once the browser branch below has built it.
- *
- * Exported because a generated browser entry (`server/src/bundle.ts` writes one)
- * registers app nodes into it, and it has no other way to reach the handle.
+ * Start Jexs on this page: build its resolver with the core and client nodes and
+ * any `nodes` given (an app's own, or a third-party package's), wire the lazy
+ * node groups, the worker and any native host bridge, then hydrate the page and
+ * register the service worker the server named. The nodes are registered before
+ * hydrating, so a `load` handler can use them. Once per page; the entry
+ * `jexs bundle` writes calls it with the project's browser node packages.
  */
-let pageResolver: Resolver | null = null;
+export function boot({ nodes = [] }: { nodes?: Node[] } = {}): Resolver {
+  if (typeof window === "undefined") throw new Error("boot() runs in a browser window.");
+  if (booted) throw new Error("This page is already booted: boot() runs once, with every node the page needs.");
+  booted = true;
 
-/** The page's resolver. Throws off the main thread, where none is built. */
-export function getResolver(): Resolver {
-  if (!pageResolver) {
-    throw new Error("No page resolver: @jexs/client builds one only in a browser window.");
-  }
-  return pageResolver;
-}
-
-// Browser: build the resolver, expose a debug/hydration handle, and auto-hydrate.
-if (typeof window !== "undefined") {
   // `pageContext` is the resolver's root scope: DOM event handlers run steps
   // against it long after any resolve returned, so it has to be attached up
   // front rather than by the first call. Every scope derived from it inherits.
-  const resolver = createResolver([...coreNodes(), ...clientNodes()], { context: pageContext });
-  pageResolver = resolver;
+  const resolver = createResolver([...coreNodes(), ...clientNodes(), ...nodes], { context: pageContext });
   // `window.jexs` is a small handle: `context` for inspecting/seeding shared state,
   // `hydrate` for (re)binding events on server-injected content (see Server SSR).
   (window as unknown as Record<string, unknown>).jexs = { context: pageContext, hydrate, resolver };
@@ -193,4 +187,6 @@ if (typeof window !== "undefined") {
     if (document.readyState === "complete") register();
     else window.addEventListener("load", register, { once: true });
   }
+
+  return resolver;
 }

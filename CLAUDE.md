@@ -14,8 +14,9 @@ Monorepo for the Jexs library. JSON as a declarative expression language — all
 
 ```bash
 npm run build          # tsc -b all packages
-npm run build:browser  # esbuild client → client/dist/browser/
 ```
+
+A browser bundle is built per project by `jexs bundle` (server/src/bundle.ts): @jexs/client plus the project's third-party browser nodes, into its `dist/browser`.
 
 ## Conventions
 
