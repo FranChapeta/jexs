@@ -292,7 +292,7 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean, useElectron: bo
     if (useTailwind) {
       lines.push(`- \`npm run build\`: compiles Tailwind (minified). There is no JS build, the app is JSON run by \`jexs run\`.`);
     }
-    lines.push(`- \`npm start\`: \`jexs run src/index.json src --prod\`. Run from the project root so FileNode and the static server find \`src/\` and \`public/\`. The \`--prod\` flag sets \`NODE_ENV=production\` and \`process.env.prod = "1"\`, so JSON templates can branch on \`{ "$var": "env.prod" }\` (e.g. picking port 80 in prod vs 3000 in dev).`);
+    lines.push(`- \`npm start\`: \`jexs run src/index.json src --prod\`. Run from the project root so FileNode and the static server find \`src/\` and \`public/\`. The \`--prod\` flag sets \`NODE_ENV=production\` and \`process.env.prod = "1"\`, so JSON templates can branch on \`{ "$var": "env.prod" }\`. The listener binds the port in the \`PORT\` environment variable, as hosting platforms set it, else 80 in prod and 3000 in dev.`);
     lines.push(`- \`npm run format\`: Prettier sweep over JSON templates.`);
     lines.push(``);
   }
@@ -693,11 +693,13 @@ async function main(): Promise<void> {
       join(dir, "src", "index.json"),
       formatJson([
         {
-          $listen: { "$if": { $var: "env.prod" }, then: 80, else: 3000 },
+          // The port the host gives in PORT, as hosting platforms do, else 80 in
+          // production and 3000 in development.
+          $listen: { $coalesce: [{ $var: "env.PORT" }, { "$if": { $var: "env.prod" }, then: 80, else: 3000 }] },
           client: true,
           do: [
-            { $var: "request.query.name" },
-            { "$if": { $var: "result" }, then: { $concat: ["Hello, ", { $var: "result" }, "!"] }, else: "Hello, world!" },
+            { $var: "request.query.name", $as: "name" },
+            { "$if": { $var: "name" }, then: { $concat: ["Hello, ", { $var: "name" }, "!"] }, else: "Hello, world!", $as: "greeting" },
             // With tailwind the greeting becomes a page, because a bare string
             // response has no <head> to link the compiled stylesheet from and the
             // CSS would be built on every run and loaded by nothing.
@@ -706,7 +708,7 @@ async function main(): Promise<void> {
                   $tag: "html",
                   content: [
                     { $tag: "head", content: [{ $tag: "meta", charset: "utf-8" }, { $tag: "link", rel: "stylesheet", href: cssHref }] },
-                    { $tag: "body", class: "p-8", content: [{ $tag: "h1", class: "text-3xl font-bold", content: { $var: "result" } }] },
+                    { $tag: "body", class: "p-8", content: [{ $tag: "h1", class: "text-3xl font-bold", content: { $var: "greeting" } }] },
                   ],
                 }]
               : []),
