@@ -34,7 +34,7 @@ export function resetMenus(): void {
  * Turn a JSON item tree into an Electron menu template.
  *
  * `do` and `submenu` are pulled out BEFORE resolving and never passed through
- * the resolver: resolving `do` in main would turn `{"$setText": ...}` into a
+ * the resolver: resolving `do` in main would turn `{"$setProp": ...}` into a
  * plain object, since main has no DOM handler for it, and the steps would be
  * silently destroyed rather than dispatched. Only the scalar fields resolve, so
  * a label or an enabled flag can still be an expression.

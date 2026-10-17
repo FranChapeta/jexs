@@ -51,7 +51,7 @@ contextBridge.exposeInMainWorld("jexsHost", {
   // keys before the page finishes loading. `loadURL` resolves once scripts have
   // run, so a main-process step sequence that opens a window and then touches
   // the DOM would otherwise race the announcement -- main would have no handler
-  // for `setText` yet and silently resolve it as plain data.
+  // for `setProp` yet and silently resolve it as plain data.
   announce: (ownKeys, ownSteps) => ipcRenderer.sendSync("jexs:renderer-keys", { keys: ownKeys, steps: ownSteps }),
   onCall: (cb) => {
     handler = cb;

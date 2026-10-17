@@ -20,7 +20,7 @@ npm install @jexs/client @jexs/core
 
 | Node | Keys | Purpose |
 |---|---|---|
-| `DomNode` | `setText`, `setHtml`, `getValue`, `setValue`, `addClass`, `toggleClass`, `setAttr`, `querySelector`, `append`, `removeEl`, ... | Read and mutate the DOM |
+| `DomNode` | `getProp`, `setProp`, `addClass`, `toggleClass`, `setAttr`, `querySelector`, `insertHtml`, `moveElement`, `removeElement`, ... | Read and mutate the DOM |
 | `AudioNode` | `audio-load`, `audio-play`, `audio-stop`, `audio-volume`, `audio-master`, ... | Web Audio playback |
 | `StorageNode` | `storage-get`, `storage-set`, `storage-delete`, `storage-has`, `storage` | `localStorage` / `sessionStorage`, named as `cache-*` names the server's cache |
 

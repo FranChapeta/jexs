@@ -448,7 +448,7 @@ export class WindowNode extends Node {
       markdownDescription:
         "Run steps inside a window's page, where the DOM lives.\nMost of the time this is unnecessary — a DOM op written in a main-process handler is forwarded to the default window automatically. Reach for this when you need a *specific* window, since a per-op `window` sibling is impossible: DOM ops are declared by `@jexs/client`, and one package cannot add a sibling to another package's op.\nSteps are sent unresolved and run in the target renderer against the page context, so they see the same state the page's own event handlers do.",
       outputDescription: "Whatever the last step evaluates to, brought back across the bridge.",
-      examples: ["{ \"$window-run\": [{ \"$setText\": [\"#status\", \"Saved\"] }], \"window\": \"editor\" }"],
+      examples: ["{ \"$window-run\": [{ \"$setProp\": [\"#status\", \"textContent\", \"Saved\"] }], \"window\": \"editor\" }"],
       siblings: {
         window: WINDOW_SIBLING,
         params: { map: true, description: "Values merged into the steps' scope (a map, or a step resolving to one), resolved in the main process before they cross." },
@@ -555,7 +555,7 @@ export class WindowNode extends Node {
    * Ship a step array to a window and run it there.
    *
    * The steps are read RAW and never resolved here: resolving in main would turn
-   * `{"$setText": ...}` into a plain object, because main has no DOM handler for
+   * `{"$setProp": ...}` into a plain object, because main has no DOM handler for
    * it. Only `window` and `params` resolve, so main-side values can cross.
    *
    * The result comes back over the same correlation-id transport as any other

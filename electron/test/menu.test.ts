@@ -31,7 +31,7 @@ test("scalar fields resolve, including expressions", async () => {
 // steps raw, exactly as a literal item does.
 test("an item that is a step resolves to the item it holds", async () => {
   const seen: unknown[] = [];
-  const steps = [{ $setText: ["#out", "Opened"] }];
+  const steps = [{ $setProp: ["#out", "textContent", "Opened"] }];
   const ctx = ctxIn({ fileMenu: { label: "Open", do: steps } });
   const [item, quit] = await buildMenuTemplate(
     [{ $var: "fileMenu" }, { label: "Quit", role: "quit" }],
@@ -45,11 +45,11 @@ test("an item that is a step resolves to the item it holds", async () => {
 });
 
 // The whole reason buildMenuTemplate exists rather than a blanket resolveFields:
-// resolving `do` in main would find no DOM handler for setText and quietly turn
+// resolving `do` in main would find no DOM handler for setProp and quietly turn
 // the step into a plain object, destroying the handler instead of dispatching it.
 test("do steps reach the click handler raw, never resolved", async () => {
   const seen: unknown[][] = [];
-  const steps = [{ $setText: ["#out", "Saved"] }];
+  const steps = [{ $setProp: ["#out", "textContent", "Saved"] }];
 
   const [item] = await buildMenuTemplate(
     [{ label: "Save", do: steps }],

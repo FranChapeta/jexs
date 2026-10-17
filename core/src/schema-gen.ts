@@ -1233,7 +1233,7 @@ export const GLOBAL_KEY_DOCS: Record<string, { markdownDescription: string; exam
   then: {
     markdownDescription:
       "Run these steps as a FIRE-AND-FORGET continuation (like a Promise `.then`): the step returns immediately (later steps do NOT block on it), and once this expression settles, the steps run with the result bound as `result`. A rejection runs `$catch`. The step itself yields `null`, as the result is delivered to `result`, not returned, so `$as` is refused beside it: read the value via `result` inside `$then`. Works on ANY node, at any depth; use it to kick off async I/O (`query`, `file`, a host `dialog`, `thread`) without stalling the sequence. (Under `$if`, `then` is the branch, not a continuation.)",
-    examples: ["{ \"$fetch\": \"/api/saves\", \"$then\": [{ \"$setHtml\": [\"#list\", { \"$var\": \"result\" }] }] }"],
+    examples: ["{ \"$fetch\": \"/api/saves\", \"$then\": [{ \"$setProp\": [\"#list\", \"innerHTML\", { \"$var\": \"result\" }] }] }"],
   },
   bubble: {
     markdownDescription:

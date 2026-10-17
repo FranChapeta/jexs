@@ -41,7 +41,7 @@ Templates live in `src/`. An optional `app/main.json` runs in the main process a
 
 Node calls cross processes automatically. The preload exposes the main process's handler keys to the renderer, and `@jexs/client` registers a `ProxyNode` for the keys it does not have locally. Because resolver registration is first-wins, only the missing keys are forwarded:
 
-- DOM ops (`setText`, `getValue`, `click`, …), `var`, `storage`, `tree-*` stay in the renderer
+- DOM ops (`setProp`, `getProp`, `click`, …), `var`, `storage`, `tree-*` stay in the renderer
 - `file`, `query`, `dialog-*`, `window-*`, `app-*` forward to main
 
 So a page template can call `{ "$query": "select", "table": "saves" }` directly. There is no `ipc` node and nothing to wire up.
@@ -104,16 +104,16 @@ A main-process handler — a menu item, a tray click, a shortcut, an `app-on` ev
 
 ```json
 { "label": "Save", "do": [
-    { "$getValue": "#editor", "$as": "text" },
+    { "$getProp": ["#editor", "value"], "$as": "text" },
     { "$file": { "$var": "path" }, "write": { "$var": "text" } } ] }
 ```
 
-`getValue` crosses to the window, `file` stays in main, and `$as` binds in main because the resolver applies global step keys in the calling thread.
+`getProp` crosses to the window, `file` stays in main, and `$as` binds in main because the resolver applies global step keys in the calling thread.
 
 `window-run` is the exception, and the difference matters: its steps are sent **unresolved** and run against the page's context, not main's. So a `{ "$var": "x" }` inside `window-run` looks up `x` in the page, not in the handler. Pass main-side values through `params`:
 
 ```json
-{ "$window-run": [{ "$setText": ["#status", { "$var": "msg" }] }],
+{ "$window-run": [{ "$setProp": ["#status", "textContent", { "$var": "msg" }] }],
   "window": "editor",
   "params": { "msg": { "$var": "status" } } }
 ```

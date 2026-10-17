@@ -87,6 +87,15 @@ test("includes: tests an array for a value", () => {
   assert.equal(resolve({ $includes: [[1, 2], "2"] }, {}), false, "strict equality");
 });
 
+test("indexOf finds the first index of a value, an object only as itself", () => {
+  assert.equal(resolve({ $indexOf: [["a", "b", "b"], "b"] }, {}), 1);
+  assert.equal(resolve({ $indexOf: [[1, 2], "2"] }, {}), -1, "strict equality");
+  const item = { id: 2 };
+  const ctx = { items: [{ id: 1 }, item], item };
+  assert.equal(resolve({ $indexOf: [{ $var: "items" }, { $var: "item" }] }, ctx), 1);
+  assert.equal(resolve({ $indexOf: [{ $var: "items" }, { $var: "item" }] }, { items: [{ id: 2 }], item }), -1, "an equal copy is not the same object");
+});
+
 test("unique / flatten rewrite the source array in place", () => {
   const ua = { xs: [1, 2, 2, 3, 1] };
   resolve({ $unique: { $var: "xs" } }, ua);

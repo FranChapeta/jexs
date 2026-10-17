@@ -18,7 +18,7 @@ import type { Context, Node, Resolver, StepField, StepFields } from "@jexs/core"
 // Call transport (main -> renderer)
 //
 // `webContents.send` is fire-and-forget, but a proxied DOM op has to return a
-// value — `{ "$getValue": "#editor", "$as": "text" }` is useless otherwise. Each
+// value — `{ "$getProp": ["#editor", "value"], "$as": "text" }` is useless otherwise. Each
 // message carries a correlation id and the renderer answers on `jexs:result`.
 // Errors travel back the same way, so a failing DOM op surfaces in main where
 // the developer is looking rather than in a renderer console nobody has open.

@@ -105,6 +105,53 @@ test("a handler reads the variables of the scope around it, and `load` runs in a
   assert.equal("path" in context, false);
 });
 
+// A row that moved has its scope rewritten in place; its handlers, bound when
+// it was first rendered, must hand over the new path rather than the old one.
+test("a handler reads the scope around it when it fires, so a rewritten scope reaches it", async (t) => {
+  const logged = t.mock.method(console, "error", () => {});
+  const context: Record<string, unknown> = { seen: [] as unknown[] };
+  createResolver(coreNodes(), { context });
+  const row = new FakeElement();
+  row.setAttribute("data-jexs-scope", JSON.stringify({ path: "2" }));
+  const button = handling("click", [{ $push: [{ $var: "seen" }, { $var: "path" }] }]);
+  button.parent = row;
+  connected = [button];
+  hydrate(fakeDocument as unknown as Document, context);
+
+  button.dispatchEvent(new Event("click"));
+  row.setAttribute("data-jexs-scope", JSON.stringify({ path: "0" }));
+  button.dispatchEvent(new Event("click"));
+  row.setAttribute("data-jexs-scope", "{not json");
+  button.dispatchEvent(new Event("click"));
+  await settle();
+  assert.deepEqual(context.seen, ["2", "0", undefined], "a malformed scope adds no variables");
+  assert.equal(logged.mock.callCount(), 1, "and is logged");
+});
+
+// A drag or pointer handler fires every frame; the scope around it is parsed
+// once per change, not once per firing.
+test("a handler firing many times parses its scope only when the scope changes", async (t) => {
+  const context: Record<string, unknown> = { seen: [] as unknown[] };
+  createResolver(coreNodes(), { context });
+  const row = new FakeElement();
+  row.setAttribute("data-jexs-scope", JSON.stringify({ path: "1" }));
+  const handle = handling("dragover", [{ $push: [{ $var: "seen" }, { $var: "path" }] }]);
+  handle.parent = row;
+  connected = [handle];
+  hydrate(fakeDocument as unknown as Document, context);
+
+  const parse = t.mock.method(JSON, "parse");
+  for (let i = 0; i < 50; i++) handle.dispatchEvent(new Event("dragover"));
+  row.setAttribute("data-jexs-scope", JSON.stringify({ path: "2" }));
+  for (let i = 0; i < 50; i++) handle.dispatchEvent(new Event("dragover"));
+  await settle();
+  const scopeParses = parse.mock.calls.filter(c => String(c.arguments[0]).includes("path")).length;
+  assert.equal(scopeParses, 2);
+  const seen = context.seen as string[];
+  assert.equal(seen.length, 100);
+  assert.deepEqual([seen[0], seen[49], seen[50], seen[99]], ["1", "1", "2", "2"]);
+});
+
 test("hydrating an element binds its own handlers too, not only those inside it", async () => {
   const context: Record<string, unknown> = { clicks: 0 };
   createResolver(coreNodes(), { context });

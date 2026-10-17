@@ -308,6 +308,20 @@ export class ArrayNode extends Node {
         "{ \"$includes\": [{ \"$var\": \"roles\" }, \"admin\"] }",
       ],
     },
+    indexOf: {
+      tuple: 2,
+      prefixItems: [
+        { type: "array", description: "The array to search." },
+        { description: "The value to find; an object or element is found only as that same one, not an equal copy." },
+      ],
+      output: "number",
+      markdownDescription: "Finds the first index of a value in an array (strict equality): `[arr, value]`. To find an object by a key, `find` it and pass what it returns.",
+      outputDescription: "The index, or `-1` when the value is not there.",
+      examples: [
+        "{ \"$indexOf\": [{ \"$var\": \"tags\" }, \"draft\"] }",
+        "{ \"$indexOf\": [{ \"$var\": \"items\" }, { \"$var\": \"item\" }] }",
+      ],
+    },
     index: {
       tuple: 2,
       prefixItems: [
@@ -660,6 +674,13 @@ export class ArrayNode extends Node {
     return resolve(def.$includes, c, args => {
       const a = this.toArray(args);
       return this.toArray(a[0]).includes(a[1]);
+    });
+  }
+
+  indexOf(def: Record<string, unknown>, c: Context) {
+    return resolve(def.$indexOf, c, args => {
+      const a = this.toArray(args);
+      return this.toArray(a[0]).indexOf(a[1]);
     });
   }
 

@@ -2,7 +2,7 @@ import { Node, Context, NodeValue } from "@jexs/core";
 import { operands, resolve, resolveAll } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { hydrate } from "../events.js";
-import { getElement, isHtmlOrSvg } from "../dom.js";
+import { getElement, isHtmlOrSvg, parseHtml, place, POSITIONS, type Placement } from "../dom.js";
 
 /** Call `name` on `target` for `op`; a target without it is an error naming both,
  *  rather than a step that quietly does nothing. */
@@ -27,10 +27,46 @@ function clipboard(op: string): Clipboard {
   return navigator.clipboard;
 }
 
+/**
+ * Parse `html`, let `put` place the nodes, then wire up events on the elements
+ * among them, which it returns: markup written by any op works like rendered
+ * markup does.
+ */
+function insertMarkup(html: unknown, context: Context, put: (nodes: ChildNode[]) => void): Element[] {
+  const nodes = parseHtml(String(html ?? ""));
+  put(nodes);
+  const added = nodes.filter((n): n is Element => n instanceof Element);
+  for (const el of added) hydrate(el, context);
+  return added;
+}
+
+/** Where `index` or `position` puts something; `append` when neither is given. */
+function placementOf(op: string, index: unknown, position: unknown): Placement {
+  if (index != null && position != null) throw new Error(`$${op} takes \`index\` or \`position\`, not both`);
+  if (index != null) {
+    const n = Number(index);
+    if (!Number.isFinite(n)) throw new Error(`$${op}: \`index\` ${JSON.stringify(index)} is not a number`);
+    return n;
+  }
+  if (position == null) return "append";
+  const found = POSITIONS.find(p => p === position);
+  if (!found) throw new Error(`$${op}: \`position\` ${JSON.stringify(position)} is not one of ${POSITIONS.join(", ")}`);
+  return found;
+}
+
+/**
+ * The root a query searches: the page, or the `in` element when the step gives
+ * one. A given `in` that resolves to nothing is null, never the whole page.
+ */
+function queryRoot(def: Record<string, unknown>, scope: unknown): ParentNode | null {
+  return def.in === undefined ? document : getElement(scope);
+}
+
 // Live DOM properties addressable by getProp/setProp, used to constrain the
 // property slot of each tuple. Read-only metrics are gettable only, so they're
 // absent from the settable list.
 const WRITABLE_PROPS = [
+  "value", "textContent", "innerHTML", "outerHTML", "disabled",
   "scrollTop", "scrollLeft", "selectedIndex", "currentTime", "volume", "playbackRate",
   "checked", "indeterminate", "muted",
 ];
@@ -38,7 +74,33 @@ const READONLY_METRICS = [
   "scrollHeight", "scrollWidth", "clientHeight", "clientWidth",
   "offsetHeight", "offsetWidth", "offsetTop", "offsetLeft",
 ];
-const GETTABLE_PROPS = [...WRITABLE_PROPS, ...READONLY_METRICS, "disabled"];
+const GETTABLE_PROPS = [...WRITABLE_PROPS, ...READONLY_METRICS];
+
+// Attributes commonly read or written at runtime, for getAttr/setAttr. Any
+// other name (a `data-*` one, say) is as valid.
+const COMMON_ATTRS = [
+  "id", "class", "style", "title", "role", "hidden", "tabindex",
+  "href", "src", "alt", "target", "rel",
+  "name", "type", "value", "placeholder", "for",
+  "disabled", "checked", "selected", "readonly", "required", "open",
+  "draggable", "contenteditable",
+  "aria-label", "aria-hidden", "aria-expanded", "aria-selected", "aria-pressed", "aria-current",
+  "aria-controls", "aria-describedby",
+  "data-jexs-scope",
+];
+
+// The siblings that say where markup or a moved element goes.
+const PLACEMENT_VARIANTS = {
+  index: {
+    type: "number",
+    markdownDescription: "Child index inside the target, as `$insert` takes one for an array: it ends up at that index; the length or more appends. Counts element children only, so give it a container that holds just the items.",
+  },
+  position: {
+    type: "string",
+    enum: POSITIONS,
+    markdownDescription: "Where, relative to the target: `before` or `after` it, or `prepend` / `append` inside it (the default).",
+  },
+} as const;
 
 // Ops that act on a target element return that element (an actual HTMLElement),
 // enabling chaining. Declared via the `_element` output + this description.
@@ -46,10 +108,16 @@ const RETURNS_TARGET = "The element operated on (an HTMLElement), for chaining."
 
 export class DomNode extends Node {
   // getProp/setProp accept a plain property name OR a dot-path to a nested one
-  // (e.g. "style.color"), like setVars. The `enum` lists common flat props for
-  // autocomplete WITHOUT restricting — the strOrExpr branch admits any string
-  // (incl. dot-paths) or a string-valued expression.
+  // (e.g. "style.color"), like setVars; getAttr/setAttr take any attribute name.
+  // Each `enum` lists common names for autocomplete WITHOUT restricting: the
+  // strOrExpr branch admits any string or a string-valued expression.
   static schemaDefs: Record<string, Record<string, unknown>> = {
+    _attrName: {
+      anyOf: [
+        { type: "string", enum: COMMON_ATTRS },
+        { $ref: "#/$defs/strOrExpr" },
+      ],
+    },
     _gettableProp: {
       anyOf: [
         { type: "string", enum: GETTABLE_PROPS },
@@ -70,7 +138,7 @@ export class DomNode extends Node {
       anyOf: [
         {
           type: "string",
-          description: "A CSS selector, naming the first element that matches it: `#email` for an id, `.card` for a class, `form input[name=\"q\"]` for anything more specific. A bare id is not enough: `\"email\"` looks for an `<email>` tag. When nothing matches, an op that reads from the element (`getAttr`, `getValue`, ...) answers null, as the lookups do, while one that acts on it is an error; check first with `$querySelector`, which `$if` reads as false when nothing matches.",
+          description: "A CSS selector, naming the first element that matches it: `#email` for an id, `.card` for a class, `form input[name=\"q\"]` for anything more specific. A bare id is not enough: `\"email\"` looks for an `<email>` tag. When nothing matches, an op that reads from the element (`getAttr`, `getProp`, ...) answers null, as the lookups do, while one that acts on it is an error; check first with `$querySelector`, which `$if` reads as false when nothing matches.",
         },
         { $ref: "#/$defs/_element" },
       ],
@@ -105,18 +173,6 @@ export class DomNode extends Node {
       type: "string",
       output: "number",
       markdownDescription: "Hides all elements matching a CSS selector. Returns the count of matched elements.",
-    },
-    enable: {
-      $ref: "#/$defs/_elementRef",
-      output: { $ref: "#/$defs/_element" },
-      outputDescription: RETURNS_TARGET,
-      markdownDescription: "Enables a form input by setting `disabled = false`.",
-    },
-    disable: {
-      $ref: "#/$defs/_elementRef",
-      output: { $ref: "#/$defs/_element" },
-      outputDescription: RETURNS_TARGET,
-      markdownDescription: "Disables a form input by setting `disabled = true`.",
     },
     focus: {
       $ref: "#/$defs/_elementRef",
@@ -173,7 +229,7 @@ export class DomNode extends Node {
       tuple: 3,
       prefixItems: [
         { $ref: "#/$defs/_elementRef", description:"The element: a CSS selector or an HTMLElement." },
-        { type: "string", description: "The attribute name." },
+        { $ref: "#/$defs/_attrName", description: "The attribute name: a common one, or any other (e.g. \"data-id\")." },
         { description: "The attribute value (coerced to a string)." },
       ],
       output: { $ref: "#/$defs/_element" },
@@ -184,7 +240,7 @@ export class DomNode extends Node {
       tuple: 2,
       prefixItems: [
         { $ref: "#/$defs/_elementRef", description:"The element: a CSS selector or an HTMLElement." },
-        { type: "string", description: "The attribute name." },
+        { $ref: "#/$defs/_attrName", description: "The attribute name: a common one, or any other (e.g. \"data-id\")." },
       ],
       output: "string",
       markdownDescription: "Gets an attribute value from an element. Pass `[selectorOrElement, attrName]`. `null` when the element or the attribute is missing.",
@@ -196,9 +252,9 @@ export class DomNode extends Node {
         { $ref: "#/$defs/_gettableProp", description: "The DOM property to read, or a dot-path to a nested one (e.g. \"style.color\")." },
       ],
       output: "any",
-      markdownDescription: "Reads a live DOM property from an element (the JS property, not the HTML attribute), e.g. `scrollTop`, `scrollHeight`, `checked`. Supports dot-paths for nested props, e.g. `style.color`. Pass `[selectorOrElement, propName]`. A missing property reads as `undefined`, and a missing element as `null`.",
+      markdownDescription: "Reads a live DOM property from an element (the JS property, not the HTML attribute), e.g. `value`, `textContent`, `checked`, `scrollTop`. Supports dot-paths for nested props, e.g. `style.color`. Pass `[selectorOrElement, propName]`. A missing property reads as `undefined`, and a missing element as `null`.",
       examples: [
-        "{ \"$getProp\": [\"#log\", \"scrollTop\"] }",
+        "{ \"$getProp\": [\"#email\", \"value\"] }",
         "{ \"$getProp\": [\"#box\", \"style.color\"] }",
       ],
     },
@@ -210,10 +266,12 @@ export class DomNode extends Node {
         { description: "The value to assign." },
       ],
       output: { $ref: "#/$defs/_element" },
-      outputDescription: RETURNS_TARGET,
-      markdownDescription: "Writes a live DOM property on an element (the JS property, not the HTML attribute), e.g. `scrollTop`, `checked`, `selectedIndex`. Supports dot-paths for nested props (e.g. `style.color`), traversed like `setVars`. Pass `[selectorOrElement, propName, value]`. Returns the element.",
+      outputDescription: "The element operated on (an HTMLElement), for chaining. For `outerHTML`, the element now in its place (the first one the markup made), or `null` when the markup made none.",
+      markdownDescription: "Writes a live DOM property on an element (the JS property, not the HTML attribute), e.g. `value`, `textContent`, `disabled`, `checked`, `scrollTop`. Supports dot-paths for nested props (e.g. `style.color`), traversed like `setVars`. Pass `[selectorOrElement, propName, value]`.\nMarkup written to `innerHTML` or `outerHTML` gets its `events` wired up, as rendered markup does. `outerHTML` replaces the element, so the step returns the replacement rather than the element that is gone.",
       examples: [
-        "{ \"$setProp\": [\"#log\", \"scrollTop\", 99999] }",
+        "{ \"$setProp\": [\"#status\", \"textContent\", \"Saved\"] }",
+        "{ \"$setProp\": [\"#list\", \"innerHTML\", { \"$var\": \"result\" }] }",
+        "{ \"$setProp\": [{ \"$var\": \"row\" }, \"outerHTML\", { \"$runVar\": \"rowTemplate\" }] }",
         "{ \"$setProp\": [\"#box\", \"style.color\", \"red\"] }",
       ],
     },
@@ -275,12 +333,32 @@ export class DomNode extends Node {
     querySelector: {
       type: "string",
       output: { $ref: "#/$defs/_element" },
-      markdownDescription: "Returns the first element matching a CSS selector, or `null` when none does: the way to check for an element that may be absent before acting on it.",
+      markdownDescription: "Returns the first element matching a CSS selector, or `null` when none does: the way to check for an element that may be absent before acting on it. Searches the whole page, or only inside `in`.",
+      examples: [
+        "{ \"$querySelector\": \"#cart\" }",
+        "{ \"$querySelector\": \"[data-children]\", \"in\": { \"$var\": \"row\" } }",
+      ],
+      siblings: {
+        in: {
+          $ref: "#/$defs/_elementRef",
+          description: "An element to search inside instead of the whole page. When it matches nothing, neither does the query.",
+        },
+      },
     },
     querySelectorAll: {
       type: "string",
       output: { type: "array", items: { $ref: "#/$defs/_element" } },
-      markdownDescription: "Returns all elements matching a CSS selector as an array.",
+      markdownDescription: "Returns all elements matching a CSS selector as an array. Searches the whole page, or only inside `in`.",
+      examples: [
+        "{ \"$querySelectorAll\": \".item\" }",
+        "{ \"$querySelectorAll\": \":scope > li\", \"in\": \"#todo\" }",
+      ],
+      siblings: {
+        in: {
+          $ref: "#/$defs/_elementRef",
+          description: "An element to search inside instead of the whole page. When it matches nothing, the result is empty.",
+        },
+      },
     },
     closest: {
       tuple: 2,
@@ -327,21 +405,6 @@ export class DomNode extends Node {
         "{ \"$caretFromPoint\": [120, 40] }",
       ],
     },
-    getValue: {
-      $ref: "#/$defs/_elementRef",
-      output: "string",
-      markdownDescription: "Gets the current `.value` of an input element: `\"\"` for an element without one, `null` when no element matches.",
-    },
-    setValue: {
-      tuple: 2,
-      prefixItems: [
-        { $ref: "#/$defs/_elementRef", description:"The input element: a CSS selector or an HTMLElement." },
-        { description: "The value to set (assigned to `.value`, coerced to a string)." },
-      ],
-      output: { $ref: "#/$defs/_element" },
-      outputDescription: RETURNS_TARGET,
-      markdownDescription: "Sets the `.value` of an input element. Pass `[selectorOrElement, value]`.",
-    },
     setRangeText: {
       tuple: [2, 5],
       prefixItems: [
@@ -365,26 +428,6 @@ export class DomNode extends Node {
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Selects all text in an `<input>`/`<textarea>` via `.select()`. Accepts a CSS selector or HTMLElement.",
     },
-    setHtml: {
-      tuple: 2,
-      prefixItems: [
-        { $ref: "#/$defs/_elementRef", description:"The element: a CSS selector or an HTMLElement." },
-        { type: "string", description: "The HTML string to set as `innerHTML`." },
-      ],
-      output: { $ref: "#/$defs/_element" },
-      outputDescription: RETURNS_TARGET,
-      markdownDescription: "Sets the `innerHTML` of an element. Pass `[selectorOrElement, html]`.",
-    },
-    setText: {
-      tuple: 2,
-      prefixItems: [
-        { $ref: "#/$defs/_elementRef", description:"The element: a CSS selector or an HTMLElement." },
-        { type: "string", description: "The text to set as `textContent`." },
-      ],
-      output: { $ref: "#/$defs/_element" },
-      outputDescription: RETURNS_TARGET,
-      markdownDescription: "Sets the `textContent` of an element. Pass `[selectorOrElement, text]`.",
-    },
     append: {
       tuple: 2,
       prefixItems: [
@@ -393,12 +436,44 @@ export class DomNode extends Node {
       ],
       output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
-      markdownDescription: "Appends HTML to an element (`insertAdjacentHTML(\"beforeend\")`) and scrolls to the bottom. Pass `[selectorOrElement, html]`.",
+      markdownDescription: "Appends HTML to the end of an element, wires up its `events`, and scrolls the element to the bottom, as a chat log wants. Pass `[selectorOrElement, html]`. To put markup anywhere else, use `insertHtml`.",
     },
-    removeEl: {
+    insertHtml: {
+      tuple: 2,
+      prefixItems: [
+        { $ref: "#/$defs/_elementRef", description: "The target: the container for `index`, `prepend` and `append`, the neighbor for `before` and `after`." },
+        { type: "string", description: "The HTML string to insert." },
+      ],
+      exclusive: true,
+      variants: PLACEMENT_VARIANTS,
+      output: { $ref: "#/$defs/_element" },
+      outputDescription: "The first element the markup made, or `null` when it made none.",
+      markdownDescription: "Inserts HTML at a child `index` of the target or at a `position` relative to it (appends by default), and wires up its `events`. Pass `[selectorOrElement, html]`.\nWith `index`, the same number as an `$insert` on the data puts the markup where the item went.",
+      examples: [
+        "{ \"$insertHtml\": [\"#todo\", { \"$runVar\": \"row\" }], \"index\": 2 }",
+        "{ \"$insertHtml\": [{ \"$var\": \"target\" }, \"<hr>\"], \"position\": \"after\" }",
+      ],
+    },
+    moveElement: {
+      tuple: 2,
+      prefixItems: [
+        { $ref: "#/$defs/_elementRef", description: "The element to move." },
+        { $ref: "#/$defs/_elementRef", description: "The target: the container for `index`, `prepend` and `append`, the neighbor for `before` and `after`." },
+      ],
+      exclusive: true,
+      variants: PLACEMENT_VARIANTS,
+      output: { $ref: "#/$defs/_element" },
+      outputDescription: "The moved element.",
+      markdownDescription: "Moves an element to a child `index` of the target or to a `position` relative to it (appends by default). The element itself moves, so its handlers, focus and typed-in values stay. Pass `[element, target]`.\nWith `index`, the element ends at exactly that index, as `$move` on an array does. Moving an element into itself is an error.",
+      examples: [
+        "{ \"$moveElement\": [{ \"$var\": \"row\" }, \"#todo\"], \"index\": 0 }",
+        "{ \"$moveElement\": [{ \"$var\": \"row\" }, { \"$var\": \"other\" }], \"position\": \"before\" }",
+      ],
+    },
+    removeElement: {
       $ref: "#/$defs/_elementRef",
       output: "boolean",
-      markdownDescription: "Removes an element from the DOM via `Element.remove()`. Accepts a CSS selector or HTMLElement. A removal, so one that is not there is reported rather than an error. (Named `removeEl` because `remove` is ArrayNode's element-removal op.)",
+      markdownDescription: "Removes an element from the page via `Element.remove()`. Accepts a CSS selector or HTMLElement. A removal, so one that is not there is reported rather than an error.",
       outputDescription: "`true` if there was an element to remove, otherwise `false`.",
     },
     scrollTo: {
@@ -493,20 +568,6 @@ export class DomNode extends Node {
       return els.length;
     });
   }
-  enable(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$enable, context, v => {
-      const el = getElement(v, "enable");
-      if ("disabled" in el) el.disabled = false;
-      return el;
-    });
-  }
-  disable(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$disable, context, v => {
-      const el = getElement(v, "disable");
-      if ("disabled" in el) el.disabled = true;
-      return el;
-    });
-  }
   addClass(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$addClass, context, args => {
       const [ref, name] = operands("addClass", args, 2);
@@ -558,7 +619,10 @@ export class DomNode extends Node {
     return resolve(def.$setProp, context, args => {
       const [ref, name, value] = operands("setProp", args, 3);
       const el = getElement(ref, "setProp");
-      setPropPath(el, String(name), value);
+      const prop = String(name);
+      if (prop === "outerHTML") return insertMarkup(value, context, nodes => el.replaceWith(...nodes))[0] ?? null;
+      setPropPath(el, prop, value);
+      if (prop === "innerHTML") hydrate(el, context);
       return el;
     });
   }
@@ -631,8 +695,8 @@ export class DomNode extends Node {
     });
   }
   /** A removal, so an element that is not there is reported rather than an error. */
-  removeEl(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$removeEl, context, v => {
+  removeElement(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$removeElement, context, v => {
       const el = getElement(v);
       el?.remove();
       return el !== null;
@@ -700,10 +764,12 @@ export class DomNode extends Node {
     return resolve(def.$getElementById, context, v => document.getElementById(String(v)));
   }
   querySelector(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$querySelector, context, v => document.querySelector(String(v)));
+    return resolveAll([def.$querySelector, def.in ?? null], context, ([selector, scope]) =>
+      queryRoot(def, scope)?.querySelector(String(selector)) ?? null);
   }
   querySelectorAll(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$querySelectorAll, context, v => Array.from(document.querySelectorAll(String(v))));
+    return resolveAll([def.$querySelectorAll, def.in ?? null], context, ([selector, scope]) =>
+      Array.from(queryRoot(def, scope)?.querySelectorAll(String(selector)) ?? []));
   }
   closest(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$closest, context, args => {
@@ -711,50 +777,35 @@ export class DomNode extends Node {
       return getElement(ref)?.closest(String(selector)) ?? null;
     });
   }
-  getValue(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$getValue, context, v => {
-      // A read: a missing element reads as null and one without a value as
-      // empty, as `getProp` reads a missing property as undefined. Writing one
-      // is an error (`setValue`).
-      const el = getElement(v);
-      if (!el) return null;
-      return "value" in el ? el.value ?? "" : "";
-    });
-  }
-  setValue(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$setValue, context, args => {
-      const [ref, value] = operands("setValue", args, 2);
-      const el = getElement(ref, "setValue");
-      if (!("value" in el)) throw new Error(`$setValue: ${JSON.stringify(ref)} has no value`);
-      el.value = String(value ?? "");
-      return el;
-    });
-  }
-  setHtml(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$setHtml, context, args => {
-      const [ref, html] = operands("setHtml", args, 2);
-      const el = getElement(ref, "setHtml");
-      el.innerHTML = String(html ?? "");
-      // Bind data-jexs-events on the inserted content against the current
-      // context (loaded templates carry their loading context this way).
-      hydrate(el, context);
-      return el;
-    });
-  }
-  setText(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$setText, context, args => {
-      const [ref, text] = operands("setText", args, 2);
-      const el = getElement(ref, "setText");
-      el.textContent = String(text ?? "");
-      return el;
-    });
-  }
   append(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$append, context, args => {
       const [ref, html] = operands("append", args, 2);
       const el = getElement(ref, "append");
-      el.insertAdjacentHTML("beforeend", String(html ?? ""));
+      insertMarkup(html, context, nodes => el.append(...nodes));
       el.scrollTop = el.scrollHeight;
+      return el;
+    });
+  }
+  insertHtml(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def.$insertHtml, def.index ?? null, def.position ?? null], context, ([args, index, position]) => {
+      const [ref, html] = operands("insertHtml", args, 2);
+      const target = getElement(ref, "insertHtml");
+      const where = placementOf("insertHtml", index, position);
+      return insertMarkup(html, context, nodes => place(target, nodes, where))[0] ?? null;
+    });
+  }
+  moveElement(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def.$moveElement, def.index ?? null, def.position ?? null], context, ([args, index, position]) => {
+      const [elRef, ref] = operands("moveElement", args, 2);
+      const el = getElement(elRef, "moveElement");
+      const target = getElement(ref, "moveElement");
+      const where = placementOf("moveElement", index, position);
+      const parent = where === "before" || where === "after" ? target.parentNode : target;
+      if (parent && el.contains(parent)) throw new Error("$moveElement: an element can't be moved into itself");
+      // Taken out first, so an index counts the children without it and the
+      // element ends there, as `$move` does.
+      if (typeof where === "number") el.remove();
+      place(target, [el], where);
       return el;
     });
   }
