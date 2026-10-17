@@ -1,7 +1,7 @@
 ﻿import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { createResolver, coreNodes } from "@jexs/core";
-import { WebRTCNode } from "../src/nodes/WebRTCNode.js";
+import { WebRTCNode } from "../src/nodes/WebRTC.js";
 
 /**
  * WebRTC stand-ins. The node is written against the browser API, so the tests

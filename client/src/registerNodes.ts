@@ -84,35 +84,35 @@ export function registerDomLazy(resolver: Resolver): void {
   resolver.registerLazy(
     ["tree-init", "tree-render", "tree-insert", "tree-remove", "tree-update", "tree-move",
      "tree-select", "tree-toggle", "tree-apply"],
-    (r) => import("./nodes/TreeNode.js").then(({ TreeNode }) => {
+    (r) => import("./nodes/Tree.js").then(({ TreeNode }) => {
       r.registerNode(new TreeNode());
     }),
   );
 
   resolver.registerLazy(
     ["list-add", "list-remove", "list-move-up", "list-move-down", "list-init", "list-sortable", "list-serialize"],
-    (r) => import("./nodes/ListNode.js").then(({ ListNode }) => {
+    (r) => import("./nodes/List.js").then(({ ListNode }) => {
       r.registerNode(new ListNode());
     }),
   );
 
   resolver.registerLazy(
     ["ws-connect", "ws-send", "ws-close", "ws-status"],
-    (r) => import("./nodes/WsNode.js").then(({ WsNode }) => {
+    (r) => import("./nodes/Ws.js").then(({ WsNode }) => {
       r.registerNode(new WsNode());
     }),
   );
 
   resolver.registerLazy(
     ["push-subscribe", "push-unsubscribe"],
-    (r) => import("./nodes/PushNode.js").then(({ PushNode }) => {
+    (r) => import("./nodes/Push.js").then(({ PushNode }) => {
       r.registerNode(new PushNode());
     }),
   );
 
   resolver.registerLazy(
     ["rtc", "rtc-connect", "rtc-signal", "rtc-send", "rtc-broadcast", "rtc-close", "rtc-status"],
-    (r) => import("./nodes/WebRTCNode.js").then(({ WebRTCNode }) => {
+    (r) => import("./nodes/WebRTC.js").then(({ WebRTCNode }) => {
       r.registerNode(new WebRTCNode());
     }),
   );

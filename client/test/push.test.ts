@@ -2,7 +2,7 @@ import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { createResolver, coreNodes } from "@jexs/core";
 import { installDom } from "./dom.js";
-import { PushNode } from "../src/nodes/PushNode.js";
+import { PushNode } from "../src/nodes/Push.js";
 
 const window = installDom();
 const resolve = createResolver([...coreNodes(), new PushNode()]);

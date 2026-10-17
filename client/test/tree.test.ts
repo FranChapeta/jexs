@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createResolver, coreNodes, childContext } from "@jexs/core";
 import { installDom } from "./dom.js";
-import { TreeNode } from "../src/nodes/TreeNode.js";
+import { TreeNode } from "../src/nodes/Tree.js";
 
 const window = installDom();
 const settle = () => new Promise(r => setTimeout(r, 10));

@@ -1,7 +1,7 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { createResolver, coreNodes } from "@jexs/core";
-import { AudioNode } from "../src/nodes/AudioNode.js";
+import { AudioNode } from "../src/nodes/Audio.js";
 
 const resolve = createResolver([...coreNodes(), new AudioNode()]);
 

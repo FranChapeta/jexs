@@ -1,5 +1,5 @@
 import { createResolver, coreNodes, isObject } from "@jexs/core";
-import { SW_EVENT, ServiceWorkerNode, swScope } from "./nodes/ServiceWorkerNode.js";
+import { SW_EVENT, ServiceWorkerNode, swScope } from "./nodes/ServiceWorker.js";
 
 export interface ServiceWorkerOptions {
   /** Names the cache (`jexs-<version>`). A new version installs into a fresh

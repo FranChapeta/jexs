@@ -2,9 +2,9 @@ import {
   WorkerNode, ProxyNode, createResolver, childContext, stepFields,
   coreNodes, Node, type Resolver, type StepFields,
 } from "@jexs/core";
-import { DomNode } from "./nodes/DomNode.js";
-import { AudioNode } from "./nodes/AudioNode.js";
-import { StorageNode } from "./nodes/StorageNode.js";
+import { DomNode } from "./nodes/Dom.js";
+import { AudioNode } from "./nodes/Audio.js";
+import { StorageNode } from "./nodes/Storage.js";
 import { registerComputeLazy, registerDomLazy } from "./registerNodes.js";
 import { makeModuleWorker } from "./makeWorker.js";
 import { hydrate, pageContext } from "./events.js";
@@ -67,12 +67,12 @@ export { hydrate, pageContext };
 // which registers the eager three itself and loads the rest on first use. A
 // bundle drops the ones it does not import, so the page pays nothing for these.
 export { DomNode, AudioNode, StorageNode };
-export { TreeNode } from "./nodes/TreeNode.js";
-export { ListNode } from "./nodes/ListNode.js";
-export { WsNode } from "./nodes/WsNode.js";
-export { PushNode } from "./nodes/PushNode.js";
-export { WebRTCNode } from "./nodes/WebRTCNode.js";
-export { ServiceWorkerNode } from "./nodes/ServiceWorkerNode.js";
+export { TreeNode } from "./nodes/Tree.js";
+export { ListNode } from "./nodes/List.js";
+export { WsNode } from "./nodes/Ws.js";
+export { PushNode } from "./nodes/Push.js";
+export { WebRTCNode } from "./nodes/WebRTC.js";
+export { ServiceWorkerNode } from "./nodes/ServiceWorker.js";
 
 let booted = false;
 

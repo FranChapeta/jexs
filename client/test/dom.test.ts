@@ -2,7 +2,7 @@ import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { createResolver, coreNodes } from "@jexs/core";
 import { installDom } from "./dom.js";
-import { DomNode } from "../src/nodes/DomNode.js";
+import { DomNode } from "../src/nodes/Dom.js";
 
 const window = installDom();
 const document = window.document;

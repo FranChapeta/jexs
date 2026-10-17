@@ -1,7 +1,7 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { createResolver, coreNodes } from "@jexs/core";
-import { WsNode } from "../src/nodes/WsNode.js";
+import { WsNode } from "../src/nodes/Ws.js";
 
 // The node is held, not just registered: its connections live on it now, so the
 // teardown and the WebRTC accessors both go through the instance.

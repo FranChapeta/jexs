@@ -2,7 +2,7 @@ import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { createResolver, coreNodes } from "@jexs/core";
 import { installDom } from "./dom.js";
-import { StorageNode } from "../src/nodes/StorageNode.js";
+import { StorageNode } from "../src/nodes/Storage.js";
 
 const window = installDom();
 const resolve = createResolver([...coreNodes(), new StorageNode()]);
