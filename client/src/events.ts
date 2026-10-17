@@ -107,6 +107,12 @@ export function hydrate(root: Element | Document = document, context: Context = 
           el.addEventListener(evt.type, (e: Event) => {
             if (evt.preventDefault) e.preventDefault();
             if (evt.stopPropagation) e.stopPropagation();
+            // Firefox starts no drag of a plain draggable element without data,
+            // and only dragstart may write it. A link's or image's own data is
+            // left alone; handlers keep what is dragged in a variable instead.
+            if (evt.type === "dragstart" && e instanceof DragEvent && e.dataTransfer?.types.length === 0) {
+              e.dataTransfer.setData("text/plain", "");
+            }
             const target = (e.currentTarget ?? e.target) as HTMLElement;
             const value = evt.type === SW_MESSAGE && e instanceof CustomEvent
               ? e.detail

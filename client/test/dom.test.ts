@@ -81,6 +81,30 @@ test("every op that writes markup wires up its events", async () => {
   assert.equal(context.clicks, 3);
 });
 
+/** A dragstart carrying `data`, which happy-dom's DragEvent does not keep from its init. */
+function dragStart(data: DataTransfer): Event {
+  const e = new window.DragEvent("dragstart", { bubbles: true });
+  Object.defineProperty(e, "dataTransfer", { value: data });
+  return e as unknown as Event;
+}
+
+test("a dragstart handler gives a plain element's drag some data, and leaves data already there alone", async () => {
+  const context: Record<string, unknown> = { started: 0 };
+  const handler = JSON.stringify([{ type: "dragstart", do: [{ $setVars: { started: { $add: [{ $var: "started" }, 1] } }, $bubble: true }] }]);
+  await run({ $setProp: ["#box", "innerHTML", `<div id="row" draggable="true" data-jexs-events='${handler}'>row</div>`] }, context);
+
+  const plain = new window.DataTransfer() as unknown as DataTransfer;
+  $("#row").dispatchEvent(dragStart(plain));
+  assert.deepEqual(Array.from(plain.types), ["text/plain"]);
+
+  const link = new window.DataTransfer() as unknown as DataTransfer;
+  link.setData("text/uri-list", "https://example.com/");
+  $("#row").dispatchEvent(dragStart(link));
+  assert.deepEqual(Array.from(link.types), ["text/uri-list"]);
+  await settle();
+  assert.equal(context.started, 2, "the handler ran both times");
+});
+
 test("outerHTML replaces the element and returns the one now in its place", async () => {
   const old = $(".item");
   const replaced = await run({ $setProp: [old, "outerHTML", "<em class=\"item\">new</em>"] });
