@@ -1,7 +1,7 @@
 import { Node, Context, NodeValue, CLIENT_SCRIPT, SW_SCRIPT, CSRF_TOKEN, TRANSLATE, type Translator } from "./Node.js";
-import { resolve, resolveAll, isOwnedKey, isStep } from "../Resolver.js";
+import { andThen, resolve, resolveAll, isOwnedKey, isStep } from "../Resolver.js";
 import { hasVariables, interpolate } from "./Variables.js";
-import { escapeHtml, escapeScriptJson, isObject } from "../helpers.js";
+import { escapeHtml, escapeScriptJson, isObject, toBooleanValue } from "../helpers.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
 
 // Compact attribute-schema builders for the per-tag variants below. HTML
@@ -84,10 +84,14 @@ export class ElementNode extends Node {
             if: { type: "array" },
             then: { items: { $ref: "#/$defs/exprFlat" } },
             else: { $ref: "#/$defs/exprFlat" },
-            description: "Steps to run when the event fires, in a scope of their own holding `event`, `target`, `value` and, inside a tree row, the row's `path`, `type`, `editMode` and `depth`. A write meant as page state, for later handlers to read, takes `$bubble`. A single expression is also accepted.",
+            description: "Steps to run when the event fires, in a scope of their own holding `event`, `target` (the element the handler is on, or the match when the handler has a `target` selector) and `value` (the target's value; for `sw-message`, the message), plus the variables of the nearest `data-jexs-scope` around the element. With a `target` selector the scope also has `index` and, for an event with a pointer position, `side`. A write meant as page state, for later handlers to read, takes `$bubble`. A single expression is also accepted.",
           },
-          preventDefault: { $ref: "#/$defs/boolOrExpr", description: "Call `preventDefault()` on the event." },
-          stopPropagation: { $ref: "#/$defs/boolOrExpr", description: "Call `stopPropagation()` on the event." },
+          target: {
+            $ref: "#/$defs/strOrExpr",
+            description: "A CSS selector, or an expression resolved to one when the element renders: the handler runs only for an event inside a matching element within this one (`li` on a list runs for any row, rows added later included), with that element as `target`. Its scope adds `index`, the target's position among its parent's element children, the numbering `$insertHtml`, `$moveElement` and `$move` use. For an event with a pointer position (clicks, drags, pointer and mouse moves) it adds `side`, `\"before\"` or `\"after\"` in DOM order by the half of the target the pointer is in, along the list whichever way it runs. Without a match the handler, `preventDefault` and `stopPropagation` are skipped.",
+          },
+          preventDefault: { $ref: "#/$defs/boolOrExpr", description: "Call `preventDefault()` on the event. An expression is resolved once, when the element renders; to decide per event, call `$preventDefault` in the steps." },
+          stopPropagation: { $ref: "#/$defs/boolOrExpr", description: "Call `stopPropagation()` on the event. An expression is resolved once, when the element renders; to decide per event, call `$stopPropagation` in the steps." },
           // Raw defs get no global keys injected; a handler honors this one.
           $catch: { $ref: "#/$defs/steps", description: "Steps run with `error` bound if `do` fails. Without this a failure is only logged." },
         },
@@ -158,100 +162,138 @@ function renderElement(def: Record<string, unknown>, context: Context): unknown 
   return resolve(def.$tag, context, tagRaw => {
     const tag = String(tagRaw);
     const isSelfClosing = SELF_CLOSING.has(tag);
-    // A step resolves to the map; a literal map is read as written, so its
-    // handlers' steps stay steps for the client to run.
-    const eventsResult = isStep(def.events)
-      ? resolve(def.events, context, buildEventsAttr)
-      : buildEventsAttr(def.events);
     // Self-closing tags can't have children — for them, `content` is the real
     // HTML attribute (e.g. `<meta name="description" content="...">`), not a
-    // reserved children key. Pass that hint to renderAttrs.
-    const attrsResult = renderAttrs(def, context, isSelfClosing);
-    // HTML5 doctype on the root <html> tag — otherwise the browser falls into
-    // quirks mode (and Lighthouse flags it). Only the root html tag triggers
-    // this; nested htmls (if anyone ever has them) get the same prefix harmlessly.
-    const prefix = tag === "html" ? "<!DOCTYPE html>" : "";
+    // reserved children key.
+    const attrs = Object.entries(def).filter(([k]) => (isSelfClosing && k === "content") || (!RESERVED_KEYS.has(k) && !isOwnedKey(k)));
+    // A literal events map hands only its handlers' options to the resolver, so
+    // their steps stay steps for the client to run. A step resolves to the map,
+    // which is data.
+    const literal = isStep(def.events) ? null : handlersOf(def.events);
+    // Written-out options resolve to themselves, so they are read as they are;
+    // only a step among them sends them through the resolver.
+    const resolveOptions = literal?.some(hasStepOption) ?? false;
+    // Everything the element is built from is resolved once, together: the
+    // attributes, then the handlers' options (or the step making the map), then
+    // the content's `raw` flag when it has one.
+    const inputs: unknown[] = attrs.map(([, v]) => v);
+    if (resolveOptions) pushOptions(inputs, literal!);
+    else if (!literal) inputs.push(def.events);
+    const hasRaw = def.raw !== undefined;
+    if (hasRaw) inputs.push(def.raw);
 
-    if (isSelfClosing) {
-      return resolveAll([attrsResult, eventsResult], context, ([attrs, events]) =>
-        `${prefix}<${tag}${attrs as string}${events as string}>`);
-    }
-
-    const injected = buildInjections(tag, def, context);
-    // <style>/<script> are raw-text elements: their content is CSS/JS, not HTML
-    // children, so it skips escaping and i18n translation. <style> resolves its
-    // content and compiles a CSS-in-JSON object to a stylesheet; a <script> with
-    // a JSON `type` serializes its content to escaped JSON (see below); every
-    // other <script> (and any other raw-text tag) is emitted verbatim.
-    let contentResult: string | Promise<string>;
-    if (tag === "style") {
-      // The template's own declaration values interpolate `$identifier` tokens
-      // before resolving, so a value a step returns is never interpolated.
-      const authored = isObject(def.content) && !isStep(def.content) ? interpolateValues(def.content, context) : def.content;
-      contentResult = resolve(authored, context, val =>
-        isObject(val) ? compileCss(val) : String(val ?? ""),
-      ) as string | Promise<string>;
-    } else if (tag === "script") {
-      // Resolve `type` first (it may be an expression), then decide how to treat
-      // the content. A JSON data block (type `application/json` or any `+json`
-      // media type, e.g. `application/ld+json`) carries data, not executable JS:
-      // resolve its content and serialize to JSON, escaping the characters that
-      // would let a value break out of the <script> — the HTML tokenizer ends the
-      // element at a literal "</script>" regardless of the `type`. Every other
-      // script keeps the raw-text contract (content emitted verbatim, and only
-      // when it is already a string). Nesting the content resolve inside the type
-      // resolve keeps it correct on the async path (Promise.then flattens).
-      contentResult = resolve(def.type, context, rawType => {
-        const type = typeof rawType === "string" ? rawType.toLowerCase() : "";
-        if (type === "application/json" || type.endsWith("+json")) {
-          return resolve(def.content, context, val => {
-            if (val == null) return "";
-            const json = typeof val === "string" ? val : JSON.stringify(val);
-            return escapeScriptJson(json);
-          });
-        }
-        return typeof def.content === "string" ? def.content : String(def.content ?? "");
-      }) as string | Promise<string>;
-    } else {
-      contentResult = resolve(def.raw ?? false, context, raw =>
-        renderContent(def.content, context, raw === true)) as string | Promise<string>;
-    }
-
-    return resolveAll([attrsResult, eventsResult, contentResult], context, parts => {
-      const [attrs, events, content] = parts as [string, string, string];
-      return `${prefix}<${tag}${attrs}${events}>${injected}${content}</${tag}>`;
+    return resolveAll(inputs, context, values => {
+      const at = attrs.length;
+      const handlers = literal ?? handlersOf(values[at]);
+      const events = eventsAttr(handlers, resolveOptions ? values : null, at);
+      // HTML5 doctype on the root <html> tag — otherwise the browser falls into
+      // quirks mode (and Lighthouse flags it). Only the root html tag triggers
+      // this; nested htmls (if anyone ever has them) get the same prefix harmlessly.
+      const prefix = tag === "html" ? "<!DOCTYPE html>" : "";
+      const open = `${prefix}<${tag}${attrsString(attrs, values)}${events}>`;
+      if (isSelfClosing) return open;
+      const close = (content: string) => `${open}${buildInjections(tag, def, context)}${content}</${tag}>`;
+      return renderBody(tag, def, context, hasRaw && values[values.length - 1] === true, close);
     });
   });
+}
+
+/**
+ * Resolve an element's children and pass them to `close`.
+ *
+ * <style>/<script> are raw-text elements: their content is CSS/JS, not HTML
+ * children, so it skips escaping and i18n translation. <style> resolves its
+ * content and compiles a CSS-in-JSON object to a stylesheet; a <script> with a
+ * JSON `type` serializes its content to escaped JSON (see below); every other
+ * <script> (and any other raw-text tag) is emitted verbatim.
+ */
+function renderBody(tag: string, def: Record<string, unknown>, context: Context, raw: boolean, close: (content: string) => string): unknown {
+  if (tag === "style") {
+    // The template's own declaration values interpolate `$identifier` tokens
+    // before resolving, so a value a step returns is never interpolated.
+    const authored = isObject(def.content) && !isStep(def.content) ? interpolateValues(def.content, context) : def.content;
+    return resolve(authored, context, val => close(isObject(val) ? compileCss(val) : String(val ?? "")));
+  }
+  if (tag === "script") {
+    // Resolve `type` first (it may be an expression), then decide how to treat
+    // the content. A JSON data block (type `application/json` or any `+json`
+    // media type, e.g. `application/ld+json`) carries data, not executable JS:
+    // resolve its content and serialize to JSON, escaping the characters that
+    // would let a value break out of the <script> — the HTML tokenizer ends the
+    // element at a literal "</script>" regardless of the `type`. Every other
+    // script keeps the raw-text contract (content emitted verbatim, and only
+    // when it is already a string).
+    return resolve(def.type, context, rawType => {
+      const type = typeof rawType === "string" ? rawType.toLowerCase() : "";
+      if (type === "application/json" || type.endsWith("+json")) {
+        return resolve(def.content, context, val =>
+          close(val == null ? "" : escapeScriptJson(typeof val === "string" ? val : JSON.stringify(val))));
+      }
+      return close(typeof def.content === "string" ? def.content : String(def.content ?? ""));
+    });
+  }
+  return andThen(renderContent(def.content, context, raw), close);
 }
 
 interface EventHandler {
   type: string;
   /** One step or an array of them. */
   do: unknown;
+  /** CSS selector of the element within this one the handler is for. */
+  target?: string;
   preventDefault?: boolean;
   stopPropagation?: boolean;
   /** Steps run with `error` bound if `do` fails, as on any step. */
   $catch?: unknown;
 }
 
-function buildEventsAttr(events: unknown): string {
-  if (!isObject(events)) return "";
+/** One entry of an `events` map: a handler object (with `do`), or bare steps. */
+interface EventEntry {
+  type: string;
+  handler: unknown;
+  options: Record<string, unknown> | null;
+}
 
-  const eventsArr: EventHandler[] = [];
-  for (const [type, handler] of Object.entries(events)) {
-    if (isObject(handler) && "do" in handler) {
-      const h = handler;
-      const evt: EventHandler = { type, do: h.do };
-      if (h.preventDefault) evt.preventDefault = true;
-      if (h.stopPropagation) evt.stopPropagation = true;
-      if (h.$catch !== undefined) evt.$catch = h.$catch;
-      eventsArr.push(evt);
-    } else {
-      eventsArr.push({ type, do: handler });
+const NO_HANDLERS: readonly EventEntry[] = Object.freeze([]);
+
+function handlersOf(events: unknown): readonly EventEntry[] {
+  if (!isObject(events)) return NO_HANDLERS;
+  return Object.entries(events).map(([type, handler]) => ({ type, handler, options: isObject(handler) && "do" in handler ? handler : null }));
+}
+
+/** Whether an entry has an option that is a step, to be resolved. */
+function hasStepOption({ options: h }: EventEntry): boolean {
+  return h !== null && (isStep(h.target) || isStep(h.preventDefault) || isStep(h.stopPropagation));
+}
+
+/** Push each entry's `target`, `preventDefault` and `stopPropagation` onto `out`, three apiece: never the handler itself, which holds steps. */
+function pushOptions(out: unknown[], handlers: readonly EventEntry[]): void {
+  for (const { options: h } of handlers) out.push(h?.target, h?.preventDefault, h?.stopPropagation);
+}
+
+/**
+ * The `data-jexs-events` attribute for `handlers`; `do` and `$catch` stay steps
+ * for the client to run. Their options' values are read from `values` at `at`
+ * when they were resolved, else from the handlers as written.
+ */
+function eventsAttr(handlers: readonly EventEntry[], values: unknown[] | null, at: number): string {
+  if (handlers.length === 0) return "";
+  const eventsArr = handlers.map(({ type, handler, options: h }, i): EventHandler => {
+    if (!h) return { type, do: handler };
+    const o = at + i * 3;
+    const target = values ? values[o] : h.target;
+    const preventDefault = values ? values[o + 1] : h.preventDefault;
+    const stopPropagation = values ? values[o + 2] : h.stopPropagation;
+    const evt: EventHandler = { type, do: h.do };
+    if (target != null) {
+      if (typeof target !== "string") throw new Error(`$tag: the "${type}" handler's target must be a CSS selector, got ${JSON.stringify(target)}`);
+      evt.target = target;
     }
-  }
-
-  if (eventsArr.length === 0) return "";
+    if (toBooleanValue(preventDefault)) evt.preventDefault = true;
+    if (toBooleanValue(stopPropagation)) evt.stopPropagation = true;
+    if (h.$catch !== undefined) evt.$catch = h.$catch;
+    return evt;
+  });
   return ` data-jexs-events="${escapeHtml(JSON.stringify(eventsArr))}"`;
 }
 
@@ -281,53 +323,40 @@ function buildInjections(tag: string, def: Record<string, unknown>, context: Con
   return result;
 }
 
-function renderAttrs(
-  def: Record<string, unknown>,
-  context: Context,
-  allowContent = false,
-): string | Promise<string> {
-  const entries = Object.entries(def).filter(([k]) => {
-    if (allowContent && k === "content") return true;
-    return !RESERVED_KEYS.has(k) && !isOwnedKey(k);
-  });
-  if (entries.length === 0) return "";
+/** The attributes `entries` name, given their values (the first `entries.length` of `resolved`). */
+function attrsString(entries: [string, unknown][], resolved: unknown[]): string {
+  const parts: string[] = [];
+  for (let i = 0; i < entries.length; i++) {
+    const [key] = entries[i];
+    const value = resolved[i];
 
-  const r = resolveAll(entries.map(([, v]) => v), context, resolved => {
-    const parts: string[] = [];
-    for (let i = 0; i < entries.length; i++) {
-      const [key] = entries[i];
-      const value = resolved[i];
+    if (value === false || value === null || value === undefined) continue;
+    if (value === true) { parts.push(key); continue; }
 
-      if (value === false || value === null || value === undefined) continue;
-      if (value === true) { parts.push(key); continue; }
-
-      if (key === "class" && typeof value === "object") {
-        const classes = Array.isArray(value)
-          ? value.filter(Boolean).map(String).join(" ")
-          : Object.entries(value as Record<string, unknown>)
-              .filter(([, v]) => v)
-              .map(([k]) => k)
-              .join(" ");
-        if (classes) parts.push(`class="${escapeHtml(classes)}"`);
-        continue;
-      }
-
-      if (key === "style" && typeof value === "object" && !Array.isArray(value)) {
-        const style = Object.entries(value as Record<string, unknown>)
-          .filter(([, v]) => v != null)
-          .map(([k, v]) => `${camelToKebab(k)}: ${v}`)
-          .join("; ");
-        if (style) parts.push(`style="${escapeHtml(style)}"`);
-        continue;
-      }
-
-      parts.push(`${key}="${escapeHtml(String(value))}"`);
+    if (key === "class" && typeof value === "object") {
+      const classes = Array.isArray(value)
+        ? value.filter(Boolean).map(String).join(" ")
+        : Object.entries(value as Record<string, unknown>)
+            .filter(([, v]) => v)
+            .map(([k]) => k)
+            .join(" ");
+      if (classes) parts.push(`class="${escapeHtml(classes)}"`);
+      continue;
     }
 
-    return parts.length > 0 ? " " + parts.join(" ") : "";
-  });
+    if (key === "style" && typeof value === "object" && !Array.isArray(value)) {
+      const style = Object.entries(value as Record<string, unknown>)
+        .filter(([, v]) => v != null)
+        .map(([k, v]) => `${camelToKebab(k)}: ${v}`)
+        .join("; ");
+      if (style) parts.push(`style="${escapeHtml(style)}"`);
+      continue;
+    }
 
-  return r as string | Promise<string>;
+    parts.push(`${key}="${escapeHtml(String(value))}"`);
+  }
+
+  return parts.length > 0 ? " " + parts.join(" ") : "";
 }
 
 // `/g` const used only with String.replace (lastIndex-safe); never call .test/.exec.

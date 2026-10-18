@@ -294,8 +294,12 @@ export function resolve(value: unknown, context: Context, cont?: (v: unknown) =>
   return cont ? andThen(r, cont) : r;
 }
 
-/** Apply `f` to a value that may still be pending: now if it is ready, else when it settles. */
-function andThen<V, T>(v: V | Promise<V>, f: (v: V) => T): T | Promise<T> {
+/**
+ * Apply `f` to a value that may still be pending: now if it is ready, else when
+ * it settles. For a result that is already resolved, which `resolve` would walk
+ * again.
+ */
+export function andThen<V, T>(v: V | Promise<V>, f: (v: V) => T): T | Promise<T> {
   return v instanceof Promise ? v.then(f) : f(v);
 }
 
