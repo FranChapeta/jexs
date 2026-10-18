@@ -26,8 +26,6 @@ npm install @jexs/client @jexs/core
 
 **Lazy-loaded nodes** (only fetched when first used):
 
-- `tree-*` — incremental tree rendering
-- `list-*` — sortable / serializable lists
 - `ws-*` — WebSocket client
 - `push-*` — web-push subscription
 - `rtc-*` — WebRTC peer connection
@@ -136,7 +134,7 @@ hydrate(myElement);     // bind events in content you inject later
 
 `jexs bundle` writes this entry for you, with the nodes of every browser node package the project has installed.
 
-Each firing of a handler runs in a scope of its own on top of the page's context, holding `event`, `target`, `value` and, inside a tree row, the row's `path`, `type`, `editMode` and `depth`. A value from an earlier event never lingers into the next, and two handlers awaiting at once each keep their own. A handler reads page state as any step does; a write meant as page state, for later handlers to read, takes `$bubble`:
+Each firing of a handler runs in a scope of its own on top of the page's context, holding `event`, `target` (the element the handler is on, or with a `target` selector the matching element the event happened in, plus its `index` and pointer `side`), `value`, and the variables of the nearest `data-jexs-scope` attribute around it. A value from an earlier event never lingers into the next, and two handlers awaiting at once each keep their own. A handler reads page state as any step does; a write meant as page state, for later handlers to read, takes `$bubble`:
 
 ```json
 { "$setVars": { "count": { "$add": [{ "$var": "count" }, 1] } }, "$bubble": true }

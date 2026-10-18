@@ -41,7 +41,7 @@ Templates live in `src/`. An optional `app/main.json` runs in the main process a
 
 Node calls cross processes automatically. The preload exposes the main process's handler keys to the renderer, and `@jexs/client` registers a `ProxyNode` for the keys it does not have locally. Because resolver registration is first-wins, only the missing keys are forwarded:
 
-- DOM ops (`setProp`, `getProp`, `click`, …), `var`, `storage`, `tree-*` stay in the renderer
+- DOM ops (`setProp`, `getProp`, `click`, …), `var` and `storage` stay in the renderer
 - `file`, `query`, `dialog-*`, `window-*`, `app-*` forward to main
 
 So a page template can call `{ "$query": "select", "table": "saves" }` directly. There is no `ipc` node and nothing to wire up.

@@ -67,8 +67,6 @@ export { hydrate, pageContext };
 // which registers the eager three itself and loads the rest on first use. A
 // bundle drops the ones it does not import, so the page pays nothing for these.
 export { DomNode, AudioNode, StorageNode };
-export { TreeNode } from "./nodes/Tree.js";
-export { ListNode } from "./nodes/List.js";
 export { WsNode } from "./nodes/Ws.js";
 export { PushNode } from "./nodes/Push.js";
 export { WebRTCNode } from "./nodes/WebRTC.js";

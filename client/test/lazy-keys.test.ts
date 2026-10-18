@@ -4,8 +4,6 @@ import { createResolver, type Node } from "@jexs/core";
 import { EntityNode, VectorNode, PhysicsNode, CollisionNode, JointNode, MeshNode } from "@jexs/physics";
 import { GlNode } from "@jexs/gl";
 import { registerComputeLazy, registerDomLazy } from "../src/registerNodes.js";
-import { TreeNode } from "../src/nodes/Tree.js";
-import { ListNode } from "../src/nodes/List.js";
 import { WsNode } from "../src/nodes/Ws.js";
 import { PushNode } from "../src/nodes/Push.js";
 import { WebRTCNode } from "../src/nodes/WebRTC.js";
@@ -28,5 +26,5 @@ test("every op of a worker-safe lazy node is a lazy key", () => {
 });
 
 test("every op of a DOM lazy node is a lazy key", () => {
-  assertLazy(registerDomLazy, [TreeNode, ListNode, WsNode, PushNode, WebRTCNode, GlNode]);
+  assertLazy(registerDomLazy, [WsNode, PushNode, WebRTCNode, GlNode]);
 });

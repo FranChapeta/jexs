@@ -30,8 +30,8 @@ function missingPackage(pkg: string, needed: string): (err: unknown) => never {
  *  - `registerComputeLazy(resolver)` — nodes that FUNCTION on a worker thread (pure
  *    compute, physics/entity/vector math, fetch-safe). The page and the worker
  *    both call this.
- *  - `registerDomLazy(resolver)` — nodes that need the DOM / main thread (tree, list, ws,
- *    push, rtc, gl). Only the page calls this; a worker must NOT register these
+ *  - `registerDomLazy(resolver)` — nodes that need the DOM / main thread (ws, push,
+ *    rtc, gl). Only the page calls this; a worker must NOT register these
  *    (no `document`/canvas/`localStorage` there — the loader would only fail).
  *
  * `registerLazy` loads a module the first time one of its keys is encountered,
@@ -77,25 +77,9 @@ export function registerComputeLazy(resolver: Resolver): void {
   );
 }
 
-/** DOM/main-thread-only groups: tree, list, ws, push, rtc, gl. Each node hydrates
- *  its own inserted content via the shared `hydrate` helper. A worker must not
- *  call this (no `document`/canvas/`localStorage` there). */
+/** DOM/main-thread-only groups: ws, push, rtc, gl. A worker must not call this
+ *  (no `document`/canvas/`localStorage` there). */
 export function registerDomLazy(resolver: Resolver): void {
-  resolver.registerLazy(
-    ["tree-init", "tree-render", "tree-insert", "tree-remove", "tree-update", "tree-move",
-     "tree-select", "tree-toggle", "tree-apply"],
-    (r) => import("./nodes/Tree.js").then(({ TreeNode }) => {
-      r.registerNode(new TreeNode());
-    }),
-  );
-
-  resolver.registerLazy(
-    ["list-add", "list-remove", "list-move-up", "list-move-down", "list-init", "list-sortable", "list-serialize"],
-    (r) => import("./nodes/List.js").then(({ ListNode }) => {
-      r.registerNode(new ListNode());
-    }),
-  );
-
   resolver.registerLazy(
     ["ws-connect", "ws-send", "ws-close", "ws-status"],
     (r) => import("./nodes/Ws.js").then(({ WsNode }) => {

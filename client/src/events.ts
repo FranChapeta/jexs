@@ -132,13 +132,13 @@ function targetPosition(e: Event, match: Element): Record<string, unknown> {
  * The single hydration helper — scan `root`, itself included, for
  * `data-jexs-events`, bind the listeners (and run any `load` events now),
  * skipping already-bound elements. Used everywhere content appears: at page
- * init, and after any DOM insertion (the DomNode ops that write markup,
- * tree updates), so freshly rendered templates wire up the same way with no
- * per-node plumbing.
+ * init, and after any DOM insertion (the DomNode ops that write markup), so
+ * freshly rendered templates wire up the same way with no per-node plumbing.
  *
  * `context` is the context handlers' scopes derive from: the shared `pageContext`
- * by default; callers that own a scoped context (a tree runtime, a template
- * loaded with params) pass theirs so the inserted content's handlers see it.
+ * by default; a caller that owns a scoped context (the step that inserted the
+ * markup, a template loaded with params) passes its own so the inserted
+ * content's handlers see it.
  *
  * Each firing runs in a child scope of its own holding `event`, `target` and
  * `value`, so a value from an earlier event never lingers, and two handlers
