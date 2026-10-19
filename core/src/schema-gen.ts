@@ -1215,7 +1215,7 @@ function buildRichMarkdown(methodKey: string, m: EmittedMethodSchema, docs: Sibl
 export const GLOBAL_KEY_DOCS: Record<string, { markdownDescription: string; examples?: string[] }> = {
   as: {
     markdownDescription:
-      "Store this step's result in a named context variable, read later via `{ \"$var\": \"name\" }`. Works on any step, at any depth. Nested in an argument, it is written when that argument settles, so read it from a later step rather than a sibling argument.",
+      "Store this step's result in a named context variable, read later via `{ \"$var\": \"name\" }`. The name may be an expression, which resolves to a dot-path. Works on any step, at any depth. Nested in an argument, it is written when that argument settles, so read it from a later step rather than a sibling argument.",
     examples: ["{ \"$var\": \"user.name\", \"$as\": \"name\" }"],
   },
   return: {

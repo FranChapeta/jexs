@@ -236,14 +236,15 @@ export function loggerFor(context: Context): Logger {
 /**
  * Write a step's result to its `$as` name and hand the result on. `$bubble`
  * alongside `$as` also writes it up the parent-context chain, so it survives the
- * current file/loop/branch scope. `$bubble` may be an expression, so it is
+ * current file/loop/branch scope. Either may be an expression, so both are
  * resolved first, and the result is handed on only once the write is done.
  */
 function storeAs(step: Record<string, unknown>, value: unknown, context: Context): unknown {
-  const name = String(step.$as);
-  if (step.$bubble === undefined) { Node.setContextValue(context, name, value); return value; }
-  return resolve(step.$bubble, context, b => {
-    Node.setContextValue(context, name, value, Node.toBooleanValue(b));
+  return resolveAll([step.$as, step.$bubble ?? false], context, ([name, bubble]) => {
+    if (typeof name !== "string" || name === "") {
+      throw new Error(`\`$as\` needs a variable name, got ${JSON.stringify(name)}`);
+    }
+    Node.setContextValue(context, name, value, Node.toBooleanValue(bubble));
     return value;
   });
 }
