@@ -50,6 +50,7 @@ export class WorkerNode extends Node {
           description: "Object passed to the thread: the ONLY data that crosses, and the worker's context (its keys become `key`). `ArrayBuffer` values transfer zero-copy (detaching the source). Must be structured-cloneable (no DOM nodes, functions, class instances).",
         },
         do: {
+          steps: true,
           description: "Steps to run on the thread, resolved against `params` as context.",
         },
         idle: {

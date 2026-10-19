@@ -1,5 +1,5 @@
 import { Node, Context, childContext } from "./Node.js";
-import { resolve, resolveAll } from "../Resolver.js";
+import { andThen, resolve, resolveAll, runSteps } from "../Resolver.js";
 import { getNestedValue } from "../helpers.js";
 import { nextRandom } from "./Math.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
@@ -224,7 +224,7 @@ export class ArrayNode extends Node {
         },
         do: {
           required: true,
-          description: "Condition to resolve for each item; the item is kept when it is truthy.",
+          description: "Steps or expression run for each item; the item is kept when the result is truthy.",
         },
       },
     },
@@ -246,13 +246,13 @@ export class ArrayNode extends Node {
         },
         do: {
           required: true,
-          description: "Condition to resolve for each item; the first item it is truthy for is returned.",
+          description: "Steps or expression run for each item; the first item whose result is truthy is returned.",
         },
       },
     },
     map: {
       output: "array",
-      markdownDescription: "Transforms each item by resolving a template.\nEach iteration exposes the current element as `item` and its position as `index` (rename via the `item`/`index` siblings).\nWhen `do` is an array it is resolved as a literal (all elements), not as sequential steps.",
+      markdownDescription: "Transforms each item by running `do` for it.\nEach iteration exposes the current element as `item` and its position as `index` (rename via the `item`/`index` siblings).\n`do` runs as steps: an array is a step sequence whose last value (or a `$return`'s) is the item's result.",
       examples: [
         "{ \"$map\": { \"$var\": \"nums\" }, \"item\": \"num\", \"do\": { \"$multiply\": [{ \"$var\": \"num\" }, 2] } }",
       ],
@@ -267,7 +267,7 @@ export class ArrayNode extends Node {
         },
         do: {
           required: true,
-          description: "Template to resolve for each item.",
+          description: "Steps or expression run for each item; its result is the item's place in the new array.",
         },
       },
     },
@@ -289,7 +289,7 @@ export class ArrayNode extends Node {
         },
         do: {
           required: true,
-          description: "Reducer to resolve for each item; what it returns becomes the next `accumulator`.",
+          description: "Steps or expression run for each item; its result becomes the next `accumulator`.",
         },
         initial: {
           description: "The accumulator's starting value (default: none, so the first `accumulator` is undefined).",
@@ -587,7 +587,7 @@ export class ArrayNode extends Node {
           const idx = i++;
           const item = items[idx];
           const itemCtx = childContext(context, { [itemName]: item, [indexName]: idx });
-          return resolve(condition, itemCtx, v => {
+          return andThen(runSteps(condition, itemCtx), v => {
             if (self.toBoolean(v)) results.push(item);
             return next();
           });
@@ -612,7 +612,7 @@ export class ArrayNode extends Node {
           const idx = i++;
           const item = items[idx];
           const itemCtx = childContext(context, { [itemName]: item, [indexName]: idx });
-          return resolve(condition, itemCtx, v => {
+          return andThen(runSteps(condition, itemCtx), v => {
             if (self.toBoolean(v)) return item;
             return next();
           });
@@ -639,7 +639,7 @@ export class ArrayNode extends Node {
           const idx = i++;
           const item = items[idx];
           const itemCtx = childContext(context, { [itemName]: item, [indexName]: idx });
-          return resolve(template, itemCtx, v => { results.push(v); return next(); });
+          return andThen(runSteps(template, itemCtx), v => { results.push(v); return next(); });
         }
         return next();
       });
@@ -662,7 +662,7 @@ export class ArrayNode extends Node {
             const idx = i++;
             const item = items[idx];
             const itemCtx = childContext(context, { [itemName]: item, [indexName]: idx, accumulator });
-            return resolve(reducer, itemCtx, v => { accumulator = v; return next(); });
+            return andThen(runSteps(reducer, itemCtx), v => { accumulator = v; return next(); });
           }
           return next();
         });

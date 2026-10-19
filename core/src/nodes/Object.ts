@@ -1,5 +1,5 @@
 import { Node, Context, childContext } from "./Node.js";
-import { resolve, resolveAll } from "../Resolver.js";
+import { andThen, resolve, resolveAll, runSteps } from "../Resolver.js";
 import { getNestedValue, isObject } from "../helpers.js";
 import type { JexsNodeSchema } from "../schema.js";
 
@@ -47,7 +47,7 @@ export class ObjectNode extends Node {
     },
     mapValues: {
       output: "object",
-      markdownDescription: "Transforms each value of an object, keeping its keys. Each iteration exposes the value as `item` and its key as `key` (rename via the `item`/`key` siblings).\nWhen `do` is an array it is resolved as a literal (all elements), not as sequential steps.",
+      markdownDescription: "Transforms each value of an object, keeping its keys. Each iteration exposes the value as `item` and its key as `key` (rename via the `item`/`key` siblings).\n`do` runs as steps: an array is a step sequence whose last value (or a `$return`'s) is the value's result.",
       examples: [
         "{ \"$mapValues\": { \"$var\": \"scores\" }, \"do\": { \"$multiply\": [{ \"$var\": \"item\" }, 2] } }",
       ],
@@ -62,7 +62,7 @@ export class ObjectNode extends Node {
         },
         do: {
           required: true,
-          description: "Template to resolve for each value.",
+          description: "Steps or expression run for each value; its result is the value under the same key.",
         },
       },
     },
@@ -172,7 +172,7 @@ export class ObjectNode extends Node {
           const key = keys[idx];
           const item = record[key];
           const itemCtx = childContext(context, { [itemName]: item, [keyName]: key });
-          return resolve(template, itemCtx, v => { result[key] = v; return next(); });
+          return andThen(runSteps(template, itemCtx), v => { result[key] = v; return next(); });
         }
         return next();
       });

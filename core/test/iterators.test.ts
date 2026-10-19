@@ -116,3 +116,39 @@ test("a literal step is rejected, not silently run as a value", () => {
   assert.throws(() => resolve(["Hello"], {}), /step must be an expression object/);
   assert.throws(() => resolve([{ $setVars: { x: 1 } }, 42], {}), /step must be an expression object/);
 });
+
+// `do` runs as steps on every iterator: an array is a sequence, its `$as`
+// writes are seen by the steps after it, and its last value is the item's.
+const twoSteps = [{ $multiply: [{ $var: "item" }, 10], $as: "big" }, { $add: [{ $var: "big" }, 1] }];
+
+test("do as steps: map, filter, find, reduce and mapValues run an array as a sequence", () => {
+  assert.deepEqual(resolve({ $map: [1, 2], do: twoSteps }, {}), [11, 21]);
+  assert.deepEqual(resolve({ $filter: [1, 2, 3], do: [{ $gt: [{ $var: "item" }, 1], $as: "keep" }, { $var: "keep" }] }, {}), [2, 3]);
+  assert.equal(resolve({ $find: [1, 2, 3], do: [{ $multiply: [{ $var: "item" }, 2], $as: "d" }, { $eq: [{ $var: "d" }, 4] }] }, {}), 2);
+  assert.equal(resolve({ $reduce: [1, 2], initial: 0, do: [{ $add: [{ $var: "accumulator" }, { $var: "item" }], $as: "s" }, { $multiply: [{ $var: "s" }, 2] }] }, {}), 8);
+  assert.deepEqual(resolve({ $mapValues: { a: 1, b: 2 }, do: twoSteps }, {}), { a: 11, b: 21 });
+});
+
+test("do as steps: a step's `$as` stays in its iteration", () => {
+  const ctx: Record<string, unknown> = {};
+  resolve({ $map: [1, 2], do: twoSteps }, ctx);
+  assert.equal(ctx.big, undefined);
+});
+
+test("do as steps: `$return` ends an item's sequence with its value, and the op goes on", () => {
+  const early = { $if: { $gt: [{ $var: "item" }, 1] }, then: { $return: "big" } };
+  assert.deepEqual(resolve({ $map: [1, 2], do: [early, { $concat: ["small"] }] }, {}), ["small", "big"]);
+});
+
+test("do as steps: a one-step `$return` sequence builds the array a literal `do` used to", () => {
+  assert.deepEqual(resolve({ $map: [1, 2], do: [{ $return: [{ $var: "item" }, { $var: "index" }] }] }, {}), [[1, 0], [2, 1]]);
+});
+
+test("do as steps: a data template still builds one object per item", () => {
+  assert.deepEqual(resolve({ $map: [1, 2], do: { n: { $var: "item" }, i: { $var: "index" } } }, {}), [{ n: 1, i: 0 }, { n: 2, i: 1 }]);
+});
+
+test("do as steps: async steps run in order within an item", async () => {
+  const out = await resolve({ $map: [1, 2], do: [{ $sleep: 1 }, { $multiply: [{ $var: "item" }, 3] }] }, {});
+  assert.deepEqual(out, [3, 6]);
+});

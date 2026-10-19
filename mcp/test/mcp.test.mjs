@@ -257,6 +257,11 @@ describe("inspect_file", () => {
     assert.match(text, /did you mean: do\b/);
   });
 
+  test("flags a mistyped op and suggests the real one, in one line", async () => {
+    const { text } = await callTool("inspect_file", { filePath: "mcp/test/fixtures/unknown-op.json" });
+    assert.match(text, /\[0\]\.\$concatt is not an op, did you mean: [^\n]*\$concat\b[^\n]*\?/);
+  });
+
   test("paths carry the array position, not a bare []", async () => {
     const { text } = await callTool("inspect_file", { filePath: "mcp/test/fixtures/typo.json" });
     assert.match(text, /\[0\]\.doo/);

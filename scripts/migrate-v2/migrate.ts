@@ -406,13 +406,34 @@ const opValue = ({ op, obj }: Step) => {
   return value?.k === "str" ? value.value : undefined;
 };
 
+/**
+ * An iterator's `do` runs as steps, so an array there is a step sequence rather
+ * than the array it used to build. `[{ "$return": [...] }]` builds it as before:
+ * a sequence of one step, which ends the sequence with that value.
+ * An array whose items write with `$as` reads as steps already, so it is left
+ * for review rather than kept as the array it built.
+ */
+function arrayDoAsReturn({ op, obj }: Step, m: Codemod): void {
+  const prop = obj.props.find(p => p.key === "do");
+  const v = prop?.value;
+  if (!prop || v?.k !== "arr") return;
+  if (v.items.some(it => it.k === "obj" && it.props.some(p => p.key === "$as"))) {
+    m.review(prop.keyStart, `\`$${op}\`'s \`do\` runs as steps now: this array was resolved as a literal, each item in parallel, so check it gives what the steps should, the last step's value being the result`);
+    return;
+  }
+  m.add({ start: v.start, end: v.start, text: `[{ ${prop.keyQuoted ? '"$return"' : "$return"}: ` });
+  m.add({ start: v.end, end: v.end, text: " }]" });
+}
+
 /** The v2 rewrites, by the op they apply to. */
 const RULES: Record<string, Rule> = {
   // The per-item template is a `do` sibling, as on `map` and `foreach`, and the
   // reducer's start an `initial` one.
-  filter: (step, m) => tupleToSiblings(step, ["do"], m),
-  find: (step, m) => tupleToSiblings(step, ["do"], m),
-  reduce: (step, m) => tupleToSiblings(step, ["do", "initial"], m),
+  filter: (step, m) => { tupleToSiblings(step, ["do"], m); arrayDoAsReturn(step, m); },
+  find: (step, m) => { tupleToSiblings(step, ["do"], m); arrayDoAsReturn(step, m); },
+  reduce: (step, m) => { tupleToSiblings(step, ["do", "initial"], m); arrayDoAsReturn(step, m); },
+  map: arrayDoAsReturn,
+  mapValues: arrayDoAsReturn,
   // The index variable is named by `index`, as on the array ops.
   foreach: (step, m) => renameSibling(step, "key", "index", m),
   // Optional modifiers are siblings, not tuple slots.
