@@ -242,7 +242,7 @@ export class MathNode extends Node {
         type: "number",
       },
       output: "number",
-      markdownDescription: "Returns the arithmetic mean of an array of numbers.",
+      markdownDescription: "Returns the arithmetic mean of an array of numbers, or `undefined` for an empty array.",
       examples: [
         "{ \"$avg\": [1, 2, 3] }",
       ],
@@ -323,7 +323,7 @@ export class MathNode extends Node {
         type: "number",
       },
       output: "number",
-      markdownDescription: "Returns the smallest number in an array.",
+      markdownDescription: "Returns the smallest number in an array, or `undefined` for an empty array.",
       examples: [
         "{ \"$min\": [3, 1, 4, 1, 5] }",
       ],
@@ -334,7 +334,7 @@ export class MathNode extends Node {
         type: "number",
       },
       output: "number",
-      markdownDescription: "Returns the largest number in an array.",
+      markdownDescription: "Returns the largest number in an array, or `undefined` for an empty array.",
       examples: [
         "{ \"$max\": [3, 1, 4, 1, 5] }",
       ],
@@ -537,7 +537,7 @@ export class MathNode extends Node {
   avg(def: Record<string, unknown>, c: Context) {
     return resolve(def.$avg, c, arr => {
       const items = this.toArray(arr);
-      if (items.length === 0) return 0;
+      if (items.length === 0) return undefined;
       return items.reduce((s: number, v) => s + this.toNumber(v), 0) / items.length;
     });
   }
@@ -591,14 +591,14 @@ export class MathNode extends Node {
   min(def: Record<string, unknown>, c: Context) {
     return resolve(def.$min, c, values => {
       const nums = this.toArray(values).map(v => this.toNumber(v));
-      return nums.length > 0 ? Math.min(...nums) : 0;
+      return nums.length > 0 ? Math.min(...nums) : undefined;
     });
   }
 
   max(def: Record<string, unknown>, c: Context) {
     return resolve(def.$max, c, values => {
       const nums = this.toArray(values).map(v => this.toNumber(v));
-      return nums.length > 0 ? Math.max(...nums) : 0;
+      return nums.length > 0 ? Math.max(...nums) : undefined;
     });
   }
 

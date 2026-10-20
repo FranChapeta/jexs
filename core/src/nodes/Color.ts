@@ -197,9 +197,11 @@ function adjustLightness(arg: unknown, formatRaw: unknown, c: Context, sign: num
   });
 }
 
-/** Normalize the `format` sibling to a known space (default `"rgb"`). */
-function fmt(value: unknown): string {
-  return value === "hsl" ? "hsl" : "rgb";
+/** The `format` sibling's color space (default `"rgb"`). */
+function fmt(value: unknown): "rgb" | "hsl" {
+  if (value === undefined) return "rgb";
+  if (value === "rgb" || value === "hsl") return value;
+  throw new Error(`Invalid color format "${String(value)}": expected rgb, hsl`);
 }
 
 /** Any color input -> rgba (all components 0..1). Strings parse as hex;

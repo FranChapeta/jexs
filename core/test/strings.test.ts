@@ -20,8 +20,12 @@ test("normalize: form sibling selects the decomposition", () => {
   assert.equal(String(out).length, 2);
 });
 
-test("normalize: unknown form falls back to NFC", () => {
-  assert.equal(resolve({ $normalize: "é", form: "bogus" }, {}), "é");
+test("normalize: an unknown form is refused", () => {
+  assert.throws(() => resolve({ $normalize: "x", form: "bogus" }, {}), /Invalid normalize form "bogus"/);
+});
+
+test("normalize: no form is NFC", () => {
+  assert.equal(resolve({ $normalize: "é" }, {}), "é");
 });
 
 // ── stringify — the value as given; indent is a sibling ──

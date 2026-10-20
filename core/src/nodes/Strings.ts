@@ -1,6 +1,6 @@
 import { Node, Context } from "./Node.js";
 import { resolve, resolveAll } from "../Resolver.js";
-import { toBooleanValue, toStringValue } from "../helpers.js";
+import { operands, toBooleanValue, toStringValue } from "../helpers.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
 
 /**
@@ -484,8 +484,7 @@ export class StringNode extends Node {
 
   replace(def: Record<string, unknown>, c: Context) {
     return resolveAll([def.$replace, def.all, def.regex, def.flags], c, ([args, all, regex, flags]) => {
-      const a = this.toArray(args);
-      if (a.length < 3) return "";
+      const a = operands("replace", args, 3);
       const str = this.toString(a[0]);
       const replacement = this.toString(a[2]);
       if (regexMode("replace", regex, flags)) {
@@ -564,14 +563,17 @@ export class StringNode extends Node {
 
   normalize(def: Record<string, unknown>, c: Context) {
     return resolveAll([def.$normalize, def.form], c, ([v, form]) => {
-      const f = NORMALIZE_FORMS.has(String(form)) ? String(form) as NormalizationForm : "NFC";
-      return this.toString(v).normalize(f);
+      const f = NORMALIZE_FORMS.find(known => known === form);
+      if (form !== undefined && f === undefined) {
+        throw new Error(`Invalid normalize form "${String(form)}": expected ${NORMALIZE_FORMS.join(", ")}`);
+      }
+      return this.toString(v).normalize(f ?? "NFC");
     });
   }
 
   segment(def: Record<string, unknown>, c: Context) {
     return resolveAll([def.$segment, def.granularity, def.locale], c, ([v, gran, locale]) => {
-      const granularity = gran === "word" || gran === "sentence" ? gran : "grapheme";
+      const granularity = this.getOption(gran, GRANULARITIES, "segment granularity") ?? "grapheme";
       const seg = new Intl.Segmenter(locale != null ? this.toString(locale) : undefined, { granularity });
       const out: string[] = [];
       for (const s of seg.segment(this.toString(v))) out.push(s.segment);
@@ -586,8 +588,8 @@ export class StringNode extends Node {
   private readonly regexCache = new Map<string, RegExp>();
 }
 
-type NormalizationForm = "NFC" | "NFD" | "NFKC" | "NFKD";
-const NORMALIZE_FORMS = new Set<string>(["NFC", "NFD", "NFKC", "NFKD"]);
+const NORMALIZE_FORMS = ["NFC", "NFD", "NFKC", "NFKD"] as const;
+const GRANULARITIES = ["grapheme", "word", "sentence"] as const;
 
 const REGEX_CACHE_MAX = 200;
 const REGEX_CACHE_MAX_SOURCE = 1024;

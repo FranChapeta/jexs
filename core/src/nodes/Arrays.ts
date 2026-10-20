@@ -697,7 +697,7 @@ export class ArrayNode extends Node {
       const start = this.toNumber(a[0]);
       const end = this.toNumber(a[1]);
       const step = a.length > 2 ? this.toNumber(a[2]) : 1;
-      if (step === 0) return [];
+      if (step === 0) throw new Error("$range step must not be 0");
       const result: number[] = [];
       if (step > 0) { for (let i = start; i <= end; i += step) result.push(i); }
       else { for (let i = start; i >= end; i += step) result.push(i); }

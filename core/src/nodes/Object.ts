@@ -184,7 +184,8 @@ export class ObjectNode extends Node {
       const result: Record<string, unknown> = {};
       for (const e of this.toArray(value)) {
         if (this.isObject(e) && "key" in e) result[this.toString(e.key)] = e.value;
-        else if (Array.isArray(e)) result[this.toString(e[0])] = e[1];
+        else if (Array.isArray(e) && e.length === 2) result[this.toString(e[0])] = e[1];
+        else throw new Error(`$fromEntries takes { key, value } or [key, value] entries, got ${JSON.stringify(e)}`);
       }
       return result;
     });

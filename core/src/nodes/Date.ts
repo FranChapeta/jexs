@@ -221,7 +221,7 @@ export class DateNode extends Node {
 
   dateNow(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$dateNow, context, fmt =>
-      formatDate(Date.now(), fmt === true ? "ms" : String(fmt))
+      formatDate(Date.now(), fmt === true || fmt === undefined ? "ms" : fmt)
     );
   }
 
@@ -316,14 +316,14 @@ export class DateNode extends Node {
 
 /** Emit a computed timestamp through the `format` sibling (or a default). */
 function emitDate(ms: number, def: Record<string, unknown>, context: Context, fallback: string): NodeValue {
-  if (!def.format) return formatDate(ms, fallback);
-  return resolve(def.format, context, fmt => formatDate(ms, String(fmt)));
+  return resolve(def.format, context, fmt => formatDate(ms, fmt === undefined ? fallback : fmt));
 }
 
-function formatDate(ms: number, format: string): string | number {
+function formatDate(ms: number, format: unknown): string | number {
   if (format === "ms") return ms;
   const d = new Date(ms);
   if (format === "iso") return d.toISOString();
+  if (format !== "datetime") throw new Error(`Invalid date format "${String(format)}": expected ms, iso, datetime`);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
 }
