@@ -6,13 +6,14 @@ import type { JexsNodeSchema } from "../schema.js";
 export class LogicNode extends Node {
   static schema: JexsNodeSchema = {
     if: {
-      markdownDescription: "Resolves `then` when the condition is truthy, otherwise `else`. Both branches are optional.",
-      outputDescription: "The resolved value of the taken branch. A branch that is an **array** is run as a step sequence and yields only its LAST value, so wrap multiple elements in one container if you need them all. With no `then` a truthy condition yields `true`; with no `else` a falsy condition yields `undefined`.",
+      markdownDescription: "Resolves `then` when the condition is truthy, otherwise `else`. `then` is required and `else` optional; for a branch on a falsy condition alone, negate it with `not`.",
+      outputDescription: "The resolved value of the taken branch, or `undefined` for a falsy condition without `else`. A branch that is an **array** is run as a step sequence and yields only its LAST value, so wrap multiple elements in one container if you need them all.",
       examples: [
         "{ \"$if\": { \"$var\": \"active\" }, \"then\": \"yes\", \"else\": \"no\" }",
       ],
       siblings: {
         then: {
+          required: true,
           description: "Value to resolve when condition is truthy.",
         },
         else: {
@@ -203,9 +204,10 @@ export class LogicNode extends Node {
   };
 
   if(def: Record<string, unknown>, context: Context): NodeValue {
+    if (!("then" in def)) throw new Error("if needs a `then`");
     return resolve(def.$if, context, condition =>
       this.toBoolean(condition)
-        ? ("then" in def ? runSteps(def.then, context) : true)
+        ? runSteps(def.then, context)
         : ("else" in def ? runSteps(def.else, context) : undefined)
     );
   }

@@ -436,6 +436,19 @@ const RULES: Record<string, Rule> = {
   mapValues: arrayDoAsReturn,
   // The index variable is named by `index`, as on the array ops.
   foreach: (step, m) => renameSibling(step, "key", "index", m),
+  // `then` is required: a branch on a falsy condition alone negates it.
+  if: (step, m) => {
+    const { obj } = step;
+    if (obj.props.some(p => p.key === "then")) return;
+    const prop = obj.props.find(p => p.key === "$if")!;
+    if (!obj.props.some(p => p.key === "else")) {
+      m.review(prop.keyStart, "`$if` needs a `then`: this one has no branch, so its condition alone was the point; use the condition step itself, or give `\"then\": true`");
+      return;
+    }
+    m.add({ start: prop.value.start, end: prop.value.start, text: `{ ${prop.keyQuoted ? '"$not"' : "$not"}: ` });
+    m.add({ start: prop.value.end, end: prop.value.end, text: " }" });
+    renameSibling(step, "else", "then", m);
+  },
   // Optional modifiers are siblings, not tuple slots.
   sortBy: (step, m) => lastSlotToSibling(step, 2, "order", m),
   padStart: (step, m) => lastSlotToSibling(step, 2, "pad", m),
