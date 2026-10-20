@@ -26,18 +26,47 @@ test("an interval run that fails goes through the step's $catch", async () => {
   assert.equal(ctx.caught, "boom");
 });
 
-test("an interval's steps read interval.count and interval.elapsed", async () => {
+test("an interval's steps read count and elapsed", async () => {
   const resolver = createResolver(coreNodes());
   const ctx: Context = {};
   resolver({
     $interval: "start", id: "counts", every: "10ms",
-    do: { $setVars: { seen: { $var: "interval.count" }, elapsed: { $var: "interval.elapsed" } }, $bubble: true },
+    do: { $setVars: { seen: { $var: "count" }, elapsed: { $var: "elapsed" } }, $bubble: true },
   }, ctx);
   await tick(45);
   resolver({ $interval: "stop", id: "counts" }, ctx);
   resolver.destroy();
   assert.ok(Number(ctx.seen) >= 2, `seen ${ctx.seen}`);
   assert.equal(typeof ctx.elapsed, "number");
+});
+
+test("each interval run has a scope of its own, with its timings in milliseconds", async () => {
+  const resolver = createResolver(coreNodes());
+  const ctx: Context = { kept: 0 };
+  const before = Date.now();
+  resolver({
+    $interval: "start", id: "scoped", every: "10ms",
+    do: [
+      { $setVars: { local: { $add: [{ $var: "local" }, 1] } } },
+      {
+        $setVars: {
+          kept: { $add: [{ $var: "kept" }, 1] },
+          last: { dt: { $var: "dt" }, elapsed: { $var: "elapsed" }, lastRun: { $var: "lastRun" } },
+        },
+        $bubble: true,
+      },
+    ],
+  }, ctx);
+  await tick(45);
+  resolver({ $interval: "stop", id: "scoped" }, ctx);
+  resolver.destroy();
+  assert.equal(ctx.dt, undefined, "the caller's context gets none of a run's timings");
+  assert.equal(ctx.local, undefined, "a write without $bubble stays in its run");
+  assert.ok(Number(ctx.kept) >= 2, `a bubbled write reaches the caller: ${String(ctx.kept)}`);
+  const last = ctx.last as { dt: number; elapsed: number; lastRun: number };
+  assert.ok(last.dt >= 5 && last.dt < 1000, `dt is in ms: ${last.dt}`);
+  assert.ok(last.elapsed >= last.dt, `elapsed is in ms: ${last.elapsed}`);
+  assert.ok(last.lastRun >= before && last.lastRun <= Date.now(), "lastRun is a Unix ms timestamp");
 });
 
 test("every interval op needs an id, and a start needs exactly one of every and rate", () => {

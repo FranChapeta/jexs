@@ -168,18 +168,10 @@ function handlerReads({ obj }: Step, names: Record<string, string>, m: Codemod):
   }
 }
 
-/**
- * `$tick` and `$cron` are both `$interval` now; their steps read `interval.*`,
- * with `cron.runCount` now `count`. Reads elsewhere are not found, since the
- * timer's variables are written where any later step can read them.
- */
+/** `$tick` and `$cron` are both `$interval` now; see `intervalRuns` for their steps. */
 function toInterval(step: Step, m: Codemod): void {
   renameOp(step, "interval", m);
-  const from = step.op === "tick" ? "tick" : "cron";
-  const steps = step.obj.props.find(p => p.key === "do")?.value;
-  if (steps) {
-    retargetReads(steps, [from], p => p.replace(from, "interval").replace(/^interval\.runCount(?=\.|$)/, "interval.count"), m);
-  }
+  intervalRuns(step, m, step.op);
   // A tick's `rate` counted runs per second, 60 unless told otherwise, and an
   // interval's `rate` is the milliseconds between runs.
   const op = step.obj.props.find(p => p.key === "$tick");
@@ -199,23 +191,49 @@ function toInterval(step: Step, m: Codemod): void {
 const rawItem = (v: Val) => (v.k === "obj" && v.props.length === 1 && v.props[0].key === "raw" ? v.props[0].value : undefined);
 
 /**
- * An element's event handlers run in a scope of their own, so a write meant as
- * page state needs `$bubble`. Which writes are page state cannot be told from
- * the template, so each is left for review.
+ * Steps that now run in a scope of their own lose a write meant to outlast them
+ * unless it has `$bubble`. Which writes are meant so cannot be told from the
+ * template, so each is left for review with `note`.
  */
+function scopedWrites(steps: Val, note: string, m: Codemod): void {
+  if (steps.k === "arr") steps.items.forEach(item => scopedWrites(item, note, m));
+  if (steps.k !== "obj") return;
+  const write = steps.props.find(p => p.key === "$as" || p.key === "$setVars");
+  if (write && !steps.props.some(p => p.key === "$bubble")) m.review(write.keyStart, note);
+  for (const p of steps.props) scopedWrites(p.value, note, m);
+}
+
+/** An element's event handlers run in a scope of their own. */
 function eventScopes(obj: Extract<Val, { k: "obj" }>, m: Codemod): void {
   const events = obj.props.find(p => p.key === "events")?.value;
   if (events?.k !== "obj" || events.props.some(p => p.key.startsWith("$"))) return;
-  const walk = (x: Val): void => {
-    if (x.k === "arr") x.items.forEach(walk);
+  for (const handler of events.props) {
+    scopedWrites(handler.value, "An event handler runs in a scope of its own now: if this write is page state that later handlers read, add `\"$bubble\": true`", m);
+  }
+}
+
+/**
+ * Each run of an `$interval` has a scope of its own, which holds its timings by
+ * name: `interval.dt` (`tick.dt`, `cron.dt`) is `dt`, and `cron.runCount` is
+ * `count`. The timings are in milliseconds: `dt` and `elapsed` were seconds,
+ * `lastRun` an ISO string. Reads outside the `do` steps are not found, since the
+ * timer's variables used to be written where any later step could read them.
+ */
+function intervalRuns({ obj }: Step, m: Codemod, root = "interval"): void {
+  const steps = obj.props.find(p => p.key === "do")?.value;
+  if (!steps) return;
+  scopedWrites(steps, "Each `$interval` run has a scope of its own now: if a later run or the caller reads this write, add `\"$bubble\": true`", m);
+  const reads = (x: Val): void => {
+    if (x.k === "arr") x.items.forEach(reads);
     if (x.k !== "obj") return;
-    const write = x.props.find(p => p.key === "$as" || p.key === "$setVars");
-    if (write && !x.props.some(p => p.key === "$bubble")) {
-      m.review(write.keyStart, "An event handler runs in a scope of its own now: if this write is page state that later handlers read, add `\"$bubble\": true`");
+    const path = x.props.find(p => p.key === "$var")?.value;
+    if (path?.k === "str" && new RegExp(`^${root}\\.(dt|elapsed|lastRun)(\\.|$)`).test(path.value)) {
+      m.review(path.start, `\`${path.value}\` is in milliseconds now (\`lastRun\` a Unix timestamp, not an ISO string): divide by 1000 where seconds are meant`);
     }
-    for (const p of x.props) walk(p.value);
+    for (const p of x.props) reads(p.value);
   };
-  for (const handler of events.props) walk(handler.value);
+  reads(steps);
+  retargetReads(steps, [root], p => p.slice(root.length + 1).replace(/^runCount(?=\.|$)/, "count"), m);
 }
 
 /**
@@ -467,6 +485,7 @@ const RULES: Record<string, Rule> = {
   // One timer op repeats steps at an interval.
   tick: toInterval,
   cron: toInterval,
+  interval: (step, m) => intervalRuns(step, m),
   // Ops that duplicated others.
   sum: (step, m) => renameOp(step, "add", m),
   notEmpty: (step, m) => {

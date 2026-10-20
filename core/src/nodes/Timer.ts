@@ -7,11 +7,11 @@
  * - { "$interval": "stop", "id": "poll" }
  * - { "$interval": "pause", "id": "poll" }
  * - { "$interval": "resume", "id": "poll" }
- * Context: interval.count, interval.dt, interval.elapsed, interval.lastRun
+ * Each run's scope: count, and dt, elapsed, lastRun in ms
  * Period: `every` as a duration ("500ms", "30s", "5m", "1h", "1d"), or `rate` in milliseconds.
  */
 
-import { Node, Context, NodeValue } from "./Node.js";
+import { Node, Context, NodeValue, childContext } from "./Node.js";
 import { resolve, resolveAll, runStepsDetached } from "../Resolver.js";
 import type { JexsNodeSchema, JexsMethodSchema, JexsPropertySchema } from "../schema.js";
 
@@ -62,10 +62,10 @@ export class TimerNode extends Node {
         "resume",
       ],
       output: "null",
-      markdownDescription: "Repeats steps at a fixed interval, compensating for drift, from a frame loop (`rate: 16`) to a scheduled task (`every: \"5m\"`). Each run waits for the last one's steps unless `detach` is set. Steps receive `interval.count`, `interval.dt` (seconds since the last run), `interval.elapsed` (seconds since start, pauses excluded) and `interval.lastRun` (ISO time) in context.",
+      markdownDescription: "Repeats steps at a fixed interval, compensating for drift, from a frame loop (`rate: 16`) to a scheduled task (`every: \"5m\"`). Each run waits for the last one's steps unless `detach` is set. Each run has a scope of its own, holding `count` (runs so far, this one included), `dt` (milliseconds since the last run), `elapsed` (milliseconds since start, pauses excluded) and `lastRun` (the run's time, in Unix milliseconds); a write that later runs or the caller read needs `$bubble`.",
       examples: [
         "{ \"$interval\": \"start\", \"id\": \"poll\", \"every\": \"30s\", \"do\": [{ \"$fetch\": \"/api/status\" }] }",
-        "{ \"$interval\": \"start\", \"id\": \"game\", \"rate\": 16, \"detach\": true, \"do\": [{ \"$var\": \"interval.dt\" }] }",
+        "{ \"$interval\": \"start\", \"id\": \"game\", \"rate\": 16, \"detach\": true, \"do\": [{ \"$var\": \"dt\" }] }",
       ],
       siblings: {
         id: TIMER_ID,
@@ -258,18 +258,15 @@ function schedule(state: TimerState): void {
     }
 
     const now = Date.now();
-    const dt = (now - state.lastTime) / 1000;
+    const scope = childContext(state.context, {
+      count: ++state.count,
+      dt: now - state.lastTime,
+      elapsed: now - state.startTime - state.pausedTotal,
+      lastRun: now,
+    });
     state.lastTime = now;
-    state.count++;
 
-    state.context.interval = {
-      count: state.count,
-      dt,
-      elapsed: (now - state.startTime - state.pausedTotal) / 1000,
-      lastRun: new Date(now).toISOString(),
-    };
-
-    const run = runStepsDetached(state.steps, state.context, state.def, `[interval] Error in "${state.id}":`);
+    const run = runStepsDetached(state.steps, scope, state.def, `[interval] Error in "${state.id}":`);
     if (state.detach) {
       // Fire-and-forget: the next run is scheduled without waiting for this one.
       schedule(state);

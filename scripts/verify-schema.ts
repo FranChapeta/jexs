@@ -711,9 +711,9 @@ const cases: Case[] = [
   // normalizes a lone expression into a one-step sequence. Both stay type-checked;
   // an untyped slot would accept anything at all.
   { label: "steps slot: an array of expressions (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $interval: "start", rate: 16.667, id: "game", do: [{ $var: "interval.dt" }, { $var: "interval.count" }] } },
+    expr: { $interval: "start", rate: 16.667, id: "game", do: [{ $var: "dt" }, { $var: "count" }] } },
   { label: "steps slot: a single expression (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $interval: "start", rate: 16.667, id: "game", do: { $var: "interval.dt" } } },
+    expr: { $interval: "start", rate: 16.667, id: "game", do: { $var: "dt" } } },
   { label: "steps slot: a scalar is still not an expression (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { $interval: "start", rate: 16.667, id: "game", do: 42 } },
   { label: "steps slot: an array of scalars (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
