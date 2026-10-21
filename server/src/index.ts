@@ -1,4 +1,6 @@
 import { Node, WorkerNode } from "@jexs/core";
+// Types a request's `Context` fields (`request`, `session`) for whoever imports this package.
+import "./context.js";
 import { makeThreadWorker } from "./makeWorker.js";
 import { CryptoNode } from "./nodes/Crypto.js";
 import { FileNode } from "./nodes/File.js";

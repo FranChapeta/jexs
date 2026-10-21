@@ -16,27 +16,6 @@ export interface Context {
   [key: string]: unknown;
   /** What the runtime keeps for its nodes, out of templates' reach (see CLIENT_SCRIPT). */
   [key: symbol]: unknown;
-  /** HTTP request data */
-  request?: {
-    method?: string;
-    path?: string;
-    body?: Record<string, unknown>;
-    query?: Record<string, unknown>;
-    params?: Record<string, unknown>;
-    headers?: Record<string, string | string[] | undefined>;
-    cookies?: Record<string, string>;
-  };
-  /** Session data */
-  session?: Record<string, unknown>;
-  /** Current loop context for foreach */
-  loop?: {
-    item: unknown;
-    index: number;
-    key: string | number;
-    first: boolean;
-    last: boolean;
-    length: number;
-  };
 }
 
 export type NodeValue = unknown;

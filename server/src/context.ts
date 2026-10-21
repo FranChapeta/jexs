@@ -14,3 +14,21 @@ export const UPGRADE = Symbol("jexs.upgrade");
 /** The connection a socket handler runs for, and the path it was opened on. */
 export const WS = Symbol("jexs.ws");
 export const WS_PATH = Symbol("jexs.wsPath");
+
+// What a request's steps read, which templates reach with `$var`.
+declare module "@jexs/core" {
+  interface Context {
+    /** The HTTP request a `$listen` step is answering. */
+    request?: {
+      method?: string;
+      path?: string;
+      body?: Record<string, unknown>;
+      query?: Record<string, unknown>;
+      params?: Record<string, unknown>;
+      headers?: Record<string, string | string[] | undefined>;
+      cookies?: Record<string, string>;
+    };
+    /** The request's session data, once a `$session` step has loaded it. */
+    session?: Record<string, unknown>;
+  }
+}
