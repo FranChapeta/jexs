@@ -272,11 +272,11 @@ export class ArrayNode extends Node {
       },
     },
     reduce: {
-      markdownDescription: "Reduces an array to a single value: the `do` reducer runs for each item, and what it returns is the next `accumulator`, starting from `initial`.\nEach iteration exposes the current element as `item`, its position as `index` (rename via the `item`/`index` siblings), and the running `accumulator`.",
+      markdownDescription: "Reduces an array to a single value: the `do` reducer runs for each item, and what it returns is the next `accumulator`, starting from `initial`.\nEach iteration exposes the current element as `item`, its position as `index` and the running `accumulator` (rename via the `item`/`index`/`accumulator` siblings).",
       outputDescription: "The final accumulator value, typed by the reducer or initial value (the initial value is returned as-is for an empty array).",
       examples: [
         "{ \"$reduce\": { \"$var\": \"nums\" }, \"do\": { \"$add\": [{ \"$var\": \"accumulator\" }, { \"$var\": \"item\" }] }, \"initial\": 0 }",
-        "{ \"$reduce\": { \"$var\": \"nums\" }, \"do\": { \"$add\": [{ \"$var\": \"accumulator\" }, { \"$var\": \"n\" }] }, \"initial\": 0, \"item\": \"n\" }",
+        "{ \"$reduce\": { \"$var\": \"nums\" }, \"do\": { \"$add\": [{ \"$var\": \"total\" }, { \"$var\": \"n\" }] }, \"initial\": 0, \"item\": \"n\", \"accumulator\": \"total\" }",
       ],
       siblings: {
         item: {
@@ -286,6 +286,10 @@ export class ArrayNode extends Node {
         index: {
           type: "string",
           description: "Variable name for the current index (default `\"index\"`).",
+        },
+        accumulator: {
+          type: "string",
+          description: "Variable name for the running value (default `\"accumulator\"`).",
         },
         do: {
           required: true,
@@ -649,9 +653,10 @@ export class ArrayNode extends Node {
   reduce(def: Record<string, unknown>, context: Context) {
     const reducer = def.do;
     if (reducer === undefined) throw new Error("reduce needs a `do` reducer");
-    return resolveAll([def.item, def.index], context, ([itemRaw, indexRaw]) => {
+    return resolveAll([def.item, def.index, def.accumulator], context, ([itemRaw, indexRaw, accumulatorRaw]) => {
       const itemName = typeof itemRaw === "string" ? itemRaw : "item";
       const indexName = typeof indexRaw === "string" ? indexRaw : "index";
+      const accumulatorName = typeof accumulatorRaw === "string" ? accumulatorRaw : "accumulator";
       return resolve(def.$reduce, context, arr => {
         const items = this.toArray(arr);
         return resolve(def.initial, context, initial => {
@@ -661,7 +666,7 @@ export class ArrayNode extends Node {
             if (i >= items.length) return accumulator;
             const idx = i++;
             const item = items[idx];
-            const itemCtx = childContext(context, { [itemName]: item, [indexName]: idx, accumulator });
+            const itemCtx = childContext(context, { [itemName]: item, [indexName]: idx, [accumulatorName]: accumulator });
             return andThen(runSteps(reducer, itemCtx), v => { accumulator = v; return next(); });
           }
           return next();

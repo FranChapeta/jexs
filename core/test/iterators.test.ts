@@ -74,6 +74,14 @@ test("reduce: renames the item while accumulator stays available", () => {
   assert.equal(out, 6);
 });
 
+test("reduce: renames the accumulator via the `accumulator` sibling", () => {
+  const out = resolve(
+    { $reduce: [1, 2, 3], do: { $add: [{ $var: "total" }, { $var: "item" }] }, initial: 10, accumulator: "total" },
+    {},
+  );
+  assert.equal(out, 16);
+});
+
 test("reduce: without `initial`, the first accumulator is undefined", () => {
   const out = resolve({ $reduce: ["a", "b"], do: { $concat: [{ $coalesce: [{ $var: "accumulator" }, ">"] }, { $var: "item" }] } }, {});
   assert.equal(out, ">ab");
