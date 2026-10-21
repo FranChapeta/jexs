@@ -19,7 +19,7 @@ test("a resolver's nodes log to the logger it was given", async () => {
   assert.equal(loggerFor(context), logger);
 
   // A detached handler's error has nobody to throw to, so it is logged.
-  await runStepsDetached([{ $error: 500 }], context, null, "[test] handler error:");
+  await runStepsDetached([{ $error: 500 }], context, { logAs: "[test] handler error:" });
   assert.deepEqual(logger.lines, [["error", "[test] handler error:", true]]);
 });
 

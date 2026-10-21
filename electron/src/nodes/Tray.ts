@@ -69,7 +69,7 @@ export class TrayNode extends Node {
       if (def.menu !== undefined) {
         const template = await buildMenuTemplate(def.menu, context, (raw, steps, item) => {
           const extra = { menuLabel: item.label, menuId: item.id, menuChecked: item.checked };
-          void runStepsDetached(steps, childContext(context, extra), raw, `[TrayNode] "${String(item.label ?? "item")}" failed:`);
+          void runStepsDetached(steps, childContext(context, extra), { step: raw, logAs: `[TrayNode] "${String(item.label ?? "item")}" failed:` });
         });
         tray.setContextMenu(Menu.buildFromTemplate(template));
       }
@@ -78,7 +78,7 @@ export class TrayNode extends Node {
         const steps = def.do;
         tray.removeAllListeners("click");
         tray.on("click", () => {
-          void runStepsDetached(steps, childContext(context), def, "[TrayNode] click handler failed:");
+          void runStepsDetached(steps, childContext(context), { step: def, logAs: "[TrayNode] click handler failed:" });
         });
       }
 

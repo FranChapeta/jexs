@@ -355,7 +355,7 @@ function runHandler(node: WebRTCNode, key: HandlerKey, extra: Record<string, unk
   if (!handler) return null;
   // Detached: these fire long after the `listen` step returned, so its own
   // `$catch` is the last handler left and anything past it reaches the console.
-  return runStepsDetached(handler.body, childContext(handler.context, extra), handler.def);
+  return runStepsDetached(handler.body, childContext(handler.context, extra), { step: handler.def });
 }
 
 function fireHandler(node: WebRTCNode, key: HandlerKey, extra: Record<string, unknown>): void {

@@ -14,7 +14,7 @@ export type {
 // ── Resolver ──
 export {
   createResolver, resolve, resolveAll, resolveFields,
-  runSteps, handleError, runStepsDetached,
+  runSteps, handleError, runStepsDetached, type DetachedOptions,
   // Node registration takes no context, so it has no resolver to read off one:
   // it hangs off the handle (`resolver.registerNode`) or, inside a lazy loader,
   // off the resolver the loader is handed.

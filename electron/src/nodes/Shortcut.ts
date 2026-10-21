@@ -70,7 +70,7 @@ export class ShortcutNode extends Node {
         const entry = registered.get(accelerator);
         if (!entry) return;
         const ctx = childContext(entry.context, { accelerator });
-        void runStepsDetached(entry.steps, ctx, entry.def, `[ShortcutNode] "${accelerator}" failed:`);
+        void runStepsDetached(entry.steps, ctx, { step: entry.def, logAs: `[ShortcutNode] "${accelerator}" failed:` });
       });
 
       if (ok) {

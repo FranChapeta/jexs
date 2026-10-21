@@ -144,7 +144,7 @@ export function resolverFor(context: Context): Resolver {
  * op. `GLOBAL_KEY_DOCS` in schema-gen describes the same five for autocomplete;
  * a test asserts the two cannot drift apart.
  */
-export const GLOBAL_KEYS = new Set(["as", "return", "catch", "bubble", "then"]);
+export const GLOBAL_KEYS: ReadonlySet<string> = new Set(["as", "return", "catch", "bubble", "then"]);
 
 /** A key the resolver owns is written with this prefix: `{ "$concat": [...] }`
  *  dispatches on `concat`, and `$as`/`$then`/`$catch`/`$return`/`$bubble` are the
@@ -532,28 +532,31 @@ function isReturn(value: unknown): value is { $return: unknown } {
   return isObject(value) && "$return" in value;
 }
 
+/** How `runStepsDetached` handles an error. */
+export interface DetachedOptions {
+  /** The step whose `$catch` handles an error. */
+  step?: unknown;
+  /** Log an unhandled error under this label instead of rejecting. */
+  logAs?: string;
+}
+
 /**
  * Run steps from a deferred callback — a timer tick, a socket message, a menu
  * click, an OS event — where `resolve` has long since returned and the resolver
  * is no longer wrapped around the call.
- * `def` is the step object whose `$catch` should be honored.
  *
  * The steps start synchronously, on the caller's stack; only the outcome comes
- * back as a promise. When nothing handled an error, the promise rejects, or,
- * given a `label`, the error goes to the resolver's logger under it and the
+ * back as a promise. An error goes to the `$catch` of `step`, the step the
+ * callback was declared on, when it has one. One that nothing handled rejects
+ * the promise, or, given `logAs`, goes to the resolver's logger under it and the
  * promise resolves to `undefined`, since a callback has nobody left to hand it to.
  */
-export async function runStepsDetached(
-  steps: unknown,
-  context: Context,
-  def: unknown = null,
-  label?: string,
-): Promise<unknown> {
+export async function runStepsDetached(steps: unknown, context: Context, options: DetachedOptions = {}): Promise<unknown> {
   try {
-    return await withCatch(() => runSteps(steps, context), def, context);
+    return await withCatch(() => runSteps(steps, context), options.step ?? null, context);
   } catch (err) {
-    if (label === undefined) throw err;
-    loggerFor(context).error(label, err);
+    if (options.logAs === undefined) throw err;
+    loggerFor(context).error(options.logAs, err);
     return undefined;
   }
 }

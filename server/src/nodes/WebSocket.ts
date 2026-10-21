@@ -181,7 +181,7 @@ export class WebSocketNode extends Node {
         const connection = childContext(context, { [WS]: ws, [WS_PATH]: path, [UPGRADE]: undefined, id });
 
         if (onOpen) {
-          void runStepsDetached(onOpen, childContext(connection), def, "[WebSocket] on-open error:");
+          void runStepsDetached(onOpen, childContext(connection), { step: def, logAs: "[WebSocket] on-open error:" });
         }
 
         ws.on("message", (raw: WebSocket.RawData) => {
@@ -203,7 +203,7 @@ export class WebSocketNode extends Node {
             return;
           }
 
-          void runStepsDetached(onMessage, childContext(connection, { message: messageData }), def, "[WebSocket] on-message error:");
+          void runStepsDetached(onMessage, childContext(connection, { message: messageData }), { step: def, logAs: "[WebSocket] on-message error:" });
         });
 
         // A client that breaks the protocol (a frame over `maxMessageSize`, invalid
@@ -215,7 +215,7 @@ export class WebSocketNode extends Node {
         ws.on("close", (code: number, reason: Buffer) => {
           if (onClose) {
             const closed = childContext(connection, { code, reason: reason.toString() });
-            void runStepsDetached(onClose, closed, def, "[WebSocket] on-close error:");
+            void runStepsDetached(onClose, closed, { step: def, logAs: "[WebSocket] on-close error:" });
           }
 
           this.paths.get(path)?.delete(ws);

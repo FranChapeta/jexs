@@ -266,7 +266,7 @@ function schedule(state: TimerState): void {
     });
     state.lastTime = now;
 
-    const run = runStepsDetached(state.steps, scope, state.def, `[interval] Error in "${state.id}":`);
+    const run = runStepsDetached(state.steps, scope, { step: state.def, logAs: `[interval] Error in "${state.id}":` });
     if (state.detach) {
       // Fire-and-forget: the next run is scheduled without waiting for this one.
       schedule(state);

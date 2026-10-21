@@ -171,7 +171,7 @@ export class MenuNode extends Node {
         // A click fires long after the step that built the menu returned, so
         // the resolver is no longer around this call. runStepsDetached keeps the
         // item's own `$catch` working and stops a synchronous throw escaping.
-        void runStepsDetached(steps, childContext(context, extra), raw, `[MenuNode] "${String(item.label ?? item.id ?? "item")}" failed:`);
+        void runStepsDetached(steps, childContext(context, extra), { step: raw, logAs: `[MenuNode] "${String(item.label ?? item.id ?? "item")}" failed:` });
       });
 
       const menu = Menu.buildFromTemplate(template);

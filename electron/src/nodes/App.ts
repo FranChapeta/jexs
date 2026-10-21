@@ -122,7 +122,7 @@ export class AppNode extends Node {
         // longer wrapped around the call. runStepsDetached keeps the step's own
         // `$catch` working and stops a synchronous throw escaping the handler.
         const ctx = childContext(context, { appEvent: event });
-        void runStepsDetached(steps, ctx, def, `[AppNode] "${event}" handler failed:`);
+        void runStepsDetached(steps, ctx, { step: def, logAs: `[AppNode] "${event}" handler failed:` });
       };
       on(event, listener);
       this.listeners.push({ app, event, listener });

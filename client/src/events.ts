@@ -168,7 +168,7 @@ export function hydrate(root: Element | Document = document, context: Context = 
           // returns. A detached run starts its steps on this stack, so that
           // holds; only the outcome is a promise.
           const scope = childContext(context, { ...scopeVars(el), event: null, target: el, value: (el as HTMLInputElement).value ?? null });
-          void runStepsDetached(evt.do, scope, evt, `[Jexs] "load" handler failed:`);
+          void runStepsDetached(evt.do, scope, { step: evt, logAs: `[Jexs] "load" handler failed:` });
         } else {
           if (evt.type === SW_MESSAGE) receiveServiceWorkerMessages(el);
           const selector = evt.target;
@@ -198,7 +198,7 @@ export function hydrate(root: Element | Document = document, context: Context = 
               ? e.detail
               : (target as HTMLInputElement).value ?? null;
             const scope = childContext(context, { ...scopeVars(target), ...(match && targetPosition(e, match)), event: e, target, value });
-            void runStepsDetached(evt.do, scope, evt, `[Jexs] "${evt.type}" handler failed:`);
+            void runStepsDetached(evt.do, scope, { step: evt, logAs: `[Jexs] "${evt.type}" handler failed:` });
           });
         }
       }

@@ -33,7 +33,7 @@ test("handleError reads `$catch` only, so a `then` sibling cannot be mistaken fo
 
   // No `$catch` on the def -> the failure must still surface, not be swallowed
   // by the presence of `then`.
-  await assert.rejects(runStepsDetached(withThen.do, ctx, withThen), /boom/);
+  await assert.rejects(runStepsDetached(withThen.do, ctx, { step: withThen }), /boom/);
 });
 
 test("a `$catch` on the def is honored while `then` is present", async () => {
@@ -44,7 +44,7 @@ test("a `$catch` on the def is honored while `then` is present", async () => {
     $then: [{ $concat: ["ignored"] }],
     $catch: [{ $concat: ["caught: ", { $var: "error.message" }] }],
   };
-  assert.equal(await runStepsDetached(both.do, ctx, both), "caught: boom");
+  assert.equal(await runStepsDetached(both.do, ctx, { step: both }), "caught: boom");
 });
 
 // The resolver's own fire-and-forget path is untouched by any of this.
@@ -80,7 +80,7 @@ test("with a label, an unhandled error is logged and the promise resolves", asyn
   const realError = console.error;
   console.error = (...args: unknown[]) => { logged.push(args); };
   try {
-    const out = await runStepsDetached([{ $error: 500, message: "boom" }], ctx, null, "[test] failed:");
+    const out = await runStepsDetached([{ $error: 500, message: "boom" }], ctx, { logAs: "[test] failed:" });
     assert.equal(out, undefined);
   } finally {
     console.error = realError;

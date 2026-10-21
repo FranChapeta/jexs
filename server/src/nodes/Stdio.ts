@@ -131,12 +131,12 @@ export class StdioNode extends Node {
           continue;
         }
 
-        void runStepsDetached(steps, childContext(context, { message }), def, "[StdioNode] on-message error:");
+        void runStepsDetached(steps, childContext(context, { message }), { step: def, logAs: "[StdioNode] on-message error:" });
       }
     });
 
     process.stdin.on("close", () => {
-      if (closeSteps) void runStepsDetached(closeSteps, childContext(context), def, "[StdioNode] on-close error:");
+      if (closeSteps) void runStepsDetached(closeSteps, childContext(context), { step: def, logAs: "[StdioNode] on-close error:" });
     });
 
     process.stdin.resume();
