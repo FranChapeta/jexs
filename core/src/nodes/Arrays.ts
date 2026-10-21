@@ -37,7 +37,7 @@ export class ArrayNode extends Node {
     },
     reverse: {
       output: "array",
-      markdownDescription: "Returns a new array with elements in reverse order.",
+      markdownDescription: "Reverses an array **in place** and returns it. Pass `clone: true` to reverse a copy and leave the source unchanged.",
       examples: [
         "{ \"$reverse\": { \"$var\": \"items\" } }",
       ],
@@ -133,7 +133,7 @@ export class ArrayNode extends Node {
         { description: "The item to append." },
       ],
       output: "array",
-      markdownDescription: "Appends an item to an array **in place** and returns that array. The array referenced by the first argument is mutated, so point it at a `var` (e.g. `{ \"$var\": \"items\" }`), not a literal. If the first argument is not an array, returns a new single-element array. For a non-mutating append use `{ \"$merge\": [arr, [item]] }`.",
+      markdownDescription: "Appends an item to an array **in place** and returns that array. The array referenced by the first argument is mutated, so point it at a `var` (e.g. `{ \"$var\": \"items\" }`), not a literal. If the first argument is not an array, returns a new single-element array. For a non-mutating append pass `clone: true`.",
       outputDescription: "The same (now longer) array; or a new `[item]` when the target is not an array.",
       examples: [
         "{ \"$push\": [{ \"$var\": \"items\" }, \"new\"] }",

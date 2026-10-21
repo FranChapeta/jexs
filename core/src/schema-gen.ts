@@ -1,22 +1,14 @@
 /**
- * Schema generation utilities.
+ * Schema generation, exported as `@jexs/core/schema`.
  *
- * Used by each package's build:schema step to produce its own dist/schema.json,
- * and by the create package to merge them into a single combined schema.
+ * `jexs schema` (server's schema-build.ts) builds each installed package's
+ * schema from its node classes with `buildPackageSchema`, merges them with
+ * `mergePackageSchemas`, and writes the project's `.jexs/combined.schema.json`
+ * (the editor's) and `.jexs/schema.json` (the MCP server's):
  *
- * Typical flow:
- *
- *   // In a package's build:schema script:
- *   import { buildPackageSchema } from "@jexs/core";
+ *   import { buildPackageSchema, mergePackageSchemas } from "@jexs/core/schema";
  *   import { coreNodes } from "@jexs/core";
- *   writeFileSync("dist/schema.json", JSON.stringify(buildPackageSchema(coreNodes()), null, 2));
- *
- *   // In create's build:schema script:
- *   import { mergePackageSchemas } from "@jexs/core";
- *   import coreSchema from "@jexs/core/dist/schema.json";
- *   // ...
- *   writeFileSync("create/dist/combined.schema.json",
- *     JSON.stringify(mergePackageSchemas([coreSchema, serverSchema, ...]), null, 2));
+ *   const merged = mergePackageSchemas([buildPackageSchema(coreNodes(), "@jexs/core"), ...]);
  *
  * Not imported by any runtime path — kept separate from Resolver/Node so the
  * client bundle doesn't pull it in.

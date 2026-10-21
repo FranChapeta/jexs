@@ -285,7 +285,7 @@ export class MathNode extends Node {
       tuple: 2,
       prefixItems: [
         { type: "number", description: "The dividend." },
-        { type: "number", description: "The divisor (returns `0` when zero)." },
+        { type: "number", description: "The divisor, which must not be zero." },
       ],
       output: "number",
       markdownDescription: "Divides the first value by the second. Dividing by zero is an error.",
@@ -297,7 +297,7 @@ export class MathNode extends Node {
       tuple: 2,
       prefixItems: [
         { type: "number", description: "The dividend (`a`)." },
-        { type: "number", description: "The divisor (`b`; returns `0` when zero)." },
+        { type: "number", description: "The divisor (`b`), which must not be zero." },
       ],
       output: "number",
       markdownDescription: "Remainder of `a % b`. A `b` of zero is an error.",

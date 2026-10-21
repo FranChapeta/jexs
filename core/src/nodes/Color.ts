@@ -3,16 +3,6 @@ import { toNumberValue, toArrayValue } from "../helpers.js";
 import { resolveAll } from "../Resolver.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
 
-/**
- * Color operations over two array color spaces:
- *   rgb `[r, g, b, a]` — r/g/b in 0..1, alpha default 1
- *   hsl `[h, s, l, a]` — h in 0-360, s/l in 0-100, alpha default 1
- * plus hex strings (`#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`).
- *
- * The `format` sibling (default `"rgb"`) disambiguates array inputs — a bare
- * `[a, b, c]` is read as rgb or hsl accordingly — and selects the space that
- * color-returning ops emit in.
- */
 export class ColorNode extends Node {
   static commonSiblings: Record<string, JexsPropertySchema> = {
     format: {

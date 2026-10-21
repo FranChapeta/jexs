@@ -48,18 +48,6 @@ const SELF_CLOSING = new Set([
   "link", "meta", "source", "track", "wbr",
 ]);
 
-/**
- * ElementNode - Renders JSON tag definitions to HTML strings.
- *
- * Matches when definition has a "tag" key.
- * Attributes go directly on the object (not nested under "attrs"):
- *
- *   { "$tag": "div", "class": "container", "content": [...] }
- *   { "$tag": "input", "type": "text", "name": "email", "required": true }
- *
- * Content can be a string, array, or nested expression. To render an element
- * conditionally, wrap it: { "$if": { "$var": "show" }, "then": { "$tag": "span" } }.
- */
 export class ElementNode extends Node {
   // An `events` value is a MAP of event-name → handler, so each handler's shape
   // (`do` steps, `preventDefault`, `stopPropagation`) is documented via

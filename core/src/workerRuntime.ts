@@ -44,8 +44,7 @@ declare global {
 // ── Control block (private SAB handshake primitive) ────────────────────────────
 // Per-unit Int32Array in its own SAB. The host bumps GO to request a batch; the
 // worker sets DONE to the GO it finished. COUNT carries the batch size; QUIT ends
-// the unit. (Was the separate `workerLoop` module — folded in as its only
-// consumer.)
+// the unit.
 const CTRL_LEN = 4;
 const IDX_GO = 0, IDX_DONE = 1, IDX_COUNT = 2, IDX_QUIT = 3;
 

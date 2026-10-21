@@ -19,28 +19,11 @@ interface ThreadState {
  *  it. Override per-step with `idle` (0 = reap now; large = long-lived). */
 const DEFAULT_IDLE_MS = 10_000;
 
-/**
- * `thread` — run resolver `do` steps on another thread, off the main one.
- *
- * The node is self-contained: it does its own request/response rid-matching over
- * the core worker pool (no separate task layer). The `thread` value names the
- * thread (the pool key) — same name shares one warm worker, different names run
- * on different threads. `params` is the explicit payload (the ONLY thing that
- * crosses, and the worker's context); `ArrayBuffer`s inside it transfer
- * zero-copy. The node returns the worker's result as a Promise, so it can be
- * awaited, collected (e.g. under `map`/`foreach parallel`), or made
- * fire-and-forget with the universal `$then` continuation (which runs on the
- * calling — main — thread with `result` bound).
- *
- * `makeWorker` is the env seam (browser `Worker` / Node `worker_threads`); null
- * means no worker is available and the steps run inline on the main thread, so
- * the same JSON works everywhere (mirroring how physics degrades).
- */
 export class WorkerNode extends Node {
   static schema: JexsNodeSchema = {
     thread: {
       output: "any",
-      markdownDescription: "Runs the `do` steps on another thread (off the main thread), keeping the main thread responsive. The value names the thread: the SAME name shares one warm worker (work time-shares that one CPU), DIFFERENT names run on parallel threads. `params` is the only data that crosses and becomes the worker's context (`x`); `ArrayBuffer`s in `params` transfer zero-copy (and detach on the sender). The node resolves to the worker's result, so collect N at once with `{ $map, parallel: true, do: { $thread } }`, or add the universal `$then` to make the call FIRE-AND-FORGET (returns immediately; `$then` runs on the main thread with `result`). Note: a worker has no DOM/`window`/`localStorage`/WebGL, so it is for compute, `fetch`, and crypto. `thread` is a MAIN-thread node: don't nest it inside another `thread`'s `do` (it isn't available there). For parallelism use sibling threads from the main thread, e.g. `{ $map, parallel: true, do: { $thread } }`.",
+      markdownDescription: "Runs the `do` steps on another thread (off the main thread), keeping the main thread responsive. The value names the thread: the SAME name shares one warm worker (work time-shares that one CPU), DIFFERENT names run on parallel threads. `params` is the only data that crosses and becomes the worker's context (`x`); `ArrayBuffer`s in `params` transfer zero-copy (and detach on the sender). The node resolves to the worker's result, so run N at once with `{ $foreach, parallel: true, do: { $thread } }`, or add the universal `$then` to make the call FIRE-AND-FORGET (returns immediately; `$then` runs on the main thread with `result`). Note: a worker has no DOM/`window`/`localStorage`/WebGL, so it is for compute, `fetch`, and crypto. `thread` is a MAIN-thread node: don't nest it inside another `thread`'s `do` (it isn't available there). For parallelism use sibling threads from the main thread, e.g. `{ $foreach, parallel: true, do: { $thread } }`.",
       outputDescription: "The worker's result (a Promise the resolver awaits). Errors run the `$catch` array with `error` bound, like any node.",
       examples: [
         "{ \"$thread\": \"hash\", \"params\": { \"bytes\": { \"$var\": \"bytes\" } }, \"do\": [ { \"$hash\": { \"$var\": \"bytes\" } } ] }",
@@ -67,6 +50,9 @@ export class WorkerNode extends Node {
    *  meets another resolver's or the physics worker's key; `dispose` ends them. */
   private readonly pool = new WorkerPool();
 
+  /** `makeWorker` builds the environment's worker (a browser `Worker`, Node's
+   *  `worker_threads`); null runs the steps inline on this thread instead, so the
+   *  same template works where there is none. */
   constructor(makeWorker: (() => TaskWorkerLike) | null) {
     super();
     this.makeWorker = makeWorker;

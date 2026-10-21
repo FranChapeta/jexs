@@ -24,7 +24,7 @@ export class ObjectNode extends Node {
         type: "array",
         items: { type: "object", properties: { key: { type: "string" }, value: { description: "The value under `key`." } } },
       },
-      markdownDescription: "Returns `[{ key, value }]` pairs from an object or array. Inverse of `fromEntries` (in the array node).",
+      markdownDescription: "Returns `[{ key, value }]` pairs from an object or array. Inverse of `fromEntries`.",
       examples: [
         "{ \"$entries\": { \"$var\": \"obj\" } }",
       ],

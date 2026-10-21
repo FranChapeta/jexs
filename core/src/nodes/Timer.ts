@@ -1,16 +1,3 @@
-/**
- * TimerNode — steps repeated at an interval, and pauses.
- *
- * Interval: a drift-compensating loop, for frame loops and scheduled tasks alike.
- * - { "$interval": "start", "id": "poll", "every": "30s", "do": [...] }
- * - { "$interval": "start", "id": "game", "rate": 16, "do": [...] }
- * - { "$interval": "stop", "id": "poll" }
- * - { "$interval": "pause", "id": "poll" }
- * - { "$interval": "resume", "id": "poll" }
- * Each run's scope: count, and dt, elapsed, lastRun in ms
- * Period: `every` as a duration ("500ms", "30s", "5m", "1h", "1d"), or `rate` in milliseconds.
- */
-
 import { Node, Context, NodeValue, childContext } from "./Node.js";
 import { resolve, resolveAll, runStepsDetached } from "../Resolver.js";
 import type { JexsNodeSchema, JexsMethodSchema, JexsPropertySchema } from "../schema.js";

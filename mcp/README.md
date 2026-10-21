@@ -119,8 +119,6 @@ Building a non-trivial program in the JSON surfaced a few sharp edges worth know
   read `box.node`.
 - A **bare `[]` is not a valid step.** `runSteps` requires every step to be an expression object, so
   a walker whose fallthrough branch was a literal `[]` threw on the first scalar leaf of any file.
-- `map`'s `do` as an **array** resolves in parallel (a data array), it is *not* a step sequence. Use
-  a single expression, and inline lookups instead of `$as`.
 - `$runVar`'s **`params` keys are literal names**, resolved per entry: you cannot spread a map that was
   computed at runtime through it. To seed context from dynamic data, build the step array instead and
   put a `setVars` step in front of the expression.

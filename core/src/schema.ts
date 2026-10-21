@@ -2,9 +2,9 @@
  * Author-facing schema types for Node classes.
  *
  * Each Node subclass declares `static schema: JexsNodeSchema` describing the
- * handler methods on the class. The schema generator (scripts/gen-schema/)
- * collects these via dynamic import and emits create/dist/combined.schema.json
- * for VS Code and (later) the runtime validator.
+ * handler methods on the class. `@jexs/core/schema` turns these into JSON
+ * Schema, which `jexs schema` writes to a project's `.jexs/` for the editor and
+ * the MCP server.
  */
 
 export type JexsType = "string" | "number" | "boolean" | "array" | "object" | "null";
