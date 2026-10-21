@@ -81,8 +81,9 @@ export class WorkerNode extends Node {
 
   thread(def: Record<string, unknown>, context: Context): NodeValue {
     const threadVal = def.$thread;
+    if (Array.isArray(threadVal)) throw new Error("$thread takes the thread's name, with its steps in `do`");
     const name = typeof threadVal === "string" ? threadVal : "default";
-    const steps = Array.isArray(threadVal) ? threadVal : def.do;
+    const steps = def.do;
     const idleMs = def.idle != null ? Number(def.idle) : DEFAULT_IDLE_MS;
 
     // Resolve `params` on the main thread so `{$var:$x}` etc. become concrete

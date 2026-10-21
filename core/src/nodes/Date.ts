@@ -25,14 +25,14 @@ const ADD_UNITS = ["ms", "second", "minute", "hour", "day", "week", "month", "ye
 export class DateNode extends Node {
   static schema: JexsNodeSchema = {
     dateNow: {
-      type: ["string", "boolean"],
+      type: "string",
       enum: [
         "ms",
         "iso",
         "datetime",
       ],
-      markdownDescription: "Returns the current timestamp. Pass a format string (`\"ms\"`, `\"iso\"`, `\"datetime\"`) or `true` (shorthand for `\"ms\"`).",
-      outputDescription: "A **number** (Unix milliseconds) for `ms`/`true`; otherwise a **string**: `iso` → ISO-8601, `datetime` → `YYYY-MM-DD HH:MM:SS` in UTC.",
+      markdownDescription: "Returns the current timestamp in the format given: `\"ms\"`, `\"iso\"` or `\"datetime\"`.",
+      outputDescription: "A **number** (Unix milliseconds) for `ms`; otherwise a **string**: `iso` → ISO-8601, `datetime` → `YYYY-MM-DD HH:MM:SS` in UTC.",
       examples: [
         "{ \"$dateNow\": \"iso\" }",
       ],
@@ -229,7 +229,7 @@ export class DateNode extends Node {
 
   dateNow(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$dateNow, context, fmt =>
-      formatDate(Date.now(), fmt === true || fmt === undefined ? "ms" : fmt)
+      formatDate(Date.now(), fmt === undefined ? "ms" : fmt)
     );
   }
 

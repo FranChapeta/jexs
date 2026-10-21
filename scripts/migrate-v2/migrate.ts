@@ -663,6 +663,17 @@ const RULES: Record<string, Rule> = {
   },
   // The part to extract is the second operand.
   datePart: (step, m) => siblingToTuple(step, "part", m),
+  // `true` was shorthand for `"ms"`.
+  dateNow: ({ obj }, m) => {
+    const v = obj.props.find(p => p.key === "$dateNow")?.value;
+    if (v?.k === "lit" && v.value === true) m.add({ start: v.start, end: v.end, text: '"ms"' });
+  },
+  // `[steps]` was shorthand for the default thread with those steps in `do`.
+  thread: ({ obj }, m) => {
+    const prop = obj.props.find(p => p.key === "$thread");
+    if (prop?.value.k !== "arr") return;
+    m.add({ start: prop.value.start, end: prop.value.start, text: `"default", ${prop.keyQuoted ? '"do"' : "do"}: ` });
+  },
   // One operand was the max with 0 as the min; it is `[min, max]` or `[]` now.
   // `$random` is `$randomNumber`, which always takes `[min, max]`: a float in
   // [0, 1) is `[0, 1]` with as many `decimals` as are wanted, 15 at most.
@@ -748,8 +759,11 @@ function walkExpr(v: Val): void {
       for (const c of p.value.props) if (c.value.k === "obj") responseObject(c.value, m);
     }
   }
-  // A `$then` step yields null at once, so `$as` beside it is refused now.
+  // A variable is written by its name as read: a leading `$` is no longer
+  // dropped from `$as`.
   const asKey = v.props.find(p => p.key === "$as");
+  if (asKey?.value.k === "str" && asKey.value.value.startsWith("$")) replaceString(asKey.value, asKey.value.value.slice(1), m);
+  // A `$then` step yields null at once, so `$as` beside it is refused now.
   if (asKey && v.props.some(p => p.key === "$then")) {
     m.review(asKey.keyStart, "`$as` is refused beside `$then`, whose result arrives later: read it as `result` inside `$then`, or drop the `$as`");
   }

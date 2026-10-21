@@ -236,9 +236,7 @@ const nodeProtoKeys = new Set([...Object.getOwnPropertyNames(Node.prototype), "d
 
 /** Write a single dot-path value into one context (no propagation). */
 function writeContextValue(context: Context, varName: string, value: unknown): void {
-  // Strip a leading `$` (charCode 36) so "$a.b" and "a.b" share one cache key.
-  const normalized = varName.charCodeAt(0) === 36 ? varName.slice(1) : varName;
-  const parts = splitPath(normalized);
+  const parts = splitPath(varName);
   if (parts.length === 1) {
     context[parts[0]] = value;
     return;
