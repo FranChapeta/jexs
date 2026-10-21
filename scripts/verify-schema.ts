@@ -187,11 +187,13 @@ const cases: Case[] = [
 
   // Date `format`: `ms` is a number, `iso`/`datetime` strings; each op defaults its own.
   { label: "number-slot accepts dateAdd (default ms) (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $sleep: { $dateAdd: [0, "1d"] } } },
+    expr: { $sleep: { $dateAdd: [0, 1], unit: "day" } } },
   { label: "string-slot rejects dateAdd (default ms: number) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
-    expr: { $foreach: [1], item: { $dateAdd: [0, "1d"] }, do: "y" } },
+    expr: { $foreach: [1], item: { $dateAdd: [0, 1], unit: "day" }, do: "y" } },
   { label: "string-slot accepts dateAdd format iso (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $foreach: [1], item: { $dateAdd: [0, "1d"], format: "iso" }, do: "y" } },
+    expr: { $foreach: [1], item: { $dateAdd: [0, 1], unit: "day", format: "iso" }, do: "y" } },
+  { label: "dateAdd rejects the old duration string (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $dateAdd: [0, "1d"] } },
   { label: "string-slot accepts dateFormat (default datetime) (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $foreach: [1], item: { $dateFormat: 0 }, do: "y" } },
   { label: "string-slot rejects dateFormat format ms (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,

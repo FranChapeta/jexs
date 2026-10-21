@@ -201,7 +201,7 @@ const MULTIPLIERS: Record<string, number> = {
 };
 
 /** Parse a human-readable interval like "5m", "1h", "30s" to milliseconds. */
-export function parseInterval(value: string): number {
+function parseInterval(value: string): number {
   const match = value.match(/^(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)$/);
   if (!match) throw new Error(`Invalid interval: "${value}"`);
   return Math.round(parseFloat(match[1]) * MULTIPLIERS[match[2]]);

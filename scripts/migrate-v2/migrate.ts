@@ -663,6 +663,24 @@ const RULES: Record<string, Rule> = {
   },
   // The part to extract is the second operand.
   datePart: (step, m) => siblingToTuple(step, "part", m),
+  // `[timestamp, "7d"]` is `[timestamp, 7]` with `"unit": "day"`, so a minute
+  // and a month no longer share the letter `m`.
+  dateAdd: ({ obj }, m) => {
+    const prop = obj.props.find(p => p.key === "$dateAdd");
+    const amount = prop?.value.k === "arr" ? prop.value.items[1] : undefined;
+    if (!prop || !amount || (amount.k === "lit" && typeof amount.value === "number")) return;
+    const units: Record<string, string> = { ms: "ms", s: "second", m: "minute", h: "hour", d: "day" };
+    const parsed = amount.k === "str" ? /^(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)$/.exec(amount.value) : null;
+    if (!parsed) {
+      m.review(prop.keyStart, "`$dateAdd` takes `[timestamp, amount]` with a `unit` beside it (`ms`, `second`, `minute`, `hour`, `day`, `week`, `month`, `year`), not a duration string");
+      return;
+    }
+    m.add({ start: amount.start, end: amount.end, text: parsed[1] });
+    if (parsed[2] !== "ms") {
+      const key = prop.keyQuoted ? '"unit"' : "unit";
+      m.add({ start: prop.value.end, end: prop.value.end, text: `, ${key}: "${units[parsed[2]]}"` });
+    }
+  },
   // `[array, key, value]` is gone: `find` tests objects by a key.
   includes: ({ obj }, m) => {
     const prop = obj.props.find(p => p.key === "$includes");

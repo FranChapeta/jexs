@@ -113,7 +113,7 @@ test("date ops resolve nested-expression arguments", () => {
   const ctx = { ts: TS };
   assert.equal(resolve({ $datePart: [{ $var: "ts" }, "year"] }, ctx), 2026);
   assert.equal(
-    resolve({ $dateDiff: [{ $var: "ts" }, { $dateAdd: [{ $var: "ts" }, "2d"] }], unit: "day" }, ctx),
+    resolve({ $dateDiff: [{ $var: "ts" }, { $dateAdd: [{ $var: "ts" }, 2], unit: "day" }], unit: "day" }, ctx),
     2,
   );
 });
@@ -142,6 +142,27 @@ test("dateRelative: unit forces the display unit", () => {
 
 test("dateRelative: numeric 'auto' uses named terms", () => {
   assert.equal(resolve({ $dateRelative: [TS - 1 * DAY, TS], numeric: "auto", locale: "en-US" }, {}), "yesterday");
+});
+
+test("dateAdd: adds an amount of a unit, ms by default", () => {
+  assert.equal(resolve({ $dateAdd: [TS, 500] }, {}), TS + 500);
+  assert.equal(resolve({ $dateAdd: [TS, 7], unit: "day" }, {}), TS + 7 * DAY);
+  assert.equal(resolve({ $dateAdd: [TS, -2], unit: "hour" }, {}), TS - 2 * HOUR);
+  assert.equal(resolve({ $dateAdd: [TS, 1], unit: "week", format: "iso" }, {}), "2026-07-08T12:30:45.123Z");
+});
+
+test("dateAdd: months and years move the calendar, keeping the day or taking the month's last", () => {
+  const jan31 = Date.UTC(2026, 0, 31, 9);
+  assert.equal(resolve({ $dateAdd: [jan31, 1], unit: "month", format: "iso" }, {}), "2026-02-28T09:00:00.000Z");
+  assert.equal(resolve({ $dateAdd: [jan31, 13], unit: "month", format: "iso" }, {}), "2027-02-28T09:00:00.000Z");
+  assert.equal(resolve({ $dateAdd: [jan31, -2], unit: "month", format: "iso" }, {}), "2025-11-30T09:00:00.000Z");
+  assert.equal(resolve({ $dateAdd: [Date.UTC(2024, 1, 29), 1], unit: "year", format: "iso" }, {}), "2025-02-28T00:00:00.000Z");
+  assert.throws(() => resolve({ $dateAdd: [TS, 1.5], unit: "month" }, {}), /whole months/);
+});
+
+test("dateAdd: the old duration string and an unknown unit are refused", () => {
+  assert.throws(() => resolve({ $dateAdd: [TS, "7d"] }, {}), /\$dateAdd takes \[timestamp, amount\]/);
+  assert.throws(() => resolve({ $dateAdd: [TS, 1], unit: "fortnight" }, {}), /Invalid dateAdd unit/);
 });
 
 test("dateRelative: base defaults to now when the tuple omits it", () => {

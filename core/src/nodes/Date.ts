@@ -1,6 +1,5 @@
 import { Node, Context, NodeValue } from "./Node.js";
 import { resolve, resolveAll } from "../Resolver.js";
-import { parseInterval } from "./Timer.js";
 import { operands } from "../helpers.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
 
@@ -21,6 +20,8 @@ function formatSibling(fallback: "ms" | "datetime"): JexsPropertySchema {
   };
 }
 
+const ADD_UNITS = ["ms", "second", "minute", "hour", "day", "week", "month", "year"] as const;
+
 export class DateNode extends Node {
   static schema: JexsNodeSchema = {
     dateNow: {
@@ -40,14 +41,21 @@ export class DateNode extends Node {
       tuple: 2,
       prefixItems: [
         { type: "number", description: "The base Unix-ms timestamp." },
-        { type: "string", description: "The interval to add, e.g. `\"500ms\"`, `\"30s\"`, `\"5m\"`, `\"1h\"`, `\"7d\"`." },
+        { type: "number", description: "How many `unit`s to add; negative to subtract." },
       ],
-      markdownDescription: "Adds a duration to a Unix-ms timestamp. Interval formats: `\"500ms\"`, `\"30s\"`, `\"5m\"`, `\"1h\"`, `\"7d\"`.",
+      markdownDescription: "Adds an amount of `unit`s to a Unix-ms timestamp as `[timestamp, amount]`. `month` and `year` move the UTC calendar date, keeping the day where the month has it and taking its last day where it does not (Jan 31 + 1 month is Feb 28 or 29); the other units are fixed lengths.",
       outputDescription: "The shifted timestamp in the `format` (default `ms`): a **number** for `ms`, else a formatted **string**.",
       examples: [
-        "{ \"$dateAdd\": [{ \"$dateNow\": \"ms\" }, \"7d\"], \"format\": \"iso\" }",
+        "{ \"$dateAdd\": [{ \"$dateNow\": \"ms\" }, 7], \"unit\": \"day\", \"format\": \"iso\" }",
+        "{ \"$dateAdd\": [{ \"$var\": \"renewsAt\" }, 1], \"unit\": \"month\" }",
       ],
       siblings: {
+        unit: {
+          type: "string",
+          enum: [...ADD_UNITS],
+          default: "ms",
+          description: "Unit of the amount (default `\"ms\"`).",
+        },
         format: formatSibling("ms"),
       },
     },
@@ -226,12 +234,13 @@ export class DateNode extends Node {
   }
 
   dateAdd(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$dateAdd, context, resolvedArgs => {
-      const a = operands("dateAdd", resolvedArgs, 2);
-      const base = this.toNumber(a[0]);
-      const interval = String(a[1]);
-      const result = base + parseInterval(interval);
-      return emitDate(result, def, context, "ms");
+    return resolveAll([def.$dateAdd, def.unit], context, ([args, unitRaw]) => {
+      const [base, amount] = operands("dateAdd", args, 2);
+      if (typeof amount !== "number") {
+        throw new Error(`$dateAdd takes [timestamp, amount] with the amount's \`unit\` beside it, got the amount ${JSON.stringify(amount)}`);
+      }
+      const unit = this.getOption(unitRaw, ADD_UNITS, "dateAdd unit") ?? "ms";
+      return emitDate(addTo(this.toNumber(base), amount, unit), def, context, "ms");
     });
   }
 
@@ -354,6 +363,19 @@ function pickRelUnit(deltaSec: number): { unit: Intl.RelativeTimeFormatUnit; val
     if (abs >= sec) return { unit, value: deltaSec / sec };
   }
   return { unit: "second", value: deltaSec };
+}
+
+/** `ms` plus `amount` `unit`s: a calendar move for months and years, clamped to the target month's last day. */
+function addTo(ms: number, amount: number, unit: typeof ADD_UNITS[number]): number {
+  if (unit !== "month" && unit !== "year") return ms + amount * UNIT_MS[unit];
+  const months = unit === "year" ? amount * 12 : amount;
+  if (!Number.isInteger(months)) throw new Error(`$dateAdd moves whole months, got ${amount} ${unit}s`);
+  const d = new Date(ms);
+  const target = d.getUTCMonth() + months;
+  const y = d.getUTCFullYear() + Math.floor(target / 12);
+  const mo = ((target % 12) + 12) % 12;
+  const lastDay = new Date(Date.UTC(y, mo + 1, 0)).getUTCDate();
+  return Date.UTC(y, mo, Math.min(d.getUTCDate(), lastDay), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), d.getUTCMilliseconds());
 }
 
 function diff(from: number, to: number, unit: string): number {
