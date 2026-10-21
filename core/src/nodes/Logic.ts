@@ -100,6 +100,10 @@ export class LogicNode extends Node {
     },
     eq: {
       tuple: 2,
+      prefixItems: [
+        { description: "One value, of any type." },
+        { description: "The other value." },
+      ],
       output: "boolean",
       markdownDescription: "Strict equality check between two resolved values.",
       examples: [
@@ -108,6 +112,10 @@ export class LogicNode extends Node {
     },
     neq: {
       tuple: 2,
+      prefixItems: [
+        { description: "One value, of any type." },
+        { description: "The other value." },
+      ],
       output: "boolean",
       markdownDescription: "Strict inequality check between two resolved values.",
       examples: [
@@ -116,6 +124,10 @@ export class LogicNode extends Node {
     },
     gt: {
       tuple: 2,
+      prefixItems: [
+        { type: "number", description: "The value `a`." },
+        { type: "number", description: "The value `b` it must be greater than." },
+      ],
       output: "boolean",
       markdownDescription: "Greater-than comparison: `a > b`.",
       examples: [
@@ -124,6 +136,10 @@ export class LogicNode extends Node {
     },
     gte: {
       tuple: 2,
+      prefixItems: [
+        { type: "number", description: "The value `a`." },
+        { type: "number", description: "The value `b` it must be at least." },
+      ],
       output: "boolean",
       markdownDescription: "Greater-than-or-equal comparison: `a >= b`.",
       examples: [
@@ -132,6 +148,10 @@ export class LogicNode extends Node {
     },
     lt: {
       tuple: 2,
+      prefixItems: [
+        { type: "number", description: "The value `a`." },
+        { type: "number", description: "The value `b` it must be less than." },
+      ],
       output: "boolean",
       markdownDescription: "Less-than comparison: `a < b`.",
       examples: [
@@ -140,6 +160,10 @@ export class LogicNode extends Node {
     },
     lte: {
       tuple: 2,
+      prefixItems: [
+        { type: "number", description: "The value `a`." },
+        { type: "number", description: "The value `b` it must be at most." },
+      ],
       output: "boolean",
       markdownDescription: "Less-than-or-equal comparison: `a <= b`.",
       examples: [

@@ -31,6 +31,10 @@ export class ObjectNode extends Node {
     },
     pick: {
       tuple: 2,
+      prefixItems: [
+        { type: "object", description: "The object to pick from." },
+        { type: "array", items: { type: "string" }, description: "The keys to keep." },
+      ],
       output: "object",
       markdownDescription: "Returns a new object containing only the listed top-level keys. Keys absent from the source are skipped.",
       examples: [
@@ -39,6 +43,10 @@ export class ObjectNode extends Node {
     },
     omit: {
       tuple: 2,
+      prefixItems: [
+        { type: "object", description: "The object to omit from." },
+        { type: "array", items: { type: "string" }, description: "The keys to drop." },
+      ],
       output: "object",
       markdownDescription: "Returns a new object with the listed top-level keys removed.",
       examples: [
