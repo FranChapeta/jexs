@@ -1,6 +1,6 @@
 import { Node, Context } from "./Node.js";
 import { resolve, resolveAll } from "../Resolver.js";
-import { operands, toBooleanValue, toStringValue } from "../helpers.js";
+import { operands, randomString, toBooleanValue, toStringValue } from "../helpers.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
 
 /**
@@ -89,6 +89,21 @@ export class StringNode extends Node {
       examples: [
         "{ \"$length\": { \"$var\": \"name\" } }",
       ],
+    },
+    randomString: {
+      type: "number",
+      output: "string",
+      markdownDescription: "A random string, the value's length long (default 32), of the characters in `chars` (letters and digits by default). Safe to use as a token.",
+      examples: [
+        "{ \"$randomString\": 16 }",
+        "{ \"$randomString\": 6, \"chars\": \"0123456789\" }",
+      ],
+      siblings: {
+        chars: {
+          type: "string",
+          description: "The characters to draw from, 1 to 256 of them (default letters and digits). Hex is `\"0123456789abcdef\"`; leave out look-alikes such as `0` and `O` for a code people type.",
+        },
+      },
     },
     slug: {
       output: "string",
@@ -413,6 +428,18 @@ export class StringNode extends Node {
 
   length(d: Record<string, unknown>, c: Context) {
     return resolve(d.$length, c, v => this.toString(v).length);
+  }
+
+  randomString(def: Record<string, unknown>, c: Context) {
+    return resolveAll([def.$randomString, def.chars], c, ([length, chars]) => {
+      if (length !== undefined && (typeof length !== "number" || !Number.isInteger(length) || length < 0)) {
+        throw new Error(`$randomString takes a length, a whole number of characters, got ${JSON.stringify(length)}`);
+      }
+      if (chars !== undefined && typeof chars !== "string") {
+        throw new Error(`$randomString chars must be a string of the characters to draw from, got ${JSON.stringify(chars)}`);
+      }
+      return randomString(length, chars);
+    });
   }
 
   toBase64(def: Record<string, unknown>, c: Context) {

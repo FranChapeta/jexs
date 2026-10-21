@@ -112,3 +112,36 @@ test("toFixed formats its value with `decimals` places, 2 by default", () => {
 test("add sums the array an expression returns", () => {
   assert.equal(resolve({ $add: { $var: "prices" } }, { prices: [1, 2, 3.5] }), 6.5);
 });
+
+test("randomNumber: an integer in [min, max], or a number with `decimals` places in it", () => {
+  const seen = new Set<number>();
+  for (let i = 0; i < 200; i++) {
+    const n = resolve({ $randomNumber: [3, 5] }, {}) as number;
+    assert.ok(Number.isInteger(n) && n >= 3 && n <= 5, String(n));
+    seen.add(n);
+    const f = resolve({ $randomNumber: [2, 3], decimals: 2 }, {}) as number;
+    assert.ok(f >= 2 && f <= 3 && Number(f.toFixed(2)) === f, String(f));
+  }
+  assert.deepEqual([...seen].sort(), [3, 4, 5], "both ends come up");
+  assert.ok(Number.isInteger(resolve({ $randomNumber: [0, 10], decimals: { $var: "missing" } }, {})));
+});
+
+test("randomNumber: decimals is a whole number from 0 to 15", () => {
+  for (const bad of [-1, 1.5, 16, "2", null]) {
+    assert.throws(() => resolve({ $randomNumber: [0, 1], decimals: bad }, {}), /decimals must be a whole number from 0 to 15/, JSON.stringify(bad));
+  }
+});
+
+test("randomNumber: takes [min, max] and nothing shorter", () => {
+  assert.throws(() => resolve({ $randomNumber: [6] }, {}), /\$randomNumber takes 2 operands, got 1/);
+  assert.throws(() => resolve({ $randomNumber: [] }, {}), /\$randomNumber takes 2 operands, got 0/);
+});
+
+test("randomNumber: a seed makes it reproducible", () => {
+  resolve({ $randomSeed: 7 }, {});
+  const a = [resolve({ $randomNumber: [0, 100] }, {}), resolve({ $randomNumber: [0, 1], decimals: 6 }, {})];
+  resolve({ $randomSeed: 7 }, {});
+  const b = [resolve({ $randomNumber: [0, 100] }, {}), resolve({ $randomNumber: [0, 1], decimals: 6 }, {})];
+  resolve({ $randomSeed: null }, {});
+  assert.deepEqual(a, b);
+});

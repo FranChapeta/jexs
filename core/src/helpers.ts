@@ -177,21 +177,28 @@ export function escapeScriptJson(json: string): string {
   });
 }
 
+const ALPHANUMERIC ="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
 /**
- * A random alphanumeric string, from the platform's crypto source (Web Crypto,
- * in Node, browsers and workers alike), so it can name a secret such as an
- * OAuth `state`.
+ * A random string of `length` characters drawn from `chars` (letters and digits
+ * by default), from the platform's crypto source (Web Crypto, in Node, browsers
+ * and workers alike), so it can name a secret such as an OAuth `state`. `chars`
+ * holds 1 to 256 characters, since each is drawn with one byte.
  */
-export function randomString(length: number = 32): string {
-  const chars =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  // A byte has 256 values, which 62 characters do not divide: bytes from 248
-  // (4 x 62) up are drawn again, so every character is equally likely.
-  const limit = 256 - (256 % chars.length);
+export function randomString(length: number = 32, chars: string = ALPHANUMERIC): string {
+  const alphabet = [...chars];
+  if (alphabet.length === 0 || alphabet.length > 256) {
+    throw new Error(`randomString draws from 1 to 256 characters, got ${alphabet.length}`);
+  }
+  // A byte has 256 values, which most alphabets do not divide (62 does not):
+  // the bytes past the last whole multiple are drawn again, so every character
+  // is equally likely.
+  const limit = 256 - (256 % alphabet.length);
   let result = "";
-  while (result.length < length) {
-    for (const byte of crypto.getRandomValues(new Uint8Array(length - result.length))) {
-      if (byte < limit) result += chars[byte % chars.length];
+  let count = 0;
+  while (count < length) {
+    for (const byte of crypto.getRandomValues(new Uint8Array(length - count))) {
+      if (byte < limit) { result += alphabet[byte % alphabet.length]; count++; }
     }
   }
   return result;

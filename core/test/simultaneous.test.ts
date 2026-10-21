@@ -157,14 +157,14 @@ test("a random seed set in one resolver does not reach the other", () => {
   const b = createResolver(coreNodes());
 
   a({ $randomSeed: 42 }, {});
-  const first = a({ $random: 1000000 }, {});
+  const first = a({ $randomNumber: [0, 1000000] }, {});
 
   // Re-seed A, then draw from B before drawing from A again. B's draw is the
   // discriminator: on a shared stream it advances the seed and A's next value
   // moves. Asserting only that A alone is reproducible would pass either way.
   a({ $randomSeed: 42 }, {});
-  b({ $random: 1000000 }, {});
-  const again = a({ $random: 1000000 }, {});
+  b({ $randomNumber: [0, 1000000] }, {});
+  const again = a({ $randomNumber: [0, 1000000] }, {});
 
   assert.equal(again, first, "B's draw must not advance A's seeded stream");
 });

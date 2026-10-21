@@ -415,25 +415,29 @@ export class MathNode extends Node {
         "{ \"$atan2\": [1, 1] }",
       ],
     },
-    random: {
-      tuple: [
-        0,
-        2,
-      ],
+    randomNumber: {
+      tuple: 2,
       prefixItems: [
-        { type: "number", description: "With one arg, the inclusive max `n` (integer in `[0, n]`); with two, the inclusive `min`." },
-        { type: "number", description: "The inclusive `max` (integer in `[min, max]`)." },
+        { type: "number", description: "The lowest the number can be." },
+        { type: "number", description: "The highest the number can be." },
       ],
       output: "number",
-      markdownDescription: "Generates a random number, using the seeded RNG when `randomSeed` has been set, otherwise `Math.random`.",
-      outputDescription: "No args → a float in `[0, 1)`. One arg `n` → an integer in `[0, n]`. Two args → an integer in `[min, max]` (both inclusive).",
+      markdownDescription: "A random number from `min` to `max`, both included, with `decimals` decimal places (a whole number by default). `randomSeed` makes the numbers repeatable.",
       examples: [
-        "{ \"$random\": [1, 6] }",
+        "{ \"$randomNumber\": [1, 6] }",
+        "{ \"$randomNumber\": [0, 1], \"decimals\": 2 }",
       ],
+      siblings: {
+        decimals: {
+          type: "number",
+          default: 0,
+          description: "Decimal places, from 0 (an integer, the default) to 15.",
+        },
+      },
     },
     randomSeed: {
       output: "null",
-      markdownDescription: "Seeds the RNG for reproducible sequences. Pass a number or string; `null` resets to unseeded.",
+      markdownDescription: "Seeds `randomNumber`'s RNG for reproducible sequences. Pass a number or string; `null` resets to unseeded.",
       examples: [
         "{ \"$randomSeed\": 42 }",
       ],
@@ -641,14 +645,19 @@ export class MathNode extends Node {
     });
   }
 
-  random(def: Record<string, unknown>, c: Context) {
-    return resolve(def.$random, c, values => {
-      const arr = this.toArray(values);
-      if (arr.length === 0) return nextRandom(c);
-      // One arg n → integer in [0, n]; two args → integer in [min, max].
-      const min = arr.length > 1 ? this.toNumber(arr[0]) : 0;
-      const max = arr.length > 1 ? this.toNumber(arr[1]) : this.toNumber(arr[0]);
-      return Math.floor(nextRandom(c) * (max - min + 1)) + min;
+  randomNumber(def: Record<string, unknown>, c: Context) {
+    return resolveAll([def.$randomNumber, def.decimals], c, ([values, decimalsRaw]) => {
+      const [minRaw, maxRaw] = operands("randomNumber", values, 2);
+      const decimals = decimalsRaw === undefined ? 0 : decimalsRaw;
+      if (typeof decimals !== "number" || !Number.isInteger(decimals) || decimals < 0 || decimals > 15) {
+        throw new Error(`$randomNumber decimals must be a whole number from 0 to 15, got ${JSON.stringify(decimalsRaw)}`);
+      }
+      // Draw a whole number of steps of 10^-decimals across the range, so both
+      // ends can come up and every step is as likely as any other.
+      const scale = 10 ** decimals;
+      const low = Math.round(this.toNumber(minRaw) * scale);
+      const steps = Math.round(this.toNumber(maxRaw) * scale) - low;
+      return (low + Math.floor(nextRandom(c) * (steps + 1))) / scale;
     });
   }
 

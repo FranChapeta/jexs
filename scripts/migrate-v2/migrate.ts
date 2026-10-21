@@ -663,6 +663,28 @@ const RULES: Record<string, Rule> = {
   },
   // The part to extract is the second operand.
   datePart: (step, m) => siblingToTuple(step, "part", m),
+  // One operand was the max with 0 as the min; it is `[min, max]` or `[]` now.
+  // `$random` is `$randomNumber`, which always takes `[min, max]`: a float in
+  // [0, 1) is `[0, 1]` with as many `decimals` as are wanted, 15 at most.
+  random: (step, m) => {
+    const prop = step.obj.props.find(p => p.key === "$random");
+    if (!prop || prop.shorthand) return;
+    renameOp(step, "randomNumber", m);
+    const v = prop.value;
+    const one = v.k === "arr" ? (v.items.length === 1 ? v.items[0] : undefined) : v.k === "lit" || v.k === "str" ? v : undefined;
+    if (v.k === "arr" && v.items.length === 0) {
+      m.add({ start: v.start, end: v.end, text: "[0, 1]" });
+      m.add({ start: v.end, end: v.end, text: `, ${prop.keyQuoted ? '"decimals"' : "decimals"}: 15` });
+      m.review(prop.keyStart, "`$random` with no operands was a float in [0, 1); this is `[0, 1]` with 15 `decimals`: give fewer if fewer will do");
+    } else if (one && v.k === "arr") {
+      m.add({ start: one.start, end: one.start, text: "0, " });
+    } else if (one) {
+      m.add({ start: v.start, end: v.start, text: "[0, " });
+      m.add({ start: v.end, end: v.end, text: "]" });
+    } else if (v.k !== "arr") {
+      m.review(prop.keyStart, "`$randomNumber` takes `[min, max]`: one operand `n` is `[0, n]`, and no operands was a float in [0, 1), now `[0, 1]` with `decimals`");
+    }
+  },
   // `[timestamp, "7d"]` is `[timestamp, 7]` with `"unit": "day"`, so a minute
   // and a month no longer share the letter `m`.
   dateAdd: ({ obj }, m) => {

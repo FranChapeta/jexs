@@ -61,7 +61,7 @@ const cases: Case[] = [
   { label: "tag with mixed-content array of strings and elements (via exprFlat)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $tag: "p", content: ["plain text", { $tag: "b", content: ["bold"] }, "more text"] } },
   { label: "switch cases with primitive arrays (RGBA tuples)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $switch: { $random: [0, 2] }, cases: { "0": [0.4, 0.25, 0.15, 1], "1": [0.3, 0.35, 0.3, 1] } } },
+    expr: { $switch: { $randomNumber: [0, 2] }, cases: { "0": [0.4, 0.25, 0.15, 1], "1": [0.3, 0.35, 0.3, 1] } } },
 
   // Output-type validation: a slot declared `type: string` should reject an expression
   // whose output is `number` or `boolean`.
