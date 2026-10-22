@@ -24,70 +24,84 @@ after(async () => {
   await fs.rm(root, { recursive: true, force: true });
 });
 
-test("exists reports presence without reading", async () => {
+test("fileExists reports presence without reading", async () => {
   await fs.writeFile(abs("present.txt"), "hi");
-  assert.equal(await run({ $file: "/present.txt", exists: true }), true);
-  assert.equal(await run({ $file: "/absent.txt", exists: true }), false);
+  assert.equal(await run({ $fileExists: "/present.txt" }), true);
+  assert.equal(await run({ $fileExists: "/absent.txt" }), false);
 });
 
 // A load fails for an unreadable file AND for a malformed one, so it cannot
-// answer "is it there", which is why exists is not just sugar.
-test("loading a missing or malformed file is an error, while exists still answers", async () => {
+// answer "is it there", which is why fileExists is not just sugar.
+test("loading a missing or malformed file is an error, while fileExists still answers", async () => {
   await fs.writeFile(abs("broken.json"), "{ not json");
   await assert.rejects(run({ $file: "/broken.json" }), /broken\.json is not valid JSON/);
   await assert.rejects(run({ $file: "/missing.json" }), /ENOENT/);
-  assert.equal(await run({ $file: "/broken.json", exists: true }), true);
+  assert.equal(await run({ $fileExists: "/broken.json" }), true);
 });
 
-test("stat reports metadata, and a path with nothing to report is an error", async () => {
+test("fileStat reports metadata, and a path with nothing to report is an error", async () => {
   await fs.writeFile(abs("sized.txt"), "12345");
-  const info = await run({ $file: "/sized.txt", stat: true }) as Record<string, unknown>;
+  const info = await run({ $fileStat: "/sized.txt" }) as Record<string, unknown>;
   assert.equal(info.size, 5);
   assert.equal(info.isFile, true);
   assert.equal(info.isDirectory, false);
   assert.match(String(info.modified), /^\d{4}-\d{2}-\d{2}T/);
 
-  await assert.rejects(run({ $file: "/nope.txt", stat: true }), /ENOENT/);
+  await assert.rejects(run({ $fileStat: "/nope.txt" }), /ENOENT/);
 });
 
-test("stat sees a directory as one", async () => {
+test("fileStat sees a directory as one", async () => {
   await fs.mkdir(abs("adir"));
-  const info = await run({ $file: "/adir", stat: true }) as Record<string, unknown>;
+  const info = await run({ $fileStat: "/adir" }) as Record<string, unknown>;
   assert.equal(info.isDirectory, true);
   assert.equal(info.isFile, false);
 });
 
-test("delete removes the file", async () => {
+test("fileDelete removes the file", async () => {
   await fs.writeFile(abs("doomed.txt"), "x");
-  assert.equal(await run({ $file: "/doomed.txt", delete: true }), true);
-  assert.equal(await run({ $file: "/doomed.txt", exists: true }), false);
+  assert.equal(await run({ $fileDelete: "/doomed.txt" }), true);
+  assert.equal(await run({ $fileExists: "/doomed.txt" }), false);
 });
 
 // Cleanup steps get re-run; "already gone" is reported, not an error.
 test("deleting an absent file answers false, so cleanup is repeatable", async () => {
-  assert.equal(await run({ $file: "/never-existed.txt", delete: true }), false);
+  assert.equal(await run({ $fileDelete: "/never-existed.txt" }), false);
 });
 
 // No recursive delete: a directory is an error rather than a silent tree wipe.
-test("delete refuses a directory", async () => {
+test("fileDelete refuses a directory", async () => {
   await fs.mkdir(abs("keepme"));
   await fs.writeFile(abs("keepme/inside.txt"), "x");
-  await assert.rejects(run({ $file: "/keepme", delete: true }));
-  assert.equal(await run({ $file: "/keepme/inside.txt", exists: true }), true);
+  await assert.rejects(run({ $fileDelete: "/keepme" }));
+  assert.equal(await run({ $fileExists: "/keepme/inside.txt" }), true);
 });
 
-test("write, copy and move return null, having done what they say", async () => {
+// A flag key picked the action by its presence, so `"delete": false` deleted.
+test("$file with a stray delete, stat or exists key only loads", async () => {
+  await fs.writeFile(abs("kept.txt"), "still here");
+  assert.equal(await run({ $file: "/kept.txt", delete: false }), "still here");
+  assert.equal(await run({ $fileExists: "/kept.txt" }), true);
+});
+
+test("write, copy, move and directoryCreate return null, having done what they say", async () => {
   assert.equal(await run({ $file: "/source.txt", write: "payload" }), null);
   assert.equal(await run({ $file: "/source.txt", copy: "/copy.txt" }), null);
   assert.equal(await fs.readFile(abs("copy.txt"), "utf8"), "payload");
-  assert.equal(await run({ $file: "/source.txt", exists: true }), true);
+  assert.equal(await run({ $fileExists: "/source.txt" }), true);
 
   assert.equal(await run({ $file: "/copy.txt", move: "/moved.txt" }), null);
   assert.equal(await fs.readFile(abs("moved.txt"), "utf8"), "payload");
-  assert.equal(await run({ $file: "/copy.txt", exists: true }), false);
+  assert.equal(await run({ $fileExists: "/copy.txt" }), false);
 
-  assert.equal(await run({ $directory: "/made/deep", create: true }), null);
-  assert.equal(await run({ $file: "/made/deep", exists: true }), true);
+  assert.equal(await run({ $directoryCreate: "/made/deep" }), null);
+  assert.equal(await run({ $fileExists: "/made/deep" }), true);
+});
+
+test("directory lists each entry's modified time as an ISO date-time", async () => {
+  await fs.mkdir(abs("listed"));
+  await fs.writeFile(abs("listed/a.txt"), "a");
+  const [entry] = await run({ $directory: "/listed" }) as Array<Record<string, unknown>>;
+  assert.match(String(entry.modified), /^\d{4}-\d{2}-\d{2}T/);
 });
 
 test("copy overwrites an existing destination, like write", async () => {
@@ -107,7 +121,7 @@ test("the path may be an expression, as everywhere else", async () => {
   await fs.writeFile(abs("dynamic.txt"), "x");
   assert.equal(
     await Promise.resolve(
-      resolve({ $file: { $var: "p" }, exists: true }, { p: "/dynamic.txt" }),
+      resolve({ $fileExists: { $var: "p" } }, { p: "/dynamic.txt" }),
     ),
     true,
   );

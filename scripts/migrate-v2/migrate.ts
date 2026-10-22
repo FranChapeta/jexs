@@ -418,6 +418,24 @@ function moveOp({ op, obj }: Step, node: string, to: string, m: Codemod): void {
   if (prop.value.value !== to) replaceString(prop.value, to, m);
 }
 
+/**
+ * `{ "$file": path, "delete": true }` is `{ "$fileDelete": path }`: the first
+ * of `flags` present names the op, and its key goes. A flag that is not a
+ * literal `true` ran the action all the same, which is likely not what was
+ * meant, so it is left for review.
+ */
+function flagToOp(step: Step, flags: string[], m: Codemod): void {
+  const flag = step.obj.props.find(p => flags.includes(p.key));
+  if (!flag) return;
+  const op = step.op + flag.key[0].toUpperCase() + flag.key.slice(1);
+  if (flag.value.k !== "lit" || flag.value.value !== true) {
+    m.review(flag.keyStart, `\`$${step.op}\` with \`${flag.key}\` ran the ${flag.key} whatever its value: it is \`$${op}\` now, so check this one was meant to`);
+    return;
+  }
+  renameOp(step, op, m);
+  removeSibling(step, flag.key, m);
+}
+
 /** The value a value-mode step names, when it is written as a literal. */
 const opValue = ({ op, obj }: Step) => {
   const value = obj.props.find(p => p.key === "$" + op)?.value;
@@ -601,6 +619,9 @@ const RULES: Record<string, Rule> = {
     if (value === "tableExists") moveOp(step, "table", "exists", m);
     if (value === "dropTable") moveOp(step, "table", "drop", m);
   },
+  // An action picked by a flag key's presence is an op of its own on the path.
+  file: (step, m) => flagToOp(step, ["delete", "stat", "exists"], m),
+  directory: (step, m) => flagToOp(step, ["create"], m),
   cache: (step, m) => {
     if (opValue(step) !== "dump") return;
     const prop = step.obj.props.find(p => p.key === "$cache")!;

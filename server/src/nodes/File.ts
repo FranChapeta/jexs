@@ -72,7 +72,7 @@ export class FileNode extends Node {
       type: "string",
       output: "any",
       markdownDescription: "Loads a JSON file and resolves it as a Jexs expression. Paths resolve like a filesystem: relative to the file doing the loading (`\"nav.json\"`, `\"../shared/x.json\"`), while a leading `/` anchors at the resolver root (`\"/data/site.json\"`).\nArrays are executed as step sequences; objects are resolved as a single expression.\nPass `\"data\": true` to skip resolution and get the raw parsed JSON (use for data files, route trees, and anywhere you want the resolver to leave the file alone).\nPass `\"raw\": true` for the raw string content with no JSON parse.\nPass `\"params\"` to merge scoped variables into the file's resolution context, or `\"write\"` to write data to the file.",
-      outputDescription: "Default: the file resolved as a Jexs expression (a JSON array runs as steps → its last value; a JSON object resolves to its value). With `data: true`, the raw parsed JSON; with `raw: true`, the file as a string; non-JSON text files return their string and binaries a Buffer. A file that can't be read, or a `.json` file that isn't valid JSON, is an error; `exists` asks first without one.",
+      outputDescription: "Default: the file resolved as a Jexs expression (a JSON array runs as steps → its last value; a JSON object resolves to its value). With `data: true`, the raw parsed JSON; with `raw: true`, the file as a string; non-JSON text files return their string and binaries a Buffer. A file that can't be read, or a `.json` file that isn't valid JSON, is an error; `fileExists` asks first without one.",
       examples: [
         "{ \"$file\": \"pages/home.json\", \"params\": { \"title\": \"Home\" } }",
       ],
@@ -90,36 +90,12 @@ export class FileNode extends Node {
           description: "Scoped variables passed into the loaded file's context: a map of values, or a step resolving to one.",
         },
       },
+      // One action per step: loading (none of these), or one of them.
+      exclusive: true,
       variants: {
         write: {
           output: "null",
           markdownDescription: "Writes data to the file (strings verbatim, otherwise JSON). A failure is an error.",
-        },
-        exists: {
-          type: "boolean",
-          output: "boolean",
-          markdownDescription: "Reports whether the path exists, without reading it. Cheaper than loading a large file to test for it, and unlike a load it does not treat an unparseable file as missing.",
-        },
-        stat: {
-          type: "boolean",
-          output: {
-            type: "object",
-            properties: {
-              size: { type: "number", description: "In bytes." },
-              modified: { type: "string", description: "ISO date-time." },
-              created: { type: "string", description: "ISO date-time." },
-              isFile: { type: "boolean" },
-              isDirectory: { type: "boolean" },
-            },
-          },
-          markdownDescription: "Reports file metadata without reading the contents. A path that cannot be read is an error.",
-          outputDescription: "The file's metadata.",
-        },
-        delete: {
-          type: "boolean",
-          output: "boolean",
-          markdownDescription: "Deletes the file. An absent one is not an error, so cleanup steps are repeatable. Refuses directories, since there is deliberately no recursive delete.",
-          outputDescription: "`true` if the file existed and was deleted, otherwise `false`.",
         },
         copy: {
           type: "string",
@@ -132,6 +108,41 @@ export class FileNode extends Node {
           markdownDescription: "Moves or renames the file, overwriting any file already there. The destination resolves the same way the source does.\nFalls back to copy-then-delete when the destination is on another drive or mount, which a plain rename cannot cross.",
         },
       },
+    },
+    fileExists: {
+      type: "string",
+      output: "boolean",
+      markdownDescription: "Reports whether the path exists, without reading it. Cheaper than loading a large file to test for it, and unlike a load it does not treat an unparseable file as missing. The path resolves as `file`'s does.",
+      examples: [
+        "{ \"$fileExists\": \"/data/settings.json\" }",
+      ],
+    },
+    fileStat: {
+      type: "string",
+      output: {
+        type: "object",
+        properties: {
+          size: { type: "number", description: "In bytes." },
+          modified: { type: "string", description: "ISO date-time." },
+          created: { type: "string", description: "ISO date-time." },
+          isFile: { type: "boolean" },
+          isDirectory: { type: "boolean" },
+        },
+      },
+      markdownDescription: "Reports a file's metadata without reading its contents. A path that cannot be read is an error. The path resolves as `file`'s does.",
+      outputDescription: "The file's metadata.",
+      examples: [
+        "{ \"$fileStat\": \"/uploads/report.pdf\" }",
+      ],
+    },
+    fileDelete: {
+      type: "string",
+      output: "boolean",
+      markdownDescription: "Deletes a file. An absent one is not an error, so cleanup steps are repeatable. Refuses directories, since there is deliberately no recursive delete. The path resolves as `file`'s does.",
+      outputDescription: "`true` if the file existed and was deleted, otherwise `false`.",
+      examples: [
+        "{ \"$fileDelete\": \"/tmp/upload.part\" }",
+      ],
     },
     directory: {
       type: "string",
@@ -166,13 +177,14 @@ export class FileNode extends Node {
           description: "List subdirectories instead of files. Combine with `recursive` to walk the whole folder tree.",
         },
       },
-      variants: {
-        create: {
-          type: "boolean",
-          output: "null",
-          markdownDescription: "Creates the directory, auto-creating any missing parent directories (no error if it already exists).",
-        },
-      },
+    },
+    directoryCreate: {
+      type: "string",
+      output: "null",
+      markdownDescription: "Creates a directory, and any missing parent directories; one that already exists is not an error. The path resolves as `directory`'s does.",
+      examples: [
+        "{ \"$directoryCreate\": \"/data/exports\" }",
+      ],
     },
     disk: {
       type: ["string", "boolean"],
@@ -199,17 +211,52 @@ export class FileNode extends Node {
 
   file(def: Record<string, unknown>, context: Context): NodeValue {
     if ("write" in def) return writeFile(def, context, this.rootAbs);
-    if ("exists" in def) return statFile(def, context, this.rootAbs, "exists");
-    if ("stat" in def) return statFile(def, context, this.rootAbs, "stat");
-    if ("delete" in def) return deleteFile(def, context, this.rootAbs);
     if ("copy" in def) return transferFile(def, context, this.rootAbs, "copy");
     if ("move" in def) return transferFile(def, context, this.rootAbs, "move");
     return loadFile(def, context, this.rootAbs);
   }
 
-  directory(def: Record<string, unknown>, context: Context): NodeValue {
-    if ("create" in def) return createDir(def, context, this.rootAbs);
+  fileExists(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$fileExists, context, filePathValue =>
+      fs.stat(resolvePath(filePathValue, this.rootAbs, getFileDir(context))).then(() => true, () => false));
+  }
 
+  fileStat(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$fileStat, context, async filePathValue => {
+      const info = await fs.stat(resolvePath(filePathValue, this.rootAbs, getFileDir(context)));
+      return {
+        size: info.size,
+        modified: info.mtime.toISOString(),
+        created: info.birthtime.toISOString(),
+        isFile: info.isFile(),
+        isDirectory: info.isDirectory(),
+      };
+    });
+  }
+
+  fileDelete(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$fileDelete, context, async filePathValue => {
+      // An absent file is reported rather than an error: a cleanup step should be
+      // repeatable, and "it is not there" is the outcome the caller wanted. No
+      // `recursive`, so a directory is an error rather than a silent tree wipe.
+      try {
+        await fs.rm(resolvePath(filePathValue, this.rootAbs, getFileDir(context)));
+        return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw error;
+      }
+    });
+  }
+
+  directoryCreate(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$directoryCreate, context, async dirPathValue => {
+      await fs.mkdir(resolvePath(dirPathValue, this.rootAbs, getFileDir(context)), { recursive: true });
+      return null;
+    });
+  }
+
+  directory(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll(
       [def.$directory, def.recursive ?? null, def.extension ?? null, def.subdirectories ?? null],
       context,
@@ -338,48 +385,6 @@ function writeFile(
  * file rather than reading it. A failed stat is the ANSWER for `exists`; for
  * `stat` it is a real failure, and throws.
  */
-function statFile(
-  def: Record<string, unknown>,
-  context: Context,
-  rootAbs: string,
-  mode: "exists" | "stat",
-): unknown {
-  return resolve(def.$file, context, async filePathValue => {
-    const filePath = resolvePath(filePathValue, rootAbs, getFileDir(context));
-
-    if (mode === "exists") return fs.stat(filePath).then(() => true, () => false);
-    const info = await fs.stat(filePath);
-
-    return {
-      size: info.size,
-      modified: info.mtime.toISOString(),
-      created: info.birthtime.toISOString(),
-      isFile: info.isFile(),
-      isDirectory: info.isDirectory(),
-    };
-  });
-}
-
-function deleteFile(
-  def: Record<string, unknown>,
-  context: Context,
-  rootAbs: string,
-): unknown {
-  return resolve(def.$file, context, async filePathValue => {
-    const filePath = resolvePath(filePathValue, rootAbs, getFileDir(context));
-    // An absent file is reported rather than an error: a cleanup step should be
-    // repeatable, and "it is not there" is the outcome the caller wanted. No
-    // `recursive`, so a directory is an error rather than a silent tree wipe.
-    try {
-      await fs.rm(filePath);
-      return true;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-      throw error;
-    }
-  });
-}
-
 function transferFile(
   def: Record<string, unknown>,
   context: Context,
@@ -406,17 +411,6 @@ function transferFile(
       await fs.copyFile(from, to);
       await fs.rm(from, { force: true });
     }
-    return null;
-  });
-}
-
-function createDir(
-  def: Record<string, unknown>,
-  context: Context,
-  rootAbs: string,
-): unknown {
-  return resolve(def.$directory, context, async dirPathValue => {
-    await fs.mkdir(resolvePath(dirPathValue, rootAbs, getFileDir(context)), { recursive: true });
     return null;
   });
 }
@@ -451,7 +445,7 @@ async function listDir(
           name: entry.name,
           path: entry.name,
           size: stat.size,
-          modified: stat.mtimeMs,
+          modified: stat.mtime.toISOString(),
         });
       }
       // Descend into real directories only — never follow a symlink recursively,
@@ -472,7 +466,7 @@ async function listDir(
         name: entry.name,
         path: entry.name,
         size: stat.size,
-        modified: stat.mtimeMs,
+        modified: stat.mtime.toISOString(),
       });
     }
   }
@@ -487,5 +481,6 @@ export interface FileInfo {
   name: string;
   path: string;
   size: number;
-  modified: number;
+  /** ISO date-time. */
+  modified: string;
 }

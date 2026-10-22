@@ -22,7 +22,7 @@ npm install @jexs/server @jexs/core
 |---|---|---|
 | `ServerNode` | `listen` | Start an HTTP listener per `listen` step (port `0` takes any free one; the step returns the port); can auto-serve the `@jexs/client` bundle |
 | `RouterNode` | `routes` | Path-based routing with `*` / `**` segment capture |
-| `FileNode` | `file`, `directory`, `disk` | Load JSON files as sub-templates, list/read/write files, report disk usage |
+| `FileNode` | `file`, `fileExists`, `fileStat`, `fileDelete`, `directory`, `directoryCreate`, `disk` | Load JSON files as sub-templates, read/write/copy/move/delete files, list and create directories, report disk usage |
 | `DatabaseNode` | `database` | Named connections (SQLite, MySQL, PostgreSQL), picked with `connection`: `connect`, `close`, `raw`, `info`, and steps run in a `transaction` |
 | `DatabaseTableNode` | `table` | Tables, from table documents: `create`, make the database match (`sync`), `alter` columns and indexes, `rename`, `drop`, `exists`, `list`, and the `validator` every change passes |
 | `DatabaseQueryNode` | `query` | Rows: `select`, `insert`, `upsert`, `update`, `delete`, `count`, and the `validator` every query passes |
