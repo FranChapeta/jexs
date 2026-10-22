@@ -601,6 +601,11 @@ const RULES: Record<string, Rule> = {
     if (value === "tableExists") moveOp(step, "table", "exists", m);
     if (value === "dropTable") moveOp(step, "table", "drop", m);
   },
+  cache: (step, m) => {
+    if (opValue(step) !== "dump") return;
+    const prop = step.obj.props.find(p => p.key === "$cache")!;
+    m.review(prop.keyStart, "`$cache: \"dump\"` is gone: read the keys you need with `$cache-get`");
+  },
   "cache-connect": (step, m) => {
     renameSibling(step, "username", "user", m);
     renameSibling(step, "ssl", "tls", m);

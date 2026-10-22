@@ -186,7 +186,7 @@ export class CacheNode extends Node {
     // keep their prefix.
     cache: {
       type: "string",
-      enum: ["close", "clear", "stats", "dump"],
+      enum: ["close", "clear", "stats"],
       markdownDescription: "Cache lifecycle / bulk operation (the value is the op).",
       examples: [
         "{ \"$cache\": \"stats\" }",
@@ -209,7 +209,6 @@ export class CacheNode extends Node {
           markdownDescription: "Reports driver statistics.",
           outputDescription: "The entry count and, where the driver knows them, its limits and memory use.",
         },
-        dump:  { output: "object", markdownDescription: "Snapshots the cache contents (memory driver only).", outputDescription: "An object snapshot of all entries. Memory driver only; other drivers fail with a 501." },
       },
     },
   };
@@ -290,11 +289,6 @@ export class CacheNode extends Node {
         }
         case "clear": return CacheNode.cacheFor(context, name).clear();
         case "stats": return CacheNode.cacheFor(context, name).stats();
-        case "dump": {
-          const instance = CacheNode.cacheFor(context, name) as unknown as Record<string, unknown>;
-          if (typeof instance.dump === "function") return instance.dump();
-          throw createHttpError(501, "cache dump is only supported by the memory driver");
-        }
         default:
           throw createHttpError(400, `Unknown cache op: ${String(op)}`);
       }

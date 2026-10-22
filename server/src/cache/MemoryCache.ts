@@ -146,14 +146,4 @@ export class MemoryCache implements CacheAdapter {
   async stats(): Promise<CacheStats> {
     return { type: "memory", size: this.cache.size, maxSize: this.maxSize };
   }
-
-  dump(): Record<string, unknown> {
-    const now = Date.now();
-    const result: Record<string, unknown> = {};
-    for (const [key, entry] of this.cache.entries()) {
-      if (entry.expiresAt !== null && now > entry.expiresAt) continue;
-      result[key] = entry.value;
-    }
-    return result;
-  }
 }
