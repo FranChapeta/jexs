@@ -110,7 +110,7 @@ interface PhysicsWorld {
   context: Context;
   paused: boolean;
   onStep: (() => void) | null;
-  /** Fixed tick interval in ms (1000/hz) when `hz` was set on physics-init; null
+  /** Fixed tick interval in ms (1000/hz) when `hz` was set on physicsInit; null
    *  = use the default scheduler (RAF on client, ~16ms timer on server). Physics
    *  still steps at FIXED_DT internally — this is only how often the loop fires. */
   tickMs: number | null;
@@ -638,7 +638,7 @@ export class PhysicsNode extends Node {
   /**
    * Optional env worker constructor. The env packages pass their worker factory:
    * `new PhysicsNode(() => new Worker(...))`. When present, a `shared:true`
-   * store's `physics-init` registers its world as a job on the (lazily created,
+   * store's `physicsInit` registers its world as a job on the (lazily created,
    * shared) physics worker and steps off-thread; otherwise it steps main-thread.
    */
   private readonly makeWorker: (() => WorkerLike) | null;
@@ -656,7 +656,7 @@ export class PhysicsNode extends Node {
   /** The world a context's steps run in, from the resolver's own PhysicsNode.
    *  Static, since every method on a Node registers as an op. */
   static world(context: Context): PhysicsWorld | undefined {
-    const node = resolverFor(context).nodeFor("physics-init");
+    const node = resolverFor(context).nodeFor("physicsInit");
     return node instanceof PhysicsNode ? node.worlds.get(PhysicsNode.sel(context)) : undefined;
   }
 
@@ -668,7 +668,7 @@ export class PhysicsNode extends Node {
   static schemaDefs = {
     _rayHit: {
       type: "object",
-      description: "An entity a ray hit, as `$physics-raycast` and `$gl-raycast` return it.",
+      description: "An entity a ray hit, as `$physicsRaycast` and `$glRaycast` return it.",
       properties: {
         id: { type: "string", description: "The entity's id." },
         slot: { type: "number", description: "The entity's slot in the store." },
@@ -679,12 +679,12 @@ export class PhysicsNode extends Node {
   };
 
   static schema: JexsNodeSchema = {
-      "physics-init": {
+      physicsInit: {
       type: "boolean",
       output: "null",
-      markdownDescription: "Initializes the physics simulation loop for the active entity store.\nMust be called after `entity-init`. Restarts any existing loop.",
+      markdownDescription: "Initializes the physics simulation loop for the active entity store.\nMust be called after `entityInit`. Restarts any existing loop.",
       examples: [
-        "{ \"$physics-init\": true, \"gravity\": [0, 980], \"damping\": 0.01 }",
+        "{ \"$physicsInit\": true, \"gravity\": [0, 980], \"damping\": 0.01 }",
       ],
       siblings: {
         gravity: {
@@ -703,7 +703,7 @@ export class PhysicsNode extends Node {
         },
         start: {
           type: "boolean",
-          description: "Auto-start the simulation loop (default `true`). Set `false` to create the world without a loop and drive it yourself with `physics-step` (e.g. a server authoritative tick), which avoids double-stepping.",
+          description: "Auto-start the simulation loop (default `true`). Set `false` to create the world without a loop and drive it yourself with `physicsStep` (e.g. a server authoritative tick), which avoids double-stepping.",
         },
         hz: {
           type: "number",
@@ -711,7 +711,7 @@ export class PhysicsNode extends Node {
         },
       },
     },
-    "physics-step": {
+    physicsStep: {
       type: "boolean",
       output: "null",
       markdownDescription: "Run a single physics step without managing a loop.\nFor use inside a tick loop for server-side authoritative simulation.",
@@ -722,36 +722,36 @@ export class PhysicsNode extends Node {
         },
       },
     },
-    "physics-pause": {
+    physicsPause: {
       type: "boolean",
       output: "null",
-      markdownDescription: "Pauses the world's simulation loop, leaving every entity where it is. Resume with `physics-resume`.",
+      markdownDescription: "Pauses the world's simulation loop, leaving every entity where it is. Resume with `physicsResume`.",
       examples: [
-        "{ \"$physics-pause\": true }",
+        "{ \"$physicsPause\": true }",
       ],
     },
-    "physics-resume": {
+    physicsResume: {
       type: "boolean",
       output: "null",
-      markdownDescription: "Resumes a world paused by `physics-pause`. The elapsed-time accumulator is reset, so the pause does not replay as one huge step.",
+      markdownDescription: "Resumes a world paused by `physicsPause`. The elapsed-time accumulator is reset, so the pause does not replay as one huge step.",
       examples: [
-        "{ \"$physics-resume\": true }",
+        "{ \"$physicsResume\": true }",
       ],
     },
-    "physics-destroy": {
+    physicsDestroy: {
       type: "boolean",
       output: "null",
       markdownDescription: "Tears the world down: stops the loop and drops the world. A threaded world's physics worker, when no other world uses it, stays alive for 10 seconds so a world started in that time reuses it. A no-op when no world exists.",
       examples: [
-        "{ \"$physics-destroy\": true }",
+        "{ \"$physicsDestroy\": true }",
       ],
     },
-    "physics-apply": {
+    physicsApply: {
       type: "string",
       output: "null",
       markdownDescription: "Applies an impulse to one entity by id, changing its velocity immediately. A no-op when the entity is not in the world.",
       examples: [
-        "{ \"$physics-apply\": \"player\", \"impulse\": [0, -400, 0] }",
+        "{ \"$physicsApply\": \"player\", \"impulse\": [0, -400, 0] }",
       ],
       siblings: {
         impulse: {
@@ -760,13 +760,13 @@ export class PhysicsNode extends Node {
         },
       },
     },
-    "physics-raycast": {
+    physicsRaycast: {
       type: "boolean",
       output: { type: "array", items: { $ref: "#/$defs/_rayHit" } },
       markdownDescription: "Casts a ray through the world and returns every entity it hits, nearest first. Works on both client and server.",
       outputDescription: "An array of hits ordered by distance, empty when nothing is hit or no world exists.",
       examples: [
-        "{ \"$physics-raycast\": true, \"from\": [0, 0], \"dir\": [1, 0], \"mask\": [\"enemy\"] }",
+        "{ \"$physicsRaycast\": true, \"from\": [0, 0], \"dir\": [1, 0], \"mask\": [\"enemy\"] }",
       ],
       siblings: {
         from: {
@@ -792,7 +792,7 @@ export class PhysicsNode extends Node {
     return (context._glSelector as string) || "";
   }
 
-  ["physics-init"](def: Record<string, unknown>, context: Context): NodeValue {
+  physicsInit(def: Record<string, unknown>, context: Context): NodeValue {
     const selector = PhysicsNode.sel(context);
     if (!selector) { console.error("[Physics] No _glSelector on context"); return null; }
 
@@ -839,7 +839,7 @@ export class PhysicsNode extends Node {
 
         this.worlds.set(selector, world);
         // `start: false` creates the world without the auto-loop, so the author
-        // drives it with `physics-step` (e.g. a server authoritative tick) — no
+        // drives it with `physicsStep` (e.g. a server authoritative tick) — no
         // double-stepping. Defaults to true (auto-loop) for backward compat.
         if (startRaw !== false) startLoop(world);
         return null;
@@ -847,19 +847,19 @@ export class PhysicsNode extends Node {
     );
   }
 
-  ["physics-pause"](_def: Record<string, unknown>, context: Context): NodeValue {
+  physicsPause(_def: Record<string, unknown>, context: Context): NodeValue {
     const w = PhysicsNode.world(context);
     if (w) w.paused = true;
     return null;
   }
 
-  ["physics-resume"](_def: Record<string, unknown>, context: Context): NodeValue {
+  physicsResume(_def: Record<string, unknown>, context: Context): NodeValue {
     const w = PhysicsNode.world(context);
     if (w) { w.paused = false; w.lastTime = 0; }
     return null;
   }
 
-  ["physics-destroy"](_def: Record<string, unknown>, context: Context): NodeValue {
+  physicsDestroy(_def: Record<string, unknown>, context: Context): NodeValue {
     const selector = PhysicsNode.sel(context);
     const w = this.worlds.get(selector);
     if (w) stopWorld(w, WORKER_IDLE_MS);
@@ -867,13 +867,13 @@ export class PhysicsNode extends Node {
     return null;
   }
 
-  ["physics-apply"](def: Record<string, unknown>, context: Context): NodeValue {
+  physicsApply(def: Record<string, unknown>, context: Context): NodeValue {
     const selector = PhysicsNode.sel(context);
     const stores = context._entityStores as Record<string, EntityStore> | undefined;
     const store = stores?.[selector];
     if (!store) return null;
 
-    return resolveAll([def["$physics-apply"], def.impulse ?? null], context, ([idRaw, impRaw]) => {
+    return resolveAll([def.$physicsApply, def.impulse ?? null], context, ([idRaw, impRaw]) => {
       const slot = store.slot(String(idRaw));
       if (slot === -1) return null;
       if (impRaw) {
@@ -884,7 +884,7 @@ export class PhysicsNode extends Node {
     });
   }
 
-  ["physics-step"](def: Record<string, unknown>, context: Context): NodeValue {
+  physicsStep(def: Record<string, unknown>, context: Context): NodeValue {
     const selector = PhysicsNode.sel(context);
     const world = this.worlds.get(selector);
     if (!world) return null;
@@ -906,10 +906,10 @@ export class PhysicsNode extends Node {
     });
   }
 
-  // ── physics-raycast — cast a ray and return sorted hits (works on client & server) ──
-  // { "$physics-raycast": true, "from": [0, 0, 0], "dir": [1, 0, 0], "mask": ["enemy"] }
+  // ── physicsRaycast — cast a ray and return sorted hits (works on client & server) ──
+  // { "$physicsRaycast": true, "from": [0, 0, 0], "dir": [1, 0, 0], "mask": ["enemy"] }
 
-  ["physics-raycast"](def: Record<string, unknown>, context: Context): NodeValue {
+  physicsRaycast(def: Record<string, unknown>, context: Context): NodeValue {
     const selector = PhysicsNode.sel(context);
     const stores = context._entityStores as Record<string, EntityStore> | undefined;
     const store = stores?.[selector];
@@ -933,12 +933,12 @@ export class PhysicsNode extends Node {
 
 export class CollisionNode extends Node {
   static schema: JexsNodeSchema = {
-    "collision-on": {
+    collisionOn: {
       type: "boolean",
       output: "string",
       markdownDescription: "Registers a collision handler that runs `do` steps when entities from two groups collide.\r\n`collisionA`, `collisionB`, `collisionNx/Ny/Nz` are set in context during the steps.",
       examples: [
-        "{ \"$collision-on\": true, \"groups\": [\"player\", \"enemy\"], \"do\": [{ \"$var\": \"collisionA\" }] }",
+        "{ \"$collisionOn\": true, \"groups\": [\"player\", \"enemy\"], \"do\": [{ \"$var\": \"collisionA\" }] }",
       ],
       siblings: {
         groups: {
@@ -964,18 +964,18 @@ export class CollisionNode extends Node {
         },
       },
     },
-    "collision-off": {
+    collisionOff: {
       type: "string",
       output: "null",
-      markdownDescription: "Removes a collision handler by the `id` that `collision-on` registered it under. Unknown ids are a no-op.",
+      markdownDescription: "Removes a collision handler by the `id` that `collisionOn` registered it under. Unknown ids are a no-op.",
       examples: [
-        "{ \"$collision-off\": \"playerHitsEnemy\" }",
+        "{ \"$collisionOff\": \"playerHitsEnemy\" }",
       ],
     },
   };
 
 
-  ["collision-on"](def: Record<string, unknown>, context: Context): NodeValue {
+  collisionOn(def: Record<string, unknown>, context: Context): NodeValue {
     const w = PhysicsNode.world(context);
     if (!w) return null;
 
@@ -984,17 +984,17 @@ export class CollisionNode extends Node {
         ? [String(groupsRaw[0]), String(groupsRaw[1])]
         : ["", ""];
       const id = idRaw != null ? String(idRaw) : `h${w.handlers.length}`;
-      if (def.do === undefined) throw new Error("collision-on needs `do` steps");
+      if (def.do === undefined) throw new Error("collisionOn needs `do` steps");
       const thread = def.thread === "main" ? "main" : "physics";
       w.handlers.push({ id, groups, do: def.do, thread });
       return id;
     });
   }
 
-  ["collision-off"](def: Record<string, unknown>, context: Context): NodeValue {
+  collisionOff(def: Record<string, unknown>, context: Context): NodeValue {
     const w = PhysicsNode.world(context);
     if (!w) return null;
-    return resolve(def["$collision-off"], context, idRaw => {
+    return resolve(def.$collisionOff, context, idRaw => {
       const id = String(idRaw);
       w.handlers = w.handlers.filter(h => h.id !== id);
       return null;
@@ -1012,12 +1012,12 @@ const REST_LENGTH: JexsPropertySchema = {
 
 export class JointNode extends Node {
   static schema: JexsNodeSchema = {
-    "joint-add": {
+    jointAdd: {
       type: "string",
       output: "string",
       markdownDescription: "Create a constraint between two entities.",
       examples: [
-        "{ \"$joint-add\": \"rope\", \"type\": \"spring\", \"a\": \"anchor\", \"b\": \"ball\", \"restLength\": 100 }",
+        "{ \"$jointAdd\": \"rope\", \"type\": \"spring\", \"a\": \"anchor\", \"b\": \"ball\", \"restLength\": 100 }",
       ],
       siblings: {
         type: {
@@ -1081,20 +1081,20 @@ export class JointNode extends Node {
         },
       },
     },
-    "joint-remove": {
+    jointRemove: {
       output: "null",
-      markdownDescription: "Remove a constraint by ID. { \"$joint-remove\": \"myJoint\" }",
+      markdownDescription: "Remove a constraint by ID. { \"$jointRemove\": \"myJoint\" }",
     },
   };
 
 
-  ["joint-add"](def: Record<string, unknown>, context: Context): NodeValue {
+  jointAdd(def: Record<string, unknown>, context: Context): NodeValue {
     const w = PhysicsNode.world(context);
     if (!w) return null;
 
     return resolveAll(
       [
-        def["$joint-add"],
+        def.$jointAdd,
         def.type ?? null,
         def.a,
         def.b,
@@ -1153,10 +1153,10 @@ export class JointNode extends Node {
     );
   }
 
-  ["joint-remove"](def: Record<string, unknown>, context: Context): NodeValue {
+  jointRemove(def: Record<string, unknown>, context: Context): NodeValue {
     const w = PhysicsNode.world(context);
     if (!w) return null;
-    return resolve(def["$joint-remove"], context, idRaw => {
+    return resolve(def.$jointRemove, context, idRaw => {
       const id = String(idRaw);
       w.constraints = w.constraints.filter(c => c.id !== id);
       return null;

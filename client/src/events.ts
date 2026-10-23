@@ -15,7 +15,7 @@ interface EventDef {
   $catch?: unknown;
 }
 
-/** Event name for messages the service worker posts (`$sw-post`); `value` is the message. */
+/** Event name for messages the service worker posts (`$swPost`); `value` is the message. */
 const SW_MESSAGE = "sw-message";
 const SW_MESSAGE_ATTR = "data-jexs-sw-message";
 let swMessagesBridged = false;

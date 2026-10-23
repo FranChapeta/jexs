@@ -153,10 +153,10 @@ describe("protocol", () => {
     // Verified by hand: forcing a throw inside the `ping` case returns -32603.
     const entry = JSON.parse(readFileSync(path.join(repoRoot, "mcp", "src", "index.json"), "utf8"));
     const listen = entry[entry.length - 1];
-    assert.ok(listen["$stdio-listen"], "the last step should be the stdio listener");
+    assert.ok(listen.$stdioListen, "the last step should be the stdio listener");
     assert.equal(listen["on-error"], undefined, "a step-level catch covers this; on-error would be a second mechanism for the same job");
-    const dispatch = listen["on-message"][1];
-    assert.ok(dispatch.$switch, "on-message[1] should be the method switch");
+    const dispatch = listen.onMessage[1];
+    assert.ok(dispatch.$switch, "onMessage[1] should be the method switch");
     assert.ok(Array.isArray(dispatch.$catch), "the method switch needs a catch, or a throw outside tools/call goes unanswered");
   });
 });
@@ -219,7 +219,7 @@ describe("search_ops", () => {
 
   test("restricts to a package", async () => {
     const { text } = await callTool("search_ops", { query: "entity", package: "@jexs/physics" });
-    assert.match(text, /entity-add/);
+    assert.match(text, /entityAdd/);
     assert.doesNotMatch(text, /@jexs\/core/);
   });
 

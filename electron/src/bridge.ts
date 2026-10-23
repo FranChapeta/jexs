@@ -108,7 +108,7 @@ export function callKey(call: Record<string, unknown>): string {
 export function noWindowError(op: string): Error {
   return createHttpError(
     500,
-    `"${op}" runs in a window, but none is open. Open one with window-open first, ` +
+    `"${op}" runs in a window, but none is open. Open one with windowOpen first, ` +
       `or move this step into a page template.`,
   );
 }
@@ -238,7 +238,7 @@ export async function installBridge(hooks: BridgeHooks): Promise<void> {
   function forwardToRenderer(call: Record<string, unknown>, context: Context): unknown {
     // No `window` sibling: DOM ops are declared by @jexs/client, and one package
     // cannot add a sibling to another package's op. Explicit targeting is
-    // `window-run`. This picks the caller's own window, else the default.
+    // `windowRun`. This picks the caller's own window, else the default.
     const win = hooks.windowFor(context);
     if (!win) throw noWindowError(callKey(call));
     return callRenderer(win, call);
@@ -251,7 +251,7 @@ export async function installBridge(hooks: BridgeHooks): Promise<void> {
   ipcMain.on("jexs:keys", (event) => { event.returnValue = announcement(localKeys()); });
 
   // The sender's window becomes the implicit target, so a page can say
-  // { "$window-close": true } and mean its own window.
+  // { "$windowClose": true } and mean its own window.
   ipcMain.handle("jexs:invoke", (event, call: unknown) => {
     const sender = BrowserWindow.fromWebContents(event.sender);
     const allow = hooks.allowedFor?.(sender) ?? null;

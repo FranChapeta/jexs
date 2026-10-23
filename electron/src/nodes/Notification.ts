@@ -21,7 +21,7 @@ export class NotificationNode extends Node {
       type: "string",
       output: "null",
       markdownDescription:
-        "Show a native desktop notification. The value is the title.\nThis is the OS notification centre, not the Web Notification API — it needs no permission prompt and no service worker, unlike the browser `sw-notify` path.",
+        "Show a native desktop notification. The value is the title.\nThis is the OS notification centre, not the Web Notification API — it needs no permission prompt and no service worker, unlike the browser `swNotify` path.",
       examples: ["{ \"$notify\": \"Export finished\", \"body\": \"saves/game1.json\" }"],
       siblings: {
         body: { type: "string", description: "Message text below the title." },

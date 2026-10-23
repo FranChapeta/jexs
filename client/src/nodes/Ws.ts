@@ -102,28 +102,28 @@ export class WsNode extends Node {
   visibilityHandler: (() => void) | null = null;
 
   static schema: JexsNodeSchema = {
-    "ws-connect": {
+    wsConnect: {
       type: "string",
       output: "null",
-      markdownDescription: "Opens a WebSocket connection and resolves once it is open, so a server that never answers reaches an enclosing `$catch` rather than failing silently. Pass `$then` instead if the sequence should carry on without waiting.\n\nRelative URLs are prefixed with `ws://` or `wss://` to match the page. Pass `on-open`, `on-message` and `on-close` step arrays. After a successful open the connection reconnects on its own with exponential backoff; `retry` controls that.\n\nName the connection to hold more than one at a time. The unnamed connection is `\"default\"`: the one `ws-send` acts on when it names none, and the name `ws-close` and `ws-status` take for it.",
+      markdownDescription: "Opens a WebSocket connection and resolves once it is open, so a server that never answers reaches an enclosing `$catch` rather than failing silently. Pass `$then` instead if the sequence should carry on without waiting.\n\nRelative URLs are prefixed with `ws://` or `wss://` to match the page. Pass `onOpen`, `onMessage` and `onClose` step arrays. After a successful open the connection reconnects on its own with exponential backoff; `retry` controls that.\n\nName the connection to hold more than one at a time. The unnamed connection is `\"default\"`: the one `wsSend` acts on when it names none, and the name `wsClose` and `wsStatus` take for it.",
       examples: [
-        "{ \"$ws-connect\": \"/ws\", \"on-message\": [{ \"$var\": \"message\" }] }",
-        "{ \"$ws-connect\": \"/feed\", \"name\": \"feed\", \"retry\": 3, \"$catch\": [{ \"$var\": \"error.message\" }] }",
+        "{ \"$wsConnect\": \"/ws\", \"onMessage\": [{ \"$var\": \"message\" }] }",
+        "{ \"$wsConnect\": \"/feed\", \"name\": \"feed\", \"retry\": 3, \"$catch\": [{ \"$var\": \"error.message\" }] }",
       ],
       siblings: {
         name: {
           type: "string",
-          description: "Names this connection, so other steps can address it and a second `ws-connect` does not replace it.",
+          description: "Names this connection, so other steps can address it and a second `wsConnect` does not replace it.",
         },
-        "on-open": {
+        onOpen: {
           steps: true,
           description: "Steps to run when the connection opens, including after a reconnect.",
         },
-        "on-message": {
+        onMessage: {
           steps: true,
           markdownDescription: "Steps to run on each incoming message, with `message` in scope: parsed as JSON when it parses, otherwise the raw value. The node reads nothing out of a message itself, so any protocol on top of the socket, an id handed out on connect included, is yours to read here.",
         },
-        "on-close": {
+        onClose: {
           steps: true,
           markdownDescription: "Steps to run when the connection closes, with `code`, `reason` and `clean` in scope. A dropped connection lands here too, before the reconnect.",
         },
@@ -142,12 +142,12 @@ export class WsNode extends Node {
         },
       },
     },
-    "ws-send": {
+    wsSend: {
       markdownDescription: "Sends data over a connection. Strings go as they are, binary values (`ArrayBuffer`, a typed array, a `Blob`) go as frames, and anything else is JSON-serialized.\n\nA message written while the socket is still opening is queued and flushed on open, since that is an ordinary startup race. Sending with no connection, or after it closed, throws.",
       output: "null",
       examples: [
-        "{ \"$ws-send\": { \"type\": \"ping\" } }",
-        "{ \"$ws-send\": { \"$var\": \"frame\" }, \"name\": \"feed\" }",
+        "{ \"$wsSend\": { \"type\": \"ping\" } }",
+        "{ \"$wsSend\": { \"$var\": \"frame\" }, \"name\": \"feed\" }",
       ],
       siblings: {
         name: {
@@ -156,13 +156,13 @@ export class WsNode extends Node {
         },
       },
     },
-    "ws-close": {
+    wsClose: {
       type: "string",
       output: "null",
       markdownDescription: "Closes the named connection, `\"default\"` for one opened without a `name`, and stops it reconnecting. Pass `code` and `reason` to tell the server why; the defaults are a normal closure.",
       examples: [
-        "{ \"$ws-close\": \"default\" }",
-        "{ \"$ws-close\": \"feed\", \"code\": 4001, \"reason\": \"signed out\" }",
+        "{ \"$wsClose\": \"default\" }",
+        "{ \"$wsClose\": \"feed\", \"code\": 4001, \"reason\": \"signed out\" }",
       ],
       siblings: {
         code: {
@@ -175,23 +175,23 @@ export class WsNode extends Node {
         },
       },
     },
-    "ws-status": {
+    wsStatus: {
       type: "string",
       output: "string",
       markdownDescription: "Reports the state of the named connection, `\"default\"` for one opened without a `name`, for showing whether the page is live.",
       outputDescription: "`\"open\"`, `\"connecting\"`, `\"closing\"`, `\"closed\"`, or `\"none\"` when nothing by that name was ever opened.",
       examples: [
-        "{ \"$ws-status\": \"default\" }",
-        "{ \"$ws-status\": \"feed\" }",
+        "{ \"$wsStatus\": \"default\" }",
+        "{ \"$wsStatus\": \"feed\" }",
       ],
     },
   };
 
-  ["ws-connect"](def: Record<string, unknown>, context: Context): NodeValue {
+  wsConnect(def: Record<string, unknown>, context: Context): NodeValue {
     // Named values rather than the whole `def`: the `on-*` siblings are step
     // arrays, and resolving those would run the handlers here at connect time.
     return resolveAll(
-      [def["$ws-connect"], def.name, def.retry, def.protocols, def.binaryType],
+      [def.$wsConnect, def.name, def.retry, def.protocols, def.binaryType],
       context,
       ([urlRaw, nameRaw, retry, protocolsRaw, binaryTypeRaw]) => {
         const name = this.toString(nameRaw) || DEFAULT;
@@ -224,8 +224,8 @@ export class WsNode extends Node {
     );
   }
 
-  ["ws-send"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["$ws-send"], def.name], context, ([data, nameRaw]) => {
+  wsSend(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def.$wsSend, def.name], context, ([data, nameRaw]) => {
       const name = this.toString(nameRaw) || DEFAULT;
       const conn = this.connections.get(name);
       const frame = typeof data === "string" ? data
@@ -233,7 +233,7 @@ export class WsNode extends Node {
         : JSON.stringify(data);
 
       if (!conn || !conn.socket) {
-        throw new Error(`ws-send has no "${name}" connection: run ws-connect first`);
+        throw new Error(`wsSend has no "${name}" connection: run wsConnect first`);
       }
       // Opening is a race worth waiting out; closed is a mistake worth reporting.
       if (conn.socket.readyState === WebSocket.CONNECTING) {
@@ -241,18 +241,18 @@ export class WsNode extends Node {
         return null;
       }
       if (conn.socket.readyState !== WebSocket.OPEN) {
-        throw new Error(`ws-send cannot use the "${name}" connection: it is ${statusOf(this, name)}`);
+        throw new Error(`wsSend cannot use the "${name}" connection: it is ${statusOf(this, name)}`);
       }
       conn.socket.send(frame);
       return null;
     });
   }
 
-  ["ws-close"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["$ws-close"], def.code, def.reason], context, ([name, code, reason]) => {
+  wsClose(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def.$wsClose, def.code, def.reason], context, ([name, code, reason]) => {
       closeConnection(
         this,
-        connectionName("ws-close", name),
+        connectionName("wsClose", name),
         code == null ? 1000 : this.toNumber(code),
         reason == null ? "" : this.toString(reason),
       );
@@ -260,8 +260,8 @@ export class WsNode extends Node {
     });
   }
 
-  ["ws-status"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$ws-status"], context, name => statusOf(this, connectionName("ws-status", name)));
+  wsStatus(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$wsStatus, context, name => statusOf(this, connectionName("wsStatus", name)));
   }
 
   /**
@@ -304,7 +304,7 @@ function openSocket(conn: Conn, protocols?: string | string[], binaryType?: Bina
       conn.attempts = 0;
       conn.delay = 1000;
       for (const frame of conn.queue.splice(0)) socket.send(frame);
-      run(conn, "on-open", {});
+      run(conn, "onOpen", {});
       settled(null);
     };
 
@@ -315,7 +315,7 @@ function openSocket(conn: Conn, protocols?: string | string[], binaryType?: Bina
       } catch {
         data = e.data;
       }
-      run(conn, "on-message", { message: data });
+      run(conn, "onMessage", { message: data });
     };
 
     socket.onclose = (e: CloseEvent) => {
@@ -330,7 +330,7 @@ function openSocket(conn: Conn, protocols?: string | string[], binaryType?: Bina
         ));
         return;
       }
-      run(conn, "on-close", { code: e.code, reason: e.reason, clean: e.wasClean });
+      run(conn, "onClose", { code: e.code, reason: e.reason, clean: e.wasClean });
       if (!conn.closing && conn.attempts < conn.retries) scheduleReconnect(conn);
       else if (!conn.closing) conn.node.connections.delete(conn.name);
     };

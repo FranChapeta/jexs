@@ -9,7 +9,7 @@ export const DEFERRED = Symbol("jexs.deferred");
 /** A part of the page `$defer` resolves in the background, and the id of its
  *  placeholder. Its HTML never rejects: a failed part is logged and left empty. */
 export type Deferred = { id: string; html: Promise<string> };
-/** A WebSocket upgrade waiting for `$socket-accept`. */
+/** A WebSocket upgrade waiting for `$socketAccept`. */
 export const UPGRADE = Symbol("jexs.upgrade");
 /** The connection a socket handler runs for, and the path it was opened on. */
 export const WS = Symbol("jexs.ws");

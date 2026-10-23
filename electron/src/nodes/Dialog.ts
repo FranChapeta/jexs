@@ -10,7 +10,7 @@ type MessageType = (typeof MESSAGE_TYPES)[number];
 /** Build OpenDialogOptions from resolved siblings. Pure — no electron runtime. */
 export function openDialogOptions(r: Record<string, unknown>): Electron.OpenDialogOptions {
   const opts: Electron.OpenDialogOptions = {};
-  if (typeof r["$dialog-open"] === "string") opts.title = r["$dialog-open"];
+  if (typeof r.$dialogOpen === "string") opts.title = r.$dialogOpen;
   if (typeof r.defaultPath === "string") opts.defaultPath = r.defaultPath;
   if (Array.isArray(r.properties)) {
     opts.properties = r.properties.filter((p): p is OpenProp => typeof p === "string");
@@ -28,7 +28,7 @@ export function openDialogOptions(r: Record<string, unknown>): Electron.OpenDial
 /** Build SaveDialogOptions from resolved siblings. Pure — no electron runtime. */
 export function saveDialogOptions(r: Record<string, unknown>): Electron.SaveDialogOptions {
   const opts: Electron.SaveDialogOptions = {};
-  if (typeof r["$dialog-save"] === "string") opts.title = r["$dialog-save"];
+  if (typeof r.$dialogSave === "string") opts.title = r.$dialogSave;
   if (typeof r.defaultPath === "string") opts.defaultPath = r.defaultPath;
   if (typeof r.buttonLabel === "string") opts.buttonLabel = r.buttonLabel;
   if (Array.isArray(r.filters)) {
@@ -44,7 +44,7 @@ export function saveDialogOptions(r: Record<string, unknown>): Electron.SaveDial
 /** Build MessageBoxOptions from resolved siblings. Pure — no electron runtime. */
 export function messageBoxOptions(r: Record<string, unknown>): Electron.MessageBoxOptions {
   const opts: Electron.MessageBoxOptions = {
-    message: typeof r["$dialog-message"] === "string" ? r["$dialog-message"] : "",
+    message: typeof r.$dialogMessage === "string" ? r.$dialogMessage : "",
   };
   if (Array.isArray(r.buttons)) opts.buttons = r.buttons.map(String);
   if (typeof r.title === "string") opts.title = r.title;
@@ -59,11 +59,11 @@ export function messageBoxOptions(r: Record<string, unknown>): Electron.MessageB
  */
 export class DialogNode extends Node {
   static schema: JexsNodeSchema = {
-    "dialog-open": {
+    dialogOpen: {
       type: "string",
       output: { type: "array", items: { type: "string" } },
       markdownDescription: "Show a native open dialog titled with the given string. Resolves to the array of selected paths (empty if cancelled).",
-      examples: ["{ \"$dialog-open\": \"Open save\", \"properties\": [\"openFile\"] }"],
+      examples: ["{ \"$dialogOpen\": \"Open save\", \"properties\": [\"openFile\"] }"],
       siblings: {
         properties: {
           type: "array",
@@ -83,12 +83,12 @@ export class DialogNode extends Node {
         defaultPath: { type: "string", description: "Path the dialog opens at." },
       },
     },
-    "dialog-save": {
+    dialogSave: {
       type: "string",
       output: "string",
       markdownDescription: "Show a native save dialog titled with the given string. Resolves to the chosen path, or an empty string if the user cancelled.",
       outputDescription: "The path the user chose, or `\"\"` on cancel — so `empty` distinguishes the two without a separate flag.",
-      examples: ["{ \"$dialog-save\": \"Save game\", \"defaultPath\": \"save.json\" }"],
+      examples: ["{ \"$dialogSave\": \"Save game\", \"defaultPath\": \"save.json\" }"],
       siblings: {
         defaultPath: { type: "string", description: "Path and filename the dialog opens with." },
         buttonLabel: { type: "string", description: "Label for the confirm button." },
@@ -104,11 +104,11 @@ export class DialogNode extends Node {
         },
       },
     },
-    "dialog-message": {
+    dialogMessage: {
       type: "string",
       output: "number",
       markdownDescription: "Show a native message box with the given message. Resolves to the index of the pressed button.",
-      examples: ["{ \"$dialog-message\": \"Quit game?\", \"buttons\": [\"Cancel\", \"Quit\"] }"],
+      examples: ["{ \"$dialogMessage\": \"Quit game?\", \"buttons\": [\"Cancel\", \"Quit\"] }"],
       siblings: {
         buttons: { type: "array", items: { type: "string" }, description: "Button labels; the result is the pressed button's index." },
         type: { type: "string", enum: ["none", "info", "error", "question", "warning"], description: "Icon/style of the box." },
@@ -119,7 +119,7 @@ export class DialogNode extends Node {
   };
 
   // Siblings arrive unresolved, so resolve the whole def before building options.
-  ["dialog-open"](def: Record<string, unknown>, context: Context): NodeValue {
+  dialogOpen(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveFields(def, context, async (r) => {
       const { dialog } = await import("electron");
       const res = await dialog.showOpenDialog(openDialogOptions(r));
@@ -127,7 +127,7 @@ export class DialogNode extends Node {
     });
   }
 
-  ["dialog-save"](def: Record<string, unknown>, context: Context): NodeValue {
+  dialogSave(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveFields(def, context, async (r) => {
       const { dialog } = await import("electron");
       const res = await dialog.showSaveDialog(saveDialogOptions(r));
@@ -137,7 +137,7 @@ export class DialogNode extends Node {
     });
   }
 
-  ["dialog-message"](def: Record<string, unknown>, context: Context): NodeValue {
+  dialogMessage(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveFields(def, context, async (r) => {
       const { dialog } = await import("electron");
       const res = await dialog.showMessageBox(messageBoxOptions(r));

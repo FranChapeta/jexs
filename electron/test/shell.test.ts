@@ -55,7 +55,7 @@ test("notificationOptions maps the primary value to title and drops non-scalars"
 
 test("saveDialogOptions maps the primary value to title and filters junk", () => {
   const o = saveDialogOptions({
-    "$dialog-save": "Save game",
+    "$dialogSave": "Save game",
     defaultPath: "save.json",
     buttonLabel: "Write",
     filters: [{ name: "JSON", extensions: ["json"] }, { name: "bad" }, "nope"],

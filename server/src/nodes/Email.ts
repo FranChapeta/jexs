@@ -152,7 +152,7 @@ export function icalEvent(value: unknown): IcalEvent | undefined {
 }
 
 /**
- * Layer the `email-connect` siblings over whatever the target spelled out, into
+ * Layer the `emailConnect` siblings over whatever the target spelled out, into
  * the options `createTransport` takes. Pure, and exported, because this is where
  * the TLS decisions are made and they are worth asserting on directly.
  */
@@ -195,7 +195,7 @@ export function smtpOptions(base: SmtpOptions, siblings: Record<string, unknown>
     if (typeof tls === "object") options.tls = tls;
     if (!options.secure) options.requireTLS = true;
   }
-  if (!options.host) throw new Error("email-connect needs a host");
+  if (!options.host) throw new Error("emailConnect needs a host");
   return options;
 }
 
@@ -211,7 +211,7 @@ async function etherealOptions(): Promise<SmtpOptions> {
 }
 
 /** Checked in two places: before resolving, and again on what resolving produced. */
-const NO_FROM = "email needs a from address: set `from` on email-connect, or on the message";
+const NO_FROM = "email needs a from address: set `from` on emailConnect, or on the message";
 
 /**
  * Addresses as one short string, for an error message. Capped at three and a
@@ -228,7 +228,7 @@ function label(to: string | string[]): string {
 
 export class EmailNode extends Node {
   /**
-   * The SMTP transport `email-connect` opened, and the defaults it carries.
+   * The SMTP transport `emailConnect` opened, and the defaults it carries.
    * Instance fields (never on the prototype, so `handlerKeys` ignores them), and
    * so per resolver: two resolvers configuring different SMTP targets in one
    * process must not overwrite each other's transport.
@@ -314,7 +314,7 @@ export class EmailNode extends Node {
           previewUrl: { type: "string", description: "Ethereal development transport only: where to view the message." },
         },
       },
-      markdownDescription: "Sends an email via SMTP to one address or a list of them, over the transport `email-connect` opened. Requires `subject`; use `body` for plain text, `html` for an HTML body, or both.\n\nA delivery failure throws a `502` HTTP error, so an enclosing `$catch` gets `error.status` and `error.message`, plus `smtp` (`{ code, responseCode, command }`) telling apart an auth rejection from a refused connection. A send where every recipient was rejected throws the same way, so nothing is reported as sent that was not.",
+      markdownDescription: "Sends an email via SMTP to one address or a list of them, over the transport `emailConnect` opened. Requires `subject`; use `body` for plain text, `html` for an HTML body, or both.\n\nA delivery failure throws a `502` HTTP error, so an enclosing `$catch` gets `error.status` and `error.message`, plus `smtp` (`{ code, responseCode, command }`) telling apart an auth rejection from a refused connection. A send where every recipient was rejected throws the same way, so nothing is reported as sent that was not.",
       outputDescription: "What the server did with it. `accepted` and `rejected` are address lists, so a send that reached some recipients but not all is visible rather than silent.",
       examples: [
         "{ \"$email\": { \"$var\": \"user.email\" }, \"subject\": \"Welcome!\", \"html\": \"<p>Hi there</p>\" }",
@@ -337,7 +337,7 @@ export class EmailNode extends Node {
         },
         from: {
           type: "string",
-          description: "Sender address, overriding the `from` set on `email-connect`.",
+          description: "Sender address, overriding the `from` set on `emailConnect`.",
         },
         cc: {
           type: ["string", "array"],
@@ -405,15 +405,15 @@ export class EmailNode extends Node {
         },
       },
     },
-    "email-connect": {
+    emailConnect: {
       type: "string",
       output: "string",
       markdownDescription: "Opens the SMTP transport every `email` step then sends over. The value is a connection string (`smtps://user:pass@smtp.example.com`), a bare hostname with the details in siblings, or `\"ethereal\"` for a development transport that captures mail and returns a preview URL instead of delivering it.\n\nCall it once at startup, reading credentials the way any other value arrives, `{ \"$var\": \"env.SMTP_URL\" }`. A later call replaces the transport. There is no implicit configuration: without this, an `email` step says so rather than guessing.",
       outputDescription: "The configured host.",
       examples: [
-        "{ \"$email-connect\": { \"$var\": \"env.SMTP_URL\" }, \"from\": \"noreply@example.com\" }",
-        "{ \"$email-connect\": \"smtp.example.com\", \"port\": 587, \"user\": \"apikey\", \"password\": { \"$var\": \"env.SMTP_PASS\" }, \"tls\": true }",
-        "{ \"$email-connect\": \"ethereal\" }",
+        "{ \"$emailConnect\": { \"$var\": \"env.SMTP_URL\" }, \"from\": \"noreply@example.com\" }",
+        "{ \"$emailConnect\": \"smtp.example.com\", \"port\": 587, \"user\": \"apikey\", \"password\": { \"$var\": \"env.SMTP_PASS\" }, \"tls\": true }",
+        "{ \"$emailConnect\": \"ethereal\" }",
       ],
       siblings: {
         port: {
@@ -439,7 +439,7 @@ export class EmailNode extends Node {
         tls: {
           type: ["boolean", "string", "object"],
           enum: TLS_STRINGS,
-          markdownDescription: "TLS for the connection, the same knob it is on `cache-connect` and `database`. `true` encrypts and verifies against the system trust store, and **fails** rather than sending in the clear. Worth setting on any connection that is not already `secure`, because SMTP's own default is to upgrade only if the server offers to, which is exactly what an attacker strips. An object does the same with its own material: `ca`, `cert`, `key`, `passphrase`, `servername`, `rejectUnauthorized`, `minVersion`, `ciphers`. `false` refuses TLS altogether, for a local relay that has none.\n\nCertificates are PEM **content**, not paths: load the file first with `{ \"$file\": \"/certs/smtp-ca.pem\", \"raw\": true, \"$as\": \"ca\" }` and pass `{ \"$var\": \"ca\" }`.",
+          markdownDescription: "TLS for the connection, the same knob it is on `cacheConnect` and `database`. `true` encrypts and verifies against the system trust store, and **fails** rather than sending in the clear. Worth setting on any connection that is not already `secure`, because SMTP's own default is to upgrade only if the server offers to, which is exactly what an attacker strips. An object does the same with its own material: `ca`, `cert`, `key`, `passphrase`, `servername`, `rejectUnauthorized`, `minVersion`, `ciphers`. `false` refuses TLS altogether, for a local relay that has none.\n\nCertificates are PEM **content**, not paths: load the file first with `{ \"$file\": \"/certs/smtp-ca.pem\", \"raw\": true, \"$as\": \"ca\" }` and pass `{ \"$var\": \"ca\" }`.",
           examples: [
             "true",
             "{ \"ca\": { \"$var\": \"ca\" }, \"servername\": \"mail.internal\" }",
@@ -453,10 +453,10 @@ export class EmailNode extends Node {
     },
   };
 
-  ["email-connect"](def: Record<string, unknown>, context: Context): NodeValue {
+  emailConnect(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveFields(def, context, async o => {
-      const target = this.toString(o["$email-connect"]).trim();
-      if (!target) throw new Error("email-connect needs a host, an smtp:// url, or \"ethereal\"");
+      const target = this.toString(o.$emailConnect).trim();
+      if (!target) throw new Error("emailConnect needs a host, an smtp:// url, or \"ethereal\"");
 
       this.preview = target.toLowerCase() === "ethereal";
       const base: SmtpOptions = this.preview
@@ -483,7 +483,7 @@ export class EmailNode extends Node {
     if (!t) {
       throw createHttpError(
         500,
-        "Email has no transport: run { \"$email-connect\": … } at startup: a url " +
+        "Email has no transport: run { \"$emailConnect\": … } at startup: a url " +
         "(\"smtps://user:pass@host\"), a hostname with the credentials alongside, " +
         "or \"ethereal\" for a development preview transport.",
       );

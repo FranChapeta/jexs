@@ -56,59 +56,59 @@ function getReader(): LineReader {
 
 export class StdioNode extends Node {
   static schema: JexsNodeSchema = {
-    "stdio-listen": {
+    stdioListen: {
       type: "boolean",
       output: "null",
-      markdownDescription: "Starts a newline-delimited JSON (NDJSON) listener on stdin. Each line is parsed as JSON, set as `message` in context, and `on-message` steps are run. Use `stdio-write` inside the steps to send output. Keep stdout for the protocol: the `jexs` CLI writes the nodes' own messages to stderr, and a resolver of your own needs a `logger` that does the same.",
+      markdownDescription: "Starts a newline-delimited JSON (NDJSON) listener on stdin. Each line is parsed as JSON, set as `message` in context, and `onMessage` steps are run. Use `stdioWrite` inside the steps to send output. Keep stdout for the protocol: the `jexs` CLI writes the nodes' own messages to stderr, and a resolver of your own needs a `logger` that does the same.",
       examples: [
-        "{ \"$stdio-listen\": true, \"on-message\": [{ \"$stdio-write\": { \"$var\": \"message\" } }] }",
+        "{ \"$stdioListen\": true, \"onMessage\": [{ \"$stdioWrite\": { \"$var\": \"message\" } }] }",
       ],
       siblings: {
-        "on-message": {
+        onMessage: {
           steps: true,
-          description: "Steps run per NDJSON line with `message` in context, in a scope of their own: `$bubble` writes to the scope `stdio-listen` ran in.",
+          description: "Steps run per NDJSON line with `message` in context, in a scope of their own: `$bubble` writes to the scope `stdioListen` ran in.",
         },
-        "on-close": {
+        onClose: {
           steps: true,
-          description: "Optional steps run when stdin closes, in a scope of their own like `on-message`'s.",
+          description: "Optional steps run when stdin closes, in a scope of their own like `onMessage`'s.",
         },
       },
     },
-    "stdio-write": {
+    stdioWrite: {
       output: "null",
       markdownDescription: "Writes a value to stdout followed by a newline. Strings pass through unchanged; everything else is JSON-encoded.",
       examples: [
-        "{ \"$stdio-write\": { \"ok\": true } }",
-        "{ \"$stdio-write\": \"hello\" }",
+        "{ \"$stdioWrite\": { \"ok\": true } }",
+        "{ \"$stdioWrite\": \"hello\" }",
       ],
     },
-    "stdio-prompt": {
+    stdioPrompt: {
       output: "string",
-      markdownDescription: "Writes a prompt to stdout and reads one line from stdin, resolving to the entered text (trailing newline stripped). Lines are buffered so piped/redirected input works, and resolves to `\"\"` at end of input (EOF), so a non-interactive run never hangs. For interactive CLIs; mutually exclusive with `stdio-listen`. Call `stdio-close` after the last prompt so the process can exit.",
+      markdownDescription: "Writes a prompt to stdout and reads one line from stdin, resolving to the entered text (trailing newline stripped). Lines are buffered so piped/redirected input works, and resolves to `\"\"` at end of input (EOF), so a non-interactive run never hangs. For interactive CLIs; mutually exclusive with `stdioListen`. Call `stdioClose` after the last prompt so the process can exit.",
       examples: [
-        "{ \"$stdio-prompt\": \"Project name: \", \"$as\": \"name\" }",
+        "{ \"$stdioPrompt\": \"Project name: \", \"$as\": \"name\" }",
       ],
     },
-    "stdio-close": {
+    stdioClose: {
       type: "boolean",
       output: "null",
-      markdownDescription: "Closes the interactive stdin reader opened by `stdio-prompt`, releasing stdin so the process can exit. Call once, after the final `stdio-prompt`.",
+      markdownDescription: "Closes the interactive stdin reader opened by `stdioPrompt`, releasing stdin so the process can exit. Call once, after the final `stdioPrompt`.",
       examples: [
-        "{ \"$stdio-close\": true }",
+        "{ \"$stdioClose\": true }",
       ],
     },
   };
 
-  ["stdio-listen"](def: Record<string, unknown>, context: Context): NodeValue {
+  stdioListen(def: Record<string, unknown>, context: Context): NodeValue {
     const log = loggerFor(context);
-    if (def["on-message"] === undefined) throw new Error('$stdio-listen needs "on-message" steps');
+    if (def.onMessage === undefined) throw new Error('$stdioListen needs "onMessage" steps');
     if (stdinAttached || reader) {
-      throw new Error("$stdio-listen: stdin is already read by an earlier stdio-listen or stdio-prompt");
+      throw new Error("$stdioListen: stdin is already read by an earlier stdioListen or stdioPrompt");
     }
     stdinAttached = true;
 
-    const steps = def["on-message"];
-    const closeSteps = def["on-close"] ?? null;
+    const steps = def.onMessage;
+    const closeSteps = def.onClose ?? null;
 
     let buffer = "";
 
@@ -131,31 +131,31 @@ export class StdioNode extends Node {
           continue;
         }
 
-        void runStepsDetached(steps, childContext(context, { message }), { step: def, logAs: "[StdioNode] on-message error:" });
+        void runStepsDetached(steps, childContext(context, { message }), { step: def, logAs: "[StdioNode] onMessage error:" });
       }
     });
 
     process.stdin.on("close", () => {
-      if (closeSteps) void runStepsDetached(closeSteps, childContext(context), { step: def, logAs: "[StdioNode] on-close error:" });
+      if (closeSteps) void runStepsDetached(closeSteps, childContext(context), { step: def, logAs: "[StdioNode] onClose error:" });
     });
 
     process.stdin.resume();
     return null;
   }
 
-  ["stdio-write"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$stdio-write"], context, value => {
+  stdioWrite(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$stdioWrite, context, value => {
       process.stdout.write(encode(value) + "\n");
       return null;
     });
   }
 
-  ["stdio-prompt"](def: Record<string, unknown>, context: Context): NodeValue {
-    if (stdinAttached) throw new Error("$stdio-prompt: stdin is read by stdio-listen, so it cannot prompt");
-    return resolve(def["$stdio-prompt"], context, text => getReader().ask(String(text)));
+  stdioPrompt(def: Record<string, unknown>, context: Context): NodeValue {
+    if (stdinAttached) throw new Error("$stdioPrompt: stdin is read by stdioListen, so it cannot prompt");
+    return resolve(def.$stdioPrompt, context, text => getReader().ask(String(text)));
   }
 
-  ["stdio-close"](): NodeValue {
+  stdioClose(): NodeValue {
     if (reader) {
       reader.close();
       reader = null;

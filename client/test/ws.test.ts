@@ -84,64 +84,64 @@ async function connect(def: Record<string, unknown>, ctx: Record<string, unknown
   return FakeSocket.last();
 }
 
-test("ws-connect: resolves once open, and makes the url absolute against the page", async () => {
-  const socket = await connect({ "$ws-connect": "/ws" });
+test("wsConnect: resolves once open, and makes the url absolute against the page", async () => {
+  const socket = await connect({ "$wsConnect": "/ws" });
   assert.equal(socket.url, "wss://app.test/ws");
-  assert.equal(resolve({ "$ws-status": "default" }, {}), "open");
+  assert.equal(resolve({ "$wsStatus": "default" }, {}), "open");
 });
 
 // The step used to return before the socket settled, so a server that never
 // answered surfaced nowhere. Awaiting the handshake is what puts it in reach.
-test("ws-connect: a connection that never opens reaches catch", async () => {
+test("wsConnect: a connection that never opens reaches catch", async () => {
   const pending = resolve(
-    { "$ws-connect": "/ws", $catch: [{ $concat: ["caught: ", { $var: "error.message" }] }] },
+    { "$wsConnect": "/ws", $catch: [{ $concat: ["caught: ", { $var: "error.message" }] }] },
     {},
   ) as Promise<unknown>;
   FakeSocket.last().drop(1006, "");
   assert.match(await pending as string, /^caught: WebSocket to wss:\/\/app\.test\/ws failed to open \(code 1006\)/);
   // Nothing is left behind for a later step to find.
-  assert.equal(resolve({ "$ws-status": "default" }, {}), "none");
+  assert.equal(resolve({ "$wsStatus": "default" }, {}), "none");
 });
 
-test("ws-connect: two named connections coexist", async () => {
-  await connect({ "$ws-connect": "/chat", name: "chat" });
-  await connect({ "$ws-connect": "/feed", name: "feed" });
+test("wsConnect: two named connections coexist", async () => {
+  await connect({ "$wsConnect": "/chat", name: "chat" });
+  await connect({ "$wsConnect": "/feed", name: "feed" });
   assert.equal(FakeSocket.live.length, 2);
-  assert.equal(resolve({ "$ws-status": "chat" }, {}), "open");
-  assert.equal(resolve({ "$ws-status": "feed" }, {}), "open");
+  assert.equal(resolve({ "$wsStatus": "chat" }, {}), "open");
+  assert.equal(resolve({ "$wsStatus": "feed" }, {}), "open");
 
-  await resolve({ "$ws-send": { hello: 1 }, name: "chat" }, {});
+  await resolve({ "$wsSend": { hello: 1 }, name: "chat" }, {});
   assert.deepEqual(FakeSocket.live[0].sent, ["{\"hello\":1}"]);
   assert.deepEqual(FakeSocket.live[1].sent, []);
 
-  await resolve({ "$ws-close": "chat" }, {});
-  assert.equal(resolve({ "$ws-status": "chat" }, {}), "none");
-  assert.equal(resolve({ "$ws-status": "feed" }, {}), "open");
+  await resolve({ "$wsClose": "chat" }, {});
+  assert.equal(resolve({ "$wsStatus": "chat" }, {}), "none");
+  assert.equal(resolve({ "$wsStatus": "feed" }, {}), "open");
 });
 
-test("ws-close and ws-status take the connection's name, not v1's placeholder", () => {
-  assert.throws(() => resolve({ "$ws-status": true }, {}), /ws-status takes the connection's name, "default" for one opened without a `name`; got true/);
+test("wsClose and wsStatus take the connection's name, not v1's placeholder", () => {
+  assert.throws(() => resolve({ "$wsStatus": true }, {}), /wsStatus takes the connection's name, "default" for one opened without a `name`; got true/);
 });
 
-test("ws-connect: protocols and binaryType reach the socket", async () => {
-  const socket = await connect({ "$ws-connect": "/ws", protocols: ["v2", "v1"], binaryType: "arraybuffer" });
+test("wsConnect: protocols and binaryType reach the socket", async () => {
+  const socket = await connect({ "$wsConnect": "/ws", protocols: ["v2", "v1"], binaryType: "arraybuffer" });
   assert.deepEqual(socket.protocols, ["v2", "v1"]);
   assert.equal(socket.binaryType, "arraybuffer");
   assert.throws(
-    () => resolve({ "$ws-connect": "/ws", binaryType: "buffer" }, {}),
+    () => resolve({ "$wsConnect": "/ws", binaryType: "buffer" }, {}),
     /Invalid ws binaryType "buffer": expected blob, arraybuffer/,
   );
 });
 
 // Defaulting an unreadable retry to Infinity would turn a typo into a socket
 // that reconnects forever, which is the failure hardest to notice.
-test("ws-connect: retry takes booleans and counts, and refuses anything else", async () => {
-  await connect({ "$ws-connect": "/ws", retry: false });
-  await connect({ "$ws-connect": "/ws", retry: 3 });
-  await connect({ "$ws-connect": "/ws", retry: true });
+test("wsConnect: retry takes booleans and counts, and refuses anything else", async () => {
+  await connect({ "$wsConnect": "/ws", retry: false });
+  await connect({ "$wsConnect": "/ws", retry: 3 });
+  await connect({ "$wsConnect": "/ws", retry: true });
   for (const retry of ["soon", "", -1]) {
     assert.throws(
-      () => resolve({ "$ws-connect": "/ws", retry }, {}),
+      () => resolve({ "$wsConnect": "/ws", retry }, {}),
       /Invalid ws retry .*expected true, false, or a number of attempts/,
       `retry: ${JSON.stringify(retry)} should have been refused`,
     );
@@ -150,10 +150,10 @@ test("ws-connect: retry takes booleans and counts, and refuses anything else", a
 
 // The message used to be written onto the captured context, so it outlived the
 // handler and leaked into everything else sharing that context.
-test("on-message: binds in a child scope, leaving the outer context alone", async () => {
+test("onMessage: binds in a child scope, leaving the outer context alone", async () => {
   const ctx: Record<string, unknown> = { message: "mine", seen: null };
   const pending = resolve(
-    { "$ws-connect": "/ws", "on-message": [{ $setVars: { seen: { $var: "message" } }, $bubble: true }] },
+    { "$wsConnect": "/ws", "onMessage": [{ $setVars: { seen: { $var: "message" } }, $bubble: true }] },
     ctx,
   ) as Promise<unknown>;
   FakeSocket.last().accept();
@@ -171,7 +171,7 @@ test("on-message: binds in a child scope, leaving the outer context alone", asyn
 test("a handler may be a single expression, not only an array", async () => {
   const ctx: Record<string, unknown> = { seen: null };
   const pending = resolve(
-    { "$ws-connect": "/ws", "on-message": { $setVars: { seen: { $var: "message" } }, $bubble: true } },
+    { "$wsConnect": "/ws", "onMessage": { $setVars: { seen: { $var: "message" } }, $bubble: true } },
     ctx,
   ) as Promise<unknown>;
   FakeSocket.last().accept();
@@ -182,13 +182,13 @@ test("a handler may be a single expression, not only an array", async () => {
   assert.deepEqual(ctx.seen, { hello: "there" });
 });
 
-test("on-close: the code and reason reach the steps", async () => {
+test("onClose: the code and reason reach the steps", async () => {
   const ctx: Record<string, unknown> = {};
   const pending = resolve(
     {
-      "$ws-connect": "/ws",
+      "$wsConnect": "/ws",
       retry: false,
-      "on-close": [{ $setVars: { why: { $concat: [{ $var: "code" }, " ", { $var: "reason" }, " ", { $var: "clean" }] } }, $bubble: true }],
+      onClose: [{ $setVars: { why: { $concat: [{ $var: "code" }, " ", { $var: "reason" }, " ", { $var: "clean" }] } }, $bubble: true }],
     },
     ctx,
   ) as Promise<unknown>;
@@ -200,55 +200,55 @@ test("on-close: the code and reason reach the steps", async () => {
   assert.equal(ctx.why, "4001 policy false");
 });
 
-test("ws-close: the code and reason reach the server", async () => {
-  const socket = await connect({ "$ws-connect": "/ws" });
-  await resolve({ "$ws-close": "default", code: 4002, reason: "signed out" }, {});
+test("wsClose: the code and reason reach the server", async () => {
+  const socket = await connect({ "$wsConnect": "/ws" });
+  await resolve({ "$wsClose": "default", code: 4002, reason: "signed out" }, {});
   assert.deepEqual(socket.closedWith, { code: 4002, reason: "signed out" });
 });
 
-test("ws-send: queued while opening, flushed on open", async () => {
-  const pending = resolve({ "$ws-connect": "/ws" }, {}) as Promise<unknown>;
+test("wsSend: queued while opening, flushed on open", async () => {
+  const pending = resolve({ "$wsConnect": "/ws" }, {}) as Promise<unknown>;
   const socket = FakeSocket.last();
   // Written before the handshake finishes: an ordinary startup race, not an error.
-  await resolve({ "$ws-send": "early" }, {});
+  await resolve({ "$wsSend": "early" }, {});
   assert.deepEqual(socket.sent, []);
   socket.accept();
   await pending;
   assert.deepEqual(socket.sent, ["early"]);
 });
 
-test("ws-send: with no connection, or after close, throws rather than dropping", async () => {
+test("wsSend: with no connection, or after close, throws rather than dropping", async () => {
   await assert.rejects(
-    async () => { await resolve({ "$ws-send": "x" }, {}); },
-    /ws-send has no "default" connection: run ws-connect first/,
+    async () => { await resolve({ "$wsSend": "x" }, {}); },
+    /wsSend has no "default" connection: run wsConnect first/,
   );
-  const socket = await connect({ "$ws-connect": "/ws", retry: false });
+  const socket = await connect({ "$wsConnect": "/ws", retry: false });
   socket.drop(1006, "");
   await new Promise(done => setTimeout(done, 10));
   await assert.rejects(
-    async () => { await resolve({ "$ws-send": "x" }, {}); },
-    /ws-send has no "default" connection/,
+    async () => { await resolve({ "$wsSend": "x" }, {}); },
+    /wsSend has no "default" connection/,
   );
 });
 
-test("ws-send: binary goes as a frame, objects as JSON", async () => {
-  const socket = await connect({ "$ws-connect": "/ws" });
+test("wsSend: binary goes as a frame, objects as JSON", async () => {
+  const socket = await connect({ "$wsConnect": "/ws" });
   const bytes = new Uint8Array([1, 2, 3]);
-  await resolve({ "$ws-send": { $var: "bytes" } }, { bytes });
-  await resolve({ "$ws-send": { a: 1 } }, {});
-  await resolve({ "$ws-send": "raw" }, {});
+  await resolve({ "$wsSend": { $var: "bytes" } }, { bytes });
+  await resolve({ "$wsSend": { a: 1 } }, {});
+  await resolve({ "$wsSend": "raw" }, {});
   assert.equal(socket.sent[0], bytes);
   assert.equal(socket.sent[1], "{\"a\":1}");
   assert.equal(socket.sent[2], "raw");
 });
 
-test("ws-status: reports every state, and none for a name never opened", async () => {
-  assert.equal(resolve({ "$ws-status": "nope" }, {}), "none");
-  const pending = resolve({ "$ws-connect": "/ws" }, {}) as Promise<unknown>;
-  assert.equal(resolve({ "$ws-status": "default" }, {}), "connecting");
+test("wsStatus: reports every state, and none for a name never opened", async () => {
+  assert.equal(resolve({ "$wsStatus": "nope" }, {}), "none");
+  const pending = resolve({ "$wsConnect": "/ws" }, {}) as Promise<unknown>;
+  assert.equal(resolve({ "$wsStatus": "default" }, {}), "connecting");
   FakeSocket.last().accept();
   await pending;
-  assert.equal(resolve({ "$ws-status": "default" }, {}), "open");
+  assert.equal(resolve({ "$wsStatus": "default" }, {}), "open");
 });
 
 // The node used to sniff `{ type: "welcome" }` off the wire to bind `wsId`, and
@@ -258,8 +258,8 @@ test("ws-status: reports every state, and none for a name never opened", async (
 test("no protocol of its own: a message is passed through untouched", async () => {
   const ctx: Record<string, unknown> = {};
   await connect({
-    "$ws-connect": "/ws",
-    "on-message": [{ $setVars: { seen: { $var: "message" } }, $bubble: true }],
+    "$wsConnect": "/ws",
+    onMessage: [{ $setVars: { seen: { $var: "message" } }, $bubble: true }],
   }, ctx);
 
   const socket = FakeSocket.last();
@@ -276,8 +276,8 @@ test("no protocol of its own: a message is passed through untouched", async () =
 test("two nodes keep their own connections", async () => {
   const other = new WsNode();
   const otherResolve = createResolver([...coreNodes(), other]);
-  await connect({ "$ws-connect": "/ws" });
-  const pending = otherResolve({ "$ws-connect": "/ws" }, {}) as Promise<unknown>;
+  await connect({ "$wsConnect": "/ws" });
+  const pending = otherResolve({ "$wsConnect": "/ws" }, {}) as Promise<unknown>;
   FakeSocket.last().accept();
   await pending;
 
@@ -287,5 +287,5 @@ test("two nodes keep their own connections", async () => {
 
   other.dispose();
   assert.equal(other.connections.size, 0);
-  assert.equal(resolve({ "$ws-status": "default" }, {}), "open");
+  assert.equal(resolve({ "$wsStatus": "default" }, {}), "open");
 });

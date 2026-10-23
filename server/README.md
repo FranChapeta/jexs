@@ -30,14 +30,14 @@ npm install @jexs/server @jexs/core
 | `SessionNode` | `session` | Cookie-backed sessions, kept in a cache: `load`, set values (with `regenerate: true` at login), `destroy` |
 | `CryptoNode` | `hash`, `verify`, `sha256`, `hmac`, `encrypt`, `decrypt`, `randomHex`, `uuid`, `timingSafeEqual` | Crypto helpers |
 | `OAuthNode` | `oauth` | Generic OAuth2 (Google, GitHub, ...): `configure`, `authUrl`, `exchange`, `refresh`, `userInfo`; the login's state and PKCE verifier wait in the session, so a callback is just `{ "$oauth": "exchange" }` |
-| `EmailNode` | `email`, `email-connect` | SMTP via nodemailer |
+| `EmailNode` | `email`, `emailConnect` | SMTP via nodemailer |
 | `WebPushNode` | `webpush` | Browser push over VAPID |
-| `WebSocketNode` | `socket-accept`, `socket-send`, `socket-send-to`, `socket-broadcast`, `socket-join`, `socket-leave`, `socket-close`, `socket-count`, `socket-list` | WebSocket server |
-| `CacheNode` | `cache-connect`, `cache-get`, `cache-set`, `cache-delete`, `cache-has`, `cache` | Named caches (memory, Redis, Memcached), picked with `connection` |
+| `WebSocketNode` | `socketAccept`, `socketSend`, `socketSendTo`, `socketBroadcast`, `socketJoin`, `socketLeave`, `socketClose`, `socketCount`, `socketList` | WebSocket server |
+| `CacheNode` | `cacheConnect`, `cacheGet`, `cacheSet`, `cacheDelete`, `cacheHas`, `cache` | Named caches (memory, Redis, Memcached), picked with `connection` |
 | `TailwindNode` | `tailwind` | On-demand Tailwind CSS generation |
 | `TranslationNode` | `translate` | i18n |
 | `DeferNode` | `defer` | Run steps after the response is sent |
-| `StdioNode` | `stdio-listen`, `stdio-write`, `stdio-prompt`, `stdio-close` | Process I/O |
+| `StdioNode` | `stdioListen`, `stdioWrite`, `stdioPrompt`, `stdioClose` | Process I/O |
 
 ## Quick example — full server in JSON
 

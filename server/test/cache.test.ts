@@ -19,12 +19,12 @@ test("two resolvers keep separate caches", async () => {
   const a = resolverWithCache();
   const b = resolverWithCache();
   try {
-    await a.resolver({ "$cache-set": "greeting", value: "hi" }, {});
-    assert.equal(await a.resolver({ "$cache-get": "greeting" }, {}), "hi");
-    assert.equal(await b.resolver({ "$cache-get": "greeting" }, {}), undefined);
+    await a.resolver({ "$cacheSet": "greeting", value: "hi" }, {});
+    assert.equal(await a.resolver({ "$cacheGet": "greeting" }, {}), "hi");
+    assert.equal(await b.resolver({ "$cacheGet": "greeting" }, {}), undefined);
 
     await b.resolver({ $cache: "clear" }, {});
-    assert.equal(await a.resolver({ "$cache-get": "greeting" }, {}), "hi");
+    assert.equal(await a.resolver({ "$cacheGet": "greeting" }, {}), "hi");
     assert.notEqual(CacheNode.cacheFor(a.context), CacheNode.cacheFor(b.context));
   } finally {
     a.resolver.destroy();
@@ -60,16 +60,16 @@ test("a session started in one resolver is not loaded by another", async () => {
 test("named caches keep separate values, and the first connected is the default", async () => {
   const { resolver } = resolverWithCache();
   try {
-    await resolver({ "$cache-connect": "memory", connection: "app" }, {});
-    await resolver({ "$cache-connect": "memory", connection: "scratch" }, {});
-    await resolver({ "$cache-set": "k", value: "in scratch", connection: "scratch" }, {});
-    await resolver({ "$cache-set": "k", value: "in app" }, {});
+    await resolver({ "$cacheConnect": "memory", connection: "app" }, {});
+    await resolver({ "$cacheConnect": "memory", connection: "scratch" }, {});
+    await resolver({ "$cacheSet": "k", value: "in scratch", connection: "scratch" }, {});
+    await resolver({ "$cacheSet": "k", value: "in app" }, {});
 
-    assert.equal(await resolver({ "$cache-get": "k", connection: "scratch" }, {}), "in scratch");
-    assert.equal(await resolver({ "$cache-get": "k", connection: "app" }, {}), "in app");
-    assert.equal(await resolver({ "$cache-has": "k", connection: "scratch" }, {}), true);
-    assert.equal(await resolver({ "$cache-delete": "k", connection: "scratch" }, {}), true);
-    assert.equal(await resolver({ "$cache-get": "k" }, {}), "in app");
+    assert.equal(await resolver({ "$cacheGet": "k", connection: "scratch" }, {}), "in scratch");
+    assert.equal(await resolver({ "$cacheGet": "k", connection: "app" }, {}), "in app");
+    assert.equal(await resolver({ "$cacheHas": "k", connection: "scratch" }, {}), true);
+    assert.equal(await resolver({ "$cacheDelete": "k", connection: "scratch" }, {}), true);
+    assert.equal(await resolver({ "$cacheGet": "k" }, {}), "in app");
   } finally {
     resolver.destroy();
   }
@@ -80,7 +80,7 @@ test("connecting a cache says so through the resolver's logger", async () => {
   const log = (message: string) => { lines.push(message); };
   const resolver = createResolver([...coreNodes(), new CacheNode()], { logger: { info: log, warn: log, error: log } });
   try {
-    await resolver({ "$cache-connect": "memory", connection: "app" }, {});
+    await resolver({ "$cacheConnect": "memory", connection: "app" }, {});
     assert.deepEqual(lines, ['[CacheNode] Connected to cache "app" (memory)']);
   } finally {
     resolver.destroy();
@@ -91,7 +91,7 @@ test("a cache name that was never connected is an error", async () => {
   const { resolver } = resolverWithCache();
   try {
     await assert.rejects(
-      async () => resolver({ "$cache-get": "k", connection: "nowhere" }, {}),
+      async () => resolver({ "$cacheGet": "k", connection: "nowhere" }, {}),
       /Cache "nowhere" is not connected/,
     );
   } finally {
@@ -102,15 +102,15 @@ test("a cache name that was never connected is an error", async () => {
 test("closing one cache leaves the others, and the default falls back to memory", async () => {
   const { resolver } = resolverWithCache();
   try {
-    await resolver({ "$cache-connect": "memory", connection: "app" }, {});
-    await resolver({ "$cache-connect": "memory", connection: "scratch" }, {});
-    await resolver({ "$cache-set": "k", value: "kept", connection: "scratch" }, {});
-    await resolver({ "$cache-set": "k", value: "gone" }, {});
+    await resolver({ "$cacheConnect": "memory", connection: "app" }, {});
+    await resolver({ "$cacheConnect": "memory", connection: "scratch" }, {});
+    await resolver({ "$cacheSet": "k", value: "kept", connection: "scratch" }, {});
+    await resolver({ "$cacheSet": "k", value: "gone" }, {});
 
     await resolver({ $cache: "close", connection: "app" }, {});
-    assert.equal(await resolver({ "$cache-get": "k", connection: "scratch" }, {}), "kept");
-    await assert.rejects(async () => resolver({ "$cache-get": "k", connection: "app" }, {}), /not connected/);
-    assert.equal(await resolver({ "$cache-get": "k" }, {}), undefined);
+    assert.equal(await resolver({ "$cacheGet": "k", connection: "scratch" }, {}), "kept");
+    await assert.rejects(async () => resolver({ "$cacheGet": "k", connection: "app" }, {}), /not connected/);
+    assert.equal(await resolver({ "$cacheGet": "k" }, {}), undefined);
   } finally {
     resolver.destroy();
   }
@@ -119,10 +119,10 @@ test("closing one cache leaves the others, and the default falls back to memory"
 test("reconnecting a name replaces its cache", async () => {
   const { resolver } = resolverWithCache();
   try {
-    await resolver({ "$cache-connect": "memory", connection: "app" }, {});
-    await resolver({ "$cache-set": "k", value: "old" }, {});
-    await resolver({ "$cache-connect": "memory", connection: "app" }, {});
-    assert.equal(await resolver({ "$cache-get": "k", connection: "app" }, {}), undefined);
+    await resolver({ "$cacheConnect": "memory", connection: "app" }, {});
+    await resolver({ "$cacheSet": "k", value: "old" }, {});
+    await resolver({ "$cacheConnect": "memory", connection: "app" }, {});
+    assert.equal(await resolver({ "$cacheGet": "k", connection: "app" }, {}), undefined);
   } finally {
     resolver.destroy();
   }
@@ -131,16 +131,16 @@ test("reconnecting a name replaces its cache", async () => {
 test("a session kept in a named cache stays there for the rest of the request", async () => {
   const { resolver } = resolverWithCache();
   try {
-    await resolver({ "$cache-connect": "memory" }, {});
-    await resolver({ "$cache-connect": "memory", connection: "sessions" }, {});
+    await resolver({ "$cacheConnect": "memory" }, {});
+    await resolver({ "$cacheConnect": "memory", connection: "sessions" }, {});
     const setCookies: string[] = [];
     const request = { request: { method: "GET", cookies: {} }, [COOKIES]: setCookies };
     await resolver([{ $session: "load", cache: "sessions" }, { $session: { user: "ada" } }], request);
     const sid = setCookies.join(";").match(/sid=([^;]+)/)?.[1];
 
-    const stored = await resolver({ "$cache-get": `session:${sid}`, connection: "sessions" }, {});
+    const stored = await resolver({ "$cacheGet": `session:${sid}`, connection: "sessions" }, {});
     assert.equal((stored as { data: Record<string, unknown> }).data.user, "ada");
-    assert.equal(await resolver({ "$cache-has": `session:${sid}` }, {}), false);
+    assert.equal(await resolver({ "$cacheHas": `session:${sid}` }, {}), false);
   } finally {
     resolver.destroy();
   }
@@ -150,10 +150,10 @@ test("translations are looked up in the named cache", async () => {
   const context = {};
   const resolver = createResolver([...coreNodes(), new CacheNode(), new TranslationNode()], { context });
   try {
-    await resolver({ "$cache-connect": "memory" }, {});
-    await resolver({ "$cache-connect": "memory", connection: "words" }, {});
-    await resolver({ "$cache-set": `t:es:${sha256("Hello")}`, value: "Hola", connection: "words" }, {});
-    await resolver({ "$cache-set": `t:es:${sha256("Hello")}`, value: "not from words" }, {});
+    await resolver({ "$cacheConnect": "memory" }, {});
+    await resolver({ "$cacheConnect": "memory", connection: "words" }, {});
+    await resolver({ "$cacheSet": `t:es:${sha256("Hello")}`, value: "Hola", connection: "words" }, {});
+    await resolver({ "$cacheSet": `t:es:${sha256("Hello")}`, value: "not from words" }, {});
 
     const html = await resolver([{ $translate: "es", cache: "words" }, { $tag: "p", content: "Hello" }], {});
     assert.equal(html, "<p>Hola</p>");

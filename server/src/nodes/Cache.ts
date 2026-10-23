@@ -7,7 +7,7 @@ import { parseTls, TLS_STRINGS } from "../connection.js";
 import { isProduction } from "../env.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "@jexs/core";
 
-/** The adapter a `$cache-connect` config asks for. */
+/** The adapter a `$cacheConnect` config asks for. */
 function createAdapter(config: CacheConfig): CacheAdapter {
   switch (config.type) {
     case "redis":
@@ -22,7 +22,7 @@ function createAdapter(config: CacheConfig): CacheAdapter {
 
 export class CacheNode extends Node {
   /** This resolver's caches by name, and whichever connected first. Instance
-   *  fields, so one resolver's `$cache-connect`, `close` or `clear` never touches
+   *  fields, so one resolver's `$cacheConnect`, `close` or `clear` never touches
    *  another's; `dispose` closes them. */
   private readonly adapters = new Map<string, CacheAdapter>();
   private defaultName: string | null = null;
@@ -30,7 +30,7 @@ export class CacheNode extends Node {
   /**
    * One of the resolver's caches, which its sessions and translations use too:
    * the one under `name`, or the default without one. In development the
-   * default is an in-memory cache until `$cache-connect` opens another; in
+   * default is an in-memory cache until `$cacheConnect` opens another; in
    * production it must be connected, since sessions kept in one process's memory
    * are lost on restart and not shared between instances. A named cache must have
    * been connected. Static, since every method on a Node registers as an op.
@@ -44,10 +44,10 @@ export class CacheNode extends Node {
     const adapter = node.adapters.get(key);
     if (adapter) return adapter;
     if (name !== undefined) {
-      throw new Error(`Cache "${name}" is not connected. Open it with { "$cache-connect": "memory", "connection": "${name}" }`);
+      throw new Error(`Cache "${name}" is not connected. Open it with { "$cacheConnect": "memory", "connection": "${name}" }`);
     }
     if (isProduction()) {
-      throw new Error('No cache is connected. In production, connect one, e.g. { "$cache-connect": "redis", "url": ... }, or { "$cache-connect": "memory" } to keep it in this process on purpose');
+      throw new Error('No cache is connected. In production, connect one, e.g. { "$cacheConnect": "redis", "url": ... }, or { "$cacheConnect": "memory" } to keep it in this process on purpose');
     }
     loggerFor(context).warn("[Cache] Not connected, using memory cache");
     const fallback = new MemoryCache();
@@ -63,18 +63,18 @@ export class CacheNode extends Node {
   }
 
   static schema: JexsNodeSchema = {
-    "cache-connect": {
+    cacheConnect: {
       type: "string",
       enum: ["redis", "memory", "memcached"],
       output: "string",
       markdownDescription: "Opens a named cache, replacing any already open under that name. The first one opened is the default, which the other `cache-*` ops, sessions and translations use unless told otherwise. The value selects the driver; connection details vary by driver. Redis also accepts a `url` connection string in place of the discrete host/port properties — memcached does not, because its connection format is the server list itself.",
       outputDescription: "The connected driver name (`\"memory\"`, `\"redis\"`, or `\"memcached\"`).",
       examples: [
-        "{ \"$cache-connect\": \"memory\" }",
-        "{ \"$cache-connect\": \"redis\", \"host\": \"localhost\", \"port\": 6379 }",
-        "{ \"$cache-connect\": \"redis\", \"url\": { \"$var\": \"env.REDIS_URL\" } }",
-        "{ \"$cache-connect\": \"memcached\", \"servers\": [\"localhost:11211\"] }",
-        "{ \"$cache-connect\": \"redis\", \"connection\": \"sessions\", \"url\": { \"$var\": \"env.REDIS_URL\" } }",
+        "{ \"$cacheConnect\": \"memory\" }",
+        "{ \"$cacheConnect\": \"redis\", \"host\": \"localhost\", \"port\": 6379 }",
+        "{ \"$cacheConnect\": \"redis\", \"url\": { \"$var\": \"env.REDIS_URL\" } }",
+        "{ \"$cacheConnect\": \"memcached\", \"servers\": [\"localhost:11211\"] }",
+        "{ \"$cacheConnect\": \"redis\", \"connection\": \"sessions\", \"url\": { \"$var\": \"env.REDIS_URL\" } }",
       ],
       siblings: {
         prefix:     { type: "string", description: "Key prefix applied to every operation." },
@@ -142,47 +142,47 @@ export class CacheNode extends Node {
         },
       },
     },
-    "cache-get": {
+    cacheGet: {
       type: "string",
       markdownDescription: "Reads the value stored under `key`.",
       outputDescription: "The stored value (any JSON type), or `null` if the key is absent or expired.",
       examples: [
-        "{ \"$cache-get\": \"user:42\" }",
+        "{ \"$cacheGet\": \"user:42\" }",
       ],
     },
-    "cache-set": {
+    cacheSet: {
       type: "string",
       markdownDescription: "Writes the `value` sibling under the given key. Optional `ttl` sibling sets expiry in seconds.",
       outputDescription: "The driver's write result, resolved once the value is stored (truthy on success).",
       examples: [
-        "{ \"$cache-set\": \"user:42\", \"value\": { \"$var\": \"user\" }, \"ttl\": 3600 }",
+        "{ \"$cacheSet\": \"user:42\", \"value\": { \"$var\": \"user\" }, \"ttl\": 3600 }",
       ],
       siblings: {
         value: { required: true, description: "Value to store." },
         ttl:   { type: "number", description: "Time-to-live in seconds." },
       },
     },
-    "cache-delete": {
+    cacheDelete: {
       type: "string",
       output: "boolean",
       markdownDescription: "Removes the entry under `key`.",
       outputDescription: "`true` if the key existed and was removed, otherwise `false`.",
       examples: [
-        "{ \"$cache-delete\": \"user:42\" }",
+        "{ \"$cacheDelete\": \"user:42\" }",
       ],
     },
-    "cache-has": {
+    cacheHas: {
       type: "string",
       output: "boolean",
       markdownDescription: "Checks whether `key` is present in the cache.",
       outputDescription: "`true` if the key is present (and unexpired), otherwise `false`.",
       examples: [
-        "{ \"$cache-has\": \"user:42\" }",
+        "{ \"$cacheHas\": \"user:42\" }",
       ],
     },
     // Keyless lifecycle / bulk ops fold into the bare `cache` key (value-mode):
     // their value carries no key, so the op name takes the value slot. Keyed CRUD
-    // (`cache-get`/`set`/`has`/`delete`) and the driver-valued `cache-connect`
+    // (`cacheGet`/`set`/`has`/`delete`) and the driver-valued `cacheConnect`
     // keep their prefix.
     cache: {
       type: "string",
@@ -220,9 +220,9 @@ export class CacheNode extends Node {
     },
   };
 
-  ["cache-connect"](def: Record<string, unknown>, context: Context): NodeValue {
+  cacheConnect(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveFields(def, context, r => {
-      const type = cacheDriver(r["$cache-connect"]);
+      const type = cacheDriver(r.$cacheConnect);
       const config: CacheConfig = { type };
 
       if (r.prefix) config.prefix = String(r.prefix);
@@ -295,26 +295,26 @@ export class CacheNode extends Node {
     });
   }
 
-  ["cache-get"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["$cache-get"], def.connection ?? null], context, async ([key, connection]) =>
+  cacheGet(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def.$cacheGet, def.connection ?? null], context, async ([key, connection]) =>
       CacheNode.cacheFor(context, optionalName(connection)).get(String(key)));
   }
 
-  ["cache-set"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["$cache-set"], def.value ?? null, def.ttl ?? null, def.connection ?? null], context, async ([keyRaw, value, ttlRaw, connection]) => {
+  cacheSet(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def.$cacheSet, def.value ?? null, def.ttl ?? null, def.connection ?? null], context, async ([keyRaw, value, ttlRaw, connection]) => {
       const key = String(keyRaw);
       const ttl = ttlRaw != null ? Number(ttlRaw) : undefined;
       return CacheNode.cacheFor(context, optionalName(connection)).set(key, value, ttl);
     });
   }
 
-  ["cache-delete"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["$cache-delete"], def.connection ?? null], context, async ([keyRaw, connection]) =>
+  cacheDelete(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def.$cacheDelete, def.connection ?? null], context, async ([keyRaw, connection]) =>
       CacheNode.cacheFor(context, optionalName(connection)).delete(String(keyRaw)));
   }
 
-  ["cache-has"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["$cache-has"], def.connection ?? null], context, async ([keyRaw, connection]) =>
+  cacheHas(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def.$cacheHas, def.connection ?? null], context, async ([keyRaw, connection]) =>
       CacheNode.cacheFor(context, optionalName(connection)).has(String(keyRaw)));
   }
 }

@@ -73,7 +73,7 @@ export const FIELD_OFFSETS: Record<string, number> = {
 // ─── Metadata side table ─────────────────────────────────────────────────────
 
 /** Every entity shape the store and the renderers understand. `EntityType`
- *  derives from it and EntityNode's `entity-add` enum spreads it. */
+ *  derives from it and EntityNode's `entityAdd` enum spreads it. */
 export const ENTITY_TYPES = [
   "quad", "triangle", "points", "circle", "line", "line-strip",
   "sphere", "cylinder", "cone", "light", "ramp", "pivot", "mesh",
@@ -92,7 +92,7 @@ export interface EntityMeta {
   group: string;
   mask: string[];
   vertices?: number[];
-  /** Reference into `EntityStore.meshes` (registered via MeshNode `register-mesh`). */
+  /** Reference into `EntityStore.meshes` (registered via MeshNode `meshRegister`). */
   meshId?: string | null;
   textureName?: string;
   normalMap?: string;
@@ -224,7 +224,7 @@ export class EntityStore {
   /**
    * Registered meshes (from GLB/GLTF imports). Keyed by mesh id.
    * Each entry holds whatever is needed by its consumers: GPU upload (`gpu`) for
-   * rendering, BVH + positions/indices for collision. Populated via MeshNode `register-mesh`.
+   * rendering, BVH + positions/indices for collision. Populated via MeshNode `meshRegister`.
    */
   meshes: Map<string, MeshEntry> = new Map();
 
@@ -908,7 +908,7 @@ export class EntityStore {
 
 const _identityWT = new Float64Array([0,0,0, 1,1,1, 0,0,0,1]);
 
-/** The store of the GL instance a context's steps run in, as `$gl-init` / `$entity-init` record it. */
+/** The store of the GL instance a context's steps run in, as `$glInit` / `$entityInit` record it. */
 export function getStore(context: Context): EntityStore | null {
   const selector = context._glSelector as string | undefined;
   if (!selector) return null;

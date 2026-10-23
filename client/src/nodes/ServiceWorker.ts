@@ -28,12 +28,12 @@ function messageSourceOf(v: unknown): Client | null {
 
 export class ServiceWorkerNode extends Node {
   static schema: JexsNodeSchema = {
-    "sw-notify": {
+    swNotify: {
       type: "string",
       output: "null",
       markdownDescription: "Shows a notification, usually from a `push` handler. The value is the title; the rest are siblings.",
       examples: [
-        "{ \"$sw-notify\": { \"$var\": \"data.title\" }, \"body\": { \"$var\": \"data.body\" }, \"icon\": \"/icon.png\", \"data\": { \"url\": { \"$var\": \"data.url\" } } }",
+        "{ \"$swNotify\": { \"$var\": \"data.title\" }, \"body\": { \"$var\": \"data.body\" }, \"icon\": \"/icon.png\", \"data\": { \"url\": { \"$var\": \"data.url\" } } }",
       ],
       siblings: {
         body: {
@@ -81,13 +81,13 @@ export class ServiceWorkerNode extends Node {
         },
       },
     },
-    "sw-open": {
+    swOpen: {
       type: "string",
       output: "null",
       markdownDescription: "Handles a `notificationclick`: closes the notification, then focuses a window already at the URL, or opens a new one. The URL is resolved against the worker's scope.",
       examples: [
-        "{ \"$sw-open\": { \"$var\": \"notification.data.url\" } }",
-        "{ \"$sw-open\": \"/inbox\", \"navigate\": true }",
+        "{ \"$swOpen\": { \"$var\": \"notification.data.url\" } }",
+        "{ \"$swOpen\": \"/inbox\", \"navigate\": true }",
       ],
       siblings: {
         navigate: {
@@ -96,19 +96,19 @@ export class ServiceWorkerNode extends Node {
         },
       },
     },
-    "sw-post": {
+    swPost: {
       output: "null",
       markdownDescription: "Sends a message to pages. In a `message` handler it replies to the page that sent the message; anywhere else it goes to every open window. Pages receive it through an `sw-message` event, with the message as `value`.",
       examples: [
-        "{ \"$sw-post\": { \"type\": \"updated\" } }",
+        "{ \"$swPost\": { \"type\": \"updated\" } }",
       ],
     },
   };
 
-  ["sw-notify"](def: Record<string, unknown>, context: Context): NodeValue {
+  swNotify(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveFields(def, context, async r => {
-      const title = r["$sw-notify"] == null ? "" : String(r["$sw-notify"]);
-      if (!title) throw new Error("$sw-notify needs a title");
+      const title = r.$swNotify == null ? "" : String(r.$swNotify);
+      if (!title) throw new Error("$swNotify needs a title");
       const opts: NotificationOptions & { image?: string; actions?: { action: string; title: string; icon?: string }[] } = {};
       if (r.body != null) opts.body = String(r.body);
       if (r.icon != null) opts.icon = String(r.icon);
@@ -130,8 +130,8 @@ export class ServiceWorkerNode extends Node {
     });
   }
 
-  ["sw-open"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["$sw-open"], def.navigate ?? false], context, async ([raw, navigate]) => {
+  swOpen(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def.$swOpen, def.navigate ?? false], context, async ([raw, navigate]) => {
       const sw = swScope();
       const target = new URL(typeof raw === "string" && raw ? raw : "/", sw.registration.scope).href;
       notificationOf(Reflect.get(context, SW_EVENT))?.close();
@@ -156,8 +156,8 @@ export class ServiceWorkerNode extends Node {
     });
   }
 
-  ["sw-post"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$sw-post"], context, async message => {
+  swPost(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$swPost, context, async message => {
       const source = messageSourceOf(Reflect.get(context, SW_EVENT));
       if (source) {
         source.postMessage(message);

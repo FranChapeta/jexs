@@ -18,7 +18,7 @@ function getUpgrade(context: Context): UpgradeContext {
   // Only the listener's upgrade handling sets it, as an UpgradeContext.
   const upgrade = context[UPGRADE] as UpgradeContext | undefined;
   if (!upgrade) {
-    throw createHttpError(500, "socket-accept must be called from an upgrade pipeline");
+    throw createHttpError(500, "socketAccept must be called from an upgrade pipeline");
   }
   return upgrade;
 }
@@ -51,90 +51,90 @@ export class WebSocketNode extends Node {
   private readonly meta = new WeakMap<WebSocket, Record<string, unknown>>();
 
   static schema: JexsNodeSchema = {
-    "socket-accept": {
+    socketAccept: {
       type: "boolean",
       output: "null",
       markdownDescription: "Completes the WebSocket upgrade for the current request and binds per-connection step arrays. Must be called while a `listen` node handles an upgrade (a `WS` route), and throws anywhere else.",
       examples: [
-        "{ \"$socket-accept\": true, \"on-message\": [{ \"$socket-broadcast\": { \"$var\": \"message\" } }] }",
+        "{ \"$socketAccept\": true, \"onMessage\": [{ \"$socketBroadcast\": { \"$var\": \"message\" } }] }",
       ],
       siblings: {
-        "on-open": {
+        onOpen: {
           steps: true,
-          description: "Steps run once after the upgrade completes. Every handler sees `id`, the connection's id (for `socket-send-to`), and the request that opened it; a value it sets with `$bubble` stays for the connection's later handlers.",
+          description: "Steps run once after the upgrade completes. Every handler sees `id`, the connection's id (for `socketSendTo`), and the request that opened it; a value it sets with `$bubble` stays for the connection's later handlers.",
         },
-        "on-message": {
+        onMessage: {
           steps: true,
           description: "Steps run on each incoming message. `message` is the parsed JSON payload.",
         },
-        "on-close": {
+        onClose: {
           steps: true,
           description: "Steps run once when the connection closes. `code` and `reason` are the close code and its reason text.",
         },
         meta: {
           type: "object",
-          description: "What `socket-list` reports for the connection beside its `id`, resolved when it is accepted, e.g. `{ \"name\": { \"$var\": \"session.name\" } }`.",
+          description: "What `socketList` reports for the connection beside its `id`, resolved when it is accepted, e.g. `{ \"name\": { \"$var\": \"session.name\" } }`.",
         },
       },
     },
-    "socket-send": {
+    socketSend: {
       output: "null",
       markdownDescription: "Sends a message on the connection a socket handler runs for. Objects are JSON-encoded.",
       examples: [
-        "{ \"$socket-send\": { \"type\": \"pong\" } }",
+        "{ \"$socketSend\": { \"type\": \"pong\" } }",
       ],
     },
-    "socket-send-to": {
+    socketSendTo: {
       type: "string",
       output: "null",
       markdownDescription: "Sends `data` to the peer identified by the connection ID. Objects are JSON-encoded.",
       examples: [
-        "{ \"$socket-send-to\": { \"$var\": \"peerId\" }, \"data\": { \"hello\": true } }",
+        "{ \"$socketSendTo\": { \"$var\": \"peerId\" }, \"data\": { \"hello\": true } }",
       ],
       siblings: {
         data: { required: true, description: "Payload to send to the target peer." },
       },
     },
-    "socket-broadcast": {
+    socketBroadcast: {
       output: "null",
       markdownDescription: "Broadcasts the payload to all peers. With `room`, sends to room members; without `room`, sends to every connection on the same route path. The sender is excluded.",
       examples: [
-        "{ \"$socket-broadcast\": { \"$var\": \"message\" }, \"room\": \"lobby\" }",
+        "{ \"$socketBroadcast\": { \"$var\": \"message\" }, \"room\": \"lobby\" }",
       ],
       siblings: {
         room: { type: "string", description: "Restrict broadcast to a named room." },
       },
     },
-    "socket-join": {
+    socketJoin: {
       type: "string",
       output: "null",
       markdownDescription: "Adds the current connection to the named room.",
       examples: [
-        "{ \"$socket-join\": \"lobby\" }",
+        "{ \"$socketJoin\": \"lobby\" }",
       ],
     },
-    "socket-leave": {
+    socketLeave: {
       type: "string",
       output: "boolean",
       outputDescription: "`true` if the connection was in the room, otherwise `false`.",
       markdownDescription: "Removes the current connection from the named room.",
     },
-    "socket-close": {
+    socketClose: {
       type: "boolean",
       output: "null",
       markdownDescription: "Closes the current connection.",
     },
-    "socket-count": {
+    socketCount: {
       type: ["string", "boolean"],
       output: "number",
       markdownDescription: "Counts connections in a room (pass the room name) or on the current route path (pass `true`).",
       outputDescription: "The connection count as a number.",
       examples: [
-        "{ \"$socket-count\": \"lobby\" }",
-        "{ \"$socket-count\": true }",
+        "{ \"$socketCount\": \"lobby\" }",
+        "{ \"$socketCount\": true }",
       ],
     },
-    "socket-list": {
+    socketList: {
       type: "string",
       output: {
         type: "array",
@@ -143,23 +143,23 @@ export class WebSocketNode extends Node {
       markdownDescription: "Lists the connections in the named room.",
       outputDescription: "One entry per connection in the room: its `id`, plus the `meta` it was accepted with.",
       examples: [
-        "{ \"$socket-list\": \"lobby\" }",
+        "{ \"$socketList\": \"lobby\" }",
       ],
     },
   };
 
-  ["socket-accept"](def: Record<string, unknown>, context: Context): NodeValue {
+  socketAccept(def: Record<string, unknown>, context: Context): NodeValue {
     const upgrade = getUpgrade(context);
     if (upgrade.accepted) return null;
 
-    const onOpen    = def["on-open"]    ?? null;
-    const onMessage = def["on-message"] ?? null;
-    const onClose   = def["on-close"]   ?? null;
+    const onOpen    = def.onOpen    ?? null;
+    const onMessage = def.onMessage ?? null;
+    const onClose   = def.onClose   ?? null;
 
     // Resolved before the upgrade is claimed, so one that fails leaves it to be refused.
     return resolve(def.meta ?? null, context, meta => {
       if (meta !== null && !isObject(meta)) {
-        throw new Error(`socket-accept: meta must be an object, not ${JSON.stringify(meta)}`);
+        throw new Error(`socketAccept: meta must be an object, not ${JSON.stringify(meta)}`);
       }
       if (upgrade.accepted) return null;
       upgrade.accepted = true;
@@ -181,7 +181,7 @@ export class WebSocketNode extends Node {
         const connection = childContext(context, { [WS]: ws, [WS_PATH]: path, [UPGRADE]: undefined, id });
 
         if (onOpen) {
-          void runStepsDetached(onOpen, childContext(connection), { step: def, logAs: "[WebSocket] on-open error:" });
+          void runStepsDetached(onOpen, childContext(connection), { step: def, logAs: "[WebSocket] onOpen error:" });
         }
 
         ws.on("message", (raw: WebSocket.RawData) => {
@@ -203,19 +203,19 @@ export class WebSocketNode extends Node {
             return;
           }
 
-          void runStepsDetached(onMessage, childContext(connection, { message: messageData }), { step: def, logAs: "[WebSocket] on-message error:" });
+          void runStepsDetached(onMessage, childContext(connection, { message: messageData }), { step: def, logAs: "[WebSocket] onMessage error:" });
         });
 
         // A client that breaks the protocol (a frame over `maxMessageSize`, invalid
         // UTF-8, a bad opcode) makes ws emit `error` and then close the socket with
-        // the matching code, so `on-close` still runs. Without a listener the
+        // the matching code, so `onClose` still runs. Without a listener the
         // event would throw and take the process down with it.
         ws.on("error", () => {});
 
         ws.on("close", (code: number, reason: Buffer) => {
           if (onClose) {
             const closed = childContext(connection, { code, reason: reason.toString() });
-            void runStepsDetached(onClose, closed, { step: def, logAs: "[WebSocket] on-close error:" });
+            void runStepsDetached(onClose, closed, { step: def, logAs: "[WebSocket] onClose error:" });
           }
 
           this.paths.get(path)?.delete(ws);
@@ -240,28 +240,28 @@ export class WebSocketNode extends Node {
     });
   }
 
-  ["socket-send"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$socket-send"], context, data => {
-      const ws = handlerSocket("socket-send", context);
-      if (ws.readyState !== WebSocket.OPEN) throw new Error("$socket-send: the connection is closed");
+  socketSend(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$socketSend, context, data => {
+      const ws = handlerSocket("socketSend", context);
+      if (ws.readyState !== WebSocket.OPEN) throw new Error("$socketSend: the connection is closed");
       ws.send(encodePayload(data));
       return null;
     });
   }
 
-  ["socket-send-to"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["$socket-send-to"], def.data], context, ([idRaw, data]) => {
+  socketSendTo(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def.$socketSendTo, def.data], context, ([idRaw, data]) => {
       const target = this.ids.get(String(idRaw));
       if (!target || target.readyState !== WebSocket.OPEN) {
-        throw new Error(`$socket-send-to: no open connection "${String(idRaw)}"`);
+        throw new Error(`$socketSendTo: no open connection "${String(idRaw)}"`);
       }
       target.send(encodePayload(data));
       return null;
     });
   }
 
-  ["socket-broadcast"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["$socket-broadcast"], def.room ?? null], context, ([data, roomRaw]) => {
+  socketBroadcast(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def.$socketBroadcast, def.room ?? null], context, ([data, roomRaw]) => {
       const payload = encodePayload(data);
       // Outside a handler there is no sender to skip, and nothing in a room matches undefined.
       const sender = context[WS];
@@ -280,9 +280,9 @@ export class WebSocketNode extends Node {
     });
   }
 
-  ["socket-join"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$socket-join"], context, roomRaw => {
-      const ws = handlerSocket("socket-join", context);
+  socketJoin(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$socketJoin, context, roomRaw => {
+      const ws = handlerSocket("socketJoin", context);
       const room = String(roomRaw);
       if (!this.rooms.has(room)) this.rooms.set(room, new Set());
       this.rooms.get(room)!.add(ws);
@@ -291,9 +291,9 @@ export class WebSocketNode extends Node {
     });
   }
 
-  ["socket-leave"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$socket-leave"], context, roomRaw => {
-      const ws = handlerSocket("socket-leave", context);
+  socketLeave(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$socketLeave, context, roomRaw => {
+      const ws = handlerSocket("socketLeave", context);
       const room = String(roomRaw);
       const was = this.rooms.get(room)?.delete(ws) ?? false;
       if (this.rooms.get(room)?.size === 0) this.rooms.delete(room);
@@ -302,20 +302,20 @@ export class WebSocketNode extends Node {
     });
   }
 
-  ["socket-close"](_def: Record<string, unknown>, context: Context): NodeValue {
-    handlerSocket("socket-close", context).close();
+  socketClose(_def: Record<string, unknown>, context: Context): NodeValue {
+    handlerSocket("socketClose", context).close();
     return null;
   }
 
-  ["socket-count"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$socket-count"], context, target => {
+  socketCount(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$socketCount, context, target => {
       if (target === true) return this.paths.get(currentPath(context))?.size ?? 0;
       return this.rooms.get(String(target))?.size ?? 0;
     });
   }
 
-  ["socket-list"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$socket-list"], context, roomRaw => {
+  socketList(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$socketList, context, roomRaw => {
       const room = String(roomRaw);
       const roomClients = this.rooms.get(room);
       if (!roomClients) return [];

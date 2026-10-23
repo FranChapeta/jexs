@@ -330,24 +330,24 @@ test("a type contradicting the url scheme is refused", async () => {
 
 // Same rule as `database: "connect"`, so the two nodes do not disagree about
 // what carrying both spellings means.
-test("cache-connect refuses a url alongside the discrete endpoint", async () => {
+test("cacheConnect refuses a url alongside the discrete endpoint", async () => {
   const cacheResolve = createResolver([...coreNodes(), new CacheNode()]);
   const run = async (step: Record<string, unknown>) =>
     await Promise.resolve(cacheResolve(step, {}));
 
   await assert.rejects(
-    async () => run({ "$cache-connect": "redis", url: "redis://h:6379", host: "elsewhere" }),
+    async () => run({ "$cacheConnect": "redis", url: "redis://h:6379", host: "elsewhere" }),
     /already carries the endpoint/,
   );
   await assert.rejects(
-    async () => run({ "$cache-connect": "redis", url: "redis://h:6379", password: "p" }),
+    async () => run({ "$cacheConnect": "redis", url: "redis://h:6379", password: "p" }),
     /already carries the endpoint/,
   );
   // `tls` is not part of the endpoint, so it still rides along with a url.
-  assert.equal(await run({ "$cache-connect": "redis", url: "rediss://h:6379", tls: true }), "redis");
+  assert.equal(await run({ "$cacheConnect": "redis", url: "rediss://h:6379", tls: true }), "redis");
   // memcached has no url at all, so its server list is the only spelling.
   assert.equal(
-    await run({ "$cache-connect": "memcached", servers: ["h:11211"], user: "u" }),
+    await run({ "$cacheConnect": "memcached", servers: ["h:11211"], user: "u" }),
     "memcached",
   );
   cacheResolve.destroy();
@@ -356,16 +356,16 @@ test("cache-connect refuses a url alongside the discrete endpoint", async () => 
 // `createAdapter` falls through to memory on `default`, so an unrecognized
 // driver used to connect in-process while the log and the return value both
 // claimed the driver that was asked for.
-test("cache-connect refuses an unknown driver instead of falling back to memory", async () => {
+test("cacheConnect refuses an unknown driver instead of falling back to memory", async () => {
   const cacheResolve = createResolver([...coreNodes(), new CacheNode()]);
   const run = async (step: Record<string, unknown>) =>
     await Promise.resolve(cacheResolve(step, {}));
 
   await assert.rejects(
-    async () => run({ "$cache-connect": "redys" }),
+    async () => run({ "$cacheConnect": "redys" }),
     /Unknown cache driver "redys" \(expected memory, redis, memcached\)/,
   );
-  assert.equal(await run({ "$cache-connect": "memory" }), "memory");
+  assert.equal(await run({ "$cacheConnect": "memory" }), "memory");
   cacheResolve.destroy();
 });
 

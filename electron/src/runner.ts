@@ -79,7 +79,7 @@ async function main(): Promise<void> {
     // template in main. Two independent checks, because this branch executes
     // rather than serves: the token proves openWindow issued the URL (page
     // script can build one, but cannot guess a token), and safeRelative still
-    // guards the name, since a page may have supplied it via `window-open` and
+    // guards the name, since a page may have supplied it via `windowOpen` and
     // FileNode resolves with path.resolve, which honors `../`.
     const wrap = url.searchParams.get("wrap");
     if (wrap !== null) {

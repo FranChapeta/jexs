@@ -303,7 +303,7 @@ const _triBuf = new Float32Array(9);
 const _triCandidates: number[] = [];
 
 /**
- * Lazy BVH build. The mesh entry holds positions + indices from `register-mesh`;
+ * Lazy BVH build. The mesh entry holds positions + indices from `meshRegister`;
  * the BVH is built the first time collision queries it.
  */
 function ensureBvh(entry: MeshEntry): void {

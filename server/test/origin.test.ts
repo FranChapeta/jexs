@@ -18,7 +18,7 @@ before(async () => {
   resolver = createResolver([...coreNodes(), new ServerNode(), new WebSocketNode()]);
   PORT = Number(await resolver({ $listen: 0, do: [{ response: "ran" }] }, {}));
   TRUSTING_PORT = Number(await resolver({ $listen: 0, trustedOrigins: ["https://admin.example"], do: [{ response: "ran" }] }, {}));
-  SOCKET_PORT = Number(await resolver({ $listen: 0, do: [{ "$socket-accept": true }] }, {}));
+  SOCKET_PORT = Number(await resolver({ $listen: 0, do: [{ "$socketAccept": true }] }, {}));
   PROXIED_PORT = Number(await resolver({ $listen: 0, trustProxy: true, do: [{ $var: "baseUrl" }] }, {}));
 });
 

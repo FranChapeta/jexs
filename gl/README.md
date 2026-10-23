@@ -18,22 +18,22 @@ A single `GlNode` exposes the full renderer through JSON keys:
 
 | Key | Purpose |
 |---|---|
-| `gl-init` | Set up the WebGL2 context on a canvas selector, with a clear color, depth test and an `on-frame` loop |
-| `gl-destroy` | Tear down the context |
-| `gl-camera` | Move / orient / look-at the camera, follow an entity, shake |
-| `gl-register-mesh` | Upload an imported mesh (typically from `parseGLB`) to the GPU for instanced rendering |
-| `gl-texture` `gl-atlas` `gl-font` | Load textures, sprite atlases and bitmap fonts |
-| `gl-frame` | Set a static atlas frame on an entity |
-| `gl-text` | Render bitmap text |
-| `gl-shader` | Bind a custom shader |
-| `gl-animate` `gl-tween` | Drive a per-entity animation, or tween a value with an easing function |
-| `gl-tilemap` `gl-tilemap-set` | Build and edit a tilemap layer |
-| `gl-trail` `gl-trail-remove` | Attach a motion trail to an entity |
-| `gl-particle` | Emit a particle burst |
-| `gl-transition` | Cross-fade post-process effects |
-| `gl-blur` | Apply a separable Gaussian blur |
-| `gl-ssao` | Toggle screen-space ambient occlusion |
-| `gl-hit` `gl-raycast` | Pick an entity under the cursor, or cast a ray into the scene |
+| `glInit` | Set up the WebGL2 context on a canvas selector, with a clear color, depth test and an `onFrame` loop |
+| `glDestroy` | Tear down the context |
+| `glCamera` | Move / orient / look-at the camera, follow an entity, shake |
+| `glRegisterMesh` | Upload an imported mesh (typically from `parseGLB`) to the GPU for instanced rendering |
+| `glTexture` `glAtlas` `glFont` | Load textures, sprite atlases and bitmap fonts |
+| `glFrame` | Set a static atlas frame on an entity |
+| `glText` | Render bitmap text |
+| `glShader` | Bind a custom shader |
+| `glAnimate` `glTween` | Drive a per-entity animation, or tween a value with an easing function |
+| `glTilemap` `glTilemapSet` | Build and edit a tilemap layer |
+| `glTrail` `glTrailRemove` | Attach a motion trail to an entity |
+| `glParticle` | Emit a particle burst |
+| `glTransition` | Cross-fade post-process effects |
+| `glBlur` | Apply a separable Gaussian blur |
+| `glSsao` | Toggle screen-space ambient occlusion |
+| `glHit` `glRaycast` | Pick an entity under the cursor, or cast a ray into the scene |
 
 Rendering reads directly from `@jexs/physics`'s `EntityStore` — there's no scene graph to maintain; whatever's in the store is what gets drawn.
 
@@ -41,14 +41,14 @@ Rendering reads directly from `@jexs/physics`'s `EntityStore` — there's no sce
 
 ```json
 [
-  { "$entity-init": "world", "width": 800, "height": 600 },
-  { "$gl-init": "#scene", "width": 800, "height": 600, "depth": true, "clear": [0.05, 0.06, 0.08, 1] },
+  { "$entityInit": "world", "width": 800, "height": 600 },
+  { "$glInit": "#scene", "width": 800, "height": 600, "depth": true, "clear": [0.05, 0.06, 0.08, 1] },
 
   { "$fetch": "/models/robot.glb", "$as": "buf" },
   { "$parseGLB": { "$var": "buf" }, "name": "robot", "$as": "scene" },
 
   { "$foreach": { "$values": { "$var": "scene.meshes" } }, "item": "m", "do": {
-    "$gl-register-mesh": { "$var": "m.id" },
+    "$glRegisterMesh": { "$var": "m.id" },
     "bounds":    { "$var": "m.bounds" },
     "positions": { "$var": "m.positions" },
     "normals":   { "$var": "m.normals" },
@@ -58,9 +58,9 @@ Rendering reads directly from `@jexs/physics`'s `EntityStore` — there's no sce
   } },
 
   { "$first": { "$keys": { "$var": "scene.meshes" } }, "$as": "meshId" },
-  { "$entity-add": "robot-1", "type": "mesh", "mesh": { "$var": "meshId" }, "translation": [0, 0, -5] },
+  { "$entityAdd": "robot-1", "type": "mesh", "mesh": { "$var": "meshId" }, "translation": [0, 0, -5] },
 
-  { "$gl-camera": true, "z": 5, "lookAt": [0, 0, 0] }
+  { "$glCamera": true, "z": 5, "lookAt": [0, 0, 0] }
 ]
 ```
 

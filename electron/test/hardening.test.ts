@@ -62,7 +62,7 @@ test("a closed window stops resolving to its old page", () => {
 
 // Stands in for `resolver.keys`. `table` and `write` are siblings rather than
 // ops, which is the distinction the allow-list turns on.
-const isOp = (key: string) => ["query", "file", "getProp", "window-close"].includes(key);
+const isOp = (key: string) => ["query", "file", "getProp", "windowClose"].includes(key);
 
 test("siblings need no listing, only ops do", () => {
   const allow = new Set(["query"]);

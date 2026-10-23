@@ -23,6 +23,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { ANY, STEPS, createCodemod, run, type Codemod, type CombinedSchema, type Val } from "../codemod/codemod.js";
+import { HANDLER_RENAMES, OP_RENAMES } from "./renames.js";
 
 const args = process.argv.slice(2);
 const schemaPath = path.resolve(args.find(a => a.startsWith("--schema="))?.slice("--schema=".length) ?? ".jexs/combined.schema.json");
@@ -561,9 +562,9 @@ const RULES: Record<string, Rule> = {
     const tree = obj.props.find(p => p.key === "$routes")?.value;
     if (tree) routeTree(tree, [], m);
   },
-  // A connection's handlers: `on-connect` is `on-open`, and its id is `id`.
+  // A connection's handlers: `on-connect` is `onOpen`, and its id is `id`.
   "socket-accept": (step, m) => {
-    renameSibling(step, "on-connect", "on-open", m);
+    renameSibling(step, "on-connect", "onOpen", m);
     handlerReads(step, { wsId: "id" }, m);
   },
   // Client handlers read what they are handed by its role, as the server's do.
@@ -586,9 +587,9 @@ const RULES: Record<string, Rule> = {
     const q = prop.keyQuoted ? '"' : "";
     m.add({ start: prop.keyStart, end: prop.value.end, text: `$catch${q}: [{ ${q}$var${q}: "${read}" }]` });
   },
-  // Storage reads like the cache: `storage-set` takes `value`, and removing is `storage-delete`.
+  // Storage reads like the cache: `storageSet` takes `value`, and removing is `storageDelete`.
   "storage-set": (step, m) => tupleToSiblings(step, ["value"], m),
-  "storage-remove": (step, m) => renameOp(step, "storage-delete", m),
+  "storage-remove": (step, m) => renameOp(step, "storageDelete", m),
   // A level's name and value are its two operands.
   "audio-volume": (step, m) => siblingToTuple(step, "volume", m),
   rtc: (step, m) => handlerReads(step, { rtcSignal: "signal", rtcPeerId: "peer", rtcInbound: "inbound", rtcMessage: "message", rtcChannel: "channel" }, m),
@@ -771,8 +772,12 @@ function walkExpr(v: Val): void {
   // made after the upgrade, say); its siblings are then walked as plain values.
   const isOp = (name: string) => HANDLERS.has(name) || Object.hasOwn(RULES, name);
   const op = v.props.find(p => p.key.startsWith("$") && isOp(p.key.slice(1)))?.key.slice(1);
-  if (op !== undefined) RULES[op]?.({ op, obj: v }, m);
-  else responseObject(v, m);
+  if (op !== undefined) {
+    RULES[op]?.({ op, obj: v }, m);
+    // Ops and their handlers are named in camelCase.
+    if (Object.hasOwn(OP_RENAMES, op)) renameOp({ op, obj: v }, OP_RENAMES[op], m);
+    for (const p of v.props) if (Object.hasOwn(HANDLER_RENAMES, p.key)) renameSibling({ op, obj: v }, p.key, HANDLER_RENAMES[p.key], m);
+  } else responseObject(v, m);
   // A route tree or handler written as data, such as a file `$routes` loads a
   // subtree from.
   if (op === undefined) dataRoute(v, m);

@@ -164,7 +164,7 @@ const cacheOf = (version = 1) => {
 const OFFLINE = { path: "/**", strategy: "network-first", fallback: "/offline.html" } as const;
 
 test("listeners are added synchronously; fetch only when there are routes", () => {
-  startServiceWorker({ events: { push: { "$sw-post": 1 } } });
+  startServiceWorker({ events: { push: { "$swPost": 1 } } });
   assert.deepEqual([...listeners.keys()].sort(), ["activate", "install", "push"]);
 
   listeners = new Map();
@@ -185,7 +185,7 @@ test("a config the runtime cannot honor is refused at startup", () => {
 
 test("install precaches, skips waiting only when asked, then runs its steps", async () => {
   windows = [{ url: abs("/"), focused: false, navigatedTo: null, inbox: [], controlled: true }];
-  startServiceWorker({ precache: ["/", "/app.css"], events: { install: { "$sw-post": "installed" } } }, { version: "a" });
+  startServiceWorker({ precache: ["/", "/app.css"], events: { install: { "$swPost": "installed" } } }, { version: "a" });
   await dispatch(new ExtendableEvent("install")).done();
   assert.equal(await (await cacheOf("a").match("/app.css"))?.text(), "cached /app.css");
   assert.equal(skipped, false);
@@ -315,7 +315,7 @@ test("stale-while-revalidate serves the cache and refreshes it", async () => {
 
 test("push data is JSON when it parses, text otherwise, null when absent", async () => {
   windows = [{ url: abs("/"), focused: false, navigatedTo: null, inbox: [], controlled: true }];
-  startServiceWorker({ events: { push: { "$sw-post": { "$var": "data" } } } });
+  startServiceWorker({ events: { push: { "$swPost": { "$var": "data" } } } });
   await dispatch(new PushEvent({ text: () => '{"title":"Hi"}' })).done();
   await dispatch(new PushEvent({ text: () => "plain" })).done();
   await dispatch(new PushEvent(null)).done();
@@ -324,9 +324,9 @@ test("push data is JSON when it parses, text otherwise, null when absent", async
 
 test("every handler sees the worker's version", async () => {
   windows = [{ url: abs("/"), focused: false, navigatedTo: null, inbox: [], controlled: true }];
-  startServiceWorker({ events: { message: { "$sw-post": { "$var": "version" } } } }, { version: "3f9a" });
+  startServiceWorker({ events: { message: { "$swPost": { "$var": "version" } } } }, { version: "3f9a" });
   await dispatch(new ExtendableMessageEvent("hi", null)).done();
-  startServiceWorker({ events: { message: { "$sw-post": { "$var": "version" } } } });
+  startServiceWorker({ events: { message: { "$swPost": { "$var": "version" } } } });
   await dispatch(new ExtendableMessageEvent("hi", null)).done();
   assert.deepEqual(windows[0].inbox, ["3f9a", 1]);
 });
@@ -334,14 +334,14 @@ test("every handler sees the worker's version", async () => {
 test("a message names the page that sent it", async () => {
   const replies: unknown[] = [];
   const page = { id: "c1", url: abs("/inbox"), type: "window", postMessage: (m: unknown) => replies.push(m) };
-  startServiceWorker({ events: { message: { "$sw-post": { "$var": "source" } } } });
+  startServiceWorker({ events: { message: { "$swPost": { "$var": "source" } } } });
   await dispatch(new ExtendableMessageEvent("hi", page)).done();
   assert.deepEqual(replies, [{ id: "c1", url: abs("/inbox"), type: "window" }]);
 });
 
 test("sync carries its tag and whether it is the last retry", async () => {
   windows = [{ url: abs("/"), focused: false, navigatedTo: null, inbox: [], controlled: true }];
-  startServiceWorker({ events: { sync: { "$sw-post": { "tag": { "$var": "tag" }, "last": { "$var": "lastChance" } } } } });
+  startServiceWorker({ events: { sync: { "$swPost": { "tag": { "$var": "tag" }, "last": { "$var": "lastChance" } } } } });
   await dispatch(Object.assign(new ExtendableEvent("sync"), { tag: "outbox", lastChance: true })).done();
   await dispatch(Object.assign(new ExtendableEvent("sync"), { tag: "outbox", lastChance: false })).done();
   assert.deepEqual(windows[0].inbox, [{ tag: "outbox", last: true }, { tag: "outbox", last: false }]);
@@ -350,7 +350,7 @@ test("sync carries its tag and whether it is the last retry", async () => {
 test("pushsubscriptionchange carries both subscriptions as JSON", async () => {
   windows = [{ url: abs("/"), focused: false, navigatedTo: null, inbox: [], controlled: true }];
   startServiceWorker({
-    events: { pushsubscriptionchange: { "$sw-post": { "old": { "$var": "oldSubscription.endpoint" }, "new": { "$var": "newSubscription" } } } },
+    events: { pushsubscriptionchange: { "$swPost": { "old": { "$var": "oldSubscription.endpoint" }, "new": { "$var": "newSubscription" } } } },
   });
   const oldSubscription = { toJSON: () => ({ endpoint: "https://push.test/old", keys: { p256dh: "k", auth: "a" } }) };
   await dispatch(Object.assign(new ExtendableEvent("pushsubscriptionchange"), { oldSubscription, newSubscription: null })).done();
@@ -359,7 +359,7 @@ test("pushsubscriptionchange carries both subscriptions as JSON", async () => {
 
 test("a clicked notification is passed whole", async () => {
   windows = [{ url: abs("/"), focused: false, navigatedTo: null, inbox: [], controlled: true }];
-  startServiceWorker({ events: { notificationclick: { "$sw-post": { "$var": "notification" } } } });
+  startServiceWorker({ events: { notificationclick: { "$swPost": { "$var": "notification" } } } });
   await dispatch(new NotificationEvent({
     title: "Hi", body: "b", tag: "t", icon: "/i.png", image: "/big.png",
     actions: [{ action: "open", title: "Open" }], timestamp: 5, requireInteraction: true, silent: false, data: { url: "/x" },
@@ -370,11 +370,11 @@ test("a clicked notification is passed whole", async () => {
   }]);
 });
 
-test("sw-notify passes its siblings as notification options", async () => {
+test("swNotify passes its siblings as notification options", async () => {
   startServiceWorker({
     events: {
       push: {
-        "$sw-notify": { "$var": "data.title" },
+        "$swNotify": { "$var": "data.title" },
         "body": "b",
         "requireInteraction": true,
         "actions": [{ "action": "open", "title": "Open" }, { "title": "no id" }],
@@ -389,12 +389,12 @@ test("sw-notify passes its siblings as notification options", async () => {
   }]);
 });
 
-test("sw-open focuses a window at the URL, else opens one, and closes the notification", async () => {
+test("swOpen focuses a window at the URL, else opens one, and closes the notification", async () => {
   windows = [
     { url: abs("/"), focused: false, navigatedTo: null, inbox: [], controlled: true },
     { url: abs("/inbox"), focused: false, navigatedTo: null, inbox: [], controlled: true },
   ];
-  startServiceWorker({ events: { notificationclick: { "$sw-open": { "$var": "notification.data.url" } } } });
+  startServiceWorker({ events: { notificationclick: { "$swOpen": { "$var": "notification.data.url" } } } });
   const click = await dispatch(new NotificationEvent({ data: { url: "/inbox" } }));
   await click.done();
   assert.equal(click.closed, true);
@@ -406,25 +406,25 @@ test("sw-open focuses a window at the URL, else opens one, and closes the notifi
   assert.equal(windows[0].navigatedTo, null);
 });
 
-test("sw-open with navigate reuses a controlled window", async () => {
+test("swOpen with navigate reuses a controlled window", async () => {
   windows = [
     { url: abs("/a"), focused: false, navigatedTo: null, inbox: [], controlled: false },
     { url: abs("/b"), focused: false, navigatedTo: null, inbox: [], controlled: true },
   ];
-  startServiceWorker({ events: { notificationclick: { "$sw-open": "/c", "navigate": true } } });
+  startServiceWorker({ events: { notificationclick: { "$swOpen": "/c", "navigate": true } } });
   await dispatch(new NotificationEvent({})).done();
   assert.equal(windows[0].navigatedTo, null);
   assert.equal(windows[1].navigatedTo, abs("/c"));
   assert.deepEqual(opened, []);
 });
 
-test("sw-post replies to the sender of a message, and broadcasts elsewhere", async () => {
+test("swPost replies to the sender of a message, and broadcasts elsewhere", async () => {
   const replies: unknown[] = [];
   windows = [{ url: abs("/"), focused: false, navigatedTo: null, inbox: [], controlled: true }];
   startServiceWorker({
     events: {
-      message: { "$sw-post": { "got": { "$var": "message" } } },
-      activate: { "$sw-post": "updated" },
+      message: { "$swPost": { "got": { "$var": "message" } } },
+      activate: { "$swPost": "updated" },
     },
   });
   await dispatch(new ExtendableMessageEvent("ping", { postMessage: (m) => replies.push(m) })).done();
@@ -439,7 +439,7 @@ test("a step list runs in order", async () => {
     events: {
       message: [
         { "$concat": [{ "$var": "message" }, "!"], "$as": "loud" },
-        { "$sw-post": { "$var": "loud" } },
+        { "$swPost": { "$var": "loud" } },
       ],
     },
   });

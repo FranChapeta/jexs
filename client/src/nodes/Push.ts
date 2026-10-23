@@ -19,32 +19,32 @@ export class PushNode extends Node {
   };
 
   static schema: JexsNodeSchema = {
-    "push-subscribe": {
+    pushSubscribe: {
       type: "string",
       output: { $ref: "#/$defs/_pushSubscription" },
       markdownDescription: "Requests notification permission and subscribes to Web Push using the given VAPID public key.\nReturns the `PushSubscription` JSON, which you send to your server to enable push delivery.\nRequires a registered service worker with `PushManager` support. A browser without it, a missing key, or a permission not granted is an error.",
       examples: [
-        "{ \"$push-subscribe\": { \"$var\": \"vapidPublicKey\" } }",
+        "{ \"$pushSubscribe\": { \"$var\": \"vapidPublicKey\" } }",
       ],
     },
-    "push-unsubscribe": {
+    pushUnsubscribe: {
       output: "boolean",
       markdownDescription: "Unsubscribes from Web Push. Pass the stored `PushSubscription` JSON object to verify the endpoint.\nReturns `true` on success, `false` if no matching subscription was found.",
       examples: [
-        "{ \"$push-unsubscribe\": { \"$var\": \"session.pushSubscription\" } }",
+        "{ \"$pushUnsubscribe\": { \"$var\": \"session.pushSubscription\" } }",
       ],
     },
   };
 
-  ["push-subscribe"](def: Record<string, unknown>, context: Context): NodeValue {
+  pushSubscribe(def: Record<string, unknown>, context: Context): NodeValue {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-      throw new Error("$push-subscribe: this browser has no Web Push (it needs a service worker and PushManager)");
+      throw new Error("$pushSubscribe: this browser has no Web Push (it needs a service worker and PushManager)");
     }
-    return resolve(def["$push-subscribe"], context, async vapidKeyRaw => {
+    return resolve(def.$pushSubscribe, context, async vapidKeyRaw => {
       const vapidKey = String(vapidKeyRaw ?? "");
-      if (!vapidKey) throw new Error("$push-subscribe needs the server's VAPID public key");
+      if (!vapidKey) throw new Error("$pushSubscribe needs the server's VAPID public key");
       const permission = await Notification.requestPermission();
-      if (permission !== "granted") throw new Error(`$push-subscribe: notification permission is ${permission}`);
+      if (permission !== "granted") throw new Error(`$pushSubscribe: notification permission is ${permission}`);
       const registration = await navigator.serviceWorker.ready;
       const subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
@@ -54,9 +54,9 @@ export class PushNode extends Node {
     });
   }
 
-  ["push-unsubscribe"](def: Record<string, unknown>, context: Context): NodeValue {
+  pushUnsubscribe(def: Record<string, unknown>, context: Context): NodeValue {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) return false;
-    return resolve(def["$push-unsubscribe"], context, async stored => {
+    return resolve(def.$pushUnsubscribe, context, async stored => {
       const registration = await navigator.serviceWorker.ready;
       const existing = await registration.pushManager.getSubscription();
       if (!existing) return false;

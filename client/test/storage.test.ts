@@ -14,38 +14,38 @@ beforeEach(() => {
 });
 
 test("set stores JSON for non-strings and get decodes it", async () => {
-  assert.deepEqual(await run({ "$storage-set": "prefs", value: { theme: "dark" } }), { theme: "dark" });
+  assert.deepEqual(await run({ "$storageSet": "prefs", value: { theme: "dark" } }), { theme: "dark" });
   assert.equal(window.localStorage.getItem("prefs"), '{"theme":"dark"}');
-  assert.deepEqual(await run({ "$storage-get": "prefs" }), { theme: "dark" });
+  assert.deepEqual(await run({ "$storageGet": "prefs" }), { theme: "dark" });
 
-  await run({ "$storage-set": "name", value: "Ada" });
+  await run({ "$storageSet": "name", value: "Ada" });
   assert.equal(window.localStorage.getItem("name"), "Ada", "a string is stored as written");
-  assert.equal(await run({ "$storage-get": "name" }), "Ada", "a value that is not JSON reads back raw");
-  assert.equal(await run({ "$storage-get": "absent" }), null);
+  assert.equal(await run({ "$storageGet": "name" }), "Ada", "a value that is not JSON reads back raw");
+  assert.equal(await run({ "$storageGet": "absent" }), null);
 });
 
 test("session: true uses sessionStorage", async () => {
-  await run({ "$storage-set": "cart", value: [1, 2], session: true });
+  await run({ "$storageSet": "cart", value: [1, 2], session: true });
   assert.equal(window.localStorage.getItem("cart"), null);
-  assert.deepEqual(await run({ "$storage-get": "cart", session: true }), [1, 2]);
+  assert.deepEqual(await run({ "$storageGet": "cart", session: true }), [1, 2]);
 });
 
 test("keys lists the store, has finds an entry, and delete and clear empty it", async () => {
-  await run({ "$storage-set": "a", value: 1 });
-  await run({ "$storage-set": "b", value: null });
+  await run({ "$storageSet": "a", value: 1 });
+  await run({ "$storageSet": "b", value: null });
   assert.deepEqual((await run({ $storage: "keys" }) as string[]).sort(), ["a", "b"]);
-  assert.equal(await run({ "$storage-has": "a" }), true);
-  assert.equal(await run({ "$storage-has": "b" }), true, "a stored null is still an entry");
-  assert.equal(await run({ "$storage-delete": "a" }), true);
-  assert.equal(await run({ "$storage-delete": "a" }), false, "nothing left to delete");
-  assert.equal(await run({ "$storage-has": "a" }), false);
+  assert.equal(await run({ "$storageHas": "a" }), true);
+  assert.equal(await run({ "$storageHas": "b" }), true, "a stored null is still an entry");
+  assert.equal(await run({ "$storageDelete": "a" }), true);
+  assert.equal(await run({ "$storageDelete": "a" }), false, "nothing left to delete");
+  assert.equal(await run({ "$storageHas": "a" }), false);
   assert.deepEqual(await run({ $storage: "keys" }), ["b"]);
   assert.equal(await run({ $storage: "clear" }), null);
   assert.deepEqual(await run({ $storage: "keys" }), []);
 });
 
 test("set needs a value", () => {
-  assert.throws(() => run({ "$storage-set": "only-key" }), /storage-set needs a `value`/);
+  assert.throws(() => run({ "$storageSet": "only-key" }), /storageSet needs a `value`/);
 });
 
 test("an unknown bulk op is an error", () => {

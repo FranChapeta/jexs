@@ -18,7 +18,7 @@ const electronNodeClasses = [
 ];
 
 // An Electron app is all of these: the main process runs the server nodes (`file`,
-// `query`) and `window-run` runs its steps in the renderer, where the DOM ops
+// `query`) and `windowRun` runs its steps in the renderer, where the DOM ops
 // live, so the examples name ops from both.
 const combined = mergePackageSchemas([
   buildPackageSchema(coreNodes(), "@jexs/core"),
@@ -35,13 +35,13 @@ function validAt(ref: string, expr: unknown): boolean {
 }
 
 const ELECTRON_OPS = [
-  "window-open", "window-close", "window-focus", "window-min", "window-max",
-  "menu", "tray", "tray-destroy", "shortcut", "shortcut-remove", "window-run",
-  "window-restore", "window-reload", "window-devtools", "window-title",
-  "window-bounds", "window-list",
-  "dialog-open", "dialog-save", "dialog-message",
-  "app-quit", "app-path", "app-version", "app-locale", "app-relaunch", "app-on",
-  "shell-open", "shell-open-path", "shell-show", "shell-trash", "shell-beep", "notify",
+  "windowOpen", "windowClose", "windowFocus", "windowMin", "windowMax",
+  "menu", "tray", "trayDestroy", "shortcut", "shortcutRemove", "windowRun",
+  "windowRestore", "windowReload", "windowDevtools", "windowTitle",
+  "windowBounds", "windowList",
+  "dialogOpen", "dialogSave", "dialogMessage",
+  "appQuit", "appPath", "appVersion", "appLocale", "appRelaunch", "appOn",
+  "shellOpen", "shellOpenPath", "shellShow", "shellTrash", "shellBeep", "notify",
 ];
 
 test("every electron op is present in byKey", () => {
@@ -70,23 +70,23 @@ test("every declared example validates against the combined schema", () => {
   }
 });
 
-test("window-open accepts its declared siblings and expressions in them", () => {
-  assert.equal(validAt("$defs/exprFlat", { "$window-open": "settings.json" }), true);
+test("windowOpen accepts its declared siblings and expressions in them", () => {
+  assert.equal(validAt("$defs/exprFlat", { "$windowOpen": "settings.json" }), true);
   assert.equal(
-    validAt("$defs/exprFlat", { "$window-open": "settings.json", width: 480, height: 320, title: "S" }),
+    validAt("$defs/exprFlat", { "$windowOpen": "settings.json", width: 480, height: 320, title: "S" }),
     true,
   );
   // Siblings are resolved now, so an expression in one must validate.
   assert.equal(
-    validAt("$defs/exprFlat", { "$window-open": "settings.json", width: { $var: "w" } }),
+    validAt("$defs/exprFlat", { "$windowOpen": "settings.json", width: { $var: "w" } }),
     true,
   );
   assert.equal(
-    validAt("$defs/exprFlat", { "$window-open": "settings.json", name: "cfg", frame: false, titleBarStyle: "hidden" }),
+    validAt("$defs/exprFlat", { "$windowOpen": "settings.json", name: "cfg", frame: false, titleBarStyle: "hidden" }),
     true,
   );
   assert.equal(
-    validAt("$defs/exprFlat", { "$window-open": "settings.json", titleBarStyle: "nonsense" }),
+    validAt("$defs/exprFlat", { "$windowOpen": "settings.json", titleBarStyle: "nonsense" }),
     false,
   );
 });
@@ -94,38 +94,38 @@ test("window-open accepts its declared siblings and expressions in them", () => 
 // No-arg ops carry the target in the primary slot; valued ops take their value
 // there and target through the `window` sibling.
 test("no-arg window ops accept a name or true", () => {
-  for (const op of ["window-close", "window-focus", "window-min", "window-max", "window-restore"]) {
+  for (const op of ["windowClose", "windowFocus", "windowMin", "windowMax", "windowRestore"]) {
     assert.equal(validAt("$defs/exprFlat", { [op]: true }), true, `${op} true`);
     assert.equal(validAt("$defs/exprFlat", { [op]: "settings" }), true, `${op} name`);
   }
 });
 
 test("valued window ops target through the window sibling", () => {
-  assert.equal(validAt("$defs/exprFlat", { "$window-title": "Untitled" }), true);
+  assert.equal(validAt("$defs/exprFlat", { "$windowTitle": "Untitled" }), true);
   assert.equal(
-    validAt("$defs/exprFlat", { "$window-title": "Untitled", window: "settings" }),
+    validAt("$defs/exprFlat", { "$windowTitle": "Untitled", window: "settings" }),
     true,
   );
   assert.equal(
-    validAt("$defs/exprFlat", { "$window-bounds": { width: 900, height: 600 }, window: "main" }),
+    validAt("$defs/exprFlat", { "$windowBounds": { width: 900, height: 600 }, window: "main" }),
     true,
   );
 });
 
-test("dialog-open constrains properties to the known enum", () => {
+test("dialogOpen constrains properties to the known enum", () => {
   assert.equal(
-    validAt("$defs/exprFlat", { "$dialog-open": "Open", properties: ["openFile"] }),
+    validAt("$defs/exprFlat", { "$dialogOpen": "Open", properties: ["openFile"] }),
     true,
   );
   assert.equal(
-    validAt("$defs/exprFlat", { "$dialog-open": "Open", properties: ["notAProperty"] }),
+    validAt("$defs/exprFlat", { "$dialogOpen": "Open", properties: ["notAProperty"] }),
     false,
   );
 });
 
-test("dialog-message constrains type to the known enum", () => {
-  assert.equal(validAt("$defs/exprFlat", { "$dialog-message": "Hi", type: "question" }), true);
-  assert.equal(validAt("$defs/exprFlat", { "$dialog-message": "Hi", type: "banana" }), false);
+test("dialogMessage constrains type to the known enum", () => {
+  assert.equal(validAt("$defs/exprFlat", { "$dialogMessage": "Hi", type: "question" }), true);
+  assert.equal(validAt("$defs/exprFlat", { "$dialogMessage": "Hi", type: "banana" }), false);
 });
 
 // The _menuItem $ref is recursive and shared: MenuNode contributes it and
@@ -138,7 +138,7 @@ test("menu items validate through arbitrary nesting", () => {
       $menu: [{
         label: "File",
         submenu: [
-          { label: "Open", accelerator: "CmdOrCtrl+O", do: [{ "$dialog-open": "Pick" }] },
+          { label: "Open", accelerator: "CmdOrCtrl+O", do: [{ "$dialogOpen": "Pick" }] },
           { type: "separator" },
           { label: "Recent", submenu: [{ label: "Deep", submenu: [{ role: "quit" }] }] },
         ],
@@ -171,11 +171,11 @@ test("tray reuses the same item shape as menu", () => {
 
 test("shortcut takes an accelerator with do steps", () => {
   assert.equal(
-    validAt("$defs/exprFlat", { $shortcut: "CommandOrControl+K", do: [{ "$window-focus": "main" }] }),
+    validAt("$defs/exprFlat", { $shortcut: "CommandOrControl+K", do: [{ "$windowFocus": "main" }] }),
     true,
   );
-  assert.equal(validAt("$defs/exprFlat", { "$shortcut-remove": true }), true);
-  assert.equal(validAt("$defs/exprFlat", { "$shortcut-remove": "CommandOrControl+K" }), true);
+  assert.equal(validAt("$defs/exprFlat", { "$shortcutRemove": true }), true);
+  assert.equal(validAt("$defs/exprFlat", { "$shortcutRemove": "CommandOrControl+K" }), true);
 });
 
 test("no electron key collides with a core key", () => {
@@ -194,11 +194,11 @@ test("no electron key collides with a core key", () => {
 test("the step fields main announces to pages are the handler slots", () => {
   const nodes = electronNodeClasses.map(C => Object.create(C.prototype));
   assert.deepEqual(stepFields(nodes), {
-    "app-on": { do: "steps" },
+    appOn: { do: "steps" },
     menu: { $menu: "nested" },
     notify: { do: "steps" },
     shortcut: { do: "steps" },
     tray: { menu: "nested", do: "steps" },
-    "window-run": { "$window-run": "steps" },
+    windowRun: { "$windowRun": "steps" },
   });
 });

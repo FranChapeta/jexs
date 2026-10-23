@@ -90,7 +90,7 @@ If neither loads, every tool says so and tells you to run `jexs schema`.
 
 The rest of `src/`:
 
-- `index.json` is the whole server: startup, the `stdio-listen` NDJSON loop (which redirects
+- `index.json` is the whole server: startup, the `stdioListen` NDJSON loop (which redirects
   `console.log` to stderr to keep stdout clean for protocol data), and a `switch` on
   `message.method` for `initialize`, `tools/list`, `tools/call`, `ping`, notifications, and a
   JSON-RPC error for anything else.

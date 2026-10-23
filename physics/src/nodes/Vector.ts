@@ -83,7 +83,7 @@ export class VectorNode extends Node {
   };
 
   static schema: JexsNodeSchema = {
-    "v-distance": {
+    vectorDistance: {
       tuple: 2,
       prefixItems: [
         { $ref: "#/$defs/_vec", description: "First vector `a`." },
@@ -92,10 +92,10 @@ export class VectorNode extends Node {
       output: "number",
       markdownDescription: "Returns the Euclidean distance between two vectors. Pass `[a, b]`.",
       examples: [
-        "{ \"$v-distance\": [{ \"$var\": \"a\" }, { \"$var\": \"b\" }] }",
+        "{ \"$vectorDistance\": [{ \"$var\": \"a\" }, { \"$var\": \"b\" }] }",
       ],
     },
-    "v-lerp": {
+    vectorLerp: {
       tuple: 3,
       prefixItems: [
         { $ref: "#/$defs/_vec", description: "Start vector `a`." },
@@ -105,10 +105,10 @@ export class VectorNode extends Node {
       output: { $ref: "#/$defs/_vec" },
       markdownDescription: "Linearly interpolates between two vectors. Pass `[a, b, t]` where `t` is 0–1.",
       examples: [
-        "{ \"$v-lerp\": [{ \"$var\": \"from\" }, { \"$var\": \"to\" }, 0.1] }",
+        "{ \"$vectorLerp\": [{ \"$var\": \"from\" }, { \"$var\": \"to\" }, 0.1] }",
       ],
     },
-    "v-toward": {
+    vectorToward: {
       tuple: 3,
       prefixItems: [
         { $ref: "#/$defs/_vec", description: "The starting vector `a`." },
@@ -118,18 +118,18 @@ export class VectorNode extends Node {
       output: { $ref: "#/$defs/_vec" },
       markdownDescription: "Moves vector `a` toward `b` by at most `maxDist`. Returns `b` if already within range. Pass `[a, b, maxDist]`.",
       examples: [
-        "{ \"$v-toward\": [{ \"$var\": \"pos\" }, { \"$var\": \"target\" }, 5] }",
+        "{ \"$vectorToward\": [{ \"$var\": \"pos\" }, { \"$var\": \"target\" }, 5] }",
       ],
     },
-    "v-normalize": {
+    vectorNormalize: {
       $ref: "#/$defs/_vec",
       output: { $ref: "#/$defs/_vec" },
       markdownDescription: "Returns the unit vector (length 1) in the same direction. Works in 2D and 3D.",
       examples: [
-        "{ \"$v-normalize\": [3, 4] }",
+        "{ \"$vectorNormalize\": [3, 4] }",
       ],
     },
-    "v-scale": {
+    vectorScale: {
       tuple: 2,
       prefixItems: [
         { $ref: "#/$defs/_vec", description: "The vector to scale." },
@@ -138,7 +138,7 @@ export class VectorNode extends Node {
       output: { $ref: "#/$defs/_vec" },
       markdownDescription: "Multiplies a vector by a scalar. Pass `[vector, scalar]`. Works in 2D and 3D.",
     },
-    "v-add": {
+    vectorAdd: {
       tuple: 2,
       prefixItems: [
         { $ref: "#/$defs/_vec", description: "First vector `a`." },
@@ -147,10 +147,10 @@ export class VectorNode extends Node {
       output: { $ref: "#/$defs/_vec" },
       markdownDescription: "Adds two vectors component-wise. Pass `[a, b]`. Works in 2D and 3D.",
       examples: [
-        "{ \"$v-add\": [{ \"$entity-get\": \"player\", \"prop\": \"translation\" }, [0, 10, 0]] }",
+        "{ \"$vectorAdd\": [{ \"$entityGet\": \"player\", \"prop\": \"translation\" }, [0, 10, 0]] }",
       ],
     },
-    "v-sub": {
+    vectorSub: {
       tuple: 2,
       prefixItems: [
         { $ref: "#/$defs/_vec", description: "The minuend vector `a`." },
@@ -159,7 +159,7 @@ export class VectorNode extends Node {
       output: { $ref: "#/$defs/_vec" },
       markdownDescription: "Subtracts vector `b` from `a`. Pass `[a, b]`. Works in 2D and 3D.",
     },
-    "v-direction": {
+    vectorDirection: {
       tuple: 2,
       prefixItems: [
         { $ref: "#/$defs/_vec", description: "The `from` vector." },
@@ -168,7 +168,7 @@ export class VectorNode extends Node {
       output: { $ref: "#/$defs/_vec" },
       markdownDescription: "Returns the unit vector from `a` pointing toward `b`. Pass `[from, to]`.",
     },
-    "v-cross": {
+    vectorCross: {
       tuple: 2,
       prefixItems: [
         { $ref: "#/$defs/_vec", description: "First vector `a`." },
@@ -177,7 +177,7 @@ export class VectorNode extends Node {
       output: { $ref: "#/$defs/_vec" },
       markdownDescription: "Returns the cross product of two vectors as a 3D vector (a 2D one has `z = 0`). Pass `[a, b]`.",
     },
-    "v-dot": {
+    vectorDot: {
       tuple: 2,
       prefixItems: [
         { $ref: "#/$defs/_vec", description: "First vector `a`." },
@@ -188,76 +188,76 @@ export class VectorNode extends Node {
     },
   };
 
-  ["v-distance"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$v-distance"], context, args => {
+  vectorDistance(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$vectorDistance, context, args => {
       const a = this.toArray(args);
       if (a.length < 2) return 0;
       return distance(toVec(a[0]), toVec(a[1]));
     });
   }
 
-  ["v-lerp"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$v-lerp"], context, args => {
+  vectorLerp(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$vectorLerp, context, args => {
       const a = this.toArray(args);
       if (a.length < 3) return [0, 0];
       return lerp(toVec(a[0]), toVec(a[1]), this.toNumber(a[2]));
     });
   }
 
-  ["v-toward"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$v-toward"], context, args => {
+  vectorToward(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$vectorToward, context, args => {
       const a = this.toArray(args);
       if (a.length < 3) return [0, 0];
       return toward(toVec(a[0]), toVec(a[1]), this.toNumber(a[2]));
     });
   }
 
-  ["v-normalize"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$v-normalize"], context, v => normalize(toVec(v)));
+  vectorNormalize(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$vectorNormalize, context, v => normalize(toVec(v)));
   }
 
-  ["v-scale"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$v-scale"], context, args => {
+  vectorScale(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$vectorScale, context, args => {
       const a = this.toArray(args);
       if (a.length < 2) return [0, 0];
       return scale(toVec(a[0]), this.toNumber(a[1]));
     });
   }
 
-  ["v-add"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$v-add"], context, args => {
+  vectorAdd(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$vectorAdd, context, args => {
       const a = this.toArray(args);
       if (a.length < 2) return [0, 0];
       return add(toVec(a[0]), toVec(a[1]));
     });
   }
 
-  ["v-sub"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$v-sub"], context, args => {
+  vectorSub(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$vectorSub, context, args => {
       const a = this.toArray(args);
       if (a.length < 2) return [0, 0];
       return sub(toVec(a[0]), toVec(a[1]));
     });
   }
 
-  ["v-direction"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$v-direction"], context, args => {
+  vectorDirection(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$vectorDirection, context, args => {
       const a = this.toArray(args);
       if (a.length < 2) return [0, 0];
       return direction(toVec(a[0]), toVec(a[1]));
     });
   }
 
-  ["v-cross"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$v-cross"], context, args => {
+  vectorCross(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$vectorCross, context, args => {
       const a = this.toArray(args);
       if (a.length < 2) return [0, 0, 0];
       return cross(toVec(a[0]), toVec(a[1]));
     });
   }
 
-  ["v-dot"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$v-dot"], context, args => {
+  vectorDot(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$vectorDot, context, args => {
       const a = this.toArray(args);
       if (a.length < 2) return 0;
       return dot(toVec(a[0]), toVec(a[1]));

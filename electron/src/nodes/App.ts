@@ -23,77 +23,77 @@ export class AppNode extends Node {
 
   dispose(): void {
     for (const { app, event, listener } of this.listeners) {
-      // `removeListener` is declared per event name, like `on`; see `app-on`.
+      // `removeListener` is declared per event name, like `on`; see `appOn`.
       (app.removeListener.bind(app) as (e: string, cb: () => void) => unknown)(event, listener);
     }
     this.listeners.length = 0;
   }
 
   static schema: JexsNodeSchema = {
-    "app-quit": {
+    appQuit: {
       output: "null",
       markdownDescription: "Quit the application.",
-      examples: ["{ \"$app-quit\": true }"],
+      examples: ["{ \"$appQuit\": true }"],
     },
-    "app-path": {
+    appPath: {
       type: "string",
       output: "string",
       markdownDescription: "Resolve a well-known app path by name (e.g. `userData`, `home`, `documents`) — the place to keep save games.",
-      examples: ["{ \"$app-path\": \"userData\" }"],
+      examples: ["{ \"$appPath\": \"userData\" }"],
     },
-    "app-version": {
+    appVersion: {
       output: "string",
       markdownDescription: "The version from the app's package.json, for an About box or a crash report.",
-      examples: ["{ \"$app-version\": true }"],
+      examples: ["{ \"$appVersion\": true }"],
     },
-    "app-locale": {
+    appLocale: {
       output: "string",
       markdownDescription: "The user's current locale, e.g. `en-GB`. Available only after the app is ready.",
-      examples: ["{ \"$app-locale\": true }"],
+      examples: ["{ \"$appLocale\": true }"],
     },
-    "app-relaunch": {
+    appRelaunch: {
       output: "null",
       markdownDescription: "Restart the app: queues a fresh instance and quits this one. Use after a settings change that only applies at startup.",
-      examples: ["{ \"$app-relaunch\": true }"],
+      examples: ["{ \"$appRelaunch\": true }"],
     },
-    "app-on": {
+    appOn: {
       type: "string",
       enum: [...APP_EVENTS],
       output: "null",
       markdownDescription:
         "Run steps when an application event fires.\nListeners add rather than replace, so this does not disturb the runner's own lifecycle handling — an `activate` handler runs alongside the default window restore, it does not suppress it.",
-      examples: ["{ \"$app-on\": \"before-quit\", \"do\": [{ \"$file\": \"state.json\", \"write\": { \"$var\": \"state\" } }] }"],
+      examples: ["{ \"$appOn\": \"before-quit\", \"do\": [{ \"$file\": \"state.json\", \"write\": { \"$var\": \"state\" } }] }"],
       siblings: {
         do: { steps: true, required: true, description: "Steps run in the main process when the event fires. An array runs as a sequence; a single expression is run on its own." },
       },
     },
   };
 
-  async "app-quit"(_def: Record<string, unknown>, _context: Context): Promise<NodeValue> {
+  async "appQuit"(_def: Record<string, unknown>, _context: Context): Promise<NodeValue> {
     const { app } = await import("electron");
     app.quit();
     return null;
   }
 
   // The path name may itself be an expression, so resolve the value first.
-  "app-path"(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$app-path"], context, async (name) => {
+  "appPath"(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$appPath, context, async (name) => {
       const { app } = await import("electron");
       return app.getPath(String(name) as AppPathName) as NodeValue;
     });
   }
 
-  async "app-version"(_def: Record<string, unknown>, _context: Context): Promise<NodeValue> {
+  async "appVersion"(_def: Record<string, unknown>, _context: Context): Promise<NodeValue> {
     const { app } = await import("electron");
     return app.getVersion();
   }
 
-  async "app-locale"(_def: Record<string, unknown>, _context: Context): Promise<NodeValue> {
+  async "appLocale"(_def: Record<string, unknown>, _context: Context): Promise<NodeValue> {
     const { app } = await import("electron");
     return app.getLocale();
   }
 
-  async "app-relaunch"(_def: Record<string, unknown>, _context: Context): Promise<NodeValue> {
+  async "appRelaunch"(_def: Record<string, unknown>, _context: Context): Promise<NodeValue> {
     const { app } = await import("electron");
     // relaunch only QUEUES the restart; without the quit nothing happens.
     app.relaunch();
@@ -102,13 +102,13 @@ export class AppNode extends Node {
   }
 
   // `do` stays raw; only the event name resolves.
-  "app-on"(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$app-on"], context, async (value) => {
+  "appOn"(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$appOn, context, async (value) => {
       const event = String(value);
       if (!APP_EVENTS.includes(event as AppEvent)) return null;
       // A handler with no steps registers and then does nothing every time the
       // event fires, which reads as the event never arriving.
-      if (def.do === undefined) throw new Error("app-on needs `do` steps");
+      if (def.do === undefined) throw new Error("appOn needs `do` steps");
       const steps = def.do;
 
       const { app } = await import("electron");

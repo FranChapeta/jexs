@@ -43,14 +43,14 @@
     "separator": "\n\n"
   },
   {
-    "$stdio-listen": true,
-    "on-message": [
+    "$stdioListen": true,
+    "onMessage": [
       { "$as": "id", "$var": "message.id" },
       {
         "$switch": { "$var": "message.method" },
         "cases": {
           "initialize": {
-            "$stdio-write": {
+            "$stdioWrite": {
               "jsonrpc": "2.0",
               "id": { "$var": "id" },
               "result": {
@@ -63,8 +63,8 @@
           },
           "notifications/initialized": [],
           "notifications/cancelled": [],
-          "ping": { "$stdio-write": { "jsonrpc": "2.0", "id": { "$var": "id" }, "result": {} } },
-          "tools/list": { "$stdio-write": { "jsonrpc": "2.0", "id": { "$var": "id" }, "result": { "tools": { "$var": "toolDefs" } } } },
+          "ping": { "$stdioWrite": { "jsonrpc": "2.0", "id": { "$var": "id" }, "result": {} } },
+          "tools/list": { "$stdioWrite": { "jsonrpc": "2.0", "id": { "$var": "id" }, "result": { "tools": { "$var": "toolDefs" } } } },
           "tools/call": [
             { "$as": "tool", "$var": "message.params.name" },
             { "$as": "args", "$var": "message.params.arguments" },
@@ -476,14 +476,14 @@
               },
               "default": { "content": [{ "type": "text", "text": { "$concat": ["Unknown tool: ", { "$var": "tool" }, ". Available: ", { "$join": { "$pluck": [{ "$var": "toolDefs" }, "name"] }, "separator": ", " }] } }], "isError": true }
             },
-            { "$stdio-write": { "jsonrpc": "2.0", "id": { "$var": "id" }, "result": { "$var": "result" } } }
+            { "$stdioWrite": { "jsonrpc": "2.0", "id": { "$var": "id" }, "result": { "$var": "result" } } }
           ]
         },
         "default": [
           {
             "$if": { "$not": { "$empty": { "$var": "id" } } },
             "then": {
-              "$stdio-write": {
+              "$stdioWrite": {
                 "jsonrpc": "2.0",
                 "id": { "$var": "id" },
                 "error": { "code": -32601, "message": { "$concat": ["Method not found: ", { "$var": "message.method" }] } }
@@ -496,7 +496,7 @@
           {
             "$if": { "$not": { "$empty": { "$var": "id" } } },
             "then": {
-              "$stdio-write": {
+              "$stdioWrite": {
                 "jsonrpc": "2.0",
                 "id": { "$var": "id" },
                 "error": { "code": -32603, "message": { "$concat": ["Internal error: ", { "$coalesce": [{ "$var": "error.message" }, { "$stringify": { "$var": "error" } }] }] } }

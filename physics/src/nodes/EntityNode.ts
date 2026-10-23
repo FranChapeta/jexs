@@ -6,16 +6,16 @@
  * On the server, use entity-* keys directly for authoritative game state.
  *
  * Supported operations:
- * - { "$entity-init": "store-id", "width": 800, "height": 600 }
- * - { "$entity-add": id, type, group, mask, translation, scale, ... }
- * - { "$entity-remove": id }
- * - { "$entity-move": id, x, y, angle }
- * - { "$entity-update": id, ... }
- * - { "$entity-clear": true }
- * - { "$entity-list": group | true }
- * - { "$entity-nearest": group, x, y }
- * - { "$entity-get": id, prop }         — single property
- * - { "$entity-get": id }               — full entity object
+ * - { "$entityInit": "store-id", "width": 800, "height": 600 }
+ * - { "$entityAdd": id, type, group, mask, translation, scale, ... }
+ * - { "$entityRemove": id }
+ * - { "$entityMove": id, x, y, angle }
+ * - { "$entityUpdate": id, ... }
+ * - { "$entityClear": true }
+ * - { "$entityList": group | true }
+ * - { "$entityNearest": group, x, y }
+ * - { "$entityGet": id, prop }         — single property
+ * - { "$entityGet": id }               — full entity object
  */
 
 import { Node, Context, NodeValue, resolve, resolveFields, isOwnedKey } from "@jexs/core";
@@ -43,7 +43,7 @@ const vec = (description: string): P => ({ type: "array", items: { type: "number
 const point = (description: string): P => ({ $ref: "#/$defs/_vec", description });
 
 /**
- * Every writable field on an entity, shared by `entity-add` and `entity-update`.
+ * Every writable field on an entity, shared by `entityAdd` and `entityUpdate`.
  * Declared before the class because the static schema initializer reads it and a
  * `const` is not hoisted. Anything not listed here (nor in `KNOWN_KEYS`) is kept
  * verbatim on the entity's `custom` metadata rather than rejected.
@@ -51,7 +51,7 @@ const point = (description: string): P => ({ $ref: "#/$defs/_vec", description }
 const ENTITY_FIELDS: Record<string, P> = {
   group:    { type: "string", description: "Collision group name (default `\"default\"`)." },
   mask:     { type: "array", items: { type: "string" }, description: "Collision groups this entity is tested against (default `[\"default\"]`)." },
-  mesh:     { type: "string", description: "Id of a mesh registered in the store. Under `entity-add: \"mesh\"` its bounds also become the entity's scale, so the collision AABB matches the geometry; on any other shape the mesh is render-only." },
+  mesh:     { type: "string", description: "Id of a mesh registered in the store. Under `entityAdd: \"mesh\"` its bounds also become the entity's scale, so the collision AABB matches the geometry; on any other shape the mesh is render-only." },
   vertices: { type: "array", items: { type: "number" }, description: "Flat vertex list, for the `line`, `line-strip` and `points` types." },
   parent:   { type: "string", description: "Id of a parent entity: this entity's transform becomes relative to it. Pass an empty value to detach." },
 
@@ -84,12 +84,12 @@ const ENTITY_FIELDS: Record<string, P> = {
   color:        { $ref: "#/$defs/_color", description: "RGBA `[r, g, b, a]`, each 0 to 1, alpha 1 if left out (default `[1, 1, 1, 1]`)." },
   uv:           vec("Texture sub-rect `[u, v, w, h]`, for drawing one frame out of an atlas."),
   opacity:      { type: "number", description: "Opacity from 0 to 1." },
-  texture:      { type: "string", description: "Name of a texture loaded with `gl-texture`." },
+  texture:      { type: "string", description: "Name of a texture loaded with `glTexture`." },
   normalMap:    { type: "string", description: "Name of a texture to light the surface with as a normal map." },
   normalScale:  { type: "number", description: "How strongly `normalMap` perturbs the surface." },
   lineWidth:    { type: "number", description: "Line width in pixels, read for the `line` and `line-strip` shapes." },
   borderRadius: { type: "number", description: "Corner radius in pixels, rounding the box an entity with depth (`scale[2]` above 0) is drawn as. It replaces the shape's geometry outright, so it is for a quad." },
-  shader:       { type: "string", description: "Name of a custom shader registered with `gl-shader`." },
+  shader:       { type: "string", description: "Name of a custom shader registered with `glShader`." },
   blend:        { type: "string", enum: [...BLEND_MODES], description: "Blend mode (default `\"normal\"`)." },
   emissive:     { type: "boolean", description: "Draw at full color, unlit by the scene's lights." },
   billboard:    { type: "boolean", description: "Keep the entity turned to face the camera." },
@@ -102,13 +102,13 @@ const ENTITY_FIELDS: Record<string, P> = {
   dirZ:      { type: "number", description: "Z of the direction a `light`'s cone points (default `-1`). Read only when `coneAngle` is set." },
 };
 
-/** The fields only one shape reads, which `entity-add` scopes to that `type`; the
- *  rest apply to every shape. `entity-update` has no `type`, so it takes them all. */
+/** The fields only one shape reads, which `entityAdd` scopes to that `type`; the
+ *  rest apply to every shape. `entityUpdate` has no `type`, so it takes them all. */
 const { lineWidth, radius, coneAngle, dirX, dirY, dirZ, ...SHARED_FIELDS } = ENTITY_FIELDS;
 
 /**
  * Every sibling the entity ops act on themselves. Derived from `ENTITY_FIELDS` so
- * a newly declared field is recognised by the same edit, plus the `entity-update`
+ * a newly declared field is recognised by the same edit, plus the `entityUpdate`
  * extras that are not shared fields. Anything outside this set, other than the
  * `$` keys the resolver owns (the op and the global step keys), is kept verbatim
  * on the entity's `custom` metadata.
@@ -160,7 +160,7 @@ function resolveRotation(r: Record<string, unknown>): [number, number, number, n
   return undefined;
 }
 
-/** Build a plain object from entity slot (shared by entity-list, entity-nearest, entity-get). */
+/** Build a plain object from entity slot (shared by entityList, entityNearest, entityGet). */
 function entityToObject(store: EntityStore, slot: number): Record<string, unknown> {
   const d = store.data;
   const b = slot * STRIDE;
@@ -180,12 +180,12 @@ function entityToObject(store: EntityStore, slot: number): Record<string, unknow
 
 export class EntityNode extends Node {
   static schema: JexsNodeSchema = {
-    "entity-init": {
+    entityInit: {
       type: "string",
       output: "null",
       markdownDescription: "Creates a new entity store and sets it as the active context store.\r\nPass `width` and `height` to define the world bounds.",
       examples: [
-        "{ \"$entity-init\": \"world\", \"width\": 800, \"height\": 600 }",
+        "{ \"$entityInit\": \"world\", \"width\": 800, \"height\": 600 }",
       ],
       siblings: {
         width: {
@@ -202,12 +202,12 @@ export class EntityNode extends Node {
         },
       },
     },
-    "entity-add": {
+    entityAdd: {
       type: "string",
       output: "null",
-      markdownDescription: "Adds an entity to the active store, under the id in `entity-add`.\r\nThe transform is `translation` / `scale` / `rotation` (there is no `x`/`y`/`w`/`h`); `angle`, `rx`, `ry` and `rotation-velocity` are shorthands that build the quaternion for you.\r\nSet `physics: true` to simulate it and `fixed: true` for an immovable body, and `pooled: true` to reuse a pooled slot.\r\nAny sibling not listed here is kept verbatim on the entity's `custom` metadata.",
+      markdownDescription: "Adds an entity to the active store, under the id in `entityAdd`.\r\nThe transform is `translation` / `scale` / `rotation` (there is no `x`/`y`/`w`/`h`); `angle`, `rx`, `ry` and `rotation-velocity` are shorthands that build the quaternion for you.\r\nSet `physics: true` to simulate it and `fixed: true` for an immovable body, and `pooled: true` to reuse a pooled slot.\r\nAny sibling not listed here is kept verbatim on the entity's `custom` metadata.",
       examples: [
-        "{ \"$entity-add\": \"player\", \"type\": \"quad\", \"translation\": [100, 100, 0], \"scale\": [32, 32, 1], \"color\": [1,0,0,1] }",
+        "{ \"$entityAdd\": \"player\", \"type\": \"quad\", \"translation\": [100, 100, 0], \"scale\": [32, 32, 1], \"color\": [1,0,0,1] }",
       ],
       siblings: {
         type: {
@@ -226,7 +226,7 @@ export class EntityNode extends Node {
           },
         },
         ...SHARED_FIELDS,
-        // A new entity starts from the defaults; `entity-update` leaves an omitted field as it is.
+        // A new entity starts from the defaults; `entityUpdate` leaves an omitted field as it is.
         blend: { ...SHARED_FIELDS.blend, default: "normal" },
         pooled: {
           type: "boolean",
@@ -234,12 +234,12 @@ export class EntityNode extends Node {
         },
       },
     },
-    "entity-remove": {
+    entityRemove: {
       type: "string",
       output: "null",
       markdownDescription: "Removes an entity from the store by id. Pass `pooled: true` to release back to the pool instead.",
       examples: [
-        "{ \"$entity-remove\": \"bullet-1\" }",
+        "{ \"$entityRemove\": \"bullet-1\" }",
       ],
       siblings: {
         pooled: {
@@ -248,12 +248,12 @@ export class EntityNode extends Node {
         },
       },
     },
-    "entity-move": {
+    entityMove: {
       type: "string",
       output: "null",
-      markdownDescription: "Moves and/or turns an entity: its `translation`, and its `rotation` or one of the shorthands that build it. Cheaper than `entity-update` for transform-only changes.",
+      markdownDescription: "Moves and/or turns an entity: its `translation`, and its `rotation` or one of the shorthands that build it. Cheaper than `entityUpdate` for transform-only changes.",
       examples: [
-        "{ \"$entity-move\": \"player\", \"translation\": { \"$v-add\": [{ \"$entity-get\": \"player\", \"prop\": \"translation\" }, [4, 0]] } }",
+        "{ \"$entityMove\": \"player\", \"translation\": { \"$vectorAdd\": [{ \"$entityGet\": \"player\", \"prop\": \"translation\" }, [4, 0]] } }",
       ],
       siblings: {
         translation: ENTITY_FIELDS.translation,
@@ -264,12 +264,12 @@ export class EntityNode extends Node {
         "rotation-velocity": ENTITY_FIELDS["rotation-velocity"],
       },
     },
-    "entity-update": {
+    entityUpdate: {
       type: "string",
       output: "null",
-      markdownDescription: "Updates writable fields on an existing entity, by the id in `entity-update`. Every field `entity-add` takes (except `type` and `pooled`, both fixed once a slot is allocated), plus `text` and the `trigger` / `ccd` collision flags.\r\nA no-op when no entity has that id.",
+      markdownDescription: "Updates writable fields on an existing entity, by the id in `entityUpdate`. Every field `entityAdd` takes (except `type` and `pooled`, both fixed once a slot is allocated), plus `text` and the `trigger` / `ccd` collision flags.\r\nA no-op when no entity has that id.",
       examples: [
-        "{ \"$entity-update\": \"player\", \"translation\": [{ \"$var\": \"x\" }, 0, 0], \"color\": [1, 0, 0, 1] }",
+        "{ \"$entityUpdate\": \"player\", \"translation\": [{ \"$var\": \"x\" }, 0, 0], \"color\": [1, 0, 0, 1] }",
       ],
       siblings: {
         ...ENTITY_FIELDS,
@@ -286,24 +286,24 @@ export class EntityNode extends Node {
         },
       },
     },
-    "entity-clear": {
+    entityClear: {
       output: "null",
       markdownDescription: "Removes all entities from the active store and triggers a re-render.",
     },
-    "entity-list": {
+    entityList: {
       type: "string",
       output: "array",
       markdownDescription: "Returns all entities in the active store as an array of plain objects.\r\nPass a group name to filter, or `true` to return all groups.",
       examples: [
-        "{ \"$entity-list\": \"enemies\" }",
+        "{ \"$entityList\": \"enemies\" }",
       ],
     },
-    "entity-nearest": {
+    entityNearest: {
       type: "string",
       output: "object",
       markdownDescription: "Returns the entity in `group` closest to the given `x`, `y` point, with an added `distance` field.",
       examples: [
-        "{ \"$entity-nearest\": \"enemies\", \"x\": { \"$var\": \"player.x\" }, \"y\": { \"$var\": \"player.y\" } }",
+        "{ \"$entityNearest\": \"enemies\", \"x\": { \"$var\": \"player.x\" }, \"y\": { \"$var\": \"player.y\" } }",
       ],
       siblings: {
         x: {
@@ -316,11 +316,11 @@ export class EntityNode extends Node {
         },
       },
     },
-    "entity-get": {
+    entityGet: {
       type: "string",
       markdownDescription: "Gets a single property or the full object for an entity. Pass `id` as the value and `prop` for a single field.\r\nOmit `prop` to get the full entity object. Supports all data fields plus `worldX`, `worldY`, `worldZ`.",
       examples: [
-        "{ \"$entity-get\": \"player\", \"prop\": \"x\" }",
+        "{ \"$entityGet\": \"player\", \"prop\": \"x\" }",
       ],
       siblings: {
         prop: {
@@ -332,11 +332,11 @@ export class EntityNode extends Node {
   };
 
 
-  // ── entity-init ──────────────────────────────────────────────────────
+  // ── entityInit ──────────────────────────────────────────────────────
 
-  ["entity-init"](def: Record<string, unknown>, context: Context): NodeValue {
+  entityInit(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveFields(def, context, r => {
-      const id = String(r["$entity-init"]);
+      const id = String(r.$entityInit);
       // `shared:true` backs the store with growable SharedArrayBuffers so the host
       // (Server worker_threads / Client Web Worker) can step physics off-thread.
       // The store quietly stays non-shared if growable SAB is unsupported.
@@ -352,16 +352,16 @@ export class EntityNode extends Node {
     });
   }
 
-  // ── entity-add ───────────────────────────────────────────────────────
+  // ── entityAdd ───────────────────────────────────────────────────────
 
-  ["entity-add"](def: Record<string, unknown>, context: Context): NodeValue {
+  entityAdd(def: Record<string, unknown>, context: Context): NodeValue {
     const store = getStore(context);
     if (!store) return null;
 
     return resolveFields(def, context, r => {
       const keys = Object.keys(def);
 
-      const id     = String(r["$entity-add"]);
+      const id     = String(r.$entityAdd);
       const type   = (r["type"] ? String(r["type"]) : "quad") as EntityMeta["type"];
       const pooled = r["pooled"] !== undefined && this.toBoolean(r["pooled"]);
 
@@ -514,13 +514,13 @@ export class EntityNode extends Node {
     });
   }
 
-  // ── entity-remove ────────────────────────────────────────────────────
+  // ── entityRemove ────────────────────────────────────────────────────
 
-  ["entity-remove"](def: Record<string, unknown>, context: Context): NodeValue {
+  entityRemove(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveFields(def, context, r => {
       const store = getStore(context);
       if (!store) return null;
-      const id     = String(r["$entity-remove"]);
+      const id     = String(r.$entityRemove);
       const pooled = r["pooled"] !== undefined && this.toBoolean(r["pooled"]);
       if (pooled) store.poolRelease(id);
       else store.remove(id);
@@ -529,14 +529,14 @@ export class EntityNode extends Node {
     });
   }
 
-  // ── entity-move ──────────────────────────────────────────────────────
+  // ── entityMove ──────────────────────────────────────────────────────
 
-  ["entity-move"](def: Record<string, unknown>, context: Context): NodeValue {
+  entityMove(def: Record<string, unknown>, context: Context): NodeValue {
     const store = getStore(context);
     if (!store) return null;
 
     return resolveFields(def, context, r => {
-      const slot = store.slot(String(r["$entity-move"]));
+      const slot = store.slot(String(r.$entityMove));
       if (slot === -1) return null;
 
       const d = store.data, b = slot * STRIDE;
@@ -559,14 +559,14 @@ export class EntityNode extends Node {
     });
   }
 
-  // ── entity-update ────────────────────────────────────────────────────
+  // ── entityUpdate ────────────────────────────────────────────────────
 
-  ["entity-update"](def: Record<string, unknown>, context: Context): NodeValue {
+  entityUpdate(def: Record<string, unknown>, context: Context): NodeValue {
     const store = getStore(context);
     if (!store) return null;
 
     return resolveFields(def, context, r => {
-      const id   = String(r["$entity-update"]);
+      const id   = String(r.$entityUpdate);
       const slot = store.slot(id);
       if (slot === -1) return null;
 
@@ -718,9 +718,9 @@ export class EntityNode extends Node {
       });
   }
 
-  // ── entity-clear ─────────────────────────────────────────────────────
+  // ── entityClear ─────────────────────────────────────────────────────
 
-  ["entity-clear"](_def: Record<string, unknown>, context: Context): NodeValue {
+  entityClear(_def: Record<string, unknown>, context: Context): NodeValue {
     const store = getStore(context);
     if (!store) return null;
     store.clear();
@@ -728,10 +728,10 @@ export class EntityNode extends Node {
     return null;
   }
 
-  // ── entity-list ──────────────────────────────────────────────────────
+  // ── entityList ──────────────────────────────────────────────────────
 
-  ["entity-list"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$entity-list"], context, val => {
+  entityList(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$entityList, context, val => {
       const store = getStore(context);
       if (!store) return [];
       const groupFilter = val === true ? null : String(val);
@@ -748,13 +748,13 @@ export class EntityNode extends Node {
     });
   }
 
-  // ── entity-nearest ───────────────────────────────────────────────────
+  // ── entityNearest ───────────────────────────────────────────────────
 
-  ["entity-nearest"](def: Record<string, unknown>, context: Context): NodeValue {
+  entityNearest(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveFields(def, context, r => {
       const store = getStore(context);
       if (!store) return null;
-      const group = String(r["$entity-nearest"]);
+      const group = String(r.$entityNearest);
       const px    = Number(r["x"]);
       const py    = Number(r["y"]);
       const d = store.data;
@@ -776,10 +776,10 @@ export class EntityNode extends Node {
     });
   }
 
-  // ── entity-get ───────────────────────────────────────────────────────
+  // ── entityGet ───────────────────────────────────────────────────────
 
-  ["entity-get"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$entity-get"], context, opId => {
+  entityGet(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$entityGet, context, opId => {
       const store = getStore(context);
       if (!store) return null;
       const id   = String(opId);

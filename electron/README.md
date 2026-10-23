@@ -57,7 +57,7 @@ The renderer reaches main through a single IPC channel, and by default it may as
 Where a window shows content you do not fully control, constrain that window when you open it:
 
 ```json
-{ "$window-open": "preview.json", "name": "preview", "allow": ["query"] }
+{ "$windowOpen": "preview.json", "name": "preview", "allow": ["query"] }
 ```
 
 Any other op that window's page asks for is refused by name. It is per window on purpose: an editor needs `file` writes, a preview needs almost nothing, and the two should not share a limit.
@@ -66,41 +66,41 @@ List ops, not siblings. `table` in `{ "$query": "select", "table": "saves" }` is
 
 Your own menu, tray and shortcut handlers are unaffected, because they run in main and never cross this channel — which is precisely what makes the list worth having rather than something that must permit everything.
 
-The list governs the IPC channel, so `app://` gets its own controls rather than relying on it. A page shares the `app://local` origin and the scheme is fetchable, but `protocol.handle` receives only a `Request` — there is no window to attribute it to, so the list cannot be consulted there. Asset requests are confined to `dist/browser`, which holds nothing the renderer was not already given. Page requests carry a per-window token that `window-open` mints and binds to one template, so a window can re-request its own document and nothing else — without it, any page could make main resolve any template under `src/` with full privileges.
+The list governs the IPC channel, so `app://` gets its own controls rather than relying on it. A page shares the `app://local` origin and the scheme is fetchable, but `protocol.handle` receives only a `Request` — there is no window to attribute it to, so the list cannot be consulted there. Asset requests are confined to `dist/browser`, which holds nothing the renderer was not already given. Page requests carry a per-window token that `windowOpen` mints and binds to one template, so a window can re-request its own document and nothing else — without it, any page could make main resolve any template under `src/` with full privileges.
 
 ## Nodes
 
 | Key | Purpose |
 |---|---|
-| `window-open` | Open a BrowserWindow on a page template; resolves to its registered name |
-| `window-close` `window-focus` `window-min` `window-max` `window-restore` `window-reload` `window-devtools` | Act on a window; the value names it, `true` means the implicit target |
-| `window-title` `window-bounds` | Set a title or geometry; target with the `window` sibling |
-| `window-list` | Every open window with its name, id, title, state and bounds |
-| `window-run` | Run steps inside a specific window's page |
+| `windowOpen` | Open a BrowserWindow on a page template; resolves to its registered name |
+| `windowClose` `windowFocus` `windowMin` `windowMax` `windowRestore` `windowReload` `windowDevtools` | Act on a window; the value names it, `true` means the implicit target |
+| `windowTitle` `windowBounds` | Set a title or geometry; target with the `window` sibling |
+| `windowList` | Every open window with its name, id, title, state and bounds |
+| `windowRun` | Run steps inside a specific window's page |
 | `menu` | Native application or per-window menu from a JSON item tree |
-| `tray` `tray-destroy` | System tray icon, tooltip and right-click menu |
-| `shortcut` `shortcut-remove` | System-wide keyboard shortcuts |
-| `dialog-open` `dialog-save` | Native file dialogs; resolve to the chosen path(s) |
-| `dialog-message` | Native message box; resolves to the pressed button index |
-| `shell-open` `shell-open-path` `shell-show` `shell-trash` `shell-beep` | Hand a URL or file to the desktop environment |
+| `tray` `trayDestroy` | System tray icon, tooltip and right-click menu |
+| `shortcut` `shortcutRemove` | System-wide keyboard shortcuts |
+| `dialogOpen` `dialogSave` | Native file dialogs; resolve to the chosen path(s) |
+| `dialogMessage` | Native message box; resolves to the pressed button index |
+| `shellOpen` `shellOpenPath` `shellShow` `shellTrash` `shellBeep` | Hand a URL or file to the desktop environment |
 | `notify` | Native OS notification |
-| `app-quit` `app-relaunch` | End or restart the app |
-| `app-path` `app-version` `app-locale` | Well-known paths and app info |
-| `app-on` | Run steps on an application lifecycle event |
+| `appQuit` `appRelaunch` | End or restart the app |
+| `appPath` `appVersion` `appLocale` | Well-known paths and app info |
+| `appOn` | Run steps on an application lifecycle event |
 
 ### Addressing windows
 
-Every window is registered under a name — the `name` sibling if given, otherwise the template's basename (`settings.json` becomes `settings`, deduped `settings-2`). `window-open` resolves to that name, so `$as` can capture it.
+Every window is registered under a name — the `name` sibling if given, otherwise the template's basename (`settings.json` becomes `settings`, deduped `settings-2`). `windowOpen` resolves to that name, so `$as` can capture it.
 
-Every window op targets a window through its `window` sibling, as in `{ "$window-title": "Saved", "window": "main" }`; opening one is `window-open`.
+Every window op targets a window through its `window` sibling, as in `{ "$windowTitle": "Saved", "window": "main" }`; opening one is `windowOpen`.
 
-The **first window opened becomes the default target**, and ops resolve in the order: explicit name, then the calling renderer's own window, then the default. So a page can say `{ "$window-close": true }` and mean itself, while `app/main.json` can say `{ "$window-title": "Saved", "window": "editor" }` and mean a specific one.
+The **first window opened becomes the default target**, and ops resolve in the order: explicit name, then the calling renderer's own window, then the default. So a page can say `{ "$windowClose": true }` and mean itself, while `app/main.json` can say `{ "$windowTitle": "Saved", "window": "editor" }` and mean a specific one.
 
 Note what is deliberately absent: focus. `getFocusedWindow()` returns null whenever the app is in the background, so a tray or global-shortcut handler firing while another app has focus would resolve to nothing. An insertion-ordered default is deterministic. When the default window closes, the next remaining window is promoted rather than the default being left empty.
 
 ## Where steps run
 
-A main-process handler — a menu item, a tray click, a shortcut, an `app-on` event — resolves in **main**. DOM ops inside it are forwarded to a window automatically, so this works with no wrapper:
+A main-process handler — a menu item, a tray click, a shortcut, an `appOn` event — resolves in **main**. DOM ops inside it are forwarded to a window automatically, so this works with no wrapper:
 
 ```json
 { "label": "Save", "do": [
@@ -110,10 +110,10 @@ A main-process handler — a menu item, a tray click, a shortcut, an `app-on` ev
 
 `getProp` crosses to the window, `file` stays in main, and `$as` binds in main because the resolver applies global step keys in the calling thread.
 
-`window-run` is the exception, and the difference matters: its steps are sent **unresolved** and run against the page's context, not main's. So a `{ "$var": "x" }` inside `window-run` looks up `x` in the page, not in the handler. Pass main-side values through `params`:
+`windowRun` is the exception, and the difference matters: its steps are sent **unresolved** and run against the page's context, not main's. So a `{ "$var": "x" }` inside `windowRun` looks up `x` in the page, not in the handler. Pass main-side values through `params`:
 
 ```json
-{ "$window-run": [{ "$setProp": ["#status", "textContent", { "$var": "msg" }] }],
+{ "$windowRun": [{ "$setProp": ["#status", "textContent", { "$var": "msg" }] }],
   "window": "editor",
   "params": { "msg": { "$var": "status" } } }
 ```

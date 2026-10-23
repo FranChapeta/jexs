@@ -16,9 +16,9 @@ test("an unknown operation is an error", async () => {
 });
 
 test("a socket op outside a socket's handlers is an error", async () => {
-  await assert.rejects(async () => resolve({ "$socket-send": "hi" }, {}), /\$socket-send runs in a socket's handlers/);
-  await assert.rejects(async () => resolve({ "$socket-join": "lobby" }, {}), /\$socket-join runs in a socket's handlers/);
-  await assert.rejects(async () => resolve({ "$socket-send-to": "nobody", data: 1 }, {}), /no open connection "nobody"/);
+  await assert.rejects(async () => resolve({ "$socketSend": "hi" }, {}), /\$socketSend runs in a socket's handlers/);
+  await assert.rejects(async () => resolve({ "$socketJoin": "lobby" }, {}), /\$socketJoin runs in a socket's handlers/);
+  await assert.rejects(async () => resolve({ "$socketSendTo": "nobody", data: 1 }, {}), /no open connection "nobody"/);
 });
 
 test("$listen without do is an error", async () => {
@@ -30,9 +30,9 @@ test("in production, the default cache must be connected", async () => {
   process.env.NODE_ENV = "production";
   const own = createResolver([...coreNodes(), ...serverNodes({ root: "." })]);
   try {
-    await assert.rejects(async () => own({ "$cache-get": "x" }, {}), /No cache is connected/);
-    await own({ "$cache-connect": "memory" }, {});
-    assert.equal(await own({ "$cache-get": "x" }, {}) ?? null, null, "a memory cache connected on purpose is fine");
+    await assert.rejects(async () => own({ "$cacheGet": "x" }, {}), /No cache is connected/);
+    await own({ "$cacheConnect": "memory" }, {});
+    assert.equal(await own({ "$cacheGet": "x" }, {}) ?? null, null, "a memory cache connected on purpose is fine");
   } finally {
     process.env.NODE_ENV = before;
     own.destroy();

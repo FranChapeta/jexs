@@ -782,7 +782,7 @@ export class ServerNode extends Node {
           pushsubscriptionchange: { $ref: "#/$defs/steps", description: "The browser changed or dropped the push subscription. `oldSubscription` and `newSubscription` are each `{ endpoint, keys }` or `null`; tell your server here." },
           notificationclick: { $ref: "#/$defs/steps", description: "A notification (or one of its `actions`) is clicked. `notification` is `{ title, body, tag, icon, badge, image, actions, timestamp, requireInteraction, silent, data }`, `action` the button's id." },
           notificationclose: { $ref: "#/$defs/steps", description: "A notification is dismissed. `notification` is `{ title, body, tag, icon, badge, image, actions, timestamp, requireInteraction, silent, data }`." },
-          message: { $ref: "#/$defs/steps", description: "A page posted a message to the worker. `data` is the message, `source` the page (`{ id, url, type }`, or `null` from anything else); `$sw-post` replies to it." },
+          message: { $ref: "#/$defs/steps", description: "A page posted a message to the worker. `data` is the message, `source` the page (`{ id, url, type }`, or `null` from anything else); `$swPost` replies to it." },
           sync: { $ref: "#/$defs/steps", description: "A background sync registered by a page runs, once the network is back. `tag` names it; `lastChance` is true on the browser's final retry." },
           periodicsync: { $ref: "#/$defs/steps", description: "A periodic background sync runs. `tag` names it." },
         },

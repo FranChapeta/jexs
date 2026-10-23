@@ -86,18 +86,18 @@ function stopSounds(node: AudioNode, name: string): void {
 // ─── AudioNode ───────────────────────────────────────────────────────────────
 
 export class AudioNode extends Node {
-  /** Decoded buffers by name, held until `audio-unload` or `dispose`. */
+  /** Decoded buffers by name, held until `audioUnload` or `dispose`. */
   readonly buffers = new Map<string, AudioBuffer>();
 
   /**
    * Playing sounds by name, plural: an effect fired twice in quick succession
    * overlaps, rather than the second cutting the first off. Pass `restart: true`
-   * to `audio-play` for the one-at-a-time behavior.
+   * to `audioPlay` for the one-at-a-time behavior.
    */
   readonly sources = new Map<string, Set<Sound>>();
 
   /**
-   * One gain per name, which is what makes `audio-volume` a level rather than a
+   * One gain per name, which is what makes `audioVolume` a level rather than a
    * live nudge: sounds route through their name's gain, so a level set before
    * anything plays still applies to what plays later, and one set during
    * playback carries to the next shot. Same arrangement as the master, one layer
@@ -118,13 +118,13 @@ export class AudioNode extends Node {
   graph: AudioGraph | null = null;
 
   static schema: JexsNodeSchema = {
-    "audio-load": {
+    audioLoad: {
       type: "string",
       output: "null",
-      markdownDescription: "Decodes an audio file and stores it under `name` for later playback with `audio-play`. The audio arrives one of two ways: a `url` to fetch, or `content` already in hand.\n\nA file that cannot be fetched or decoded throws, so `$catch` sees it at the point of loading rather than leaving `audio-play` to warn about a missing buffer much later.",
+      markdownDescription: "Decodes an audio file and stores it under `name` for later playback with `audioPlay`. The audio arrives one of two ways: a `url` to fetch, or `content` already in hand.\n\nA file that cannot be fetched or decoded throws, so `$catch` sees it at the point of loading rather than leaving `audioPlay` to warn about a missing buffer much later.",
       examples: [
-        "{ \"$audio-load\": \"shoot\", \"url\": \"/audio/shoot.wav\" }",
-        "[{ \"$fetch\": \"/audio/theme.ogg\", \"headers\": { \"Authorization\": { \"$var\": \"auth\" } }, \"$as\": \"bytes\" },\n { \"$audio-load\": \"theme\", \"content\": { \"$var\": \"bytes\" } }]",
+        "{ \"$audioLoad\": \"shoot\", \"url\": \"/audio/shoot.wav\" }",
+        "[{ \"$fetch\": \"/audio/theme.ogg\", \"headers\": { \"Authorization\": { \"$var\": \"auth\" } }, \"$as\": \"bytes\" },\n { \"$audioLoad\": \"theme\", \"content\": { \"$var\": \"bytes\" } }]",
       ],
       variants: {
         url: {
@@ -136,21 +136,21 @@ export class AudioNode extends Node {
         },
       },
     },
-    "audio-unload": {
+    audioUnload: {
       type: "string",
       output: "null",
       markdownDescription: "Forgets a name: stops whatever is playing under it, drops the decoded buffer, and drops any level set for it.\n\nNothing else frees them. A decoded buffer is the expensive thing a page holds, and both it and the level live until this runs or the resolver is destroyed, so a game loading per-level sounds wants this on the way out.",
       examples: [
-        "{ \"$audio-unload\": \"shoot\" }",
+        "{ \"$audioUnload\": \"shoot\" }",
       ],
     },
-    "audio-play": {
+    audioPlay: {
       type: "string",
       output: "null",
       markdownDescription: "Plays a previously loaded audio buffer. Set `volume` (0-1) and `loop: true` for looping.\n\nPlaying the same name again overlaps it, which is what a sound effect fired twice in quick succession should do. Pass `restart: true` for the one-at-a-time behavior, which is what music or a voice line wants.",
       examples: [
-        "{ \"$audio-play\": \"shoot\", \"volume\": 0.5 }",
-        "{ \"$audio-play\": \"music\", \"loop\": true, \"restart\": true }",
+        "{ \"$audioPlay\": \"shoot\", \"volume\": 0.5 }",
+        "{ \"$audioPlay\": \"music\", \"loop\": true, \"restart\": true }",
       ],
       siblings: {
         volume: {
@@ -167,40 +167,40 @@ export class AudioNode extends Node {
         },
       },
     },
-    "audio-stop": {
+    audioStop: {
       type: "string",
       output: "null",
       markdownDescription: "Stops every sound playing under a name.",
       examples: [
-        "{ \"$audio-stop\": \"shoot\" }",
+        "{ \"$audioStop\": \"shoot\" }",
       ],
     },
-    "audio-volume": {
+    audioVolume: {
       tuple: 2,
       prefixItems: [
         { type: "string", description: "The name the level is for." },
         { type: "number", description: "The level, 0 to 1." },
       ],
       output: "null",
-      markdownDescription: "Sets the level for a name: what is playing under it changes without restarting, and so does everything played under it afterwards. That makes it the thing to wire a settings slider to, and it works before anything has played.\n\nIt multiplies rather than replaces: the level, the `volume` on each `audio-play`, and `audio-master` all apply, so a deliberately quiet shot stays quiet relative to whatever level the player chose.",
+      markdownDescription: "Sets the level for a name: what is playing under it changes without restarting, and so does everything played under it afterwards. That makes it the thing to wire a settings slider to, and it works before anything has played.\n\nIt multiplies rather than replaces: the level, the `volume` on each `audioPlay`, and `audioMaster` all apply, so a deliberately quiet shot stays quiet relative to whatever level the player chose.",
       examples: [
-        "{ \"$audio-volume\": [\"shoot\", 0.3] }",
+        "{ \"$audioVolume\": [\"shoot\", 0.3] }",
       ],
     },
-    "audio-master": {
+    audioMaster: {
       type: "number",
       output: "null",
       markdownDescription: "Sets the master gain for all audio output in this context (0–1).",
       examples: [
-        "{ \"$audio-master\": 0.5 }",
+        "{ \"$audioMaster\": 0.5 }",
       ],
     },
   };
 
 
-  ["audio-load"](def: Record<string, unknown>, context: Context): NodeValue {
+  audioLoad(def: Record<string, unknown>, context: Context): NodeValue {
     const { ctx } = audioGraph(this);
-    return resolveAll([def["$audio-load"], def["url"] ?? null, def["content"] ?? null], context,
+    return resolveAll([def.$audioLoad, def["url"] ?? null, def["content"] ?? null], context,
       async ([nameRaw, urlRaw, contentRaw]) => {
         const name = String(nameRaw);
         if (urlRaw == null && contentRaw == null) {
@@ -208,7 +208,7 @@ export class AudioNode extends Node {
         }
         const from = urlRaw == null ? "the content given" : String(urlRaw);
         // A miss used to be a console line, leaving the template to find out later
-        // when audio-play warned about a buffer that was never there.
+        // when audioPlay warned about a buffer that was never there.
         const bytes = contentRaw == null
           ? await fetchAudio(name, String(urlRaw))
           : await audioBytes(name, contentRaw);
@@ -226,15 +226,15 @@ export class AudioNode extends Node {
     );
   }
 
-  ["audio-play"](def: Record<string, unknown>, context: Context): NodeValue {
+  audioPlay(def: Record<string, unknown>, context: Context): NodeValue {
     const { ctx } = audioGraph(this);
     return resolveAll(
-      [def["$audio-play"], def["volume"], def["loop"] ?? false, def["restart"] ?? false],
+      [def.$audioPlay, def["volume"], def["loop"] ?? false, def["restart"] ?? false],
       context,
       ([nameRaw, volumeRaw, loopRaw, restartRaw]: unknown[]) => {
         const name = String(nameRaw);
         const buffer = this.buffers.get(name);
-        if (!buffer) throw new Error(`$audio-play: no sound "${name}" is loaded; audio-load it first`);
+        if (!buffer) throw new Error(`$audioPlay: no sound "${name}" is loaded; audioLoad it first`);
 
         const volume = Number(volumeRaw ?? 1);
         const loop = this.toBoolean(loopRaw);
@@ -271,32 +271,32 @@ export class AudioNode extends Node {
     );
   }
 
-  ["audio-stop"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$audio-stop"], context, name => {
+  audioStop(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$audioStop, context, name => {
       stopSounds(this, this.toString(name));
       return null;
     });
   }
 
-  ["audio-volume"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$audio-volume"], context, args => {
-      if (!Array.isArray(args) || args.length !== 2) throw new Error("audio-volume takes [name, level]");
+  audioVolume(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$audioVolume, context, args => {
+      if (!Array.isArray(args) || args.length !== 2) throw new Error("audioVolume takes [name, level]");
       const [name, level] = args;
       levelFor(this, this.toString(name)).gain.value = Number(level);
       return null;
     });
   }
 
-  ["audio-master"](def: Record<string, unknown>, context: Context): NodeValue {
+  audioMaster(def: Record<string, unknown>, context: Context): NodeValue {
     const { master } = audioGraph(this);
-    return resolve(def["$audio-master"], context, volume => {
+    return resolve(def.$audioMaster, context, volume => {
       master.gain.value = Number(volume);
       return null;
     });
   }
 
-  ["audio-unload"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def["$audio-unload"], context, nameRaw => {
+  audioUnload(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$audioUnload, context, nameRaw => {
       // No `audioGraph(this)`: forgetting a name never needs a context, so
       // unloading before anything loaded does not build one.
       const name = this.toString(nameRaw);

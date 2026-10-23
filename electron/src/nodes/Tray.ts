@@ -43,10 +43,10 @@ export class TrayNode extends Node {
         do: { steps: true, description: "Steps run in the main process when the icon is clicked." },
       },
     },
-    "tray-destroy": {
+    trayDestroy: {
       output: "null",
       markdownDescription: "Remove the tray icon. This also restores the normal quit rule, so closing the last window ends the app again.",
-      examples: ["{ \"$tray-destroy\": true }"],
+      examples: ["{ \"$trayDestroy\": true }"],
     },
   };
 
@@ -86,7 +86,7 @@ export class TrayNode extends Node {
     });
   }
 
-  ["tray-destroy"](_def: Record<string, unknown>, _context: Context): NodeValue {
+  trayDestroy(_def: Record<string, unknown>, _context: Context): NodeValue {
     tray?.destroy();
     tray = null;
     return null;

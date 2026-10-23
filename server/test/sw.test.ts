@@ -15,7 +15,7 @@ const config = {
   precache: { $var: "offlinePages" },
   routes: [{ path: ["/", "/**"], strategy: "network-first", fallback: "/offline.html" }],
   skipWaiting: true,
-  events: { push: { "$sw-notify": { $var: "data.title" } } },
+  events: { push: { "$swNotify": { $var: "data.title" } } },
 };
 const embedded = { ...config, precache: ["/offline.html"] };
 
@@ -89,7 +89,7 @@ test("there is no separate config file", async () => {
 test("events from a step resolve to the map; a literal map's steps are left alone", async () => {
   const other = createResolver([...coreNodes(), new ServerNode()]);
   try {
-    const swEvents = { push: { "$sw-notify": { $var: "data.title" } } };
+    const swEvents = { push: { "$swNotify": { $var: "data.title" } } };
     const port = await other(
       { $listen: 0, client: true, sw: { events: { $var: "swEvents" } }, do: [{ response: "routed" }] },
       { swEvents },
@@ -116,7 +116,7 @@ test("sw from a step resolves to the config, which is data: nothing in it resolv
     const swConfig = {
       precache: [{ $concat: ["/offline", ".html"] }],
       skipWaiting: true,
-      events: { push: { "$sw-notify": { $var: "data.title" } } },
+      events: { push: { "$swNotify": { $var: "data.title" } } },
     };
     const port = await other({ $listen: 0, client: true, sw: { $var: "swConfig" }, do: [] }, { swConfig });
     const script = await (await fetch(`${at(port)}/jexs/sw.js`)).text();

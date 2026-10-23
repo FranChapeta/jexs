@@ -80,7 +80,7 @@ test("browserWindowOptions ignores non-scalar leftovers instead of coercing them
 
 test("openDialogOptions maps the primary value to title and filters junk", () => {
   const o = openDialogOptions({
-    "$dialog-open": "Open save",
+    "$dialogOpen": "Open save",
     defaultPath: "/tmp",
     properties: ["openFile", 7, "multiSelections"],
     filters: [
@@ -101,7 +101,7 @@ test("openDialogOptions omits everything absent", () => {
 
 test("messageBoxOptions maps the primary value to message and validates type", () => {
   const o = messageBoxOptions({
-    "$dialog-message": "Quit game?",
+    "$dialogMessage": "Quit game?",
     buttons: ["Cancel", "Quit"],
     title: "Confirm",
     detail: "Unsaved progress will be lost.",

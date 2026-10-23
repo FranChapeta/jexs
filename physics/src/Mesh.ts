@@ -1,7 +1,7 @@
 /**
  * Mesh types for imported geometry (GLB / GLTF).
  *
- * The parser (MeshNode) produces transient `MeshData` and `Scene`. The `register-mesh`
+ * The parser (MeshNode) produces transient `MeshData` and `Scene`. The `meshRegister`
  * step consumes them into `MeshEntry` records stored in `EntityStore.meshes` keyed by id.
  * One entry holds whatever is needed by each consumer:
  *  - `gpu` is set by GL when uploaded as VBO/IBO (opaque handle, type-erased here so
@@ -23,7 +23,7 @@ export interface MeshMaterial {
   baseColorFactor?: [number, number, number, number];
 }
 
-/** Transient parser output for a single primitive. Consumed by `register-mesh`. */
+/** Transient parser output for a single primitive. Consumed by `meshRegister`. */
 export interface MeshData {
   id: string;
   positions: Float32Array;
@@ -35,12 +35,12 @@ export interface MeshData {
 }
 
 /**
- * One row to be fed into `entity-add`. The parser emits one row per draw call:
+ * One row to be fed into `entityAdd`. The parser emits one row per draw call:
  *  - A glTF node with 0 primitives → 1 pivot row.
  *  - A glTF node with 1 primitive → 1 mesh row.
  *  - A glTF node with N>1 primitives → 1 pivot row + N mesh rows parented to it.
  *
- * Rows are emitted parents-first, so a single `foreach scene.nodes → entity-add`
+ * Rows are emitted parents-first, so a single `foreach scene.nodes → entityAdd`
  * works without recursion.
  */
 export interface NodeData {
@@ -102,7 +102,7 @@ export interface MeshEntry {
   /** Cached material URIs (same shape as MeshData.material). */
   material?: MeshMaterial;
   /**
-   * GPU upload handle (set by GL during register-mesh).
+   * GPU upload handle (set by GL during meshRegister).
    * Type-erased here so this file stays env-agnostic; gl/src/gl/types.ts defines `GpuMesh`
    * and casts on read/write.
    */

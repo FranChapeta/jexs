@@ -54,7 +54,7 @@ export interface JexsPropertySchema {
    *
    * Mark a property required only when the handler itself refuses to run without
    * it. A value that merely has a default, or one the node can source elsewhere at
-   * runtime (e.g. a `from` that `email-connect` may already have supplied), is not
+   * runtime (e.g. a `from` that `emailConnect` may already have supplied), is not
    * required here: the schema cannot see that state and would report a valid step
    * as broken.
    */

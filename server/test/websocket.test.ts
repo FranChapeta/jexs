@@ -13,9 +13,9 @@ async function server(options: Record<string, unknown> = {}) {
     $listen: 0,
     ...options,
     do: [{
-      "$socket-accept": true,
-      "on-open": [{ "$socket-join": "lobby" }],
-      "on-message": [{ "$socket-send": { "$socket-count": "lobby" } }],
+      "$socketAccept": true,
+      onOpen: [{ "$socketJoin": "lobby" }],
+      onMessage: [{ "$socketSend": { "$socketCount": "lobby" } }],
     }],
   }, {});
   return { resolver, port };
@@ -43,7 +43,7 @@ test("two resolvers' sockets do not share rooms", async () => {
   const b = await server();
   const clients = [await connect(a.port), await connect(b.port)];
   try {
-    await new Promise(r => setTimeout(r, 50)); // let on-open join the room
+    await new Promise(r => setTimeout(r, 50)); // let onOpen join the room
     assert.equal(await ask(clients[0]), "1");
     assert.equal(await ask(clients[1]), "1");
   } finally {
@@ -55,7 +55,7 @@ test("two resolvers' sockets do not share rooms", async () => {
 
 // Each event runs in a scope of its own under the connection's, so a handler's
 // own variables are gone after it, and what it bubbles stays with the connection.
-test("a connection's handlers share its id and what they bubble, and on-close gets the close code", { timeout: 5000 }, async () => {
+test("a connection's handlers share its id and what they bubble, and onClose gets the close code", { timeout: 5000 }, async () => {
   const closes: unknown[] = [];
   class SeenNode extends Node {
     seen(def: Record<string, unknown>, context: Context) {
@@ -67,13 +67,13 @@ test("a connection's handlers share its id and what they bubble, and on-close ge
   const port = await resolver({
     $listen: 0,
     do: [{
-      "$socket-accept": true,
-      "on-message": [
+      "$socketAccept": true,
+      onMessage: [
         { $if: { $var: "message.name" }, then: { $setVars: { name: { $var: "message.name" } }, $bubble: true } },
         { $concat: [{ $var: "id" }, "|", { $var: "name" }], $as: "reply" },
-        { "$socket-send": { $var: "reply" } },
+        { "$socketSend": { $var: "reply" } },
       ],
-      "on-close": [{ $seen: true }],
+      onClose: [{ $seen: true }],
     }],
   }, {});
   try {
@@ -94,15 +94,15 @@ test("a connection's handlers share its id and what they bubble, and on-close ge
   }
 });
 
-test("socket-list reports each connection's id and the meta it was accepted with", { timeout: 5000 }, async () => {
+test("socketList reports each connection's id and the meta it was accepted with", { timeout: 5000 }, async () => {
   const resolver = createResolver([...coreNodes(), new ServerNode(), new WebSocketNode()]);
   const port = await resolver({
     $listen: 0,
     do: [{
-      "$socket-accept": true,
+      "$socketAccept": true,
       meta: { name: { $var: "request.query.name" } },
-      "on-open": [{ "$socket-join": "lobby" }],
-      "on-message": [{ "$socket-send": { "$socket-list": "lobby" } }],
+      onOpen: [{ "$socketJoin": "lobby" }],
+      onMessage: [{ "$socketSend": { "$socketList": "lobby" } }],
     }],
   }, {});
   try {
@@ -111,7 +111,7 @@ test("socket-list reports each connection's id and the meta it was accepted with
       socket.once("open", () => resolve(socket));
       socket.once("error", reject);
     });
-    await new Promise(r => setTimeout(r, 50)); // let on-open join the room
+    await new Promise(r => setTimeout(r, 50)); // let onOpen join the room
     const list = JSON.parse(await ask(ws)) as Array<Record<string, unknown>>;
     assert.equal(list.length, 1);
     assert.equal(list[0].name, "ada");

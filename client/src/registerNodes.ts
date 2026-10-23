@@ -49,15 +49,15 @@ function missingPackage(pkg: string, needed: string): (err: unknown) => never {
  *  worker (no DOM/GPU/storage). */
 export function registerComputeLazy(resolver: Resolver): void {
   resolver.registerLazy(
-    ["entity-init", "entity-add", "entity-remove", "entity-move", "entity-update",
-     "entity-clear", "entity-list", "entity-nearest", "entity-get",
-     "v-distance", "v-lerp", "v-toward", "v-normalize", "v-scale",
-     "v-add", "v-sub", "v-direction", "v-cross", "v-dot",
-     "physics-init", "physics-pause", "physics-resume", "physics-destroy", "physics-apply", "physics-step",
-     "physics-raycast",
-     "collision-on", "collision-off",
-     "joint-add", "joint-remove",
-     "parseGLB", "parseGLTF", "register-mesh"],
+    ["entityInit", "entityAdd", "entityRemove", "entityMove", "entityUpdate",
+     "entityClear", "entityList", "entityNearest", "entityGet",
+     "vectorDistance", "vectorLerp", "vectorToward", "vectorNormalize", "vectorScale",
+     "vectorAdd", "vectorSub", "vectorDirection", "vectorCross", "vectorDot",
+     "physicsInit", "physicsPause", "physicsResume", "physicsDestroy", "physicsApply", "physicsStep",
+     "physicsRaycast",
+     "collisionOn", "collisionOff",
+     "jointAdd", "jointRemove",
+     "parseGLB", "parseGLTF", "meshRegister"],
     (r) => Promise.all([
       import("@jexs/physics").catch(
         missingPackage("@jexs/physics", "entity, vector, physics, collision, joint and mesh ops"),
@@ -81,31 +81,31 @@ export function registerComputeLazy(resolver: Resolver): void {
  *  (no `document`/canvas/`localStorage` there). */
 export function registerDomLazy(resolver: Resolver): void {
   resolver.registerLazy(
-    ["ws-connect", "ws-send", "ws-close", "ws-status"],
+    ["wsConnect", "wsSend", "wsClose", "wsStatus"],
     (r) => import("./nodes/Ws.js").then(({ WsNode }) => {
       r.registerNode(new WsNode());
     }),
   );
 
   resolver.registerLazy(
-    ["push-subscribe", "push-unsubscribe"],
+    ["pushSubscribe", "pushUnsubscribe"],
     (r) => import("./nodes/Push.js").then(({ PushNode }) => {
       r.registerNode(new PushNode());
     }),
   );
 
   resolver.registerLazy(
-    ["rtc", "rtc-connect", "rtc-signal", "rtc-send", "rtc-broadcast", "rtc-close", "rtc-status"],
+    ["rtc", "rtcConnect", "rtcSignal", "rtcSend", "rtcBroadcast", "rtcClose", "rtcStatus"],
     (r) => import("./nodes/WebRTC.js").then(({ WebRTCNode }) => {
       r.registerNode(new WebRTCNode());
     }),
   );
 
   resolver.registerLazy(
-    ["gl-init", "gl-destroy", "gl-hit", "gl-camera", "gl-texture", "gl-animate",
-     "gl-text", "gl-font", "gl-shader", "gl-blur", "gl-transition", "gl-tween", "gl-ssao",
-     "gl-register-mesh", "gl-atlas", "gl-frame", "gl-tilemap", "gl-tilemap-set",
-     "gl-trail", "gl-trail-remove", "gl-raycast", "gl-particle"],
+    ["glInit", "glDestroy", "glHit", "glCamera", "glTexture", "glAnimate",
+     "glText", "glFont", "glShader", "glBlur", "glTransition", "glTween", "glSsao",
+     "glRegisterMesh", "glAtlas", "glFrame", "glTilemap", "glTilemapSet",
+     "glTrail", "glTrailRemove", "glRaycast", "glParticle"],
     (r) => import("@jexs/gl")
       .catch(missingPackage("@jexs/gl", "gl-* ops"))
       .then(({ GlNode }) => {

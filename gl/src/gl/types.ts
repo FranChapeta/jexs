@@ -98,14 +98,14 @@ export interface GlInstance {
   atlases: Map<string, { texture: string; frames: [number, number, number, number][] }>;
   tilemaps: Map<string, { vbo: WebGLBuffer; vertCount: number; textureName: string; z: number; dirty: boolean; data: number[][]; atlas: string; tileW: number; tileH: number }>;
   shaders: Map<string, { program: WebGLProgram; uniforms: Record<string, WebGLUniformLocation | null>; aPosition: number }>;
-  /** Registered MSDF fonts (atlas texture + parsed metrics), keyed by gl-font name.
-   *  gl-text with `font` matching a key renders via the MSDF path (crisp at any
+  /** Registered MSDF fonts (atlas texture + parsed metrics), keyed by glFont name.
+   *  glText with `font` matching a key renders via the MSDF path (crisp at any
    *  scale); any other font string falls back to the canvas texture (Tier 1). */
   msdfFonts: Map<string, { font: MsdfFont; tex: WebGLTexture; w: number; h: number }>;
   /** Active equirectangular env backdrop: a registered `textures` entry (LDR
    *  panorama OR float HDR) drawn as a skybox sampled by view direction, plus its
    *  draw settings. Null = use the `skyTop`/`skyBottom` gradient sky instead. Set
-   *  via the `skybox` field on `gl-init`/`gl-camera`; the env map is just a
+   *  via the `skybox` field on `glInit`/`glCamera`; the env map is just a
    *  texture, not a separate concept. */
   envSky: { texture: string; intensity: number; rotation: number } | null;
   /** Lazily-built equirect skybox program (view-direction sampled). */
@@ -366,7 +366,7 @@ export interface GlTween {
   duration: number;
   elapsed: number;
   easing: (t: number) => number;
-  /** Settles the `gl-tween` step: on completion, when a newer tween takes over
+  /** Settles the `glTween` step: on completion, when a newer tween takes over
    *  all of its fields, or when the scene is destroyed. */
   done: () => void;
 }

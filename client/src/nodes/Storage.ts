@@ -17,46 +17,46 @@ function encode(value: unknown): string {
 
 export class StorageNode extends Node {
   static schema: JexsNodeSchema = {
-    "storage-get": {
+    storageGet: {
       type: "string",
       markdownDescription: "Reads a value from `localStorage` (or `sessionStorage` if `session: true`). Returns the JSON-parsed value, the raw string if parsing fails, or `null` if the key is absent.",
       examples: [
-        "{ \"$storage-get\": \"username\" }",
-        "{ \"$storage-get\": \"cart\", \"session\": true }",
+        "{ \"$storageGet\": \"username\" }",
+        "{ \"$storageGet\": \"cart\", \"session\": true }",
       ],
     },
-    "storage-set": {
+    storageSet: {
       type: "string",
       markdownDescription: "Writes the `value` sibling under the given key. Non-string values are JSON-encoded.",
       outputDescription: "The stored value.",
       examples: [
-        "{ \"$storage-set\": \"username\", \"value\": \"Alice\" }",
-        "{ \"$storage-set\": \"prefs\", \"value\": { \"theme\": \"dark\" } }",
+        "{ \"$storageSet\": \"username\", \"value\": \"Alice\" }",
+        "{ \"$storageSet\": \"prefs\", \"value\": { \"theme\": \"dark\" } }",
       ],
       siblings: {
         value: { required: true, description: "The value to store. Non-string values are JSON-encoded." },
       },
     },
-    "storage-delete": {
+    storageDelete: {
       type: "string",
       output: "boolean",
       markdownDescription: "Removes the entry under the given key.",
       outputDescription: "`true` if the key existed and was removed, otherwise `false`.",
       examples: [
-        "{ \"$storage-delete\": \"username\" }",
+        "{ \"$storageDelete\": \"username\" }",
       ],
     },
-    "storage-has": {
+    storageHas: {
       type: "string",
       output: "boolean",
       markdownDescription: "Checks whether the given key is present.",
       outputDescription: "`true` if the key is present, otherwise `false`, even when the stored value is the string `\"null\"`.",
       examples: [
-        "{ \"$storage-has\": \"username\" }",
+        "{ \"$storageHas\": \"username\" }",
       ],
     },
     // Keyless bulk ops fold into the bare `storage` key (value-mode); the keyed
-    // ones (`storage-get`/`set`/`delete`/`has`, as `cache-*` names them) keep
+    // ones (`storageGet`/`set`/`delete`/`has`, as `cache-*` names them) keep
     // their prefix. All honor `session`.
     storage: {
       type: "string",
@@ -80,23 +80,23 @@ export class StorageNode extends Node {
     },
   };
 
-  ["storage-get"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["$storage-get"], def.session], context, ([keyRaw, sessionRaw]) => {
+  storageGet(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def.$storageGet, def.session], context, ([keyRaw, sessionRaw]) => {
       const store = pickStore(sessionRaw);
       return decode(store.getItem(String(keyRaw)));
     });
   }
 
-  ["storage-set"](def: Record<string, unknown>, context: Context): NodeValue {
-    if (!("value" in def)) throw new Error("storage-set needs a `value` to store");
-    return resolveAll([def["$storage-set"], def.value, def.session], context, ([keyRaw, value, sessionRaw]) => {
+  storageSet(def: Record<string, unknown>, context: Context): NodeValue {
+    if (!("value" in def)) throw new Error("storageSet needs a `value` to store");
+    return resolveAll([def.$storageSet, def.value, def.session], context, ([keyRaw, value, sessionRaw]) => {
       pickStore(sessionRaw).setItem(String(keyRaw), encode(value));
       return value;
     });
   }
 
-  ["storage-delete"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["$storage-delete"], def.session], context, ([keyRaw, sessionRaw]) => {
+  storageDelete(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def.$storageDelete, def.session], context, ([keyRaw, sessionRaw]) => {
       const store = pickStore(sessionRaw);
       const key = String(keyRaw);
       const existed = store.getItem(key) !== null;
@@ -105,8 +105,8 @@ export class StorageNode extends Node {
     });
   }
 
-  ["storage-has"](def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def["$storage-has"], def.session], context, ([keyRaw, sessionRaw]) =>
+  storageHas(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def.$storageHas, def.session], context, ([keyRaw, sessionRaw]) =>
       pickStore(sessionRaw).getItem(String(keyRaw)) !== null);
   }
 

@@ -10,7 +10,7 @@ import { WebRTCNode } from "../src/nodes/WebRTC.js";
  * emits a candidate.
  *
  * There is no socket stub anywhere in this file. Signalling is just steps now,
- * so an `on-signal` that records into the context is the whole transport.
+ * so an `onSignal` that records into the context is the whole transport.
  */
 class FakeChannel {
   readyState = "connecting";
@@ -126,7 +126,7 @@ const base = (): Ctx => ({ sent: [], seen: [] });
 
 /** Register with the recording sink, plus any extra siblings under test. */
 async function listen(ctx: Ctx, extra: Record<string, unknown> = {}): Promise<void> {
-  await resolve({ $rtc: "listen", "on-signal": RECORD, ...extra }, ctx);
+  await resolve({ $rtc: "listen", "onSignal": RECORD, ...extra }, ctx);
 }
 
 const OFFER = { type: "offer", sdp: "v=0 remote offer" };
@@ -143,7 +143,7 @@ test("connect blocks until both channels are open, then yields the peer id", asy
   await listen(ctx);
 
   let settled = false;
-  const dialing = resolve({ "$rtc-connect": "B" }, ctx) as Promise<unknown>;
+  const dialing = resolve({ "$rtcConnect": "B" }, ctx) as Promise<unknown>;
   void dialing.then(() => { settled = true; }, () => { settled = true; });
 
   await tick();
@@ -158,10 +158,10 @@ test("connect blocks until both channels are open, then yields the peer id", asy
   assert.equal(await dialing, "B");
 });
 
-test("connect emits an offer through on-signal, in the browser's own shape", async () => {
+test("connect emits an offer through onSignal, in the browser's own shape", async () => {
   const ctx = base();
   await listen(ctx);
-  const dialing = resolve({ "$rtc-connect": "B", timeout: 40 }, ctx) as Promise<unknown>;
+  const dialing = resolve({ "$rtcConnect": "B", timeout: 40 }, ctx) as Promise<unknown>;
   dialing.catch(() => { /* left to time out */ });
   await tick();
 
@@ -175,17 +175,17 @@ test("connect rejects on timeout, where catch can see it", async () => {
   const ctx = base();
   await listen(ctx);
   const message = await resolve(
-    { "$rtc-connect": "B", timeout: 20, $catch: [{ $var: "error.message" }] },
+    { "$rtcConnect": "B", timeout: 20, $catch: [{ $var: "error.message" }] },
     ctx,
   );
-  assert.match(String(message), /rtc-connect to "B" timed out after 20ms/);
+  assert.match(String(message), /rtcConnect to "B" timed out after 20ms/);
   assert.equal(FakePeer.last().closed, true, "a timed-out dial should not leave the peer open");
 });
 
 test("connect refuses without a prior listen, since an offer would have nowhere to go", async () => {
   await assert.rejects(
-    async () => { await resolve({ "$rtc-connect": "B" }, base()); },
-    /rtc-connect needs a prior rtc "listen"/,
+    async () => { await resolve({ "$rtcConnect": "B" }, base()); },
+    /rtcConnect needs a prior rtc "listen"/,
   );
 });
 
@@ -193,59 +193,59 @@ test("an inbound offer is answered with no signalling logic in the template", as
   const ctx = base();
   await listen(ctx);
 
-  await resolve({ "$rtc-signal": "A", data: OFFER }, ctx);
+  await resolve({ "$rtcSignal": "A", data: OFFER }, ctx);
   await tick();
 
   assert.deepEqual(ctx.sent, [{ type: "answer", sdp: "v=0 answer" }]);
   assert.deepEqual(FakePeer.last().remoteDescription, OFFER);
 });
 
-test("on-peer refuses by resolving falsy: nothing is signalled back", async () => {
+test("onPeer refuses by resolving falsy: nothing is signalled back", async () => {
   const ctx = base();
-  await listen(ctx, { "on-peer": { $push: [{ $var: "seen" }, { $var: "peer" }] } });
+  await listen(ctx, { "onPeer": { $push: [{ $var: "seen" }, { $var: "peer" }] } });
   // `push` returns the array, which is truthy, so the peer above is admitted.
-  await resolve({ "$rtc-signal": "A", data: OFFER }, ctx);
+  await resolve({ "$rtcSignal": "A", data: OFFER }, ctx);
   await tick();
-  assert.equal(ctx.sent.length, 1, "a truthy on-peer should have answered");
+  assert.equal(ctx.sent.length, 1, "a truthy onPeer should have answered");
 
-  await listen(ctx, { "on-peer": { $not: true } });
+  await listen(ctx, { "onPeer": { $not: true } });
   ctx.sent.length = 0;
-  await resolve({ "$rtc-signal": "B", data: OFFER }, ctx);
+  await resolve({ "$rtcSignal": "B", data: OFFER }, ctx);
   await tick();
   assert.deepEqual(ctx.sent, [], "a refused peer must not be answered");
-  assert.equal(await resolve({ "$rtc-status": "B" }, ctx), "none");
+  assert.equal(await resolve({ "$rtcStatus": "B" }, ctx), "none");
 });
 
 // The security argument in one test: a payload can say whatever it likes, and
 // the node still believes only the `from` its transport vouched for.
 test("from comes from the sibling, never from inside the payload", async () => {
   const ctx = base();
-  await listen(ctx, { "on-open": { $push: [{ $var: "seen" }, { $var: "peer" }] } });
+  await listen(ctx, { "onOpen": { $push: [{ $var: "seen" }, { $var: "peer" }] } });
 
   const forged = { ...OFFER, from: "victim", to: "victim" };
-  await resolve({ "$rtc-signal": "attacker", data: forged }, ctx);
+  await resolve({ "$rtcSignal": "attacker", data: forged }, ctx);
   await tick();
 
   FakePeer.last().receiveChannels();
   await tick();
   assert.deepEqual(ctx.seen, ["attacker"]);
-  assert.equal(await resolve({ "$rtc-status": "victim" }, ctx), "none");
+  assert.equal(await resolve({ "$rtcStatus": "victim" }, ctx), "none");
 });
 
 test("signal refuses what is neither a description nor a candidate", async () => {
   const ctx = base();
   await listen(ctx);
   await assert.rejects(
-    async () => { await resolve({ "$rtc-signal": "A", data: { hello: "there" } }, ctx); },
+    async () => { await resolve({ "$rtcSignal": "A", data: { hello: "there" } }, ctx); },
     /must be a session description .* or an ICE candidate/,
   );
   await assert.rejects(
-    async () => { await resolve({ "$rtc-signal": "A", data: "nope" }, ctx); },
+    async () => { await resolve({ "$rtcSignal": "A", data: "nope" }, ctx); },
     /must be a session description or an ICE candidate, got string/,
   );
   await assert.rejects(
-    async () => { await resolve({ "$rtc-signal": "A", data: { type: "offer" } }, ctx); },
-    /rtc-signal offer carries no sdp/,
+    async () => { await resolve({ "$rtcSignal": "A", data: { type: "offer" } }, ctx); },
+    /rtcSignal offer carries no sdp/,
   );
 });
 
@@ -253,15 +253,15 @@ test("signal names its peer as the value, and refuses without one", async () => 
   const ctx = base();
   await listen(ctx);
   await assert.rejects(
-    async () => { await resolve({ "$rtc-signal": undefined, data: OFFER }, ctx); },
-    /rtc-signal needs the peer the payload came from/,
+    async () => { await resolve({ "$rtcSignal": undefined, data: OFFER }, ctx); },
+    /rtcSignal needs the peer the payload came from/,
   );
 });
 
 test("signal refuses before any listen", async () => {
   await assert.rejects(
-    async () => { await resolve({ "$rtc-signal": "A", data: OFFER }, base()); },
-    /rtc-signal needs a prior rtc "listen"/,
+    async () => { await resolve({ "$rtcSignal": "A", data: OFFER }, base()); },
+    /rtcSignal needs a prior rtc "listen"/,
   );
 });
 
@@ -269,8 +269,8 @@ test("an answer for a peer that was never dialed is a failure, not a silent drop
   const ctx = base();
   await listen(ctx);
   await assert.rejects(
-    async () => { await resolve({ "$rtc-signal": "ghost", data: ANSWER }, ctx); },
-    /rtc-signal has no pending connection to "ghost"/,
+    async () => { await resolve({ "$rtcSignal": "ghost", data: ANSWER }, ctx); },
+    /rtcSignal has no pending connection to "ghost"/,
   );
 });
 
@@ -280,10 +280,10 @@ test("a candidate arriving before the offer is queued, then applied", async () =
   const ctx = base();
   await listen(ctx);
 
-  await resolve({ "$rtc-signal": "A", data: CANDIDATE }, ctx);
+  await resolve({ "$rtcSignal": "A", data: CANDIDATE }, ctx);
   assert.equal(FakePeer.live.length, 0, "a candidate must not conjure a peer");
 
-  await resolve({ "$rtc-signal": "A", data: OFFER }, ctx);
+  await resolve({ "$rtcSignal": "A", data: OFFER }, ctx);
   await tick();
 
   const peer = FakePeer.last();
@@ -291,17 +291,17 @@ test("a candidate arriving before the offer is queued, then applied", async () =
   assert.equal((peer.added[0] as { candidate: string }).candidate, CANDIDATE.candidate);
 });
 
-test("on-message binds the message, the peer and the channel it came over", async () => {
+test("onMessage binds the message, the peer and the channel it came over", async () => {
   const ctx = base();
   await listen(ctx, {
-    "on-message": {
+    onMessage: {
       $push: [{ $var: "seen" }, { $concat: [
         { $var: "peer" }, "/", { $var: "channel" }, "/", { $var: "message.n" },
       ] }],
     },
   });
 
-  const dialing = resolve({ "$rtc-connect": "B", timeout: 200 }, ctx) as Promise<unknown>;
+  const dialing = resolve({ "$rtcConnect": "B", timeout: 200 }, ctx) as Promise<unknown>;
   await tick();
   const peer = FakePeer.last();
   peer.openChannels();
@@ -317,11 +317,11 @@ test("send refuses an unknown peer and an unlisted channel", async () => {
   const ctx = base();
   await listen(ctx);
   await assert.rejects(
-    async () => { await resolve({ "$rtc-send": "nobody", data: { a: 1 } }, ctx); },
-    /rtc-send has no data channel to "nobody"/,
+    async () => { await resolve({ "$rtcSend": "nobody", data: { a: 1 } }, ctx); },
+    /rtcSend has no data channel to "nobody"/,
   );
   await assert.rejects(
-    async () => { await resolve({ "$rtc-send": "nobody", data: { a: 1 }, channel: "reliable" }, ctx); },
+    async () => { await resolve({ "$rtcSend": "nobody", data: { a: 1 }, channel: "reliable" }, ctx); },
     /Invalid rtc channel "reliable"/,
   );
 });
@@ -329,35 +329,35 @@ test("send refuses an unknown peer and an unlisted channel", async () => {
 test("status reports none, connecting and open", async () => {
   const ctx = base();
   await listen(ctx);
-  assert.equal(await resolve({ "$rtc-status": "B" }, ctx), "none");
+  assert.equal(await resolve({ "$rtcStatus": "B" }, ctx), "none");
 
-  const dialing = resolve({ "$rtc-connect": "B", timeout: 200 }, ctx) as Promise<unknown>;
+  const dialing = resolve({ "$rtcConnect": "B", timeout: 200 }, ctx) as Promise<unknown>;
   await tick();
-  assert.equal(await resolve({ "$rtc-status": "B" }, ctx), "connecting");
+  assert.equal(await resolve({ "$rtcStatus": "B" }, ctx), "connecting");
 
   FakePeer.last().openChannels();
   await dialing;
-  assert.equal(await resolve({ "$rtc-status": "B" }, ctx), "open");
+  assert.equal(await resolve({ "$rtcStatus": "B" }, ctx), "open");
 });
 
 test("a second listen replaces the handlers of the first", async () => {
   const first = base();
-  await listen(first, { "on-peer": { $push: [{ $var: "seen" }, "first"] } });
+  await listen(first, { "onPeer": { $push: [{ $var: "seen" }, "first"] } });
 
   const second = base();
-  await listen(second, { "on-peer": { $push: [{ $var: "seen" }, "second"] } });
+  await listen(second, { "onPeer": { $push: [{ $var: "seen" }, "second"] } });
 
-  await resolve({ "$rtc-signal": "A", data: OFFER }, second);
+  await resolve({ "$rtcSignal": "A", data: OFFER }, second);
   await tick();
   assert.deepEqual(first.seen, []);
   assert.deepEqual(second.seen, ["second"]);
   assert.deepEqual(first.sent, [], "the replaced sink should be silent too");
 });
 
-test("listen without on-signal is refused: an offer would have nowhere to go", async () => {
+test("listen without onSignal is refused: an offer would have nowhere to go", async () => {
   await assert.rejects(
     async () => { await resolve({ $rtc: "listen" }, base()); },
-    /rtc "listen" needs "on-signal"/,
+    /rtc "listen" needs "onSignal"/,
   );
 });
 
@@ -366,7 +366,7 @@ test("iceServers reach the connection, and a malformed entry throws", async () =
   const servers = [{ urls: "turn:turn.test:3478", username: "u", credential: "p" }];
   await listen(ctx, { iceServers: servers });
 
-  const dialing = resolve({ "$rtc-connect": "B", timeout: 40 }, ctx) as Promise<unknown>;
+  const dialing = resolve({ "$rtcConnect": "B", timeout: 40 }, ctx) as Promise<unknown>;
   dialing.catch(() => { /* left to time out */ });
   await tick();
   assert.deepEqual(FakePeer.last().config.iceServers, servers);
@@ -383,7 +383,7 @@ test("trickle false emits no candidates, and one description carrying them all",
   const ctx = base();
   await listen(ctx, { trickle: false });
 
-  const dialing = resolve({ "$rtc-connect": "B", timeout: 200 }, ctx) as Promise<unknown>;
+  const dialing = resolve({ "$rtcConnect": "B", timeout: 200 }, ctx) as Promise<unknown>;
   await tick();
 
   const peer = FakePeer.last();
@@ -403,7 +403,7 @@ test("trickle false emits no candidates, and one description carrying them all",
 test("trickle on by default emits each candidate as it is found", async () => {
   const ctx = base();
   await listen(ctx);
-  const dialing = resolve({ "$rtc-connect": "B", timeout: 40 }, ctx) as Promise<unknown>;
+  const dialing = resolve({ "$rtcConnect": "B", timeout: 40 }, ctx) as Promise<unknown>;
   dialing.catch(() => { /* left to time out */ });
   await tick();
 
@@ -413,21 +413,21 @@ test("trickle on by default emits each candidate as it is found", async () => {
   assert.equal((ctx.sent[1] as { candidate: string }).candidate, "candidate:2 1 udp 1 10.0.0.2 5000 typ host");
 });
 
-test("on-close fires for a peer that opened, and not for one that never did", async () => {
+test("onClose fires for a peer that opened, and not for one that never did", async () => {
   const ctx = base();
-  await listen(ctx, { "on-close": { $push: [{ $var: "seen" }, { $var: "peer" }] } });
+  await listen(ctx, { "onClose": { $push: [{ $var: "seen" }, { $var: "peer" }] } });
 
   // Never opened: the rejected dial is the report, so nothing is announced.
-  await resolve({ "$rtc-connect": "doomed", timeout: 20, $catch: [{ $var: "error.message" }] }, ctx);
+  await resolve({ "$rtcConnect": "doomed", timeout: 20, $catch: [{ $var: "error.message" }] }, ctx);
   await tick();
   assert.deepEqual(ctx.seen, []);
 
-  const dialing = resolve({ "$rtc-connect": "B", timeout: 200 }, ctx) as Promise<unknown>;
+  const dialing = resolve({ "$rtcConnect": "B", timeout: 200 }, ctx) as Promise<unknown>;
   await tick();
   FakePeer.last().openChannels();
   await dialing;
 
-  await resolve({ "$rtc-close": "B" }, ctx);
+  await resolve({ "$rtcClose": "B" }, ctx);
   await tick();
   assert.deepEqual(ctx.seen, ["B"]);
 });
@@ -435,7 +435,7 @@ test("on-close fires for a peer that opened, and not for one that never did", as
 test("a failed connection tears the peer down", async () => {
   const ctx = base();
   await listen(ctx);
-  const dialing = resolve({ "$rtc-connect": "B", timeout: 200 }, ctx) as Promise<unknown>;
+  const dialing = resolve({ "$rtcConnect": "B", timeout: 200 }, ctx) as Promise<unknown>;
   await tick();
   const peer = FakePeer.last();
   peer.fail();
@@ -447,9 +447,9 @@ test("dispose closes peers, rejects pending dials and forgets the handlers", asy
   const node = new WebRTCNode();
   const own = createResolver([...coreNodes(), node]);
   const ctx = base();
-  await own({ $rtc: "listen", "on-signal": RECORD }, ctx);
+  await own({ $rtc: "listen", "onSignal": RECORD }, ctx);
 
-  const dialing = own({ "$rtc-connect": "B", timeout: 5000 }, ctx) as Promise<unknown>;
+  const dialing = own({ "$rtcConnect": "B", timeout: 5000 }, ctx) as Promise<unknown>;
   await tick();
   const peer = FakePeer.last();
 
@@ -459,7 +459,7 @@ test("dispose closes peers, rejects pending dials and forgets the handlers", asy
   assert.equal(node.peers.size, 0);
   assert.equal(node.handlers.size, 0);
   await assert.rejects(
-    async () => { await own({ "$rtc-connect": "C" }, ctx); },
+    async () => { await own({ "$rtcConnect": "C" }, ctx); },
     /needs a prior rtc "listen"/,
   );
 });
@@ -475,17 +475,17 @@ test("two nodes negotiate end to end with nothing between them", async () => {
   const ctxB = base();
   const OPENED = { $push: [{ $var: "seen" }, { $concat: [{ $var: "peer" }, "/", { $var: "inbound" }] }] };
 
-  await runA({ $rtc: "listen", "on-signal": RECORD, "on-open": OPENED }, ctxA);
-  await runB({ $rtc: "listen", "on-signal": RECORD, "on-open": OPENED }, ctxB);
+  await runA({ $rtc: "listen", "onSignal": RECORD, "onOpen": OPENED }, ctxA);
+  await runB({ $rtc: "listen", "onSignal": RECORD, "onOpen": OPENED }, ctxB);
 
-  const dialing = runA({ "$rtc-connect": "b", timeout: 2000 }, ctxA) as Promise<unknown>;
+  const dialing = runA({ "$rtcConnect": "b", timeout: 2000 }, ctxA) as Promise<unknown>;
   await tick();
 
   // A's offer, carried by the test instead of a socket.
-  await runB({ "$rtc-signal": "a", data: ctxA.sent.shift() }, ctxB);
+  await runB({ "$rtcSignal": "a", data: ctxA.sent.shift() }, ctxB);
   await tick();
   // B's answer, carried back.
-  await runA({ "$rtc-signal": "b", data: ctxB.sent.shift() }, ctxA);
+  await runA({ "$rtcSignal": "b", data: ctxB.sent.shift() }, ctxA);
   await tick();
 
   const [peerA, peerB] = FakePeer.live;

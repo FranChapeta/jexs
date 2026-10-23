@@ -21,8 +21,8 @@ npm install @jexs/client @jexs/core
 | Node | Keys | Purpose |
 |---|---|---|
 | `DomNode` | `getProp`, `setProp`, `addClass`, `toggleClass`, `setAttr`, `querySelector`, `insertHtml`, `moveElement`, `removeElement`, ... | Read and mutate the DOM |
-| `AudioNode` | `audio-load`, `audio-play`, `audio-stop`, `audio-volume`, `audio-master`, ... | Web Audio playback |
-| `StorageNode` | `storage-get`, `storage-set`, `storage-delete`, `storage-has`, `storage` | `localStorage` / `sessionStorage`, named as `cache-*` names the server's cache |
+| `AudioNode` | `audioLoad`, `audioPlay`, `audioStop`, `audioVolume`, `audioMaster`, ... | Web Audio playback |
+| `StorageNode` | `storageGet`, `storageSet`, `storageDelete`, `storageHas`, `storage` | `localStorage` / `sessionStorage`, named as `cache-*` names the server's cache |
 
 **Lazy-loaded nodes** (only fetched when first used):
 
@@ -51,8 +51,8 @@ A service worker is a config: what to precache, how to answer requests, and the 
     "skipWaiting": true,
     "claim": true,
     "events": {
-      "push": { "$sw-notify": { "$var": "data.title" }, "body": { "$var": "data.body" }, "data": { "url": { "$var": "data.url" } } },
-      "notificationclick": { "$sw-open": { "$var": "notification.data.url" } }
+      "push": { "$swNotify": { "$var": "data.title" }, "body": { "$var": "data.body" }, "data": { "url": { "$var": "data.url" } } },
+      "notificationclick": { "$swOpen": { "$var": "notification.data.url" } }
     }
   }
 }
@@ -96,9 +96,9 @@ Every handler sees `version`, the worker's version (the hash the server generate
 
 | Op | Does |
 |---|---|
-| `$sw-notify` | Show a notification (`body`, `icon`, `badge`, `image`, `tag`, `actions`, `requireInteraction`, `silent`, `data`). |
-| `$sw-open` | Focus the window at a URL or open one; `navigate: true` reuses an open app window. |
-| `$sw-post` | Message pages: the sender, in a `message` handler, otherwise every window. Pages handle it with an `sw-message` event, the message as `value`. |
+| `$swNotify` | Show a notification (`body`, `icon`, `badge`, `image`, `tag`, `actions`, `requireInteraction`, `silent`, `data`). |
+| `$swOpen` | Focus the window at a URL or open one; `navigate: true` reuses an open app window. |
+| `$swPost` | Message pages: the sender, in a `message` handler, otherwise every window. Pages handle it with an `sw-message` event, the message as `value`. |
 
 ## Usage from HTML
 
