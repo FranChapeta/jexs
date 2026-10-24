@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, loggerFor, resolveAll, resolveFields, resolverFor, createHttpError } from "@jexs/core";
+import { Node, Context, NodeValue, loggerFor, resolveAll, resolveFields, resolverFor } from "@jexs/core";
 import type { CacheAdapter, CacheConfig } from "../cache/CacheAdapter.js";
 import { MemoryCache } from "../cache/MemoryCache.js";
 import { RedisCache } from "../cache/RedisCache.js";
@@ -152,8 +152,9 @@ export class CacheNode extends Node {
     },
     cacheSet: {
       type: "string",
+      output: "any",
       markdownDescription: "Writes the `value` sibling under the given key. Optional `ttl` sibling sets expiry in seconds.",
-      outputDescription: "The driver's write result, resolved once the value is stored (truthy on success).",
+      outputDescription: "The value it stored, once it is stored, so the step can stand where the value is needed.",
       examples: [
         "{ \"$cacheSet\": \"user:42\", \"value\": { \"$var\": \"user\" }, \"ttl\": 3600 }",
       ],
@@ -247,7 +248,7 @@ export class CacheNode extends Node {
         // memjs dials over a plain socket, so silently accepting a `tls` here
         // would ship unencrypted traffic while the template says otherwise.
         if (r.tls != null) {
-          throw createHttpError(501, "the memcached driver does not support TLS; tunnel it or use redis");
+          throw new Error("the memcached driver does not support TLS; tunnel it or use redis");
         }
         config.memcached = {};
         if (r.servers && Array.isArray(r.servers)) {
@@ -290,7 +291,7 @@ export class CacheNode extends Node {
         case "clear": return CacheNode.cacheFor(context, name).clear();
         case "stats": return CacheNode.cacheFor(context, name).stats();
         default:
-          throw createHttpError(400, `Unknown cache op: ${String(op)}`);
+          throw new Error(`$cache: unknown operation ${JSON.stringify(op)}; it takes close, clear or stats`);
       }
     });
   }
@@ -301,10 +302,12 @@ export class CacheNode extends Node {
   }
 
   cacheSet(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def.$cacheSet, def.value ?? null, def.ttl ?? null, def.connection ?? null], context, async ([keyRaw, value, ttlRaw, connection]) => {
+    if (def.value === undefined) throw new Error("$cacheSet needs a `value` to store");
+    return resolveAll([def.$cacheSet, def.value, def.ttl ?? null, def.connection ?? null], context, async ([keyRaw, value, ttlRaw, connection]) => {
       const key = String(keyRaw);
       const ttl = ttlRaw != null ? Number(ttlRaw) : undefined;
-      return CacheNode.cacheFor(context, optionalName(connection)).set(key, value, ttl);
+      await CacheNode.cacheFor(context, optionalName(connection)).set(key, value, ttl);
+      return value;
     });
   }
 
@@ -331,10 +334,7 @@ function cacheDriver(value: unknown): CacheConfig["type"] {
   if ((CACHE_DRIVERS as readonly string[]).includes(type)) {
     return type as CacheConfig["type"];
   }
-  throw createHttpError(
-    400,
-    `Unknown cache driver "${type}" (expected ${CACHE_DRIVERS.join(", ")})`,
-  );
+  throw new Error(`Unknown cache driver "${type}" (expected ${CACHE_DRIVERS.join(", ")})`);
 }
 
 // Per driver, the properties a `url` already carries
@@ -351,9 +351,6 @@ function requireOneEndpoint(r: Record<string, unknown>, type: string): void {
   if (!r.url) return;
   const also = (ENDPOINT_SIBLINGS[type] ?? []).filter(k => r[k] != null);
   if (also.length > 0) {
-    throw createHttpError(
-      400,
-      `"url" already carries the endpoint — drop ${also.map(k => `"${k}"`).join(", ")}, or drop the url and spell it out`,
-    );
+    throw new Error(`"url" already carries the endpoint: drop ${also.map(k => `"${k}"`).join(", ")}, or drop the url and spell it out`);
   }
 }

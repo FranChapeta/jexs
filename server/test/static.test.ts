@@ -258,3 +258,20 @@ test("listen returns the port it bound, and refuses a non-port", async () => {
     other.destroy();
   }
 });
+
+// A setting the listener cannot use stops it at startup rather than being
+// dropped for its default.
+test("listen refuses a size, an origin list or a client it cannot use", async () => {
+  const other = createResolver([...coreNodes(), new ServerNode()]);
+  try {
+    const refused = (extra: Record<string, unknown>, message: RegExp) =>
+      assert.rejects(async () => other({ $listen: 0, do: [], ...extra }, {}), message);
+    await refused({ maxBodySize: -1 }, /maxBodySize -1 is not a positive whole number of bytes/);
+    await refused({ maxBodySize: "1mb" }, /maxBodySize "1mb" is not a positive whole number of bytes/);
+    await refused({ trustedOrigins: ["https://ok.example", 5] }, /trustedOrigins \["https:\/\/ok.example",5\] is not a list of origins/);
+    await refused({ trustedOrigins: "https://ok.example" }, /is not a list of origins/);
+    await refused({ client: "jexs" }, /client "jexs" is neither true nor a path starting with "\/"/);
+  } finally {
+    other.destroy();
+  }
+});

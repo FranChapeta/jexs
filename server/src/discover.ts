@@ -116,7 +116,9 @@ function rank(name: string): number {
  * Discover and instantiate every node package that applies to the given runtime
  * `env` (`"node"` or `"browser"`). Imports each package's `nodes` entry, taking
  * its default export (a `Node[]` or a `(opts) => Node[]` factory invoked with
- * `{ root }`). One broken/host-incompatible package warns and is skipped.
+ * `{ root }`). A package that fails to load stops the load, naming it, rather
+ * than leaving its ops to fail later as unknown. Which env a package runs in is
+ * its manifest's `env`, so one built for the other runtime is never imported.
  */
 export async function loadNodePackages(
   projectDir: string,
@@ -137,9 +139,12 @@ export async function loadNodePackages(
         typeof contribution === "function"
           ? await (contribution as (o: { root: string }) => Node[] | Promise<Node[]>)({ root })
           : contribution;
-      if (Array.isArray(nodes)) out.push(...(nodes as Node[]));
+      if (!Array.isArray(nodes)) {
+        throw new Error(`${pkg.manifest.nodes}'s default export gives ${typeof nodes}, not an array of nodes`);
+      }
+      out.push(...(nodes as Node[]));
     } catch (err) {
-      console.warn(`jexs: could not load nodes from "${pkg.name}": ${(err as Error).message}`);
+      throw new Error(`jexs: could not load nodes from "${pkg.name}": ${err instanceof Error ? err.message : String(err)}`, { cause: err });
     }
   }
   return out;

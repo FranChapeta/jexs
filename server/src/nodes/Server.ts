@@ -683,12 +683,12 @@ export class ServerNode extends Node {
           description: "Per-request steps run for each incoming HTTP request. What they yield, `$return`'s value or the last step's, is the response.",
         },
         client: {
-          type: "boolean",
-          description: "Pass `true` to serve the browser bundle at `/jexs`, or a string path to use a custom route.",
+          type: ["boolean", "string"],
+          description: "Pass `true` to serve the browser bundle at `/jexs`, or a path starting with `/` to serve it there.",
         },
         maxBodySize: {
           type: "number",
-          description: "Maximum request body size in bytes.",
+          description: "Maximum request body size in bytes (default 1048576, 1 MB). A larger body is refused with 413.",
         },
         host: {
           type: "string",
@@ -795,8 +795,8 @@ export class ServerNode extends Node {
     const steps = def.do;
     if (!Array.isArray(steps)) throw new Error('$listen needs "do": an array of the steps each request runs');
 
-    const options = [def.maxBodySize, def.maxMessageSize, def.trustedOrigins, def.host, def.trustProxy, def.system].map(o => o ?? null);
-    return resolveAll([def.$listen, ...options], context, async ([portRaw, maxBodyRaw, maxMessageRaw, originsRaw, hostRaw, trustProxy, system]) => {
+    const options = [def.maxBodySize, def.maxMessageSize, def.trustedOrigins, def.host, def.trustProxy, def.system, def.client].map(o => o ?? null);
+    return resolveAll([def.$listen, ...options], context, async ([portRaw, maxBodyRaw, maxMessageRaw, originsRaw, hostRaw, trustProxy, system, client]) => {
       // `0` asks the OS for any free port; the step returns the one it got.
       const requested = portRaw == null || portRaw === "" ? 3000 : Number(portRaw);
       if (!Number.isInteger(requested) || requested < 0 || requested > 65535) {
@@ -806,6 +806,12 @@ export class ServerNode extends Node {
         throw new Error(`$listen: host ${JSON.stringify(hostRaw)} is not an address`);
       }
       const host = hostRaw ?? "0.0.0.0";
+      if (originsRaw !== null && !(Array.isArray(originsRaw) && originsRaw.every(o => typeof o === "string"))) {
+        throw new Error(`$listen: trustedOrigins ${JSON.stringify(originsRaw)} is not a list of origins`);
+      }
+      if (client !== null && typeof client !== "boolean" && !(typeof client === "string" && client.startsWith("/"))) {
+        throw new Error(`$listen: client ${JSON.stringify(client)} is neither true nor a path starting with "/"`);
+      }
 
       const listener: Listener = {
         node: this,
@@ -819,27 +825,24 @@ export class ServerNode extends Node {
         staticDirs: new Map(),
         sw: null,
         publicDir: path.resolve(process.cwd(), "public"),
-        trustedOrigins: Array.isArray(originsRaw) ? originsRaw.filter(o => typeof o === "string") : [],
+        trustedOrigins: originsRaw ?? [],
         trustProxy: trustProxy === true,
         system: system === true,
       };
 
-      if (def.maxBodySize && maxBodyRaw != null) {
-        const maxBody = Number(maxBodyRaw);
-        if (maxBody > 0) listener.maxBodySize = maxBody;
-      }
-      if (maxMessageRaw != null) {
-        const maxMessage = Number(maxMessageRaw);
-        if (!Number.isInteger(maxMessage) || maxMessage <= 0) {
-          throw new Error(`$listen: maxMessageSize ${JSON.stringify(maxMessageRaw)} is not a positive whole number of bytes`);
+      for (const [name, raw] of [["maxBodySize", maxBodyRaw], ["maxMessageSize", maxMessageRaw]] as const) {
+        if (raw === null) continue;
+        const bytes = Number(raw);
+        if (!Number.isInteger(bytes) || bytes <= 0) {
+          throw new Error(`$listen: ${name} ${JSON.stringify(raw)} is not a positive whole number of bytes`);
         }
-        listener.maxMessageSize = maxMessage;
+        listener[name] = bytes;
       }
 
       // Client bundle auto-serving
-      const servePath = typeof def.client === "string" ? def.client : "/jexs";
+      const servePath = typeof client === "string" ? client : "/jexs";
       let browserDir: string | null = null;
-      if (def.client) {
+      if (client) {
         browserDir = resolveClientBrowserDir();
         if (browserDir) {
           serveStaticDir(listener, servePath, browserDir);
@@ -861,7 +864,7 @@ export class ServerNode extends Node {
         if (!this.isObject(sw) || Object.keys(sw).length === 0) {
           throw new Error('$listen "sw" takes a config, e.g. { "precache": ["/offline.html"], "routes": [...], "events": {...} }');
         }
-        if (!def.client) {
+        if (!client) {
           throw new Error('$listen "sw" needs "client": the service worker runtime ships in the browser bundle');
         }
         if (browserDir) {

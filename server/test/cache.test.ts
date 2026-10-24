@@ -146,6 +146,22 @@ test("a session kept in a named cache stays there for the rest of the request", 
   }
 });
 
+test("cacheSet needs a value and returns it, and a mistake in a step is no HTTP error", async () => {
+  const { resolver } = resolverWithCache();
+  try {
+    await resolver({ "$cacheConnect": "memory" }, {});
+    assert.deepEqual(await resolver({ "$cacheSet": "user", value: { id: 1 } }, {}), { id: 1 });
+    assert.deepEqual(await resolver({ "$cacheGet": "user" }, {}), { id: 1 });
+    await assert.rejects(async () => resolver({ "$cacheSet": "user" }, {}), /\$cacheSet needs a `value` to store/);
+
+    const plain = (message: RegExp) => (e: Error & { status?: number }) => e.status === undefined && message.test(e.message);
+    await assert.rejects(async () => resolver({ $cache: "dump" }, {}), plain(/unknown operation "dump"/));
+    await assert.rejects(async () => resolver({ "$cacheConnect": "mongo" }, {}), plain(/Unknown cache driver "mongo"/));
+  } finally {
+    resolver.destroy();
+  }
+});
+
 test("translations are looked up in the named cache", async () => {
   const context = {};
   const resolver = createResolver([...coreNodes(), new CacheNode(), new TranslationNode()], { context });
