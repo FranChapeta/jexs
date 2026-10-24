@@ -202,12 +202,15 @@ async function handleUpgrade(
   const upgrade = { req, socket, head, wss, accepted: false };
   try {
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+    // The same context a request gets, so the steps that route one route the other.
     const context: Context = {
       ...listener.startupContext,
+      baseUrl: getBaseUrl(listener, req),
       request: {
         method: "WS",
         path: url.pathname,
         body: {},
+        rawBody: "",
         query: Object.fromEntries(url.searchParams),
         headers: req.headers,
         cookies: parseCookies(req),
@@ -215,13 +218,9 @@ async function handleUpgrade(
       [COOKIES]: [],
       [UPGRADE]: upgrade,
     };
+    if (listener.system) context.system = systemInfo();
 
-    for (const step of listener.steps) {
-      const stepResult = await resolve(step, context);
-      if (upgrade.accepted) return;
-      if (isReturn(stepResult)) break;
-    }
-
+    await runSteps(listener.steps, context);
     if (!upgrade.accepted) socket.destroy();
   } catch (error) {
     loggerFor(listener.startupContext).error("WebSocket upgrade error:", error);
@@ -245,7 +244,7 @@ async function handleRequest(
       req.url || "/",
       `http://${req.headers.host || "localhost"}`,
     );
-    const body = await parseBody(req, listener);
+    const { body, rawBody } = await parseBody(req, listener);
 
     // Method override: HTML forms only support GET/POST, so support _method field
     // (standard pattern used by Rails, Laravel, Express method-override, etc.)
@@ -291,6 +290,7 @@ async function handleRequest(
         method,
         path: requestPath,
         body: body as Record<string, unknown>,
+        rawBody,
         query: query as Record<string, unknown>,
         headers,
         cookies,
@@ -330,10 +330,6 @@ async function handleRequest(
   }
 }
 
-function isReturn(value: unknown): value is { $return: unknown } {
-  return isObject(value) && "$return" in value;
-}
-
 /** What is written: the status, the headers, and the body as text. */
 interface Reply {
   status: number;
@@ -371,7 +367,8 @@ function replyFor(value: unknown): Reply {
   };
 }
 
-async function parseBody(req: http.IncomingMessage, listener: Listener): Promise<unknown> {
+/** A request's body as parsed, by its content type, and as the text it came as. */
+async function parseBody(req: http.IncomingMessage, listener: Listener): Promise<{ body: unknown; rawBody: string }> {
   return new Promise((resolveBody, reject) => {
     const chunks: Buffer[] = [];
     let totalSize = 0;
@@ -388,28 +385,28 @@ async function parseBody(req: http.IncomingMessage, listener: Listener): Promise
 
     req.on("end", () => {
       if (chunks.length === 0) {
-        resolveBody({});
+        resolveBody({ body: {}, rawBody: "" });
         return;
       }
 
-      const body = Buffer.concat(chunks).toString();
+      const rawBody = Buffer.concat(chunks).toString();
       const contentType = req.headers["content-type"] || "";
 
       if (contentType.includes("application/json")) {
         try {
-          resolveBody(JSON.parse(body));
+          resolveBody({ body: JSON.parse(rawBody), rawBody });
         } catch {
           reject(createHttpError(400, "Malformed JSON body"));
         }
       } else if (contentType.includes("application/x-www-form-urlencoded")) {
-        resolveBody(Object.fromEntries(new URLSearchParams(body)));
+        resolveBody({ body: Object.fromEntries(new URLSearchParams(rawBody)), rawBody });
       } else {
-        resolveBody(body);
+        resolveBody({ body: rawBody, rawBody });
       }
     });
 
     req.on("error", () => {
-      resolveBody({});
+      resolveBody({ body: {}, rawBody: "" });
     });
   });
 }
@@ -672,7 +669,7 @@ export class ServerNode extends Node {
       type: "number",
       output: "number",
       outputDescription: "The port it listens on: the one given, or the free port the OS picked for `0`.",
-      markdownDescription: "Starts an HTTP listener on the given port (default 3000; `0` picks any free port). Pass per-request steps in `\"do\"`.\nSet `\"client\": true` (or a path string) to auto-serve the `@jexs/client` browser bundle\nand inject the script tag into rendered `<head>` elements.\nSet `\"sw\"` (with `\"client\"`) to run a service worker: what it precaches, how it answers requests (`routes`), and the steps it resolves per event (`events`).\n\n**Multiple ports.** Bind more ports by adding more `{ \"$listen\": ..., \"do\": [...] }` steps. Each is an independent listener with its own `do` pipeline, `client`, `sw`, `maxBodySize` and `maxMessageSize`.\n\n**Cross-site requests.** A POST, PUT, PATCH or DELETE, or a WebSocket upgrade, that a browser sends from another site's page is refused with 403 before any step runs, since it would carry the user's cookies. Requests from outside a browser (webhooks, scripts) are not affected. Allow other origins with `trustedOrigins`.\n\n**Per-request `do` execution.** The steps run in order against a fresh per-request context, as any step list does: `\"as\"` and `setVars` write into the context for later steps, and a step resolving to `{ \"$return\": X }` ends the list early with `X`.\n\n**The response.** What the steps yield, `$return`'s value or the last step's, is the response. A string is sent as `text/html`, nothing at all as a 404, and any other value as JSON. For full control yield a response object, one with a `response`:\n- `response`: the body (string, or any JSON value for `responseType: \"json\"`). For `responseType: \"redirect\"` it is the `Location` URL.\n- `responseStatus`: HTTP status code (default `200`, or `302` for a redirect).\n- `responseType`: `\"html\"` | `\"json\"` | `\"text\"` | `\"redirect\"` | a literal MIME string (e.g. `\"image/png\"`). When omitted it is inferred: string → `html`, otherwise `json`.\n- `responseHeaders`: extra response headers.\n\nIts other keys are not sent. To send a value that has a `response` of its own (an email's delivery report) as data, yield it as a response object's `response`.",
+      markdownDescription: "Starts an HTTP listener on the given port (default 3000; `0` picks any free port). Pass per-request steps in `\"do\"`.\nSet `\"client\": true` (or a path string) to auto-serve the `@jexs/client` browser bundle\nand inject the script tag into rendered `<head>` elements.\nSet `\"sw\"` (with `\"client\"`) to run a service worker: what it precaches, how it answers requests (`routes`), and the steps it resolves per event (`events`).\n\n**Multiple ports.** Bind more ports by adding more `{ \"$listen\": ..., \"do\": [...] }` steps. Each is an independent listener with its own `do` pipeline, `client`, `sw`, `maxBodySize` and `maxMessageSize`.\n\n**Cross-site requests.** A POST, PUT, PATCH or DELETE, or a WebSocket upgrade, that a browser sends from another site's page is refused with 403 before any step runs, since it would carry the user's cookies. Requests from outside a browser (webhooks, scripts) are not affected. Allow other origins with `trustedOrigins`.\n\n**Per-request `do` execution.** The steps run in order against a fresh per-request context, as any step list does: `\"as\"` and `setVars` write into the context for later steps, and a step resolving to `{ \"$return\": X }` ends the list early with `X`.\n\n**The request.** The steps read it as `request`: `method`, `path`, `query`, `headers`, `cookies`, `body` (JSON or form fields, parsed by its content type, else the text) and `rawBody` (the body as the text it came as, for checking a webhook's signature with `$hmac`), beside `baseUrl`, the URL the app is reached at. A WebSocket upgrade runs the same steps, with `method` `\"WS\"`, for `$socketAccept` to take it.\n\n**The response.** What the steps yield, `$return`'s value or the last step's, is the response. A string is sent as `text/html`, nothing at all as a 404, and any other value as JSON. For full control yield a response object, one with a `response`:\n- `response`: the body (string, or any JSON value for `responseType: \"json\"`). For `responseType: \"redirect\"` it is the `Location` URL.\n- `responseStatus`: HTTP status code (default `200`, or `302` for a redirect).\n- `responseType`: `\"html\"` | `\"json\"` | `\"text\"` | `\"redirect\"` | a literal MIME string (e.g. `\"image/png\"`). When omitted it is inferred: string → `html`, otherwise `json`.\n- `responseHeaders`: extra response headers.\n\nIts other keys are not sent. To send a value that has a `response` of its own (a row with a `response` column, say) as data, yield it as a response object's `response`.",
       examples: [
         "{ \"$listen\": 3000, \"client\": true, \"do\": [{ \"$session\": \"load\" }, { \"$routes\": { \"$var\": \"routes\" } }] }",
         "{ \"response\": { \"id\": 7 }, \"responseStatus\": 201 }",

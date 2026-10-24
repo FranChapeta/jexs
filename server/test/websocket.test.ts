@@ -36,6 +36,34 @@ function ask(ws: WebSocket): Promise<string> {
   });
 }
 
+// An upgrade runs the listener's steps as a request does: a `$return` before the
+// accept ends them, refusing the socket, and its handlers see the same `baseUrl`.
+test("an upgrade runs the listener's steps as a request does", { timeout: 5000 }, async () => {
+  const resolver = createResolver([...coreNodes(), new ServerNode(), new WebSocketNode()]);
+  try {
+    const port = await resolver({
+      $listen: 0,
+      do: [
+        { $if: { $eq: [{ $var: "request.query.deny" }, "1"] }, then: { $return: "refused" } },
+        { "$socketAccept": true, onMessage: [{ "$socketSend": { $var: "baseUrl" } }] },
+      ],
+    }, {});
+    const ws = await connect(port);
+    try {
+      assert.equal(await ask(ws), `http://127.0.0.1:${port}`);
+    } finally {
+      ws.close();
+    }
+    await assert.rejects(new Promise((resolve, reject) => {
+      const refused = new WebSocket(`ws://127.0.0.1:${port}/?deny=1`);
+      refused.once("open", () => resolve(refused));
+      refused.once("error", reject);
+    }));
+  } finally {
+    resolver.destroy();
+  }
+});
+
 // Rooms, ids and counts belong to the resolver whose listener upgraded the
 // socket, so two resolvers in one process never see each other's connections.
 test("two resolvers' sockets do not share rooms", async () => {

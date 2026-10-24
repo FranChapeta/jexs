@@ -262,6 +262,9 @@ test("email: a send the server takes reports who it accepted", async () => {
     assert.deepEqual(out.accepted, ["a@x.com", "b@x.com"]);
     assert.deepEqual(out.rejected, []);
     assert.match(String(out.messageId), /@/);
+    // `reply`, not `response`, so returning the report from a route sends it as data.
+    assert.match(String(out.reply), /^250/);
+    assert.equal(out.response, undefined);
   } finally {
     server.close();
   }

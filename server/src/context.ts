@@ -23,6 +23,8 @@ declare module "@jexs/core" {
       method?: string;
       path?: string;
       body?: Record<string, unknown>;
+      /** The body as the text it came as, for checking a signature over it. */
+      rawBody?: string;
       query?: Record<string, unknown>;
       params?: Record<string, unknown>;
       headers?: Record<string, string | string[] | undefined>;

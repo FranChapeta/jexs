@@ -52,3 +52,18 @@ test("a malformed JSON body is a 400", async () => {
     own.destroy();
   }
 });
+
+// A webhook's signature is over the bytes it sent, which a parsed body no
+// longer has: spacing and key order are gone once it is an object.
+test("a request carries its body as the text it came as, beside the parsed one", async () => {
+  const own = createResolver([...coreNodes(), ...serverNodes({ root: "." })]);
+  try {
+    const port = await own({ $listen: 0, do: [{ response: { raw: { $var: "request.rawBody" }, id: { $var: "request.body.id" } } }] }, {});
+    const sent = '{ "id": 7,  "b": 1 }';
+    const res = await fetch(`http://127.0.0.1:${port}/`, { method: "POST", headers: { "content-type": "application/json" }, body: sent });
+    assert.deepEqual(await res.json(), { raw: sent, id: 7 });
+    assert.deepEqual(await (await fetch(`http://127.0.0.1:${port}/`)).json(), { raw: "" }, "no body is the empty text");
+  } finally {
+    own.destroy();
+  }
+});

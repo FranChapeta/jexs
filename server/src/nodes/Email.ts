@@ -310,7 +310,7 @@ export class EmailNode extends Node {
           messageId: { type: "string" },
           accepted: { type: "array", items: { type: "string" }, description: "The addresses the server accepted." },
           rejected: { type: "array", items: { type: "string" }, description: "The addresses it refused." },
-          response: { type: "string", description: "The server's final reply." },
+          reply: { type: "string", description: "The server's final reply." },
           previewUrl: { type: "string", description: "Ethereal development transport only: where to view the message." },
         },
       },
@@ -543,7 +543,7 @@ export class EmailNode extends Node {
         messageId: info.messageId,
         accepted: (info.accepted ?? []).map(String),
         rejected: (info.rejected ?? []).map(String),
-        response: info.response ?? null,
+        reply: info.response ?? null,
       };
       if (this.preview) {
         const previewUrl = nodemailer.getTestMessageUrl(info);

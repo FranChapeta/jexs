@@ -793,6 +793,11 @@ const RULES: Record<string, Rule> = {
     }
   },
   "email-connect": (step, m) => renameSibling(step, "ssl", "tls", m),
+  // The report's `response` is `reply`, so returning it from a route sends it as data.
+  email: ({ obj }, m) => {
+    const as = obj.props.find(p => p.key === "$as");
+    if (as) m.review(as.keyStart, "`$email`'s report names the server's reply `reply`, no longer `response`: read it under the new name");
+  },
   defer: ({ obj }, m) => {
     const delay = obj.props.find(p => p.key === "delay");
     if (delay) m.review(delay.keyStart, "`$defer`'s `delay` is gone: start the deferred steps with `{ \"$sleep\": <ms> }`");
