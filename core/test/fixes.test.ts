@@ -5,6 +5,13 @@ import type { Context } from "../src/index.js";
 
 const tick = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+/** Wait until `done` holds, or two seconds pass: interval runs land when the
+ *  machine gets to them, which a fixed sleep cannot promise under load. */
+async function until(done: () => boolean): Promise<void> {
+  const deadline = Date.now() + 2000;
+  while (!done() && Date.now() < deadline) await tick(5);
+}
+
 /** The handlers an element hands the browser, from its `data-jexs-events` attribute. */
 function eventsOf(html: string): Array<Record<string, unknown>> {
   const m = /data-jexs-events="([^"]*)"/.exec(html);
@@ -20,7 +27,7 @@ test("an interval run that fails goes through the step's $catch", async () => {
     do: [{ $error: 500, message: "boom" }],
     $catch: [{ $setVars: { caught: { $var: "error.message" } }, $bubble: true }],
   }, ctx);
-  await tick(40);
+  await until(() => ctx.caught !== undefined);
   resolver({ $interval: "stop", id: "fails" }, ctx);
   resolver.destroy();
   assert.equal(ctx.caught, "boom");
@@ -33,7 +40,7 @@ test("an interval's steps read count and elapsed", async () => {
     $interval: "start", id: "counts", every: "10ms",
     do: { $setVars: { seen: { $var: "count" }, elapsed: { $var: "elapsed" } }, $bubble: true },
   }, ctx);
-  await tick(45);
+  await until(() => Number(ctx.seen) >= 2);
   resolver({ $interval: "stop", id: "counts" }, ctx);
   resolver.destroy();
   assert.ok(Number(ctx.seen) >= 2, `seen ${ctx.seen}`);
@@ -57,7 +64,7 @@ test("each interval run has a scope of its own, with its timings in milliseconds
       },
     ],
   }, ctx);
-  await tick(45);
+  await until(() => Number(ctx.kept) >= 2);
   resolver({ $interval: "stop", id: "scoped" }, ctx);
   resolver.destroy();
   assert.equal(ctx.dt, undefined, "the caller's context gets none of a run's timings");
