@@ -341,7 +341,7 @@ export class WindowNode extends Node {
           type: "array",
           items: { type: "string" },
           description:
-            "Ops this window's page may ask the main process for. Omit for no restriction.\nList ops only — a sibling travels with its op, so `[\"query\"]` already covers `{ \"$query\": \"select\", \"table\": \"saves\" }`. Nested values are checked too, so a denied op cannot hide in a sibling slot.\nYour own menu, tray and shortcut handlers are unaffected — they run in main and never cross the IPC channel this limits.",
+            "Ops this window's page may ask the main process for. Omit for no restriction.\nList ops only — a sibling travels with its op, so `[\"querySelect\"]` already covers `{ \"$querySelect\": \"saves\", \"where\": { \"id\": 1 } }`. Nested values are checked too, so a denied op cannot hide in a sibling slot.\nYour own menu, tray and shortcut handlers are unaffected — they run in main and never cross the IPC channel this limits.",
         },
         titleBarStyle: {
           type: "string",

@@ -18,7 +18,7 @@ const SCHEMA_KEYWORDS = ["$schema", "$id", "$ref", "$defs", "$anchor", "$dynamic
 /** How many inline schemas a SchemaNode keeps compiled before dropping the least recently used. */
 export const MAX_COMPILED = 500;
 
-/** The id a table document is registered under, which `$table` and `$query` look it up by. */
+/** The id a table document is registered under, which the table and query ops look it up by. */
 export function tableId(table: string): string {
   return `table/${table}`;
 }
@@ -88,7 +88,7 @@ export class SchemaNode extends Node {
     schema: {
       type: "string",
       enum: ["register", "unregister", "list", "validate"],
-      markdownDescription: "JSON Schema (draft 2020-12): registered schemas, which route bodies, table rows and other schemas can `$ref` by id, and checking a value against one. A table document registers as `table/<name>`; `$table: \"create\"` and `\"sync\"` register theirs themselves.",
+      markdownDescription: "JSON Schema (draft 2020-12): registered schemas, which route bodies, table rows and other schemas can `$ref` by id, and checking a value against one. A table document registers as `table/<name>`; `$tableCreate` and `$tableSync` register theirs themselves.",
       examples: [
         "{ \"$schema\": \"register\", \"path\": \"db/schemas\" }",
         "{ \"$schema\": \"validate\", \"schema\": \"table/users\", \"data\": { \"$var\": \"request.body\" } }",
@@ -106,7 +106,7 @@ export class SchemaNode extends Node {
         unregister: {
           output: "boolean",
           outputDescription: "Whether something was registered under the id.",
-          markdownDescription: "Forgets a registered schema. A table's document going leaves the table as it is; `$query` writes to it are just no longer checked.",
+          markdownDescription: "Forgets a registered schema. A table's document going leaves the table as it is; query writes to it are just no longer checked.",
           siblings: { id: { type: "string", required: true, description: "The schema's id, `table/<name>` for a table." } },
         },
         list: {

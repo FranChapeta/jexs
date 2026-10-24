@@ -41,10 +41,10 @@ Templates live in `src/`. An optional `app/main.json` runs in the main process a
 
 Node calls cross processes automatically. The preload exposes the main process's handler keys to the renderer, and `@jexs/client` registers a `ProxyNode` for the keys it does not have locally. Because resolver registration is first-wins, only the missing keys are forwarded:
 
-- DOM ops (`setProp`, `getProp`, `click`, …), `var` and `storage` stay in the renderer
-- `file`, `query`, `dialog-*`, `window-*`, `app-*` forward to main
+- DOM ops (`setProp`, `getProp`, `click`, …), `var` and `storage*` stay in the renderer
+- `file`, `query*`, `dialog*`, `window*`, `app*` forward to main
 
-So a page template can call `{ "$query": "select", "table": "saves" }` directly. There is no `ipc` node and nothing to wire up.
+So a page template can call `{ "$querySelect": "saves" }` directly. There is no `ipc` node and nothing to wire up.
 
 ## Security model
 
@@ -57,12 +57,12 @@ The renderer reaches main through a single IPC channel, and by default it may as
 Where a window shows content you do not fully control, constrain that window when you open it:
 
 ```json
-{ "$windowOpen": "preview.json", "name": "preview", "allow": ["query"] }
+{ "$windowOpen": "preview.json", "name": "preview", "allow": ["querySelect"] }
 ```
 
 Any other op that window's page asks for is refused by name. It is per window on purpose: an editor needs `file` writes, a preview needs almost nothing, and the two should not share a limit.
 
-List ops, not siblings. `table` in `{ "$query": "select", "table": "saves" }` is data belonging to `query`, so `allow: ["query"]` is the whole list — siblings are declared by whichever package owns the op, and expecting an author to enumerate them would be both tedious and wrong. The check walks nested values as well, because a sibling's value is itself resolved: `{ "$query": "x", "table": { "$file": "/etc/passwd" } }` would otherwise reach `file` with only `query` and `table` at the top level.
+List ops, not siblings. `where` in `{ "$querySelect": "saves", "where": { "id": 1 } }` is data belonging to `querySelect`, so `allow: ["querySelect"]` is the whole list, and it lets the page read rows without writing them, since `queryDelete` is an op of its own. Siblings are declared by whichever package owns the op, and expecting an author to enumerate them would be both tedious and wrong. The check walks nested values as well, because a sibling's value is itself resolved: `{ "$querySelect": "saves", "where": { "$file": "/etc/passwd" } }` would otherwise reach `file` with only `querySelect` and `where` at the top level.
 
 Your own menu, tray and shortcut handlers are unaffected, because they run in main and never cross this channel — which is precisely what makes the list worth having rather than something that must permit everything.
 

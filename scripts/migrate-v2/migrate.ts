@@ -355,6 +355,9 @@ function dataRoute(v: Val, m: Codemod): void {
   else if (isRunHandler(v)) routeHandler(v, [], m);
 }
 
+/** The `$query` operations that read and write rows, each an op of its own. */
+const ROW_OPS = ["select", "insert", "upsert", "update", "delete", "count"];
+
 /** A `where` operator's one name, by each alias it had. */
 const WHERE_OPERATORS: Record<string, string> = { ne: "neq", "!=": "neq", ">": "gt", ">=": "gte", "<": "lt", "<=": "lte" };
 
@@ -409,17 +412,6 @@ function connectionNameValue(step: Step, m: Codemod): void {
 }
 
 /**
- * Move the step to another op: `{ "$<op>": "<from>" }` becomes
- * `{ "$<node>": "<to>" }`, keeping how its key is quoted.
- */
-function moveOp({ op, obj }: Step, node: string, to: string, m: Codemod): void {
-  const prop = obj.props.find(p => p.key === "$" + op);
-  if (!prop || prop.shorthand || prop.value.k !== "str") return;
-  m.add({ start: prop.keyStart, end: prop.keyEnd, text: "$" + node });
-  if (prop.value.value !== to) replaceString(prop.value, to, m);
-}
-
-/**
  * `{ "$file": path, "delete": true }` is `{ "$fileDelete": path }`: the first
  * of `flags` present names the op, and its key goes. A flag that is not a
  * literal `true` ran the action all the same, which is likely not what was
@@ -435,6 +427,22 @@ function flagToOp(step: Step, flags: string[], m: Codemod): void {
   }
   renameOp(step, op, m);
   removeSibling(step, flag.key, m);
+}
+
+/**
+ * A value-mode step is an op of its own now, valued by what one of its siblings
+ * gave: `{ "$query": "select", "table": "users" }` is `{ "$querySelect": "users" }`.
+ * The op's key and value go and the sibling's key becomes the op's, so edits
+ * inside the sibling's value still apply.
+ */
+function siblingAsOp(step: Step, sibling: string, to: string, m: Codemod): void {
+  if (!step.obj.props.some(p => p.key === sibling)) {
+    const prop = step.obj.props.find(p => p.key === "$" + step.op)!;
+    m.review(prop.keyStart, `This step is \`$${to}\` now, valued by what \`${sibling}\` gave: give it that value`);
+    return;
+  }
+  removeSibling(step, "$" + step.op, m);
+  renameSibling(step, sibling, "$" + to, m);
 }
 
 /** The value a value-mode step names, when it is written as a literal. */
@@ -613,12 +621,16 @@ const RULES: Record<string, Rule> = {
     if (onChange) walk(onChange);
   },
   // One name per option: `tls` and `user`.
-  // A table's structure is `$table`'s.
+  // Dropping a table is `$tableDrop`, valued by the table, and whether one
+  // exists is read from the list of them.
   database: (step, m) => {
     const value = opValue(step);
     if (value === "connect") renameSibling(step, "ssl", "tls", m);
-    if (value === "tableExists") moveOp(step, "table", "exists", m);
-    if (value === "dropTable") moveOp(step, "table", "drop", m);
+    if (value === "dropTable") siblingAsOp(step, "table", "tableDrop", m);
+    if (value === "tableExists") {
+      const prop = step.obj.props.find(p => p.key === "$database")!;
+      m.review(prop.keyStart, "`$database: \"tableExists\"` is gone: test the list of tables, `{ \"$includes\": [{ \"$database\": \"tables\" }, <table>] }`");
+    }
   },
   // An action picked by a flag key's presence is an op of its own on the path.
   file: (step, m) => flagToOp(step, ["delete", "stat", "exists"], m),
@@ -626,41 +638,48 @@ const RULES: Record<string, Rule> = {
   cache: (step, m) => {
     if (opValue(step) !== "dump") return;
     const prop = step.obj.props.find(p => p.key === "$cache")!;
-    m.review(prop.keyStart, "`$cache: \"dump\"` is gone: read the keys you need with `$cache-get`");
+    m.review(prop.keyStart, "`$cache: \"dump\"` is gone: read the keys you need with `$cacheGet`");
   },
   "cache-connect": (step, m) => {
     renameSibling(step, "username", "user", m);
     renameSibling(step, "ssl", "tls", m);
     const ttl = step.obj.props.find(p => p.key === "defaultTtl");
-    if (ttl) m.review(ttl.keyStart, "`defaultTtl` is gone, and it never applied: drop it, and give `$cache-set` its `ttl`");
+    if (ttl) m.review(ttl.keyStart, "`defaultTtl` is gone, and it never applied: drop it, and give `$cacheSet` its `ttl`");
   },
   "email-connect": (step, m) => renameSibling(step, "ssl", "tls", m),
   defer: ({ obj }, m) => {
     const delay = obj.props.find(p => p.key === "delay");
     if (delay) m.review(delay.keyStart, "`$defer`'s `delay` is gone: start the deferred steps with `{ \"$sleep\": <ms> }`");
   },
-  // `$query` is rows: creating, altering and dropping a table are `$table`'s,
-  // and the connection is `connection`.
+  // Each row operation is an op valued by its table (`$querySelect`, ...);
+  // creating, altering and dropping a table are the table ops' (`$tableSync`,
+  // valued by what `schema` gave, `$tableAlter`, `$tableDrop`); and the
+  // connection is `connection`.
   query: (step, m) => {
     const where = step.obj.props.find(p => p.key === "where");
     if (where) whereOperators(where.value, m);
     renameSibling(step, "database", "connection", m);
     const value = opValue(step);
-    if (value === "create" || value === "drop" || value === "alter") {
-      moveOp(step, "table", value === "create" ? "sync" : value, m);
+    if (value === "create") siblingAsOp(step, "schema", "tableSync", m);
+    else if (value === "drop") siblingAsOp(step, "table", "tableDrop", m);
+    else if (value === "alter") {
+      siblingAsOp(step, "table", "tableAlter", m);
       renameSibling(step, "addColumns", "add", m);
-    }
-    if (value === "alter") {
       const prop = step.obj.props.find(p => p.key === "$query")!;
-      m.review(prop.keyStart, "`$table: \"alter\"` adds every column in `add` and returns `null`: one that exists is an error rather than skipped, so where this runs on every start, use `$table: \"sync\"` with the table's document");
+      m.review(prop.keyStart, "`$tableAlter` adds every column in `add` and returns `null`: one that exists is an error rather than skipped, so where this runs on every start, use `$tableSync` with the table's document");
+    } else if (value !== undefined && ROW_OPS.includes(value)) {
+      siblingAsOp(step, "table", "query" + value[0].toUpperCase() + value.slice(1), m);
+    } else {
+      const prop = step.obj.props.find(p => p.key === "$query")!;
+      m.review(prop.keyStart, "`$query` is an op per operation now, valued by the table (`$querySelect`, `$queryInsert`, `$queryUpsert`, `$queryUpdate`, `$queryDelete`, `$queryCount`): use the one this step runs");
     }
   },
   // A connection's entry carries only the `meta` it was accepted with.
   "socket-list": ({ obj }, m) => {
-    m.review(obj.props[0].keyStart, "`$socket-list` entries no longer carry `name` from `session.user_name`: give `$socket-accept` a `meta`, e.g. `{ \"name\": { \"$var\": \"session.user_name\" } }`");
+    m.review(obj.props[0].keyStart, "`$socketList` entries no longer carry `name` from `session.user_name`: give `$socketAccept` a `meta`, e.g. `{ \"name\": { \"$var\": \"session.user_name\" } }`");
   },
   // A schema to register or check against is `schema`, a table's registered one
-  // is `table/<name>`, and the global validator is `$query`'s, its steps its `do`.
+  // is `table/<name>`, and the validator is the connection's, its steps `rows`.
   schema: (step, m) => {
     const prop = step.obj.props.find(p => p.key === "$schema")!;
     const value = opValue(step);
@@ -671,9 +690,9 @@ const RULES: Record<string, Rule> = {
       }
     }
     if (value === "validator") {
-      moveOp(step, "query", "validator", m);
-      renameSibling(step, "run", "do", m);
-      m.review(prop.keyStart, "The global validator now runs for row queries only: to authorize creating, altering and dropping tables, give `$table: \"validator\"` steps too");
+      renameOp(step, "database", m);
+      renameSibling(step, "run", "rows", m);
+      m.review(prop.keyStart, "The validator is the connection's now, so set it after `$database: \"connect\"` (with `connection` for one not the default). `rows` runs for row queries only: to authorize creating, altering and dropping tables, give it `structure` steps too");
     }
     if (value === "get") {
       m.review(prop.keyStart, "`$schema: \"get\"` is gone: read the document's file with `$file` (`data: true`), or find it in `{ \"$schema\": \"list\" }`");

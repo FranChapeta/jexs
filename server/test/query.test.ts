@@ -6,7 +6,6 @@ import path from "node:path";
 import { createResolver, coreNodes } from "@jexs/core";
 import { serverNodes } from "../src/index.js";
 import { DatabaseTableNode } from "../src/nodes/DatabaseTable.js";
-import { DatabaseQueryNode } from "../src/nodes/DatabaseQuery.js";
 
 // The registry is the resolver's own, so lookups go through a context attached to it.
 const registry = {};
@@ -24,34 +23,38 @@ after(async () => {
 test("a query step runs end to end against sqlite", async () => {
   const context = {};
   await resolve({ $database: "connect", connection: "query-test", type: "sqlite", filename: path.join(dir, "test.db") }, context);
-  await resolve({ $table: "sync", ...conn, schema: {
+  await resolve({ $tableSync: {
     table: "people",
     properties: {
       id: { type: "integer", primaryKey: true, autoIncrement: true },
       name: { type: "string" },
       email: { type: "string" },
     },
-  } }, context);
-  await resolve({ $query: "insert", ...conn, table: "people", data: [{ name: "Ada", email: "ada@x" }, { name: "Grace", email: "grace@x" }] }, context);
+  }, ...conn }, context);
+  await resolve({ $queryInsert: "people", ...conn, data: [{ name: "Ada", email: "ada@x" }, { name: "Grace", email: "grace@x" }] }, context);
 
-  const rows = await resolve({ $query: "select", ...conn, table: "people", orderBy: { name: "asc" } }, context);
+  const rows = await resolve({ $querySelect: "people", ...conn, orderBy: { name: "asc" } }, context);
   assert.deepEqual((rows as Array<{ name: string }>).map(r => r.name), ["Ada", "Grace"]);
-  assert.equal(await resolve({ $query: "count", ...conn, table: "people" }, context), 2);
+  assert.equal(await resolve({ $queryCount: "people", ...conn }, context), 2);
 
   // Column names and `where` operators are plain data, even when they share a name with an op.
-  const grace = await resolve({ $query: "select", ...conn, table: "people", first: true,
+  const grace = await resolve({ $querySelect: "people", ...conn, first: true,
     where: { email: "grace@x", id: { gt: 0, in: [1, 2] } } }, context);
   assert.equal((grace as { name: string }).name, "Grace");
 
   // Expressions resolve at any depth of a clause, operator objects and `or` lists included.
-  const ada = await resolve({ $query: "select", ...conn, table: "people", first: true,
+  const ada = await resolve({ $querySelect: "people", ...conn, first: true,
     where: { or: [{ email: { $var: "who" } }, { id: { lt: { $var: "min" } } }] } }, { who: "ada@x", min: 0 });
   assert.equal((ada as { name: string }).name, "Ada");
+
+  // The table is the op's value, and may come from an expression.
+  assert.equal(await resolve({ $queryCount: { $var: "table" }, ...conn }, { table: "people" }), 2);
+  await assert.rejects(resolve({ $queryCount: 5, ...conn }, {}), /\$queryCount takes a table name, got number/);
 });
 
 test("every condition in a where applies: each operator on a column, and or/and beside other columns", async () => {
   const names = async (where: unknown) =>
-    ((await resolve({ $query: "select", ...conn, table: "people", where, orderBy: { name: "asc" } }, {})) as Array<{ name: string }>)
+    ((await resolve({ $querySelect: "people", ...conn, where, orderBy: { name: "asc" } }, {})) as Array<{ name: string }>)
       .map(r => r.name);
 
   assert.deepEqual(await names({ id: { gt: 0, lt: 2 } }), ["Ada"]);
@@ -63,11 +66,11 @@ test("every condition in a where applies: each operator on a column, and or/and 
   await assert.rejects(names({ id: { gtt: 1 } }), /id: unknown operator "gtt"/);
 });
 
-test("validators authorize every row query: global first, then the table's own", async () => {
+test("validators authorize every row query: the connection's first, then the table's own", async () => {
   // `seen` is shared by reference with each validator's context, so their writes show here.
   const context = { seen: { global: "", table: "" } };
   const table = [{ $setVars: { "seen.table": { $concat: [{ $var: "operation" }, ":", { $var: "query.table" }] } } }];
-  await resolve({ $query: "validator", do: [
+  await resolve({ $database: "validator", ...conn, rows: [
     { $setVars: { "seen.global": { $concat: [{ $var: "operation" }, ":", { $var: "schema.table" }] } } },
     { $if: { $eq: [{ $var: "operation" }, "delete"] }, then: { $error: 403, message: "no deletes" } },
     // Narrow every select on notes to one author, the way a row-level policy would.
@@ -76,61 +79,93 @@ test("validators authorize every row query: global first, then the table's own",
   ] }, context);
   try {
     // Structure is the app's own setup, so no validator runs for it.
-    await resolve({ $table: "create", ...conn, schema: {
+    await resolve({ $tableCreate: {
       table: "notes", validator: table,
       properties: { id: { type: "integer", primaryKey: true, autoIncrement: true }, author: { type: "string" } },
-    } }, context);
+    }, ...conn }, context);
     assert.deepEqual(context.seen, { global: "", table: "" });
     assert.deepEqual(DatabaseTableNode.get(registry, "notes")?.validator, table);
 
-    await resolve({ $query: "insert", ...conn, table: "notes", data: [{ author: "ada" }, { author: "bob" }] }, context);
+    await resolve({ $queryInsert: "notes", ...conn, data: [{ author: "ada" }, { author: "bob" }] }, context);
     assert.deepEqual(context.seen, { global: "insert:notes", table: "insert:notes" });
 
-    const rows = await resolve({ $query: "select", ...conn, table: "notes" }, context);
+    const rows = await resolve({ $querySelect: "notes", ...conn }, context);
     assert.deepEqual((rows as Array<{ author: string }>).map(r => r.author), ["ada"]);
 
-    await assert.rejects(resolve({ $query: "delete", ...conn, table: "notes", where: { author: "bob" } }, context), /no deletes/);
-    assert.equal(await resolve({ $query: "count", ...conn, table: "notes", system: true }, context), 2);
+    await assert.rejects(resolve({ $queryDelete: "notes", ...conn, where: { author: "bob" } }, context), /no deletes/);
+    assert.equal(await resolve({ $queryCount: "notes", ...conn, system: true }, context), 2);
   } finally {
-    await resolve({ $query: "validator", do: null }, {});
+    await resolve({ $database: "validator", ...conn, rows: [] }, {});
+  }
+});
+
+test("a query reaches the database's own catalog only with system: true", async () => {
+  const refused = /is the database's own catalog, which only a step with `system: true` may query/;
+  await assert.rejects(resolve({ $querySelect: "sqlite_master", ...conn }, {}), refused);
+  await assert.rejects(resolve({ $queryCount: "main.sqlite_master", ...conn }, {}), refused);
+  await assert.rejects(resolve({ $querySelect: "information_schema.tables as t", ...conn }, {}), refused);
+  await assert.rejects(resolve({ $querySelect: "people", ...conn,
+    innerJoin: [{ table: "sqlite_master", on: { "people.name": "sqlite_master.name" } }] }, {}), refused);
+  await assert.rejects(resolve({ $querySelect: "people", ...conn, leftJoin: [{ table: 5, on: {} }] }, {}), /a join's `table` must be a table name/);
+  const tables = await resolve({ $querySelect: "sqlite_master", ...conn, system: true, where: { type: "table", name: "people" } }, {}) as unknown[];
+  assert.equal(tables.length, 1);
+});
+
+test("validators belong to their connection, and one is cleared with an empty list", async () => {
+  const other = { connection: "query-other" };
+  await resolve({ $database: "connect", ...other, type: "sqlite", filename: path.join(dir, "other.db") }, {});
+  try {
+    await resolve({ $tableCreate: { table: "pads", properties: { name: { type: "string" } } }, ...other }, {});
+    await assert.rejects(async () => resolve({ $database: "validator", ...other }, {}), /needs `rows` or `structure` steps/);
+    await resolve({ $database: "validator", ...other, rows: [{ $error: 403, message: "read-only" }] }, {});
+    await assert.rejects(resolve({ $queryCount: "pads", ...other }, {}), /read-only/);
+    assert.equal(await resolve({ $queryCount: "people", ...conn }, {}), 2, "the other connection is unaffected");
+    // Setting `structure` leaves `rows` as it was.
+    await resolve({ $database: "validator", ...other, structure: [] }, {});
+    await assert.rejects(resolve({ $queryCount: "pads", ...other }, {}), /read-only/);
+    await resolve({ $database: "validator", ...other, rows: [] }, {});
+    assert.equal(await resolve({ $queryCount: "pads", ...other }, {}), 0);
+  } finally {
+    await resolve({ $database: "close", ...other }, {});
   }
 });
 
 test("create applies a composite primary key, and MySQL-only options elsewhere are ignored", async () => {
-  await resolve({ $table: "create", ...conn, schema: {
+  await resolve({ $tableCreate: {
     table: "memberships", primaryKey: ["team", "person"], options: { engine: "InnoDB", charset: "utf8mb4" },
     properties: { team: { type: "string" }, person: { type: "string" } },
-  } }, {});
-  await resolve({ $query: "insert", ...conn, table: "memberships", data: { team: "a", person: "ada" } }, {});
-  await assert.rejects(resolve({ $query: "insert", ...conn, table: "memberships", data: { team: "a", person: "ada" } }, {}));
-  await resolve({ $query: "insert", ...conn, table: "memberships", data: { team: "b", person: "ada" } }, {});
+  }, ...conn }, {});
+  await resolve({ $queryInsert: "memberships", ...conn, data: { team: "a", person: "ada" } }, {});
+  await assert.rejects(resolve({ $queryInsert: "memberships", ...conn, data: { team: "a", person: "ada" } }, {}));
+  await resolve({ $queryInsert: "memberships", ...conn, data: { team: "b", person: "ada" } }, {});
 });
 
 // Structure changes return what they changed, not a status object, and a
 // failure throws instead of being recorded and passed over.
 test("create, sync, alter, rename and drop return what they changed, and a failure throws", async () => {
   const schema = { table: "gadgets", properties: { name: { type: "string" } } };
-  assert.equal(await resolve({ $table: "create", ...conn, schema }, {}), "gadgets");
-  await assert.rejects(async () => resolve({ $table: "create", ...conn, schema }, {}), /already exists/);
-  assert.deepEqual(await resolve({ $table: "sync", ...conn, schema }, {}), [], "already there");
-  assert.equal(await resolve({ $table: "exists", ...conn, table: "gadgets" }, {}), true);
+  assert.equal(await resolve({ $tableCreate: schema, ...conn }, {}), "gadgets");
+  await assert.rejects(async () => resolve({ $tableCreate: schema, ...conn }, {}), /already exists/);
+  assert.deepEqual(await resolve({ $tableSync: schema, ...conn }, {}), [], "already there");
+  const exists = (table: string) => resolve({ $includes: [{ $database: "tables", ...conn }, table] }, {});
+  assert.equal(await exists("gadgets"), true);
 
-  const alter = { $table: "alter", ...conn, table: "gadgets", add: { size: { type: "integer" } } };
+  const alter = { $tableAlter: "gadgets", ...conn, add: { size: { type: "integer" } } };
   assert.equal(await resolve(alter, {}), null);
   await assert.rejects(async () => resolve(alter, {}), /size/, "a column that exists is an error");
-  await assert.rejects(async () => resolve({ $table: "alter", ...conn, table: "gadgets" }, {}), /alter needs a change/);
+  await assert.rejects(async () => resolve({ $tableAlter: "gadgets", ...conn }, {}), /\$tableAlter needs a change/);
 
-  assert.equal(await resolve({ $table: "rename", ...conn, table: "gadgets", to: "widgets" }, {}), "widgets");
-  const tables = await resolve({ $table: "list", ...conn }, {}) as string[];
+  assert.equal(await resolve({ $tableRename: "gadgets", ...conn, to: "widgets" }, {}), "widgets");
+  const tables = await resolve({ $database: "tables", ...conn }, {}) as string[];
   assert.ok(tables.includes("widgets") && !tables.includes("gadgets"), tables.join(", "));
 
-  assert.equal(await resolve({ $table: "drop", ...conn, table: "widgets" }, {}), null);
-  assert.equal(await resolve({ $table: "exists", ...conn, table: "widgets" }, {}), false);
+  assert.equal(await resolve({ $tableDrop: "widgets", ...conn }, {}), null);
+  assert.equal(await exists("widgets"), false);
 
   await assert.rejects(
-    async () => resolve({ $table: "sync", ...conn, schema: {
+    async () => resolve({ $tableSync: {
       table: "broken", properties: { name: { type: "string" } }, indexes: { by_missing: { columns: ["nope"] } },
-    } }, {}),
+    }, ...conn }, {}),
     /nope/,
   );
   await resolve({ $schema: "unregister", id: "table/broken" }, {});
@@ -143,16 +178,16 @@ test("alter adds, renames, changes and drops columns and indexes, in order", asy
     (await resolve({ $database: "raw", ...conn, sql: "PRAGMA table_info(accounts)" }, {}) as Array<{ name: string; notnull: number }>)
       .map(c => [c.name, c.notnull]),
   );
-  await resolve({ $table: "create", ...conn, schema: {
+  await resolve({ $tableCreate: {
     table: "accounts",
     properties: { id: { type: "integer", primaryKey: true, autoIncrement: true }, mail: { type: "string" }, legacy: { type: "string" } },
     indexes: { by_mail: { type: "unique", columns: "mail" } },
-  } }, {});
-  await resolve({ $query: "insert", ...conn, table: "accounts", data: { mail: "ada@x", legacy: "1" } }, {});
+  }, ...conn }, {});
+  await resolve({ $queryInsert: "accounts", ...conn, data: { mail: "ada@x", legacy: "1" } }, {});
 
-  await resolve({ $table: "alter", ...conn, table: "accounts", add: { nick: { type: "string" } } }, {});
+  await resolve({ $tableAlter: "accounts", ...conn, add: { nick: { type: "string" } } }, {});
   await resolve({ $database: "raw", ...conn, sql: "UPDATE accounts SET nick = 'ada'" }, {});
-  await resolve({ $table: "alter", ...conn, table: "accounts",
+  await resolve({ $tableAlter: "accounts", ...conn,
     dropIndexes: ["by_mail"],
     rename: { mail: "email" },
     change: { nick: { type: "string" } }, required: ["nick"],
@@ -162,14 +197,14 @@ test("alter adds, renames, changes and drops columns and indexes, in order", asy
 
   const { email, nick, legacy } = await info();
   assert.deepEqual({ email, nick, legacy }, { email: 0, nick: 1, legacy: undefined });
-  const row = await resolve({ $query: "select", ...conn, table: "accounts", first: true }, {});
+  const row = await resolve({ $querySelect: "accounts", ...conn, first: true }, {});
   assert.deepEqual(row, { id: 1, email: "ada@x", nick: "ada" });
   const insert = (data: object) => resolve({ $database: "raw", ...conn, sql: "INSERT INTO accounts (email, nick) VALUES (?, ?)", bindings: Object.values(data) }, {});
   await assert.rejects(insert({ email: "ada@x", nick: "b" }), /UNIQUE/);
   await assert.rejects(insert({ email: "b@x", nick: null }), /NOT NULL/);
 
   // A column named wrongly is refused before anything changes, on every database.
-  const alter = (changes: object) => resolve({ $table: "alter", ...conn, table: "accounts", ...changes }, {});
+  const alter = (changes: object) => resolve({ $tableAlter: "accounts", ...conn, ...changes }, {});
   await assert.rejects(alter({ drop: ["nowhere"] }), /no column "nowhere" to drop in "accounts"/);
   await assert.rejects(alter({ add: { nick: { type: "string" } } }), /a column "nick" already exists, so cannot add/);
   await assert.rejects(alter({ rename: { email: "mail" }, change: { email: { type: "string" } } }), /no column "email" to change/);
@@ -177,7 +212,7 @@ test("alter adds, renames, changes and drops columns and indexes, in order", asy
 
   // In a transaction an alter is all or nothing: the index fails, so the rename
   // and the change (a table rebuild on SQLite) before it are undone.
-  await assert.rejects(resolve({ $database: "transaction", ...conn, do: [{ $table: "alter", ...conn, table: "accounts",
+  await assert.rejects(resolve({ $database: "transaction", ...conn, do: [{ $tableAlter: "accounts", ...conn,
     rename: { email: "mail" }, change: { nick: { type: "string" } }, addIndexes: { broken: { columns: "nowhere" } },
   }] }, {}), /nowhere/);
   const after = await info();
@@ -185,11 +220,11 @@ test("alter adds, renames, changes and drops columns and indexes, in order", asy
 });
 
 test("a transaction commits its steps together, or rolls them all back", async () => {
-  await resolve({ $table: "create", ...conn, schema: {
+  await resolve({ $tableCreate: {
     table: "ledger", properties: { id: { type: "integer", primaryKey: true, autoIncrement: true }, amount: { type: "integer" } },
-  } }, {});
-  const insert = (amount: number) => ({ $query: "insert", ...conn, table: "ledger", data: { amount } });
-  const count = () => resolve({ $query: "count", ...conn, table: "ledger" }, {});
+  }, ...conn }, {});
+  const insert = (amount: number) => ({ $queryInsert: "ledger", ...conn, data: { amount } });
+  const count = () => resolve({ $queryCount: "ledger", ...conn }, {});
 
   assert.equal(await resolve({ $database: "transaction", ...conn, do: [insert(1), insert(2), { $concat: ["done"] }] }, {}), "done");
   assert.equal(await count(), 2);
@@ -203,37 +238,37 @@ test("a transaction commits its steps together, or rolls them all back", async (
     { $database: "transaction", ...conn, do: [insert(5), { $error: 500 }], $catch: [{ $concat: ["caught"] }] },
   ] }, {});
   assert.deepEqual(
-    (await resolve({ $query: "select", ...conn, table: "ledger", orderBy: { id: "asc" } }, {}) as Array<{ amount: number }>).map(r => r.amount),
+    (await resolve({ $querySelect: "ledger", ...conn, orderBy: { id: "asc" } }, {}) as Array<{ amount: number }>).map(r => r.amount),
     [1, 2, 4],
   );
 
   // Structure changes join it too.
   await assert.rejects(resolve({ $database: "transaction", ...conn, do: [
-    { $table: "alter", ...conn, table: "ledger", add: { note: { type: "string" } } },
+    { $tableAlter: "ledger", ...conn, add: { note: { type: "string" } } },
     { $error: 500 },
   ] }, {}));
-  assert.equal(Object.keys(await resolve({ $query: "select", ...conn, table: "ledger", first: true }, {}) as object).includes("note"), false);
+  assert.equal(Object.keys(await resolve({ $querySelect: "ledger", ...conn, first: true }, {}) as object).includes("note"), false);
 });
 
-test("the $table validator authorizes each change to a table's structure", async () => {
+test("the connection's structure validator authorizes each change to a table's structure", async () => {
   // `seen` is appended to in place, so the validator's records show here.
   const context = { seen: [] as unknown[], allow: false };
-  await resolve({ $table: "validator", do: [
+  await resolve({ $database: "validator", ...conn, structure: [
     { $push: [{ $var: "seen" }, { $concat: [{ $var: "operation" }, " ", { $var: "table" }, " ", { $var: "schema.table" }, " ", { $stringify: { $var: "changes" } }] }] },
     { $if: { $not: { $var: "allow" } }, then: { $error: 403, message: "structure is admin-only" } },
   ] }, context);
   try {
     const schema = { table: "audited", properties: { name: { type: "string" } } };
-    await assert.rejects(resolve({ $table: "create", ...conn, schema }, context), /admin-only/);
+    await assert.rejects(resolve({ $tableCreate: schema, ...conn }, context), /admin-only/);
     assert.equal(DatabaseTableNode.get(registry, "audited"), undefined, "a refused document is not registered");
-    assert.equal(await resolve({ $table: "exists", ...conn, table: "audited" }, context), false);
+    assert.equal(await resolve({ $includes: [{ $database: "tables", ...conn }, "audited"] }, context), false);
 
-    assert.equal(await resolve({ $table: "create", ...conn, schema, system: true }, context), "audited");
+    assert.equal(await resolve({ $tableCreate: schema, ...conn, system: true }, context), "audited");
     context.allow = true;
-    await resolve({ $table: "alter", ...conn, table: "audited", add: { age: { type: "integer" } } }, context);
-    await resolve({ $table: "rename", ...conn, table: "audited", to: "audited2" }, context);
-    await resolve({ $table: "drop", ...conn, table: "audited2" }, context);
-    await resolve({ $table: "list", ...conn }, context);
+    await resolve({ $tableAlter: "audited", ...conn, add: { age: { type: "integer" } } }, context);
+    await resolve({ $tableRename: "audited", ...conn, to: "audited2" }, context);
+    await resolve({ $tableDrop: "audited2", ...conn }, context);
+    await resolve({ $database: "tables", ...conn }, context);
     assert.deepEqual(context.seen, [
       "create audited audited ",
       "alter audited audited {\"add\":{\"age\":{\"type\":\"integer\"}}}",
@@ -241,7 +276,7 @@ test("the $table validator authorizes each change to a table's structure", async
       "drop audited2  ",
     ]);
   } finally {
-    await resolve({ $table: "validator", do: null }, {});
+    await resolve({ $database: "validator", ...conn, structure: [] }, {});
   }
 });
 
@@ -252,14 +287,14 @@ test("sync adds the columns and indexes a table lacks, and warns about what only
   const at = { connection: "sync-test" };
   try {
     await own({ $database: "connect", ...at, type: "sqlite", filename: path.join(dir, "sync.db") }, {});
-    await own({ $table: "create", ...at, schema: { table: "pets", properties: { name: { type: "string" }, legacy: { type: "string" } } } }, {});
-    await own({ $query: "insert", ...at, table: "pets", data: { name: "rex" } }, {});
+    await own({ $tableCreate: { table: "pets", properties: { name: { type: "string" }, legacy: { type: "string" } } }, ...at }, {});
+    await own({ $queryInsert: "pets", ...at, data: { name: "rex" } }, {});
 
-    await own({ $table: "sync", ...at, schema: {
+    await own({ $tableSync: {
       table: "pets", required: ["name", "owner"],
       properties: { name: { type: "string" }, owner: { type: "string" }, born: { type: "string", sqlType: "timestamp", sqlDefault: "CURRENT_TIMESTAMP" } },
       indexes: { by_owner: { columns: "owner" } },
-    } }, {});
+    }, ...at }, {});
 
     const indexes = await own({ $database: "raw", ...at, sql: "PRAGMA index_list(pets)" }, {}) as Array<{ name: string }>;
     assert.deepEqual(indexes.map(i => i.name), ["by_owner"]);
@@ -274,13 +309,15 @@ test("sync adds the columns and indexes a table lacks, and warns about what only
   }
 });
 
-test("sync without a document syncs what is registered: one table by name, or all of them", async () => {
+test("sync given a name syncs what is registered: one table by name, or all of them with \"*\"", async () => {
   await resolve({ $schema: "register", schema: { table: "later_a", properties: { name: { type: "string" } } } }, {});
   await resolve({ $schema: "register", schema: { table: "later_b", properties: { name: { type: "string" } } } }, {});
-  assert.deepEqual(await resolve({ $table: "sync", ...conn, schema: "later_a" }, {}), ["later_a"]);
-  const all = await resolve({ $table: "sync", ...conn }, {}) as string[];
+  assert.deepEqual(await resolve({ $tableSync: "later_a", ...conn }, {}), ["later_a"]);
+  const all = await resolve({ $tableSync: "*", ...conn }, {}) as string[];
   assert.ok(all.includes("later_b") && !all.includes("later_a"), all.join(", "));
-  await assert.rejects(async () => resolve({ $table: "sync", ...conn, schema: "never" }, {}), /no document registered for table "never"/);
+  await assert.rejects(async () => resolve({ $tableSync: "never", ...conn }, {}), /\$tableSync: no document registered for table "never"/);
+  await assert.rejects(async () => resolve({ $tableSync: true, ...conn }, {}), /\$tableSync takes a table document or a registered table's name, or "\*"/);
+  await assert.rejects(async () => resolve({ $tableCreate: "*", ...conn }, {}), /\$tableCreate: no document registered for table "\*"/);
 });
 
 test("register reads a directory: table documents by table, others by their $id", async () => {
@@ -289,26 +326,26 @@ test("register reads a directory: table documents by table, others by their $id"
   await fs.writeFile(path.join(schemas, "posts.json"), JSON.stringify({ table: "posts", properties: { title: { type: "string" } } }));
   await fs.writeFile(path.join(schemas, "address.json"), JSON.stringify({ $id: "address", type: "object", required: ["city"] }));
   assert.deepEqual(await resolve({ $schema: "register", path: schemas }, {}), ["address", "table/posts"]);
-  assert.deepEqual(await resolve({ $table: "sync", ...conn, schema: "posts" }, {}), ["posts"]);
+  assert.deepEqual(await resolve({ $tableSync: "posts", ...conn }, {}), ["posts"]);
 });
 
 test("a schema needs an id, which a table document takes from its table", async () => {
-  await assert.rejects(resolve({ $table: "sync", ...conn, schema: { table: 5, properties: {} } }, {}), /needs a `table` name and `properties`/);
+  await assert.rejects(resolve({ $tableSync: { table: 5, properties: {} }, ...conn }, {}), /needs a `table` name and `properties`/);
   await assert.rejects(resolve({ $schema: "register", schema: { type: "object" } }, {}), /needs an `\$id`/);
   await assert.rejects(resolve({ $schema: "register", schema: { $id: "x", table: "t", properties: {} } }, {}), /leave `\$id` out/);
 });
 
 test("a column's SQL default is `sqlDefault`, apart from JSON Schema's `default`", async () => {
-  await resolve({ $table: "create", ...conn, schema: {
+  await resolve({ $tableCreate: {
     table: "stamps",
     properties: {
       id: { type: "integer", primaryKey: true, autoIncrement: true },
       label: { type: "string", default: "untitled" },
       made: { type: "string", sqlType: "timestamp", sqlDefault: "CURRENT_TIMESTAMP" },
     },
-  } }, {});
-  await resolve({ $query: "insert", ...conn, table: "stamps", data: { label: "a" } }, {});
-  const row = await resolve({ $query: "select", ...conn, table: "stamps", first: true }, {}) as { made: unknown };
+  }, ...conn }, {});
+  await resolve({ $queryInsert: "stamps", ...conn, data: { label: "a" } }, {});
+  const row = await resolve({ $querySelect: "stamps", ...conn, first: true }, {}) as { made: unknown };
   assert.match(String(row.made), /^\d{4}-\d{2}-\d{2}/);
 });
 
@@ -336,12 +373,12 @@ test("register takes a document from a step, and unregister forgets it", async (
 });
 
 test("a validator that changes `schema` does not change the registered table", async () => {
-  await resolve({ $table: "create", ...conn, schema: {
+  await resolve({ $tableCreate: {
     table: "guarded",
     properties: { id: { type: "integer", primaryKey: true, autoIncrement: true }, name: { type: "string" } },
     validator: [{ $setVars: { "schema.properties.injected": { type: "string" } } }],
-  } }, {});
-  await resolve({ $query: "select", ...conn, table: "guarded" }, {});
+  }, ...conn }, {});
+  await resolve({ $querySelect: "guarded", ...conn }, {});
   assert.equal(DatabaseTableNode.get(registry, "guarded")?.properties?.injected, undefined);
 });
 
@@ -370,22 +407,29 @@ test("a route body can $ref a table's document", async () => {
   await assert.rejects(async () => resolve({ $routes: routes }, request({})), (err: { status?: number }) => err.status === 400);
 });
 
-// Schemas and the global validator belong to the resolver that registered
-// them, so they never judge another resolver's queries.
-test("two resolvers keep separate schemas and global validators", async () => {
+// Schemas and connections, with their validators, belong to the resolver that
+// made them, so they never judge another resolver's queries.
+test("two resolvers keep separate schemas and validators", async () => {
   const a = {};
   const b = {};
   const ra = createResolver([...coreNodes(), ...serverNodes()], { context: a });
   const rb = createResolver([...coreNodes(), ...serverNodes()], { context: b });
+  const shared = { connection: "isolated", type: "sqlite", filename: path.join(dir, "isolated.db") };
   try {
     await ra({ $schema: "register", schema: { table: "isolated", properties: { email: { type: "string" } }, required: ["email"] } }, {});
-    await ra({ $query: "validator", do: [{ $error: 403 }] }, {});
+    await ra({ $database: "connect", ...shared }, {});
+    await rb({ $database: "connect", ...shared }, {});
+    await ra({ $tableSync: "isolated", connection: "isolated" }, {});
+    await ra({ $database: "validator", connection: "isolated", rows: [{ $error: 403, message: "a's policy" }] }, {});
 
     assert.ok(DatabaseTableNode.get(a, "isolated"));
     assert.equal(DatabaseTableNode.get(b, "isolated"), undefined);
     assert.deepEqual(await rb({ $schema: "list" }, {}), []);
-    assert.equal((rb.nodeFor("query") as DatabaseQueryNode).globalValidator, null);
+    await assert.rejects(ra({ $queryCount: "isolated", connection: "isolated" }, {}), /a's policy/);
+    assert.equal(await rb({ $queryCount: "isolated", connection: "isolated" }, {}), 0);
   } finally {
+    await ra({ $database: "close", connection: "isolated" }, {});
+    await rb({ $database: "close", connection: "isolated" }, {});
     ra.destroy();
     rb.destroy();
   }

@@ -260,7 +260,7 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean, useElectron: bo
     lines.push(`- \`src/\`: renderer templates. The main process resolves one to HTML and serves it over \`app://\`; \`src/index.json\` is the page the first window opens.`);
     lines.push(`- \`src/main.json\`: OPTIONAL main-process startup, run before any window exists (menus, tray, extra windows). Without it the runner just opens a window on \`src/index.json\`.`);
     lines.push(`- \`dist/browser/\`: \`jexs bundle\` output, and the only directory \`app://\` serves. Rebuilt from scratch on every bundle.`);
-    lines.push(`- Main-process nodes (\`file\`, \`query\`, \`dialog\`, …) are forwarded from the renderer, so renderer JSON calls them directly. A relative \`{ "$file": "x.json" }\` resolves against the calling page's own directory.`);
+    lines.push(`- Main-process ops (\`file\`, \`querySelect\`, \`dialogOpen\`, …) are forwarded from the renderer, so renderer JSON calls them directly. A relative \`{ "$file": "x.json" }\` resolves against the calling page's own directory.`);
     lines.push(`- A \`/\`-prefixed path anchors at \`src/\`, from anywhere, including \`src/main.json\`, so main-process startup reaches a page with \`/index.json\`. Without the slash a path is relative to the file doing the loading.`);
     if (useTailwind) {
       lines.push(`- \`input.css\`: Tailwind v4 entry and config. \`@source\` scans \`./src/**/*.json\` for class names; theme, variants and custom styles go here too (\`@theme\`, \`@layer base { ... }\`, \`@apply\`). The stylesheet builds to \`dist/browser/styles.css\` AFTER \`jexs bundle\`, which clears that directory, and the window shell links it.`);

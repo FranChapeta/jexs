@@ -23,9 +23,9 @@ npm install @jexs/server @jexs/core
 | `ServerNode` | `listen` | Start an HTTP listener per `listen` step (port `0` takes any free one; the step returns the port); can auto-serve the `@jexs/client` bundle |
 | `RouterNode` | `routes` | Path-based routing with `*` / `**` segment capture |
 | `FileNode` | `file`, `fileExists`, `fileStat`, `fileDelete`, `directory`, `directoryCreate`, `disk` | Load JSON files as sub-templates, read/write/copy/move/delete files, list and create directories, report disk usage |
-| `DatabaseNode` | `database` | Named connections (SQLite, MySQL, PostgreSQL), picked with `connection`: `connect`, `close`, `raw`, `info`, and steps run in a `transaction` |
-| `DatabaseTableNode` | `table` | Tables, from table documents: `create`, make the database match (`sync`), `alter` columns and indexes, `rename`, `drop`, `exists`, `list`, and the `validator` every change passes |
-| `DatabaseQueryNode` | `query` | Rows: `select`, `insert`, `upsert`, `update`, `delete`, `count`, and the `validator` every query passes |
+| `DatabaseNode` | `database` | Named connections (SQLite, MySQL, PostgreSQL), picked with `connection`: `connect`, `close`, `raw`, `info`, the `tables` it has, steps run in a `transaction`, and the `validator` every query and table change on it passes |
+| `DatabaseTableNode` | `tableCreate`, `tableSync`, `tableAlter`, `tableRename`, `tableDrop` | Tables, from table documents: create them, make the database match (`tableSync`), alter columns and indexes |
+| `DatabaseQueryNode` | `querySelect`, `queryInsert`, `queryUpsert`, `queryUpdate`, `queryDelete`, `queryCount` | Rows, each op valued by its table |
 | `SchemaNode` | `schema` | JSON Schema: `register` schemas (a table document as `table/<name>`) that route bodies, rows and other schemas can `$ref`, `unregister`, `list`, `validate` |
 | `SessionNode` | `session` | Cookie-backed sessions, kept in a cache: `load`, set values (with `regenerate: true` at login), `destroy` |
 | `CryptoNode` | `hash`, `verify`, `sha256`, `hmac`, `encrypt`, `decrypt`, `randomHex`, `uuid`, `timingSafeEqual` | Crypto helpers |
@@ -47,7 +47,7 @@ npm install @jexs/server @jexs/core
 [
   { "$database": "connect", "filename": "data.db" },
   { "$schema": "register", "path": "db/tables" },
-  { "$table": "sync" },
+  { "$tableSync": "*" },
 
   { "$listen": 3000, "client": true, "do": [
     { "$session": "load" },
@@ -58,12 +58,12 @@ npm install @jexs/server @jexs/core
         "api": { "children": {
           "users": { "methods": {
             "GET": { "do": [
-              { "$query": "select", "table": "users", "orderBy": { "id": "desc" }, "limit": 50 }
+              { "$querySelect": "users", "orderBy": { "id": "desc" }, "limit": 50 }
             ] },
             "POST": {
               "body": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" } } },
               "do": [
-                { "$query": "insert", "table": "users", "data": { "$var": "request.body" } }
+                { "$queryInsert": "users", "data": { "$var": "request.body" } }
               ]
             }
           } }

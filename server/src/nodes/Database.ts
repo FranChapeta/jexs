@@ -38,10 +38,18 @@ const DEFAULT_HOST = "localhost";
 const DEFAULT_PORT = { mysql: 3306, pg: 5432 } as const;
 const DEFAULT_USER = { mysql: "root", pg: "postgres" } as const;
 
+/** The steps `$database: "validator"` set on a connection: `rows` authorize each
+ *  query op, `structure` each change to a table's structure. */
+export interface Validators {
+  rows?: unknown;
+  structure?: unknown;
+}
+
 // Internal connection wrapper
 interface DatabaseConnection {
   knex: KnexType;
   info: ConnectionInfo;
+  validators: Validators;
 }
 
 /** The transactions open around a step, by connection name. A symbol, so no
@@ -117,7 +125,9 @@ export class DatabaseNode extends Node {
         "close",
         "raw",
         "info",
+        "tables",
         "transaction",
+        "validator",
       ],
       markdownDescription: "Manages database connections. Supports SQLite (`better-sqlite3`), MySQL (`mysql2`), and PostgreSQL (`pg`) via Knex. The operation is the primary value; each carries its own properties.",
       examples: [
@@ -199,14 +209,30 @@ export class DatabaseNode extends Node {
           outputDescription: "The connection as `connect` returned it, plus `tables` (and `size` for SQLite), or `null` if no connection has that name. Carries no credentials.",
           markdownDescription: "Reports where a connection points, whether TLS is on, and how many tables it has.",
         },
+        tables: {
+          output: { type: "array", items: { type: "string" } },
+          outputDescription: "The names of the database's tables, sorted.",
+          markdownDescription: "Lists the tables in the database, whether or not a document is registered for them. Whether one exists is `{ \"$includes\": [{ \"$database\": \"tables\" }, \"users\"] }`.",
+        },
         transaction: {
           outputDescription: "The last step's value.",
-          markdownDescription: "Runs `do` in a transaction on the connection: every `$query`, `$table` and `raw` step inside it that uses the connection joins it. It commits when the steps finish, and rolls back and rethrows when one throws. Inside another transaction on the same connection it is a savepoint. The steps run in a scope of their own, so their writes need `$bubble` to reach outside it. MySQL commits on any change to a table's structure, so there `$table` steps cannot be rolled back.",
+          markdownDescription: "Runs `do` in a transaction on the connection: every query, table and `raw` step inside it that uses the connection joins it. It commits when the steps finish, and rolls back and rethrows when one throws. Inside another transaction on the same connection it is a savepoint. The steps run in a scope of their own, so their writes need `$bubble` to reach outside it. MySQL commits on any change to a table's structure, so there `$tableCreate`, `$tableAlter` and the like cannot be rolled back.",
           examples: [
-            "{ \"$database\": \"transaction\", \"do\": [{ \"$query\": \"update\", \"table\": \"accounts\", \"where\": { \"id\": 1 }, \"decrement\": { \"balance\": 10 } }, { \"$query\": \"update\", \"table\": \"accounts\", \"where\": { \"id\": 2 }, \"increment\": { \"balance\": 10 } }] }",
+            "{ \"$database\": \"transaction\", \"do\": [{ \"$queryUpdate\": \"accounts\", \"where\": { \"id\": 1 }, \"decrement\": { \"balance\": 10 } }, { \"$queryUpdate\": \"accounts\", \"where\": { \"id\": 2 }, \"increment\": { \"balance\": 10 } }] }",
           ],
           siblings: {
             do: { steps: true, required: true, description: "Steps run in the transaction." },
+          },
+        },
+        validator: {
+          output: "null",
+          markdownDescription: "Sets the connection's validators: steps that authorize what reaches it, refusing with `{ \"$error\": 403 }`. `rows` run before every query op on every table (`$querySelect`, `$queryInsert`, ...); they see `operation`, the table's document as `schema`, and `query` (`table`, `where`, `data`, ...), which they may narrow. A table document's own `validator` runs after them, never instead. `structure` runs before every `$tableCreate`, `$tableSync` (once per table), `$tableAlter`, `$tableRename` and `$tableDrop`; it sees `operation`, `table`, the table's document as `schema` (the one being applied for `create` and `sync`, else the registered one, if any) and, for `alter` and `rename`, what they change as `changes`. Steps with `system: true` skip both. A validator left out stays as it was, and an empty list clears it; both last until the connection closes.",
+          examples: [
+            "{ \"$database\": \"validator\", \"rows\": [{ \"$if\": { \"$not\": { \"$var\": \"session.user\" } }, \"then\": { \"$error\": 401 } }] }",
+          ],
+          siblings: {
+            rows: { steps: true, description: "Steps run before each query op on the connection." },
+            structure: { steps: true, description: "Steps run before each change to a table's structure on the connection." },
           },
         },
       },
@@ -250,8 +276,12 @@ export class DatabaseNode extends Node {
           return doRaw(this, def, context);
         case "info":
           return doInfo(this, def, context);
+        case "tables":
+          return resolve(def.connection ?? null, context, name => listTables(knexIn(this, context, name)));
         case "transaction":
           return doTransaction(this, def, context);
+        case "validator":
+          return doValidator(this, def, context);
         default:
           throw new Error(`$database: unknown operation ${JSON.stringify(operation)}`);
       }
@@ -266,6 +296,12 @@ export class DatabaseNode extends Node {
    *  connection, the transaction. */
   static getKnex(context: Context, name?: unknown): KnexType {
     return knexIn(databaseFor(context), context, name);
+  }
+
+  /** The validators set on the connection a step names in `name`, for the
+   *  query and table nodes to run. */
+  static validators(context: Context, name?: unknown): Validators {
+    return requireConnection(databaseFor(context), name).validators;
   }
 }
 
@@ -292,12 +328,13 @@ function transactionsIn(context: Context): Map<string, KnexType.Transaction> {
   return open instanceof Map ? open : new Map();
 }
 
-/** Open `name`, replacing any connection already under it. */
+/** Open `name`, replacing any connection already under it but keeping its validators. */
 function openConnection(self: DatabaseNode, name: string, config: DatabaseConfig): void {
-  self.connections.get(name)?.knex.destroy();
+  const old = self.connections.get(name);
+  old?.knex.destroy();
   const knex = createConnection(config);
   // `config` goes no further than this call: knex has what it needs to dial.
-  self.connections.set(name, { knex, info: describe(config) });
+  self.connections.set(name, { knex, info: describe(config), validators: old?.validators ?? {} });
 }
 
 /** The connection under `name`, opening a default SQLite file if there is none. */
@@ -599,6 +636,20 @@ function doTransaction(self: DatabaseNode, def: Record<string, unknown>, context
       const open = new Map(transactionsIn(context)).set(name, trx);
       return await runSteps(def.do, childContext(context, { [TRANSACTIONS]: open }));
     });
+  });
+}
+
+/** Set the connection's validators, kept as written to run later; one the step
+ *  leaves out stays as it was. */
+function doValidator(self: DatabaseNode, def: Record<string, unknown>, context: Context): unknown {
+  if (def.rows === undefined && def.structure === undefined) {
+    throw new Error("$database validator needs `rows` or `structure` steps");
+  }
+  return resolve(def.connection ?? null, context, nameRaw => {
+    const { validators } = requireConnection(self, nameRaw);
+    if (def.rows !== undefined) validators.rows = def.rows;
+    if (def.structure !== undefined) validators.structure = def.structure;
+    return null;
   });
 }
 

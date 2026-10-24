@@ -1,9 +1,9 @@
 import { Knex as KnexType } from "knex";
-import { Node, Context, NodeValue, childContext, isObject, loggerFor, resolve, resolveAll, resolveFields, resolverFor, runSteps, type Logger } from "@jexs/core";
-import { DatabaseNode, listTables } from "./Database.js";
+import { Node, Context, NodeValue, childContext, isObject, loggerFor, resolveAll, resolveFields, runSteps, type Logger } from "@jexs/core";
+import { DatabaseNode } from "./Database.js";
 import { sha256 } from "./Crypto.js";
 import { SchemaNode, isTableDocument, requireSchemaNode, schemaArg, tableId } from "./Schema.js";
-import type { JexsNodeSchema } from "@jexs/core";
+import type { JexsNodeSchema, JexsPropertySchema } from "@jexs/core";
 
 /** The functions a column's `computed` may name, each deriving the column from another on insert. */
 export const COMPUTE_FNS: Record<string, (value: string) => string> = { sha256 };
@@ -91,15 +91,12 @@ export interface TableJsonSchema {
     charset?: string;
     collate?: string;
   };
-  /** Steps run before each query on this table, after the global validator
+  /** Steps run before each query on this table, after the connection's `rows`
    *  (see DatabaseQuery's `runValidators`). */
   validator?: unknown;
   [key: string]: unknown;
 }
 
-const tableName = { type: "string", required: true, description: "The table's name." } as const;
-const connection = { type: "string", description: "Named database connection (default if omitted)." } as const;
-const system = { type: "boolean", description: "Skip the `$table` validator: for the app's own changes, such as building its tables at startup." } as const;
 const tableNames = { type: "array", items: { type: "string" } } as const;
 const names = (description: string) => ({ type: "array", items: { type: "string" }, description }) as const;
 
@@ -147,7 +144,7 @@ export class DatabaseTableNode extends Node {
           description: "MySQL table options; other databases ignore them.",
           properties: { engine: { type: "string" }, charset: { type: "string" }, collate: { type: "string" } },
         },
-        validator: { $ref: "#/$defs/steps", description: "Steps run before each query on this table, after the global validator, with `operation`, `schema` and `query`." },
+        validator: { $ref: "#/$defs/steps", description: "Steps run before each query on this table, after the connection's `rows` validator, with `operation`, `schema` and `query`." },
       },
     },
     _tableColumns: { type: "object", additionalProperties: { $ref: "#/$defs/_tableColumn" } },
@@ -187,8 +184,8 @@ export class DatabaseTableNode extends Node {
         },
       },
     },
-    /** `create`'s and `sync`'s `schema`: a table document, or a table's name (`"*"`
-     *  for every registered one), or a step producing either. */
+    /** `$tableCreate`'s and `$tableSync`'s value: a table document, or a table's
+     *  name (`"*"` for every registered one), or a step producing either. */
     _tableSchemaSlot: {
       if: { type: "object", anyOf: [{ required: ["properties"] }, { required: ["table"] }] },
       then: { $ref: "#/$defs/tableSchema" },
@@ -196,135 +193,152 @@ export class DatabaseTableNode extends Node {
     },
   };
 
+  static commonSiblings: Record<string, JexsPropertySchema> = {
+    connection: { type: "string", description: "Named database connection (default if omitted)." },
+    system: { type: "boolean", description: "Skip the connection's `structure` validator: for the app's own changes, such as building its tables at startup." },
+  };
+
   static schema: JexsNodeSchema = {
-    table: {
-      type: "string",
-      enum: ["create", "sync", "alter", "rename", "drop", "exists", "list", "validator"],
-      markdownDescription: "A database's tables. A table document declares a table's columns as JSON Schema, registered with `$schema` as `table/<name>` (`create` and `sync` register the one they are given); once registered, every `$query` write to the table is checked against it. `alter`, `rename` and `drop` change the database only: the registered document stays as it is, for `$schema: \"register\"` to replace.",
+    tableCreate: {
+      $ref: "#/$defs/_tableSchemaSlot",
+      literal: true,
+      output: "string",
+      outputDescription: "The table's name.",
+      markdownDescription: "Creates a table from a table document: JSON Schema for its rows, whose `properties` are the columns, beside the settings that build the table. The document is registered with `$schema` as `table/<name>` first, and once registered, every `$queryInsert`, `$queryUpsert` and `$queryUpdate` on the table is checked against it. The value is the document, kept as written so its `validator` stays steps (load a file with `$file` and `data: true`), or the name of a registered one. A table that already exists is an error; `$tableSync` brings an existing one up to date instead.",
       examples: [
-        "{ \"$table\": \"sync\", \"schema\": { \"$file\": \"db/users.json\", \"data\": true } }",
-        "{ \"$table\": \"alter\", \"table\": \"users\", \"add\": { \"email\": { \"type\": \"string\" } } }",
-        "{ \"$table\": \"drop\", \"table\": \"old_logs\" }",
+        "{ \"$tableCreate\": { \"$file\": \"db/users.json\", \"data\": true } }",
       ],
-      variants: {
-        create: {
-          output: "string",
-          outputDescription: "The table's name.",
-          markdownDescription: "Creates a table from its document, registering it first when it is given one. A table that already exists is an error; `sync` brings an existing one up to date instead.",
-          siblings: {
-            schema: { $ref: "#/$defs/_tableSchemaSlot", literal: true, required: true, description: "A table document, kept as written so its `validator` stays steps (load a file with `$file` and `data: true`), or the name of a registered table." },
-            connection,
-            system,
-          },
-        },
-        sync: {
-          output: tableNames,
-          outputDescription: "The names of the tables it created.",
-          markdownDescription: "Makes the database match table documents, adding only: it creates the tables that are missing, and adds the columns and named indexes an existing table lacks. A required column added to a table with rows is nullable until an `alter` makes it NOT NULL. It never changes, renames or drops what is there, since that could lose data; it warns about columns the document lacks, for an `alter` to deal with. Given a `schema` document, it registers it first; given a table's name, it syncs that registered table; without one, or with `\"*\"`, every registered table.",
-          siblings: {
-            schema: { $ref: "#/$defs/_tableSchemaSlot", literal: true, description: "A table document (kept as written, as for `create`), a registered table's name, or `\"*\"` for every registered table, the default." },
-            connection,
-            system,
-          },
-        },
-        alter: {
-          output: "null",
-          markdownDescription: "Changes a table's structure, applying in this order: `dropIndexes`, `add`, `rename`, `change`, `drop`, `addIndexes`. Each is done as given, so adding a column that exists or dropping one that does not is an error. To make a column NOT NULL once its rows have a value, `change` it with its name in `required`. A failure partway leaves the earlier changes made; on PostgreSQL and SQLite, wrap the step in `$database: \"transaction\"` to apply all or none.",
-          examples: [
-            "{ \"$table\": \"alter\", \"table\": \"users\", \"change\": { \"email\": { \"type\": \"string\" } }, \"required\": [\"email\"] }",
-            "{ \"$table\": \"alter\", \"table\": \"users\", \"rename\": { \"mail\": \"email\" }, \"drop\": [\"legacy_id\"] }",
-          ],
-          siblings: {
-            table: tableName,
-            add: { $ref: "#/$defs/_tableColumns", description: "Columns to add, by name, each described as in a table document (`type`, `sqlType`, `sqlDefault`, ...)." },
-            rename: { map: true, description: "Columns to rename: `{ \"old\": \"new\" }`." },
-            change: { $ref: "#/$defs/_tableColumns", description: "Columns to change, by name (after `rename`), each described in full as in a table document: what the description leaves out, such as a default, the column loses." },
-            drop: names("Columns to drop."),
-            required: names("Which columns of `add` and `change` are NOT NULL."),
-            addIndexes: { $ref: "#/$defs/_tableIndexes", description: "Indexes to add, by name, as in a table document's `indexes`." },
-            dropIndexes: names("Indexes to drop, by name."),
-            connection,
-            system,
-          },
-        },
-        rename: {
-          output: "string",
-          outputDescription: "The table's new name.",
-          markdownDescription: "Renames a table.",
-          siblings: {
-            table: tableName,
-            to: { type: "string", required: true, description: "The table's new name." },
-            connection,
-            system,
-          },
-        },
-        drop: {
-          output: "null",
-          markdownDescription: "Drops the table if it exists. Its registered document, if any, stays registered; `unregister` forgets it.",
-          siblings: { table: tableName, connection, system },
-        },
-        exists: {
-          output: "boolean",
-          markdownDescription: "Whether the table exists in the database.",
-          siblings: { table: tableName, connection },
-        },
-        list: {
-          output: tableNames,
-          outputDescription: "The names of the database's tables, sorted.",
-          markdownDescription: "Lists the tables in the database, whether or not a document is registered for them.",
-          siblings: { connection },
-        },
-        validator: {
-          output: "null",
-          markdownDescription: "Sets the validator for structure: steps run before every `create`, `sync` (once per table), `alter`, `rename` and `drop` to authorize it. They see `operation`, `table`, the table's document as `schema` (the one being applied for `create` and `sync`, else the registered one, if any) and, for `alter` and `rename`, what they change as `changes`. Refuse with `{ \"$error\": 403 }`. Steps with `system: true` skip it. Row queries have their own, `$query: \"validator\"`.",
-          siblings: {
-            do: { steps: true, description: "Steps run before each change to a table's structure." },
-          },
-        },
+    },
+    tableSync: {
+      $ref: "#/$defs/_tableSchemaSlot",
+      literal: true,
+      output: tableNames,
+      outputDescription: "The names of the tables it created.",
+      markdownDescription: "Makes the database match table documents, adding only: it creates the tables that are missing, and adds the columns and named indexes an existing table lacks. A required column added to a table with rows is nullable until `$tableAlter` makes it NOT NULL. It never changes, renames or drops what is there, since that could lose data; it warns about columns the document lacks, for `$tableAlter` to deal with. The value is a table document, registered first as `$tableCreate` does; a registered table's name; or `\"*\"` for every registered table.",
+      examples: [
+        "{ \"$tableSync\": \"*\" }",
+        "{ \"$tableSync\": { \"$file\": \"db/users.json\", \"data\": true } }",
+      ],
+    },
+    tableAlter: {
+      type: "string",
+      output: "null",
+      markdownDescription: "Changes the structure of the table the value names, applying in this order: `dropIndexes`, `add`, `rename`, `change`, `drop`, `addIndexes`. Each is done as given, so adding a column that exists or dropping one that does not is an error. To make a column NOT NULL once its rows have a value, `change` it with its name in `required`. A failure partway leaves the earlier changes made; on PostgreSQL and SQLite, wrap the step in `$database: \"transaction\"` to apply all or none. The table's registered document stays as it is, for `$schema: \"register\"` to replace.",
+      examples: [
+        "{ \"$tableAlter\": \"users\", \"add\": { \"email\": { \"type\": \"string\" } } }",
+        "{ \"$tableAlter\": \"users\", \"change\": { \"email\": { \"type\": \"string\" } }, \"required\": [\"email\"] }",
+        "{ \"$tableAlter\": \"users\", \"rename\": { \"mail\": \"email\" }, \"drop\": [\"legacy_id\"] }",
+      ],
+      siblings: {
+        add: { $ref: "#/$defs/_tableColumns", description: "Columns to add, by name, each described as in a table document (`type`, `sqlType`, `sqlDefault`, ...)." },
+        rename: { map: true, description: "Columns to rename: `{ \"old\": \"new\" }`." },
+        change: { $ref: "#/$defs/_tableColumns", description: "Columns to change, by name (after `rename`), each described in full as in a table document: what the description leaves out, such as a default, the column loses." },
+        drop: names("Columns to drop."),
+        required: names("Which columns of `add` and `change` are NOT NULL."),
+        addIndexes: { $ref: "#/$defs/_tableIndexes", description: "Indexes to add, by name, as in a table document's `indexes`." },
+        dropIndexes: names("Indexes to drop, by name."),
       },
+    },
+    tableRename: {
+      type: "string",
+      output: "string",
+      outputDescription: "The table's new name.",
+      markdownDescription: "Renames the table the value names. Its registered document stays as it is, under the old name.",
+      examples: ["{ \"$tableRename\": \"users\", \"to\": \"accounts\" }"],
+      siblings: {
+        to: { type: "string", required: true, description: "The table's new name." },
+      },
+    },
+    tableDrop: {
+      type: "string",
+      output: "null",
+      markdownDescription: "Drops the table the value names, if it exists. Its registered document, if any, stays registered; `$schema: \"unregister\"` forgets it.",
+      examples: ["{ \"$tableDrop\": \"old_logs\" }"],
     },
   };
 
-  /** The steps `{ "$table": "validator" }` set, run before every change to a
-   *  table's structure. An instance field, so one resolver's policy never
-   *  judges another's changes. */
-  validator: unknown = null;
-
-  table(def: Record<string, unknown>, context: Context): NodeValue {
-    if (def.$table === "validator") {
-      this.validator = def.do ?? null;
-      return null;
+  async tableCreate(def: Record<string, unknown>, context: Context): Promise<string> {
+    const [connection, system] = await resolveAll([def.connection ?? null, def.system ?? null], context, values => values);
+    const [schema] = await documentsOf(def.$tableCreate, { connection, system }, context, "create");
+    const knex = DatabaseNode.getKnex(context, connection);
+    if (await knex.schema.hasTable(schema.table)) {
+      throw new Error(`$tableCreate: table "${schema.table}" already exists; \`$tableSync\` adds what it lacks`);
     }
-    return resolve(def.$table, context, op => {
-      switch (op) {
-        case "create":
-          return doCreate(def, context);
-        case "sync":
-          return doSync(def, context);
-        case "alter":
-          return doAlter(def, context);
-        case "rename":
-          return resolveAll([def.table, def.to, def.connection ?? null, def.system ?? null], context, async ([table, to, name, system]) => {
-            await authorize(context, system, "rename", String(table), { changes: { to } });
-            await DatabaseNode.getKnex(context, name).schema.renameTable(String(table), String(to));
-            loggerFor(context).info(`[DatabaseTable] Renamed table ${String(table)} to ${String(to)}`);
-            return String(to);
-          });
-        case "drop":
-          return resolveAll([def.table, def.connection ?? null, def.system ?? null], context, async ([table, name, system]) => {
-            await authorize(context, system, "drop", String(table));
-            await DatabaseNode.getKnex(context, name).schema.dropTableIfExists(String(table));
-            loggerFor(context).info(`[DatabaseTable] Dropped table: ${String(table)}`);
-            return null;
-          });
-        case "exists":
-          return resolveAll([def.table, def.connection ?? null], context, ([table, name]) =>
-            DatabaseNode.getKnex(context, name).schema.hasTable(String(table)));
-        case "list":
-          return resolve(def.connection ?? null, context, name => listTables(DatabaseNode.getKnex(context, name)));
-        default:
-          throw new Error(`$table: unknown operation ${JSON.stringify(op)}`);
+    await createTable(knex, schema);
+    loggerFor(context).info(`[DatabaseTable] Created table: ${schema.table}`);
+    return schema.table;
+  }
+
+  // A failure throws, so a startup that cannot build its tables stops there.
+  async tableSync(def: Record<string, unknown>, context: Context): Promise<string[]> {
+    const [connection, system] = await resolveAll([def.connection ?? null, def.system ?? null], context, values => values);
+    const schemas = await documentsOf(def.$tableSync, { connection, system }, context, "sync");
+    const knex = DatabaseNode.getKnex(context, connection);
+    const created: string[] = [];
+    for (const schema of schemas) {
+      if (await knex.schema.hasTable(schema.table)) {
+        await syncTable(knex, schema, loggerFor(context));
+        continue;
       }
+      await createTable(knex, schema);
+      loggerFor(context).info(`[DatabaseTable] Created table: ${schema.table}`);
+      created.push(schema.table);
+    }
+    return created;
+  }
+
+  // Each change applies in `ALTERATIONS` order, one statement group at a time,
+  // so a later change sees the columns an earlier one added or renamed.
+  tableAlter(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveFields(def, context, async r => {
+      const tableName = String(r.$tableAlter);
+      const changes = Object.fromEntries(ALTERATIONS.filter(k => r[k] != null).map(k => [k, r[k]]));
+      if (Object.keys(changes).length === 0) {
+        throw new Error(`$tableAlter needs a change: ${ALTERATIONS.map(k => `\`${k}\``).join(", ")}`);
+      }
+      for (const key of ["add", "rename", "change", "addIndexes"] as const) {
+        if (r[key] != null && !isObject(r[key])) throw new Error(`$tableAlter: \`${key}\` must be an object, by name`);
+      }
+      for (const key of ["drop", "dropIndexes", "required"] as const) {
+        if (r[key] != null && !Array.isArray(r[key])) throw new Error(`$tableAlter: \`${key}\` must be an array of names`);
+      }
+      await authorize(context, r, "alter", tableName, { changes });
+
+      const required = new Set((r.required as string[] | undefined) ?? []);
+      const { add, rename, change, drop, addIndexes, dropIndexes } = changes as {
+        add?: Record<string, ColumnSchema>; rename?: Record<string, unknown>; change?: Record<string, ColumnSchema>;
+        drop?: string[]; addIndexes?: Record<string, IndexDef>; dropIndexes?: string[];
+      };
+      const knex = DatabaseNode.getKnex(context, r.connection);
+      checkColumns(tableName, Object.keys(await knex(tableName).columnInfo()), add, rename, change, drop);
+      const alter = (build: (table: KnexType.CreateTableBuilder) => void) => knex.schema.alterTable(tableName, build);
+      if (dropIndexes) await alter(table => { for (const index of dropIndexes) table.dropIndex([], index); });
+      if (add) await alter(table => { buildColumns(table, add, required, knex); });
+      if (rename) await alter(table => { for (const [from, to] of Object.entries(rename)) table.renameColumn(from, String(to)); });
+      if (change) await alter(table => { for (const column of buildColumns(table, change, required, knex)) column.alter(); });
+      if (drop) await alter(table => { table.dropColumns(...drop); });
+      if (addIndexes) await alter(table => { buildIndexes(table, addIndexes); });
+
+      loggerFor(context).info(`[DatabaseTable] Altered table ${tableName}: ${Object.keys(changes).join(", ")}`);
+      return null;
+    });
+  }
+
+  tableRename(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def.$tableRename, def.to, def.connection ?? null, def.system ?? null], context, async ([table, to, connection, system]) => {
+      await authorize(context, { connection, system }, "rename", String(table), { changes: { to } });
+      await DatabaseNode.getKnex(context, connection).schema.renameTable(String(table), String(to));
+      loggerFor(context).info(`[DatabaseTable] Renamed table ${String(table)} to ${String(to)}`);
+      return String(to);
+    });
+  }
+
+  tableDrop(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def.$tableDrop, def.connection ?? null, def.system ?? null], context, async ([table, connection, system]) => {
+      await authorize(context, { connection, system }, "drop", String(table));
+      await DatabaseNode.getKnex(context, connection).schema.dropTableIfExists(String(table));
+      loggerFor(context).info(`[DatabaseTable] Dropped table: ${String(table)}`);
+      return null;
     });
   }
 
@@ -336,19 +350,25 @@ export class DatabaseTableNode extends Node {
   }
 }
 
+/** A table step's resolved `connection` and `system`. */
+interface Settings {
+  connection?: unknown;
+  system?: unknown;
+}
+
 /**
- * Run the `$table` validator, if one is set and the step is not `system`, before
- * a change to `table`. It sees the table's document as `schema` (a copy, so the
- * registered one stays as registered) unless `extra` gives the one being
- * applied, and refuses by throwing.
+ * Run the connection's `structure` validator, if it is set and the step is not
+ * `system`, before a change to `table`. It sees the table's document as `schema`
+ * (a copy, so the registered one stays as registered) unless `extra` gives the
+ * one being applied, and refuses by throwing.
  */
 async function authorize(
-  context: Context, system: unknown, operation: string, table: string,
+  context: Context, step: Settings, operation: string, table: string,
   extra: { schema?: TableJsonSchema; changes?: Record<string, unknown> } = {},
 ): Promise<void> {
-  const node = resolverFor(context).nodeFor("table");
-  const steps = node instanceof DatabaseTableNode ? node.validator : null;
-  if (steps == null || system === true) return;
+  if (step.system === true) return;
+  const steps = DatabaseNode.validators(context, step.connection).structure;
+  if (steps == null) return;
   const schema = extra.schema ?? DatabaseTableNode.get(context, table);
   await runSteps(steps, childContext(context, {
     operation, table, schema: schema && structuredClone(schema), changes: extra.changes,
@@ -356,31 +376,32 @@ async function authorize(
 }
 
 /**
- * The table documents a `create` or `sync` names in `schema`, each authorized by
- * the `$table` validator: a document, which is registered once authorized; a
- * registered table's name; or, for `sync` only, `"*"` or nothing for every
- * registered table.
+ * The table documents a `$tableCreate` or `$tableSync` names in its value, each
+ * authorized by the connection's `structure` validator: a document, which is
+ * registered once authorized; a registered table's name; or, for `sync` only,
+ * `"*"` for every registered table.
  */
-async function documentsOf(def: Record<string, unknown>, context: Context, operation: "create" | "sync"): Promise<TableJsonSchema[]> {
-  const [schema, system] = await Promise.all([schemaArg(def.schema, context), resolve(def.system ?? null, context)]);
+async function documentsOf(value: unknown, step: Settings, context: Context, operation: "create" | "sync"): Promise<TableJsonSchema[]> {
+  const op = operation === "create" ? "$tableCreate" : "$tableSync";
+  const schema = await schemaArg(value, context);
   const schemas = requireSchemaNode(context);
   if (isObject(schema)) {
     if (!isTableDocument(schema)) throw new Error("A table document needs a `table` name and `properties`.");
-    await authorize(context, system, operation, schema.table, { schema: schema as TableJsonSchema });
+    await authorize(context, step, operation, schema.table, { schema: schema as TableJsonSchema });
     SchemaNode.register(schemas, schema);
     return [DatabaseTableNode.get(context, schema.table)!];
   }
   let documents: TableJsonSchema[];
-  if (typeof schema === "string" && schema !== "*") {
-    const found = DatabaseTableNode.get(context, schema);
-    if (!found) throw new Error(`$table: no document registered for table "${schema}"`);
-    documents = [found];
-  } else if (operation === "sync") {
+  if (schema === "*" && operation === "sync") {
     documents = SchemaNode.all(schemas, tableId("")).filter(isTableDocument) as TableJsonSchema[];
+  } else if (typeof schema === "string") {
+    const found = DatabaseTableNode.get(context, schema);
+    if (!found) throw new Error(`${op}: no document registered for table "${schema}"`);
+    documents = [found];
   } else {
-    throw new Error("$table create needs `schema`: a table document, or a registered table's name");
+    throw new Error(`${op} takes a table document or a registered table's name${operation === "sync" ? ", or \"*\" for every registered one" : ""}`);
   }
-  for (const doc of documents) await authorize(context, system, operation, doc.table);
+  for (const doc of documents) await authorize(context, step, operation, doc.table);
   return documents;
 }
 
@@ -399,40 +420,6 @@ async function createTable(knex: KnexType, schema: TableJsonSchema): Promise<voi
     if (schema.indexes) buildIndexes(table, schema.indexes);
     if (schema.foreignKeys) buildForeignKeys(table, schema.foreignKeys);
   });
-}
-
-/** `create`: create a table from its document. One that exists is an error. */
-async function doCreate(def: Record<string, unknown>, context: Context): Promise<string> {
-  const [schema] = await documentsOf(def, context, "create");
-  const knex = DatabaseNode.getKnex(context, await resolve(def.connection ?? null, context));
-  if (await knex.schema.hasTable(schema.table)) {
-    throw new Error(`$table create: table "${schema.table}" already exists; \`sync\` adds what it lacks`);
-  }
-  await createTable(knex, schema);
-  loggerFor(context).info(`[DatabaseTable] Created table: ${schema.table}`);
-  return schema.table;
-}
-
-/**
- * `sync`: create each table that is missing, and bring each existing one up to
- * its document additively. Returns the names of the tables it created; a
- * failure throws, so a startup that cannot build its tables stops there.
- */
-async function doSync(def: Record<string, unknown>, context: Context): Promise<string[]> {
-  const schemas = await documentsOf(def, context, "sync");
-  const knex = DatabaseNode.getKnex(context, await resolve(def.connection ?? null, context));
-  const created: string[] = [];
-  for (const schema of schemas) {
-    const tableName = schema.table;
-    if (await knex.schema.hasTable(tableName)) {
-      await syncTable(knex, schema, loggerFor(context));
-      continue;
-    }
-    await createTable(knex, schema);
-    loggerFor(context).info(`[DatabaseTable] Created table: ${tableName}`);
-    created.push(tableName);
-  }
-  return created;
 }
 
 /**
@@ -492,46 +479,6 @@ async function indexNames(knex: KnexType, tableName: string): Promise<string[]> 
 }
 
 /**
- * `alter`: apply each change the step gives, in `ALTERATIONS` order, one
- * statement group at a time, so a later change sees the columns an earlier one
- * added or renamed.
- */
-function doAlter(def: Record<string, unknown>, context: Context): unknown {
-  return resolveFields(def, context, async r => {
-    const tableName = String(r.table);
-    const changes = Object.fromEntries(ALTERATIONS.filter(k => r[k] != null).map(k => [k, r[k]]));
-    if (Object.keys(changes).length === 0) {
-      throw new Error(`$table alter needs a change: ${ALTERATIONS.map(k => `\`${k}\``).join(", ")}`);
-    }
-    for (const key of ["add", "rename", "change", "addIndexes"] as const) {
-      if (r[key] != null && !isObject(r[key])) throw new Error(`$table alter: \`${key}\` must be an object, by name`);
-    }
-    for (const key of ["drop", "dropIndexes", "required"] as const) {
-      if (r[key] != null && !Array.isArray(r[key])) throw new Error(`$table alter: \`${key}\` must be an array of names`);
-    }
-    await authorize(context, r.system, "alter", tableName, { changes });
-
-    const required = new Set((r.required as string[] | undefined) ?? []);
-    const { add, rename, change, drop, addIndexes, dropIndexes } = changes as {
-      add?: Record<string, ColumnSchema>; rename?: Record<string, unknown>; change?: Record<string, ColumnSchema>;
-      drop?: string[]; addIndexes?: Record<string, IndexDef>; dropIndexes?: string[];
-    };
-    const knex = DatabaseNode.getKnex(context, r.connection);
-    checkColumns(tableName, Object.keys(await knex(tableName).columnInfo()), add, rename, change, drop);
-    const alter = (build: (table: KnexType.CreateTableBuilder) => void) => knex.schema.alterTable(tableName, build);
-    if (dropIndexes) await alter(table => { for (const index of dropIndexes) table.dropIndex([], index); });
-    if (add) await alter(table => { buildColumns(table, add, required, knex); });
-    if (rename) await alter(table => { for (const [from, to] of Object.entries(rename)) table.renameColumn(from, String(to)); });
-    if (change) await alter(table => { for (const column of buildColumns(table, change, required, knex)) column.alter(); });
-    if (drop) await alter(table => { table.dropColumns(...drop); });
-    if (addIndexes) await alter(table => { buildIndexes(table, addIndexes); });
-
-    loggerFor(context).info(`[DatabaseTable] Altered table ${tableName}: ${Object.keys(changes).join(", ")}`);
-    return null;
-  });
-}
-
-/**
  * Refuse an `alter` that names a column wrongly, before it changes anything:
  * one to add must be new, and one to rename, change or drop must exist by then.
  * Checked here because SQLite's rebuild skips a missing column without a word.
@@ -543,7 +490,7 @@ function checkColumns(
   const columns = new Set(existing);
   const need = (name: string, present: boolean, what: string) => {
     if (columns.has(name) !== present) {
-      throw new Error(`$table alter: ${present ? "no" : "a"} column "${name}" ${present ? "to" : "already exists, so cannot"} ${what} in "${tableName}"`);
+      throw new Error(`$tableAlter: ${present ? "no" : "a"} column "${name}" ${present ? "to" : "already exists, so cannot"} ${what} in "${tableName}"`);
     }
   };
   for (const name of Object.keys(add ?? {})) { need(name, false, "add"); columns.add(name); }
@@ -664,7 +611,7 @@ function buildColumns(
         column = table.uuid(name);
         break;
       default:
-        throw new Error(`$table: column "${name}" has an unknown sqlType "${sqlType}"; it takes ${SQL_TYPES.join(", ")}`);
+        throw new Error(`Table column "${name}" has an unknown sqlType "${sqlType}"; it takes ${SQL_TYPES.join(", ")}`);
     }
 
     // Apply modifiers

@@ -60,22 +60,23 @@ test("a closed window stops resolving to its old page", () => {
   assert.equal(pageForWindowName("detail"), undefined);
 });
 
-// Stands in for `resolver.keys`. `table` and `write` are siblings rather than
+// Stands in for `resolver.keys`. `where` and `write` are siblings rather than
 // ops, which is the distinction the allow-list turns on.
-const isOp = (key: string) => ["query", "file", "getProp", "windowClose"].includes(key);
+const isOp = (key: string) => ["querySelect", "queryDelete", "file", "getProp", "windowClose"].includes(key);
 
 test("siblings need no listing, only ops do", () => {
-  const allow = new Set(["query"]);
-  assert.equal(deniedKey({ $query: "select", table: "saves" }, allow, isOp), undefined);
+  const allow = new Set(["querySelect"]);
+  assert.equal(deniedKey({ $querySelect: "saves", where: { id: 1 } }, allow, isOp), undefined);
+  assert.equal(deniedKey({ $queryDelete: "saves", where: { id: 1 } }, allow, isOp), "queryDelete");
   assert.equal(deniedKey({ $file: "x", write: "y" }, allow, isOp), "file");
 });
 
 test("global step keys are never treated as ops to allow", () => {
-  const allow = new Set(["query"]);
+  const allow = new Set(["querySelect"]);
   // `() => true` claims every key is an op, so only the GLOBAL_KEYS skip can
   // save this call.
   assert.equal(
-    deniedKey({ $query: "select", $as: "rows", $catch: [], $then: [], $bubble: true, $return: 1 }, allow, () => true),
+    deniedKey({ $querySelect: "saves", $as: "rows", $catch: [], $then: [], $bubble: true, $return: 1 }, allow, () => true),
     undefined,
   );
 });
@@ -83,28 +84,28 @@ test("global step keys are never treated as ops to allow", () => {
 // A sibling's VALUE is resolved too, so an op nested inside one reaches its
 // handler. Checking only the call's own keys would have let both of these run.
 test("a denied op nested in a sibling value is caught", () => {
-  const allow = new Set(["query"]);
-  assert.equal(deniedKey({ $query: "x", table: { $file: "/etc/passwd" } }, allow, isOp), "file");
-  assert.equal(deniedKey({ $query: "x", $catch: [{ $file: "/etc/passwd" }] }, allow, isOp), "file");
+  const allow = new Set(["querySelect"]);
+  assert.equal(deniedKey({ $querySelect: "x", where: { $file: "/etc/passwd" } }, allow, isOp), "file");
+  assert.equal(deniedKey({ $querySelect: "x", $catch: [{ $file: "/etc/passwd" }] }, allow, isOp), "file");
 });
 
 // A structured clone preserves reference identity, so one object can be shared
 // across many slots. Re-walking it at each reference is exponential: this payload
 // is ~70 objects and takes seconds undeduplicated, against ~0ms with the WeakSet.
 test("a shared subtree is walked once, not once per reference", () => {
-  let node: Record<string, unknown> = { $query: "leaf" };
-  for (let i = 0; i < 24; i++) node = { $query: "x", a: node, b: node };
+  let node: Record<string, unknown> = { $querySelect: "leaf" };
+  for (let i = 0; i < 24; i++) node = { $querySelect: "x", a: node, b: node };
   const started = Date.now();
-  assert.equal(deniedKey(node, new Set(["query"]), isOp), undefined);
+  assert.equal(deniedKey(node, new Set(["querySelect"]), isOp), undefined);
   assert.ok(Date.now() - started < 2000, "the walk did not deduplicate shared references");
 });
 
 // The degenerate case of the same thing: without dedup this recurses until the
 // stack gives out rather than returning a verdict.
 test("a cyclic payload returns instead of overflowing the stack", () => {
-  const call: Record<string, unknown> = { $query: "select" };
-  call.table = call;
-  assert.equal(deniedKey(call, new Set(["query"]), isOp), undefined);
+  const call: Record<string, unknown> = { $querySelect: "saves" };
+  call.where = call;
+  assert.equal(deniedKey(call, new Set(["querySelect"]), isOp), undefined);
 });
 
 

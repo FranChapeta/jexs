@@ -1,11 +1,10 @@
 import { Knex as KnexType } from "knex";
-import { Node, Context, NodeValue, isOwnedKey, resolveFields, resolverFor, runSteps } from "@jexs/core";
+import { Node, Context, NodeValue, isOwnedKey, resolveFields, runSteps } from "@jexs/core";
 import { DatabaseNode } from "./Database.js";
 import { COMPUTE_FNS, DatabaseTableNode, type ColumnSchema, type TableJsonSchema } from "./DatabaseTable.js";
 import { requireSchemaNode, validate } from "./Schema.js";
 import type { JexsMethodSchema, JexsNodeSchema, JexsOutput, JexsPropertySchema } from "@jexs/core";
 
-const VALID_QUERY_TYPES = new Set(["select", "insert", "upsert", "update", "delete", "count"]);
 /** Set on the context a validator runs in, so its own queries skip validation. A symbol, so no template can read or set it. */
 const VALIDATING = Symbol("validating");
 
@@ -55,7 +54,7 @@ const SqlValidator = {
  */
 export interface QueryDefinition {
   type: "select" | "insert" | "upsert" | "update" | "delete" | "count";
-  table?: string;
+  table: string;
   columns?: string[];
   data?: Record<string, unknown> | Record<string, unknown>[];
   where?: WhereClause;
@@ -138,23 +137,26 @@ const CLAUSE: Record<string, JexsPropertySchema> = {
 };
 
 /**
- * A value-mode variant: the op's `output` and the clauses it accepts. update and
- * delete resolve to a row count, and to the affected rows instead when
+ * A query op, valued by its table: its `output` and the clauses it accepts. update
+ * and delete resolve to a row count, and to the affected rows instead when
  * `returning` is present, so there `returning` is a presence variant.
  */
-function op(output: JexsOutput, markdown: string, clauses: string[], rowsWhenReturning = false): JexsMethodSchema {
-  const siblings = Object.fromEntries(clauses.map(k => [k, CLAUSE[k]]));
-  if (!rowsWhenReturning) return { output, markdownDescription: markdown, siblings };
-  return {
-    output, markdownDescription: markdown, siblings,
-    variants: { returning: { ...CLAUSE.returning, output: "array", outputDescription: "The affected rows." } },
+function op(output: JexsOutput, markdown: string, example: string, clauses: string[], rowsWhenReturning = false): JexsMethodSchema {
+  const schema: JexsMethodSchema = {
+    type: "string", output, markdownDescription: markdown, examples: [example],
+    siblings: Object.fromEntries(clauses.map(k => [k, CLAUSE[k]])),
   };
+  if (rowsWhenReturning) {
+    schema.variants = { returning: { ...CLAUSE.returning, output: "array", outputDescription: "The affected rows." } };
+  }
+  return schema;
 }
 
 export class DatabaseQueryNode extends Node {
-  /** The steps `{ "$query": "validator" }` set, run before every query. An
-   *  instance field, so one resolver's policy never judges another's queries. */
-  globalValidator: unknown = null;
+  static commonSiblings: Record<string, JexsPropertySchema> = {
+    connection: { type: "string", description: "Named database connection (default if omitted)." },
+    system: { type: "boolean", description: "For the app's own queries, which have no request to authorize: skip the connection's validators, and allow the database's own catalog (`information_schema`, `pg_catalog`, `sqlite_master`, ...), which other queries are refused." },
+  };
 
   static schemaDefs: Record<string, Record<string, unknown>> = {
     // `data` resolves whole, so an expression is one more object here.
@@ -162,93 +164,181 @@ export class DatabaseQueryNode extends Node {
   };
 
   static schema: JexsNodeSchema = {
-    query: {
-      type: "string",
-      enum: ["select", "insert", "upsert", "update", "delete", "count", "validator"],
-      markdownDescription: "Reads and writes a table's rows. The value is the operation; `table` is the target and the op's clauses (`where`, `data`, `first`, ...) sit beside it. A write to a table with a registered document (see `$table`) is checked against it.",
-      examples: [
-        "{ \"$query\": \"select\", \"table\": \"users\", \"where\": { \"id\": { \"$var\": \"id\" } }, \"first\": true }",
-      ],
-      siblings: {
-        table:      { type: "string",  description: "Target table." },
-        connection: { type: "string",  description: "Named database connection (default if omitted)." },
-        system:     { type: "boolean", description: "Skip the validators: for the app's own queries, which have no request to authorize." },
-      },
-      variants: {
-        select: op("any", "Reads rows. Returns an array (or the single row / `null` with `first`).",
-          ["where", "orderBy", "groupBy", "first", "columns", "limit", "offset", "distinct", "innerJoin", "leftJoin", "rightJoin", "group_concat"]),
-        insert: op("any", "Inserts `data` (object or array of rows). Returns the PK(s), or the rows with `returning`.",
-          ["data", "ignore", "returning"]),
-        upsert: op("any", "Inserts or updates on `conflict`. `merge` limits which columns update.",
-          ["data", "conflict", "merge", "returning"]),
-        update: op("number", "Updates matching rows. `increment`/`decrement` apply atomic deltas. Returns the row count (or rows with `returning`).",
-          ["where", "data", "increment", "decrement"], true),
-        delete: op("number", "Deletes matching rows (requires `where`). Returns the row count (or rows with `returning`).",
-          ["where"], true),
-        count:  op("number", "Counts matching rows; supports joins and `distinct` + `columns`.",
-          ["where", "distinct", "columns", "innerJoin", "leftJoin", "rightJoin"]),
-        validator: {
-          output: "null",
-          markdownDescription: "Sets the global validator: steps run before every query on every table to authorize it. They see `operation`, the table's document as `schema`, and `query` (`table`, `where`, `data`, ...), which they may narrow. Refuse with `{ \"$error\": 403 }`. A table document's own `validator` runs after this one, never instead of it. Queries with `system: true` skip both.",
-          siblings: {
-            do: { steps: true, description: "Steps run before each query." },
-          },
-        },
-      },
-    },
+    querySelect: op("any", "Reads rows from the table the value names. Returns an array, or with `first` the single row (`null` when none matches).",
+      "{ \"$querySelect\": \"users\", \"where\": { \"id\": { \"$var\": \"id\" } }, \"first\": true }",
+      ["where", "orderBy", "groupBy", "first", "columns", "limit", "offset", "distinct", "innerJoin", "leftJoin", "rightJoin", "group_concat"]),
+    queryInsert: op("any", "Inserts `data` (a row or an array of rows) into the table the value names, checked against the table's registered document if it has one (see `$tableCreate`). Returns the new primary key (or keys), or the rows with `returning`.",
+      "{ \"$queryInsert\": \"users\", \"data\": { \"name\": { \"$var\": \"name\" } } }",
+      ["data", "ignore", "returning"]),
+    queryUpsert: op("any", "Inserts `data`, or updates the row with the same `conflict` columns; `merge` limits which columns update. Checked like `$queryInsert`.",
+      "{ \"$queryUpsert\": \"settings\", \"data\": { \"key\": \"theme\", \"value\": \"dark\" }, \"conflict\": [\"key\"] }",
+      ["data", "conflict", "merge", "returning"]),
+    queryUpdate: op("number", "Updates the rows that match `where` in the table the value names, checked against the table's registered document if it has one. `increment`/`decrement` apply atomic deltas. Returns the row count, or the rows with `returning`.",
+      "{ \"$queryUpdate\": \"posts\", \"where\": { \"id\": 1 }, \"increment\": { \"views\": 1 } }",
+      ["where", "data", "increment", "decrement"], true),
+    queryDelete: op("number", "Deletes the rows that match `where`, which it requires, from the table the value names. Returns the row count, or the rows with `returning`.",
+      "{ \"$queryDelete\": \"sessions\", \"where\": { \"id\": { \"$var\": \"id\" } } }",
+      ["where"], true),
+    queryCount: op("number", "Counts the rows that match `where` in the table the value names. Supports joins, and `distinct` with `columns` counts distinct values.",
+      "{ \"$queryCount\": \"users\", \"where\": { \"active\": true } }",
+      ["where", "distinct", "columns", "innerJoin", "leftJoin", "rightJoin"]),
   };
 
-  query(def: Record<string, unknown>, context: Context): NodeValue {
-    if (def.$query === "validator") {
-      this.globalValidator = def.do ?? null;
-      return null;
-    }
-    return execQuery(def, context);
+  querySelect(def: Record<string, unknown>, context: Context): NodeValue {
+    return runQuery("select", def, context, async (knex, query) => {
+      let builder = knex(query.table);
+      if (query.distinct) builder = builder.distinct();
+      builder = builder.select(query.columns && query.columns.length > 0 ? query.columns : "*");
+      for (const [alias, colDef] of Object.entries(query.group_concat ?? {})) {
+        const [col, sep] = Array.isArray(colDef) ? colDef : [colDef, ","];
+        builder = builder.select(knex.raw("GROUP_CONCAT(??, ?) as ??", [col, sep, alias]));
+      }
+      builder = applyJoins(builder, query);
+      if (query.where) builder = applyWhere(builder, query.where);
+      if (query.groupBy) builder = builder.groupBy(Array.isArray(query.groupBy) ? query.groupBy : [query.groupBy]);
+      for (const [column, direction] of Object.entries(query.orderBy ?? {})) {
+        builder = builder.orderBy(column, direction.toLowerCase() as "asc" | "desc");
+      }
+      if (query.limit) builder = builder.limit(query.limit);
+      if (query.offset) builder = builder.offset(query.offset);
+      if (query.first) return (await builder.first()) || null;
+      return builder;
+    });
+  }
+
+  queryInsert(def: Record<string, unknown>, context: Context): NodeValue {
+    return runQuery("insert", def, context, async (knex, query) => {
+      if (!query.data) throw new Error("$queryInsert needs `data`");
+      let builder = knex(query.table).insert(rowsToWrite(context, query.table, query.data));
+      if (query.ignore) builder = builder.onConflict().ignore();
+      if (query.returning) builder = builder.returning(query.returning);
+      const result = await builder;
+      if (query.returning) return result;
+      return Array.isArray(query.data) ? result : (result as number[])[0];
+    });
+  }
+
+  queryUpsert(def: Record<string, unknown>, context: Context): NodeValue {
+    return runQuery("upsert", def, context, async (knex, query) => {
+      if (!query.data) throw new Error("$queryUpsert needs `data`");
+      if (!query.conflict || !query.conflict.length) throw new Error("$queryUpsert needs `conflict` columns");
+      // `merge` (a subset of columns) lets the conflict update touch only some
+      // columns, e.g. keep `created_at` intact; omit it to merge every inserted column.
+      let builder = knex(query.table)
+        .insert(rowsToWrite(context, query.table, query.data))
+        .onConflict(query.conflict)
+        .merge(query.merge && query.merge.length ? query.merge : undefined);
+      if (query.returning) builder = builder.returning(query.returning);
+      const result = await builder;
+      if (query.returning) return result;
+      return Array.isArray(query.data) ? result : (result as number[])[0];
+    });
+  }
+
+  queryUpdate(def: Record<string, unknown>, context: Context): NodeValue {
+    return runQuery("update", def, context, (knex, query) => {
+      const changes = query.data;
+      if ((!changes || Array.isArray(changes)) && !query.increment && !query.decrement) {
+        throw new Error("$queryUpdate needs a `data` object, or `increment`/`decrement`");
+      }
+      const data = changes && !Array.isArray(changes) ? changesToWrite(context, query.table, changes) : {};
+      // Atomic deltas: `col = col +/- n`, applied as raw after validation so they
+      // bypass type coercion (the value is an expression, not a literal).
+      for (const [col, amt] of Object.entries(query.increment ?? {})) {
+        data[col] = knex.raw("?? + ?", [col, Number(amt)]);
+      }
+      for (const [col, amt] of Object.entries(query.decrement ?? {})) {
+        data[col] = knex.raw("?? - ?", [col, Number(amt)]);
+      }
+      let builder = knex(query.table);
+      if (query.where) builder = applyWhere(builder, query.where);
+      return query.returning ? builder.update(data, query.returning) : builder.update(data);
+    });
+  }
+
+  queryDelete(def: Record<string, unknown>, context: Context): NodeValue {
+    return runQuery("delete", def, context, (knex, query) => {
+      if (!query.where) throw new Error("$queryDelete needs `where`");
+      const builder = applyWhere(knex(query.table), query.where);
+      return query.returning ? builder.delete(query.returning) : builder.delete();
+    });
+  }
+
+  queryCount(def: Record<string, unknown>, context: Context): NodeValue {
+    return runQuery("count", def, context, async (knex, query) => {
+      let builder = applyJoins(knex(query.table), query);
+      // `distinct` with `columns` is COUNT(DISTINCT col); otherwise COUNT(*).
+      builder = query.distinct && query.columns && query.columns.length > 0
+        ? builder.countDistinct(`${query.columns[0]} as count`)
+        : builder.count("* as count");
+      if (query.where) builder = applyWhere(builder, query.where);
+      const result = await builder.first();
+      return Number((result as { count: number } | undefined)?.count || 0);
+    });
   }
 }
 
-async function execQuery(def: Record<string, unknown>, context: Context): Promise<NodeValue> {
-  // Every clause is a sibling holding plain data (column names, `where`
-  // operators, row keys), so the step resolves in one pass.
-  const r = await resolveFields(def, context, r => r);
-  const query = toQuery(r);
-  // Omitted `connection` falls back to whichever opened first; getKnex owns
-  // that chain, so this does not repeat it.
-  const knex = DatabaseNode.getKnex(context, r.connection);
+/** Schemas, and table name prefixes, that hold a database's own catalog. */
+const CATALOG_SCHEMAS = new Set(["information_schema", "pg_catalog", "pg_toast", "mysql", "performance_schema", "sys"]);
+const CATALOG_TABLE = /^(sqlite_|pg_|pragma_)/;
 
-  if (!r.system) await runValidators(query, context);
-
-  switch (query.type) {
-    case "select":  return executeSelect(knex, query, query.first === true) as Promise<NodeValue>;
-    case "insert":  return executeInsert(knex, query, context) as Promise<NodeValue>;
-    case "upsert":  return executeUpsert(knex, query, context) as Promise<NodeValue>;
-    case "update":  return executeUpdate(knex, query, context) as Promise<NodeValue>;
-    case "delete":  return executeDelete(knex, query) as Promise<NodeValue>;
-    case "count":   return executeCount(knex, query) as Promise<NodeValue>;
-  }
-}
-
-/** The table's document, or a stand-in when it is not registered, so the
- *  global validator still sees the table name. */
-function documentOf(query: QueryDefinition, context: Context): TableJsonSchema {
-  return DatabaseTableNode.get(context, query.table!) ?? { table: query.table!, properties: {} };
+/** Whether a table name, as knex reads it (`schema.table`, perhaps `as alias`), is part of the catalog. */
+function isCatalog(name: string): boolean {
+  const parts = name.split(/\s+as\s+/i)[0].trim().toLowerCase().split(".");
+  return parts.slice(0, -1).some(p => CATALOG_SCHEMAS.has(p)) || CATALOG_TABLE.test(parts[parts.length - 1]);
 }
 
 /**
- * Run the validators before a query executes: the global validator, then the
- * table's own `validator`, so a table can add checks but never lift the
- * app-wide ones. They see the table document as `schema`, the operation as
+ * Run a query op: resolve the step into its query (the op's value as `table`,
+ * beside its clauses, without the `connection` and `system` settings), refuse
+ * the catalog and have the connection's validators check it unless the step is
+ * `system`, then `run` it.
+ */
+async function runQuery(
+  type: QueryDefinition["type"], def: Record<string, unknown>, context: Context,
+  run: (knex: KnexType, query: QueryDefinition) => unknown,
+): Promise<unknown> {
+  // Every clause is a sibling holding plain data (column names, `where`
+  // operators, row keys), so the step resolves in one pass.
+  const r = await resolveFields(def, context, r => r);
+  const op = `$query${type[0].toUpperCase()}${type.slice(1)}`;
+  const table = r[op];
+  if (typeof table !== "string") throw new Error(`${op} takes a table name, got ${typeof table}`);
+  const fields: Record<string, unknown> = { type };
+  for (const [k, v] of Object.entries(r)) {
+    if (!isOwnedKey(k) && k !== "connection" && k !== "system") fields[k] = v;
+  }
+  fields.table = table;
+  const query = fields as unknown as QueryDefinition;
+  // Omitted `connection` falls back to whichever opened first; getKnex owns
+  // that chain, so this does not repeat it.
+  const knex = DatabaseNode.getKnex(context, r.connection);
+  if (!r.system) {
+    const joined = [query.innerJoin, query.leftJoin, query.rightJoin].flatMap(joins => joins ?? []).map(join => join.table);
+    for (const name of [table, ...joined]) {
+      if (typeof name !== "string") throw new Error(`${op}: a join's \`table\` must be a table name`);
+      if (isCatalog(name)) throw new Error(`${op}: "${name}" is the database's own catalog, which only a step with \`system: true\` may query`);
+    }
+    await runValidators(query, r.connection, context);
+  }
+  return run(knex, query);
+}
+
+/**
+ * Run the validators before a query executes: the connection's `rows`, then
+ * the table's own `validator`, so a table can add checks but never lift the
+ * connection's. They see the table document as `schema`, the operation as
  * `operation` and the query itself as `query`, which they may narrow (e.g. add
  * an owner to `where`) since this is the object that runs. A validator refuses
  * by throwing (`{ "$error": 403 }`).
  */
-async function runValidators(query: QueryDefinition, context: Context): Promise<void> {
+async function runValidators(query: QueryDefinition, connection: unknown, context: Context): Promise<void> {
   if (Reflect.get(context, VALIDATING) === true) return;
   const operation = query.type === "count" ? "select" : query.type;
-  // The resolver's own node holds its global validator.
-  const node = resolverFor(context).nodeFor("query");
-  const global = node instanceof DatabaseQueryNode ? node.globalValidator : null;
-  const schema = documentOf(query, context);
+  const global = DatabaseNode.validators(context, connection).rows;
+  // A stand-in for a table with no registered document, so the connection's
+  // validator still sees the table's name.
+  const schema: TableJsonSchema = DatabaseTableNode.get(context, query.table) ?? { table: query.table, properties: {} };
   const own = schema.validator;
   if (global == null && own == null) return;
   // A copy: a validator may narrow the query, but the registered document
@@ -259,22 +349,6 @@ async function runValidators(query: QueryDefinition, context: Context): Promise<
   for (const steps of [global, own]) {
     if (steps != null) await runSteps(steps, validatorContext);
   }
-}
-
-/** The resolved step as the QueryDefinition the execute* helpers consume: its clauses, without the resolver's `$` keys or the `connection` and `system` settings. */
-function toQuery(r: Record<string, unknown>): QueryDefinition {
-  const type = r.$query;
-  if (typeof type !== "string" || !VALID_QUERY_TYPES.has(type)) {
-    throw new Error(`Invalid query type: "${type}". Must be one of: ${[...VALID_QUERY_TYPES].join(", ")}`);
-  }
-  if (typeof r.table !== "string") {
-    throw new Error("Query must have a table property");
-  }
-  const query: Record<string, unknown> = { type };
-  for (const [k, v] of Object.entries(r)) {
-    if (!isOwnedKey(k) && k !== "connection" && k !== "system") query[k] = v;
-  }
-  return query as unknown as QueryDefinition;
 }
 
 // ── The rows a write sends, prepared by the table's document ─────────────────
@@ -436,243 +510,15 @@ function coerceType(value: unknown, col: ColumnSchema, colName: string, tableNam
   }
 }
 
-/**
- * Execute a SELECT query
- */
-async function executeSelect(
-  knex: KnexType,
-  query: QueryDefinition,
-  first: boolean,
-): Promise<unknown> {
-  if (!query.table) throw new Error("Query requires a table name");
-  let builder = knex(query.table);
-
-  // Distinct
-  if (query.distinct) {
-    builder = builder.distinct();
-  }
-
-  // Columns
-  if (query.columns && query.columns.length > 0) {
-    builder = builder.select(query.columns);
-  } else {
-    builder = builder.select("*");
-  }
-
-  // Group Concat
-  if (query.group_concat) {
-    for (const [alias, colDef] of Object.entries(query.group_concat)) {
-      const [col, sep] = Array.isArray(colDef) ? colDef : [colDef, ","];
-      builder = builder.select(knex.raw(`GROUP_CONCAT(??, ?) as ??`, [col, sep, alias]));
+/** Apply the query's `innerJoin`, `leftJoin` and `rightJoin` clauses. */
+function applyJoins(builder: KnexType.QueryBuilder, query: QueryDefinition): KnexType.QueryBuilder {
+  for (const method of ["innerJoin", "leftJoin", "rightJoin"] as const) {
+    for (const join of query[method] ?? []) {
+      const tableName = join.as ? `${join.table} as ${join.as}` : join.table;
+      builder = builder[method](tableName, qb => {
+        for (const [left, right] of Object.entries(join.on)) qb.on(left, "=", right);
+      });
     }
-  }
-
-  // Joins
-  for (const [joins, type] of [
-    [query.innerJoin, "inner"], [query.leftJoin, "left"], [query.rightJoin, "right"],
-  ] as [JoinDefinition[] | undefined, "inner" | "left" | "right"][]) {
-    if (joins) builder = applyJoins(builder, joins, type);
-  }
-
-  // Where
-  if (query.where) {
-    builder = applyWhere(builder, query.where);
-  }
-
-  // Group By
-  if (query.groupBy) {
-    const groups = Array.isArray(query.groupBy)
-      ? query.groupBy
-      : [query.groupBy];
-    builder = builder.groupBy(groups);
-  }
-
-  // Order By
-  if (query.orderBy) {
-    for (const [column, direction] of Object.entries(query.orderBy)) {
-      builder = builder.orderBy(
-        column,
-        direction.toLowerCase() as "asc" | "desc",
-      );
-    }
-  }
-
-  // Limit
-  if (query.limit) {
-    builder = builder.limit(query.limit);
-  }
-
-  // Offset
-  if (query.offset) {
-    builder = builder.offset(query.offset);
-  }
-
-  // Execute
-  if (first) {
-    const result = await builder.first();
-    return result || null;
-  }
-
-  return builder;
-}
-
-/**
- * Execute an INSERT query
- */
-async function executeInsert(
-  knex: KnexType,
-  query: QueryDefinition,
-  context: Context,
-): Promise<unknown> {
-  if (!query.table) throw new Error("Query requires a table name");
-  if (!query.data) {
-    throw new Error("INSERT query requires data");
-  }
-
-  // Validate and enrich data (computed columns, type coercion)
-  const data = rowsToWrite(context, query.table!, query.data);
-
-  let builder = knex(query.table).insert(data);
-  if (query.ignore) builder = builder.onConflict().ignore();
-  if (query.returning) builder = builder.returning(query.returning);
-
-  const result = await builder;
-  if (query.returning) return result;
-  return Array.isArray(query.data) ? result : (result as number[])[0];
-}
-
-/**
- * Execute an UPSERT query (INSERT ... ON CONFLICT ... DO UPDATE)
- */
-async function executeUpsert(
-  knex: KnexType,
-  query: QueryDefinition,
-  context: Context,
-): Promise<unknown> {
-  if (!query.table) throw new Error("Query requires a table name");
-  if (!query.data) {
-    throw new Error("UPSERT query requires data");
-  }
-  if (!query.conflict || !query.conflict.length) {
-    throw new Error("UPSERT query requires conflict columns");
-  }
-
-  const data = rowsToWrite(context, query.table!, query.data);
-
-  // `merge` (subset of columns) lets the conflict update touch only some columns
-  // — e.g. keep `created_at` intact; omit to merge every inserted column.
-  let builder = knex(query.table)
-    .insert(data)
-    .onConflict(query.conflict)
-    .merge(query.merge && query.merge.length ? query.merge : undefined);
-  if (query.returning) builder = builder.returning(query.returning);
-
-  const result = await builder;
-  if (query.returning) return result;
-  return Array.isArray(query.data) ? result : (result as number[])[0];
-}
-
-/**
- * Execute an UPDATE query
- */
-async function executeUpdate(
-  knex: KnexType,
-  query: QueryDefinition,
-  context: Context,
-): Promise<unknown> {
-  if (!query.table) throw new Error("Query requires a table name");
-  const hasDelta = !!(query.increment || query.decrement);
-  if ((!query.data || Array.isArray(query.data)) && !hasDelta) {
-    throw new Error("UPDATE query requires a data object or increment/decrement");
-  }
-
-  // Validate and filter data (strip unknown columns, coerce types).
-  const data: Record<string, unknown> = query.data && !Array.isArray(query.data)
-    ? changesToWrite(context, query.table!, query.data as Record<string, unknown>)
-    : {};
-
-  // Atomic deltas: `col = col +/- n`, applied as raw after validation so they
-  // bypass type coercion (the value is an expression, not a literal).
-  for (const [col, amt] of Object.entries(query.increment ?? {})) {
-    data[col] = knex.raw("?? + ?", [col, Number(amt)]);
-  }
-  for (const [col, amt] of Object.entries(query.decrement ?? {})) {
-    data[col] = knex.raw("?? - ?", [col, Number(amt)]);
-  }
-
-  let builder = knex(query.table);
-  if (query.where) {
-    builder = applyWhere(builder, query.where);
-  }
-
-  return query.returning ? builder.update(data, query.returning) : builder.update(data);
-}
-
-/**
- * Execute a DELETE query
- */
-async function executeDelete(
-  knex: KnexType,
-  query: QueryDefinition,
-): Promise<unknown> {
-  if (!query.table) throw new Error("Query requires a table name");
-  let builder = knex(query.table);
-
-  if (query.where) {
-    builder = applyWhere(builder, query.where);
-  } else {
-    // Safety: require WHERE clause for DELETE
-    throw new Error("DELETE query requires a WHERE clause");
-  }
-
-  return query.returning ? builder.delete(query.returning) : builder.delete();
-}
-
-/**
- * Execute a COUNT query
- */
-async function executeCount(
-  knex: KnexType,
-  query: QueryDefinition,
-): Promise<number> {
-  let builder = knex(query.table!);
-
-  // Joins (valid on every driver for count).
-  for (const [joins, type] of [
-    [query.innerJoin, "inner"], [query.leftJoin, "left"], [query.rightJoin, "right"],
-  ] as [JoinDefinition[] | undefined, "inner" | "left" | "right"][]) {
-    if (joins) builder = applyJoins(builder, joins, type);
-  }
-
-  // `distinct` + `columns` → COUNT(DISTINCT col); otherwise COUNT(*).
-  builder = query.distinct && query.columns && query.columns.length > 0
-    ? builder.countDistinct(`${query.columns[0]} as count`)
-    : builder.count("* as count");
-
-  if (query.where) {
-    builder = applyWhere(builder, query.where);
-  }
-
-  const result = await builder.first();
-  return Number((result as { count: number })?.count || 0);
-}
-
-/**
- * Apply JOIN clauses
- */
-function applyJoins(
-  builder: KnexType.QueryBuilder,
-  joins: JoinDefinition[],
-  type: "inner" | "left" | "right",
-): KnexType.QueryBuilder {
-  const method = type === "left" ? "leftJoin" : type === "right" ? "rightJoin" : "innerJoin";
-  for (const join of joins) {
-    const tableName = join.as ? `${join.table} as ${join.as}` : join.table;
-    builder = (builder[method] as Function)(tableName, (qb: KnexType.JoinClause) => {
-      for (const [left, right] of Object.entries(join.on)) {
-        qb.on(left, "=", right);
-      }
-    });
   }
   return builder;
 }
