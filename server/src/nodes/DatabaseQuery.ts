@@ -341,9 +341,12 @@ async function runValidators(query: QueryDefinition, connection: unknown, contex
   const schema: TableJsonSchema = DatabaseTableNode.get(context, query.table) ?? { table: query.table, properties: {} };
   const own = schema.validator;
   if (global == null && own == null) return;
-  // A copy: a validator may narrow the query, but the registered document
-  // stays as registered.
-  const validatorContext: Context & { [VALIDATING]: true } = {
+  // A copy of the caller's context, not a child scope: a validator refuses or
+  // narrows the query, and never writes the caller's variables. `query` is the
+  // object that runs, so a dot-path write narrows it; `schema` is a copy, so
+  // the registered document stays as registered. `VALIDATING` carries into
+  // nested scopes, so a query run inside skips validation.
+  const validatorContext: Context = {
     ...context, [VALIDATING]: true, schema: structuredClone(schema), query, operation,
   };
   for (const steps of [global, own]) {

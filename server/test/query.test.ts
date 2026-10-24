@@ -99,6 +99,31 @@ test("validators authorize every row query: the connection's first, then the tab
   }
 });
 
+// A validator runs in a copy of the caller's context: `query` is the object
+// that runs, a query inside skips validation instead of recursing, and none of
+// its writes reach the caller, not even with `$bubble`.
+test("a validator changes the data a query writes and queries inside, but writes nothing of the caller's", async () => {
+  await resolve({ $tableCreate: { table: "drafts", properties: {
+    id: { type: "integer", primaryKey: true, autoIncrement: true }, author: { type: "string" }, stamp: { type: "string" },
+  } }, ...conn }, {});
+  await resolve({ $database: "validator", ...conn, rows: [
+    { $if: { $eq: [{ $var: "operation" }, "insert"] }, then: { $setVars: { "query.data.stamp": "checked" } } },
+    { $queryCount: "drafts", ...conn, $as: "existing" },
+    { $concat: [{ $var: "operation" }, ":", { $var: "existing" }], $as: "lastCheck", $bubble: true },
+  ] }, {});
+  const context: Record<string, unknown> = {};
+  try {
+    // Inside a loop, so there is a scope between the query and the caller that a bubble would reach.
+    await resolve({ $foreach: [1], do: [{ $queryInsert: "drafts", ...conn, data: { author: "ada" } }] }, context);
+    assert.equal(context.lastCheck, undefined, "a validator writes nothing of the caller's");
+    assert.equal(context.existing, undefined);
+    const row = await resolve({ $querySelect: "drafts", ...conn, first: true, system: true }, {});
+    assert.deepEqual(row, { id: 1, author: "ada", stamp: "checked" });
+  } finally {
+    await resolve({ $database: "validator", ...conn, rows: [] }, {});
+  }
+});
+
 test("a query reaches the database's own catalog only with system: true", async () => {
   const refused = /is the database's own catalog, which only a step with `system: true` may query/;
   await assert.rejects(resolve({ $querySelect: "sqlite_master", ...conn }, {}), refused);
@@ -255,6 +280,7 @@ test("the connection's structure validator authorizes each change to a table's s
   const context = { seen: [] as unknown[], allow: false };
   await resolve({ $database: "validator", ...conn, structure: [
     { $push: [{ $var: "seen" }, { $concat: [{ $var: "operation" }, " ", { $var: "table" }, " ", { $var: "schema.table" }, " ", { $stringify: { $var: "changes" } }] }] },
+    { $concat: ["structure"], $as: "leaked", $bubble: true },
     { $if: { $not: { $var: "allow" } }, then: { $error: 403, message: "structure is admin-only" } },
   ] }, context);
   try {
@@ -275,6 +301,7 @@ test("the connection's structure validator authorizes each change to a table's s
       "rename audited audited {\"to\":\"audited2\"}",
       "drop audited2  ",
     ]);
+    assert.equal(Reflect.get(context, "leaked"), undefined, "a validator writes nothing of the caller's");
   } finally {
     await resolve({ $database: "validator", ...conn, structure: [] }, {});
   }

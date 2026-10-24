@@ -1,5 +1,5 @@
 import { Knex as KnexType } from "knex";
-import { Node, Context, NodeValue, childContext, isObject, loggerFor, resolveAll, resolveFields, runSteps, type Logger } from "@jexs/core";
+import { Node, Context, NodeValue, isObject, loggerFor, resolveAll, resolveFields, runSteps, type Logger } from "@jexs/core";
 import { DatabaseNode } from "./Database.js";
 import { sha256 } from "./Crypto.js";
 import { SchemaNode, isTableDocument, requireSchemaNode, schemaArg, tableId } from "./Schema.js";
@@ -370,9 +370,11 @@ async function authorize(
   const steps = DatabaseNode.validators(context, step.connection).structure;
   if (steps == null) return;
   const schema = extra.schema ?? DatabaseTableNode.get(context, table);
-  await runSteps(steps, childContext(context, {
-    operation, table, schema: schema && structuredClone(schema), changes: extra.changes,
-  }));
+  // A copy of the caller's context, not a child scope: a validator refuses,
+  // and never writes the caller's variables.
+  await runSteps(steps, {
+    ...context, operation, table, schema: schema && structuredClone(schema), changes: extra.changes,
+  });
 }
 
 /**
