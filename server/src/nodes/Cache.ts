@@ -137,7 +137,7 @@ export class CacheNode extends Node {
           markdownDescription: "In-memory driver.",
           siblings: {
             maxSize:     { type: "number", description: "Maximum entry count." },
-            checkPeriod: { type: "number", description: "Expiry sweep interval in seconds." },
+            checkPeriod: { type: "number", description: "How often, in milliseconds, expired entries are swept out (default 60000, one minute); `0` turns the sweep off, leaving an expired entry to go when it is next read." },
           },
         },
       },
@@ -264,7 +264,13 @@ export class CacheNode extends Node {
       if (type === "memory") {
         config.memory = {};
         if (r.maxSize) config.memory.maxSize = Number(r.maxSize);
-        if (r.checkPeriod) config.memory.checkPeriod = Number(r.checkPeriod);
+        if (r.checkPeriod != null) {
+          const ms = Number(r.checkPeriod);
+          if (!Number.isFinite(ms) || ms < 0) {
+            throw new Error(`$cacheConnect: checkPeriod ${JSON.stringify(r.checkPeriod)} is not a number of milliseconds`);
+          }
+          config.memory.checkPeriod = ms;
+        }
       }
 
       // Replacing a name closes the cache it had.

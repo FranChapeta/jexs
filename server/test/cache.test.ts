@@ -157,6 +157,9 @@ test("cacheSet needs a value and returns it, and a mistake in a step is no HTTP 
     const plain = (message: RegExp) => (e: Error & { status?: number }) => e.status === undefined && message.test(e.message);
     await assert.rejects(async () => resolver({ $cache: "dump" }, {}), plain(/unknown operation "dump"/));
     await assert.rejects(async () => resolver({ "$cacheConnect": "mongo" }, {}), plain(/Unknown cache driver "mongo"/));
+    await assert.rejects(async () => resolver({ "$cacheConnect": "memory", checkPeriod: -1 }, {}), /checkPeriod -1 is not a number of milliseconds/);
+    // `0` turns the sweep off rather than falling back to the default.
+    assert.equal(await resolver({ "$cacheConnect": "memory", connection: "unswept", checkPeriod: 0 }, {}), "memory");
   } finally {
     resolver.destroy();
   }

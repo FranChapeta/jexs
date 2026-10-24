@@ -786,6 +786,11 @@ const RULES: Record<string, Rule> = {
     renameSibling(step, "ssl", "tls", m);
     const ttl = step.obj.props.find(p => p.key === "defaultTtl");
     if (ttl) m.review(ttl.keyStart, "`defaultTtl` is gone, and it never applied: drop it, and give `$cacheSet` its `ttl`");
+    // `checkPeriod` was always milliseconds, though documented as seconds.
+    const period = step.obj.props.find(p => p.key === "checkPeriod");
+    if (period?.value.k === "lit" && typeof period.value.value === "number" && period.value.value > 0 && period.value.value < 1000) {
+      m.review(period.keyStart, `\`checkPeriod\` is milliseconds, as it always was though documented as seconds: ${period.value.value} sweeps every ${period.value.value}ms, so write ${period.value.value * 1000} if seconds were meant`);
+    }
   },
   "email-connect": (step, m) => renameSibling(step, "ssl", "tls", m),
   defer: ({ obj }, m) => {
