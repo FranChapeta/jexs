@@ -361,13 +361,25 @@ const ROW_OPS = ["select", "insert", "upsert", "update", "delete", "count"];
 /** A `where` operator's one name, by each alias it had. */
 const WHERE_OPERATORS: Record<string, string> = { ne: "neq", "!=": "neq", ">": "gt", ">=": "gte", "<": "lt", "<=": "lte" };
 
-/** Rename the operator aliases in a `where` clause, through its `or` and `and` lists. */
+/**
+ * Rename the operator aliases in a `where` clause, through its `or` and `and`
+ * lists. `isNotNull: <boolean>` is `isNull` with the opposite boolean.
+ */
 function whereOperators(v: Val, m: Codemod): void {
   if (v.k !== "obj" || isStep(v)) return;
   for (const p of v.props) {
     if ((p.key === "or" || p.key === "and") && p.value.k === "arr") p.value.items.forEach(item => whereOperators(item, m));
     else if (p.value.k === "obj" && !isStep(p.value)) {
       for (const op of p.value.props) {
+        if (op.key === "isNotNull") {
+          if (op.value.k === "lit" && typeof op.value.value === "boolean") {
+            m.add({ start: op.keyStart, end: op.keyEnd, text: "isNull" });
+            m.add({ start: op.value.start, end: op.value.end, text: String(!op.value.value) });
+          } else {
+            m.review(op.keyStart, "`isNotNull` is gone: `isNull: false` matches NOT NULL");
+          }
+          continue;
+        }
         const to = WHERE_OPERATORS[op.key];
         // The key's span leaves out its quotes, so they stay as written.
         if (to) m.add({ start: op.keyStart, end: op.keyEnd, text: to });
@@ -659,7 +671,12 @@ const RULES: Record<string, Rule> = {
     const where = step.obj.props.find(p => p.key === "where");
     if (where) whereOperators(where.value, m);
     renameSibling(step, "database", "connection", m);
+    renameSibling(step, "group_concat", "groupConcat", m);
     const value = opValue(step);
+    if (value === "update" && !step.obj.props.some(p => p.key === "where")) {
+      const prop = step.obj.props.find(p => p.key === "$query")!;
+      m.review(prop.keyStart, "`$queryUpdate` needs `where`: without one this updated every row, which is `where: {}` now");
+    }
     if (value === "create") siblingAsOp(step, "schema", "tableSync", m);
     else if (value === "drop") siblingAsOp(step, "table", "tableDrop", m);
     else if (value === "alter") {

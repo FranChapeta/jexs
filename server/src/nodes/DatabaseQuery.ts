@@ -68,7 +68,7 @@ export interface QueryDefinition {
   first?: boolean;
   distinct?: boolean;
   // Aggregate
-  group_concat?: Record<string, string | [string, string]>;
+  groupConcat?: Record<string, string | [string, string]>;
   conflict?: string[];
   // Write-op extras
   /** Atomic `col = col + n` on update. */
@@ -109,13 +109,12 @@ export type WhereValue =
   | { in?: unknown[] }
   | { notIn?: unknown[] }
   | { between?: [unknown, unknown] }
-  | { isNull?: boolean }
-  | { isNotNull?: boolean };
+  | { isNull?: boolean };
 
 /** The clauses a query op takes as siblings, by name. Declared before the class
  *  so the static schema initializer can read them (a `const` is not hoisted). */
 const CLAUSE: Record<string, JexsPropertySchema> = {
-  where:        { description: "WHERE clause: `{ column: value }`, an operator object (`{ column: { gt: 1, lt: 5 } }`), and nested `or`/`and` lists of clauses. Every entry must hold, each operator on a column included." },
+  where:        { description: "WHERE clause: `{ column: value }`, an operator object (`{ column: { gt: 1, lt: 5 } }`), and nested `or`/`and` lists of clauses. Every entry must hold, each operator on a column included. The operators are `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like`, `notLike`, `in`, `notIn`, `between` and `isNull` (`isNull: false` for NOT NULL)." },
   data:         { $ref: "#/$defs/_queryRows", description: "Row data: an object, an array of rows, or an expression producing either." },
   orderBy:      { description: "ORDER BY: `{ column: 'asc' | 'desc' }`." },
   groupBy:      { description: "GROUP BY column name or array of names." },
@@ -127,7 +126,7 @@ const CLAUSE: Record<string, JexsPropertySchema> = {
   innerJoin:    { type: "array", description: "INNER JOIN clauses." },
   leftJoin:     { type: "array", description: "LEFT JOIN clauses." },
   rightJoin:    { type: "array", description: "RIGHT JOIN clauses." },
-  group_concat: { description: "GROUP_CONCAT aggregate." },
+  groupConcat:  { map: true, description: "Columns joined into one string per group, by alias: `{ \"tags\": \"tag\" }` joins with `,`, `{ \"tags\": [\"tag\", \" | \"] }` with a separator of its own. `GROUP_CONCAT` on SQLite and MySQL, `STRING_AGG` on PostgreSQL." },
   conflict:     { type: "array", description: "Conflict target columns (upsert)." },
   merge:        { type: "array", description: "Columns to update on conflict (upsert); omit to merge all." },
   ignore:       { type: "boolean", description: "INSERT OR IGNORE on conflict (insert)." },
@@ -137,16 +136,16 @@ const CLAUSE: Record<string, JexsPropertySchema> = {
 };
 
 /**
- * A query op, valued by its table: its `output` and the clauses it accepts. update
- * and delete resolve to a row count, and to the affected rows instead when
- * `returning` is present, so there `returning` is a presence variant.
+ * A query op, valued by its table: its `output` and the clauses it accepts. An
+ * op that changes existing rows (update, delete) requires `where`, and resolves
+ * to a row count, or to the affected rows instead when `returning` is present,
+ * so there `returning` is a presence variant.
  */
-function op(output: JexsOutput, markdown: string, example: string, clauses: string[], rowsWhenReturning = false): JexsMethodSchema {
-  const schema: JexsMethodSchema = {
-    type: "string", output, markdownDescription: markdown, examples: [example],
-    siblings: Object.fromEntries(clauses.map(k => [k, CLAUSE[k]])),
-  };
-  if (rowsWhenReturning) {
+function op(output: JexsOutput, markdown: string, example: string, clauses: string[], changesRows = false): JexsMethodSchema {
+  const siblings: Record<string, JexsPropertySchema> = Object.fromEntries(clauses.map(k => [k, CLAUSE[k]]));
+  const schema: JexsMethodSchema = { type: "string", output, markdownDescription: markdown, examples: [example], siblings };
+  if (changesRows) {
+    siblings.where = { ...CLAUSE.where, required: true };
     schema.variants = { returning: { ...CLAUSE.returning, output: "array", outputDescription: "The affected rows." } };
   }
   return schema;
@@ -166,17 +165,17 @@ export class DatabaseQueryNode extends Node {
   static schema: JexsNodeSchema = {
     querySelect: op("any", "Reads rows from the table the value names. Returns an array, or with `first` the single row (`null` when none matches).",
       "{ \"$querySelect\": \"users\", \"where\": { \"id\": { \"$var\": \"id\" } }, \"first\": true }",
-      ["where", "orderBy", "groupBy", "first", "columns", "limit", "offset", "distinct", "innerJoin", "leftJoin", "rightJoin", "group_concat"]),
+      ["where", "orderBy", "groupBy", "first", "columns", "limit", "offset", "distinct", "innerJoin", "leftJoin", "rightJoin", "groupConcat"]),
     queryInsert: op("any", "Inserts `data` (a row or an array of rows) into the table the value names, checked against the table's registered document if it has one (see `$tableCreate`). Returns the new primary key (or keys), or the rows with `returning`.",
       "{ \"$queryInsert\": \"users\", \"data\": { \"name\": { \"$var\": \"name\" } } }",
       ["data", "ignore", "returning"]),
     queryUpsert: op("any", "Inserts `data`, or updates the row with the same `conflict` columns; `merge` limits which columns update. Checked like `$queryInsert`.",
       "{ \"$queryUpsert\": \"settings\", \"data\": { \"key\": \"theme\", \"value\": \"dark\" }, \"conflict\": [\"key\"] }",
       ["data", "conflict", "merge", "returning"]),
-    queryUpdate: op("number", "Updates the rows that match `where` in the table the value names, checked against the table's registered document if it has one. `increment`/`decrement` apply atomic deltas. Returns the row count, or the rows with `returning`.",
+    queryUpdate: op("number", "Updates the rows that match `where`, which it requires, in the table the value names, checked against the table's registered document if it has one. `where: {}` updates every row. `increment`/`decrement` apply atomic deltas. Returns the row count, or the rows with `returning`.",
       "{ \"$queryUpdate\": \"posts\", \"where\": { \"id\": 1 }, \"increment\": { \"views\": 1 } }",
       ["where", "data", "increment", "decrement"], true),
-    queryDelete: op("number", "Deletes the rows that match `where`, which it requires, from the table the value names. Returns the row count, or the rows with `returning`.",
+    queryDelete: op("number", "Deletes the rows that match `where`, which it requires, from the table the value names. `where: {}` deletes every row. Returns the row count, or the rows with `returning`.",
       "{ \"$queryDelete\": \"sessions\", \"where\": { \"id\": { \"$var\": \"id\" } } }",
       ["where"], true),
     queryCount: op("number", "Counts the rows that match `where` in the table the value names. Supports joins, and `distinct` with `columns` counts distinct values.",
@@ -189,9 +188,13 @@ export class DatabaseQueryNode extends Node {
       let builder = knex(query.table);
       if (query.distinct) builder = builder.distinct();
       builder = builder.select(query.columns && query.columns.length > 0 ? query.columns : "*");
-      for (const [alias, colDef] of Object.entries(query.group_concat ?? {})) {
+      const dialect = knex.client.dialect;
+      const concat = dialect === "mysql" ? "GROUP_CONCAT(?? SEPARATOR ?) as ??"
+        : dialect === "sqlite3" ? "GROUP_CONCAT(??, ?) as ??"
+        : "STRING_AGG(CAST(?? AS TEXT), ?) as ??";
+      for (const [alias, colDef] of Object.entries(query.groupConcat ?? {})) {
         const [col, sep] = Array.isArray(colDef) ? colDef : [colDef, ","];
-        builder = builder.select(knex.raw("GROUP_CONCAT(??, ?) as ??", [col, sep, alias]));
+        builder = builder.select(knex.raw(concat, [col, sep, alias]));
       }
       builder = applyJoins(builder, query);
       if (query.where) builder = applyWhere(builder, query.where);
@@ -237,6 +240,7 @@ export class DatabaseQueryNode extends Node {
 
   queryUpdate(def: Record<string, unknown>, context: Context): NodeValue {
     return runQuery("update", def, context, (knex, query) => {
+      if (!query.where) throw new Error("$queryUpdate needs `where`; `where: {}` updates every row");
       const changes = query.data;
       if ((!changes || Array.isArray(changes)) && !query.increment && !query.decrement) {
         throw new Error("$queryUpdate needs a `data` object, or `increment`/`decrement`");
@@ -250,15 +254,14 @@ export class DatabaseQueryNode extends Node {
       for (const [col, amt] of Object.entries(query.decrement ?? {})) {
         data[col] = knex.raw("?? - ?", [col, Number(amt)]);
       }
-      let builder = knex(query.table);
-      if (query.where) builder = applyWhere(builder, query.where);
+      const builder = applyWhere(knex(query.table), query.where);
       return query.returning ? builder.update(data, query.returning) : builder.update(data);
     });
   }
 
   queryDelete(def: Record<string, unknown>, context: Context): NodeValue {
     return runQuery("delete", def, context, (knex, query) => {
-      if (!query.where) throw new Error("$queryDelete needs `where`");
+      if (!query.where) throw new Error("$queryDelete needs `where`; `where: {}` deletes every row");
       const builder = applyWhere(knex(query.table), query.where);
       return query.returning ? builder.delete(query.returning) : builder.delete();
     });
@@ -583,9 +586,9 @@ function applyColumn(
     else if (op === "in") builder = builder.whereIn(col, SqlValidator.array(operand, at));
     else if (op === "notIn") builder = builder.whereNotIn(col, SqlValidator.array(operand, at));
     else if (op === "between") builder = builder.whereBetween(col, SqlValidator.tuple(operand, at));
-    else if (op === "isNull" || op === "isNotNull") {
-      const isNull = (op === "isNull") === Boolean(operand);
-      builder = isNull ? builder.whereNull(col) : builder.whereNotNull(col);
+    else if (op === "isNull") {
+      if (typeof operand !== "boolean") throw new Error(`${at}: expected true or false, got ${typeof operand}`);
+      builder = operand ? builder.whereNull(col) : builder.whereNotNull(col);
     } else {
       throw new Error(`${col}: unknown operator "${op}"`);
     }

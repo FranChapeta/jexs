@@ -64,6 +64,20 @@ test("every condition in a where applies: each operator on a column, and or/and 
   assert.deepEqual(await names({ and: [{ name: "Grace" }], or: [{ id: 1 }, { id: 2 }] }), ["Grace"]);
   assert.deepEqual(await names({ email: { isNull: false } }), ["Ada", "Grace"]);
   await assert.rejects(names({ id: { gtt: 1 } }), /id: unknown operator "gtt"/);
+  await assert.rejects(names({ email: { isNotNull: true } }), /email: unknown operator "isNotNull"/);
+  await assert.rejects(names({ email: { isNull: "false" } }), /email.isNull: expected true or false, got string/);
+});
+
+test("groupConcat joins a column per group, with a separator of its own", async () => {
+  const row = await resolve({ $querySelect: "people", ...conn, columns: ["id"], groupConcat: { names: ["name", "|"], emails: "email" }, first: true }, {}) as { names: string; emails: string };
+  assert.deepEqual(row.names.split("|").sort(), ["Ada", "Grace"]);
+  assert.deepEqual(row.emails.split(",").sort(), ["ada@x", "grace@x"]);
+});
+
+test("update needs a where, and an empty one reaches every row", async () => {
+  await assert.rejects(resolve({ $queryUpdate: "people", ...conn, data: { email: "x" } }, {}), /\$queryUpdate needs `where`; `where: {}` updates every row/);
+  await assert.rejects(resolve({ $queryDelete: "people", ...conn }, {}), /\$queryDelete needs `where`/);
+  assert.equal(await resolve({ $queryUpdate: "people", ...conn, where: {}, increment: { id: 0 } }, {}), 2);
 });
 
 test("validators authorize every row query: the connection's first, then the table's own", async () => {
