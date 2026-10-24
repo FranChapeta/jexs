@@ -471,7 +471,6 @@ function coercionType(col: ColumnSchema): string {
 function coerceType(value: unknown, col: ColumnSchema, colName: string, tableName: string): unknown {
   switch (coercionType(col)) {
     case "integer":
-    case "int":
     case "biginteger":
     case "bigint":
     case "smallint":
@@ -503,8 +502,7 @@ function coerceType(value: unknown, col: ColumnSchema, colName: string, tableNam
     case "text":
       return String(value);
 
-    case "boolean":
-    case "bool": {
+    case "boolean": {
       if (typeof value === "string") {
         return value !== "" && value !== "0" && value.toLowerCase() !== "false" ? 1 : 0;
       }

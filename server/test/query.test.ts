@@ -388,6 +388,10 @@ test("a column's SQL default is `sqlDefault`, apart from JSON Schema's `default`
   await resolve({ $queryInsert: "stamps", ...conn, data: { label: "a" } }, {});
   const row = await resolve({ $querySelect: "stamps", ...conn, first: true }, {}) as { made: unknown };
   assert.match(String(row.made), /^\d{4}-\d{2}-\d{2}/);
+  // JSON Schema's `default` is not the column's: a row the database fills itself has no label.
+  await resolve({ $database: "raw", ...conn, sql: "INSERT INTO stamps (id) VALUES (2)" }, {});
+  const raw = await resolve({ $querySelect: "stamps", ...conn, where: { id: 2 }, first: true }, {}) as { label: unknown };
+  assert.equal(raw.label, null);
 });
 
 // The registry keeps its own copy of a document: the one a template wrote is a

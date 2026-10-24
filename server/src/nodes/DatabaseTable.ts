@@ -10,9 +10,9 @@ export const COMPUTE_FNS: Record<string, (value: string) => string> = { sha256 }
 
 const JSON_TYPES = ["string", "number", "integer", "boolean", "object", "array", "null"];
 const SQL_TYPES = [
-  "integer", "int", "biginteger", "bigint", "smallint", "tinyint", "float", "double", "decimal",
-  "varchar", "string", "text", "mediumtext", "longtext", "boolean", "bool",
-  "date", "datetime", "timestamp", "time", "json", "jsonb", "binary", "blob", "uuid",
+  "integer", "biginteger", "bigint", "smallint", "tinyint", "float", "double", "decimal",
+  "varchar", "text", "mediumtext", "longtext", "boolean",
+  "date", "datetime", "timestamp", "time", "json", "jsonb", "binary", "uuid",
 ];
 const REFERENTIAL = ["CASCADE", "SET NULL", "RESTRICT", "NO ACTION"];
 const strings = { type: "array", items: { type: "string" } };
@@ -33,7 +33,6 @@ export interface ColumnSchema {
   /** SQL column type (e.g. `varchar`, `biginteger`, `timestamp`). Mapped from
    *  the JSON Schema `type` when omitted. */
   sqlType?: string;
-  length?: number;
   precision?: number;
   scale?: number;
   primaryKey?: boolean;
@@ -168,7 +167,7 @@ export class DatabaseTableNode extends Node {
         default:       { description: "JSON Schema's default, the value a row is given. The column's SQL default is `sqlDefault`." },
         sqlType:       { enum: SQL_TYPES, description: "The SQL type; without it, mapped from the JSON Schema `type`." },
         sqlDefault:    { type: ["string", "number", "boolean", "null"], description: "The column's SQL default. `CURRENT_TIMESTAMP` is passed through as SQL." },
-        length:        { type: "integer", description: "Length of a `varchar` (default 255); `maxLength` wins when both are set." },
+        maxLength:     { type: "integer", description: "JSON Schema's longest string, checked on every write, and the length of a `varchar` column (default 255)." },
         precision:     { type: "integer" },
         scale:         { type: "integer" },
         primaryKey:    { type: "boolean" },
@@ -442,7 +441,6 @@ async function syncTable(knex: KnexType, schema: TableJsonSchema, log: Logger): 
     const columns = Object.fromEntries(missing.map(name => {
       const col: ColumnSchema = { ...schema.properties[name] };
       if (typeof col.sqlDefault === "string" && /current_timestamp/i.test(col.sqlDefault)) delete col.sqlDefault;
-      if (typeof col.default === "string" && /current_timestamp/i.test(col.default)) delete col.default;
       return [name, col];
     }));
     await knex.schema.alterTable(tableName, table => { buildColumns(table, columns, new Set(), knex); });
@@ -539,12 +537,10 @@ function buildColumns(
   const columns: KnexType.ColumnBuilder[] = [];
   for (const [name, col] of Object.entries(properties)) {
     const sqlType = (col.sqlType ?? jsonTypeToSql(col.type)).toLowerCase();
-    const length = col.maxLength ?? col.length ?? 255;
     let column: KnexType.ColumnBuilder;
 
     switch (sqlType) {
       case "integer":
-      case "int":
         column = col.autoIncrement
           ? table.increments(name)
           : table.integer(name);
@@ -571,8 +567,7 @@ function buildColumns(
         column = table.decimal(name, col.precision ?? 8, col.scale ?? 2);
         break;
       case "varchar":
-      case "string":
-        column = table.string(name, length);
+        column = table.string(name, col.maxLength ?? 255);
         break;
       case "text":
         column = table.text(name);
@@ -584,7 +579,6 @@ function buildColumns(
         column = table.text(name, "longtext");
         break;
       case "boolean":
-      case "bool":
         column = table.boolean(name);
         break;
       case "date":
@@ -606,7 +600,6 @@ function buildColumns(
         column = table.jsonb(name);
         break;
       case "binary":
-      case "blob":
         column = table.binary(name);
         break;
       case "uuid":
@@ -623,12 +616,11 @@ function buildColumns(
     }
     if (required.has(name)) column.notNullable();
     if (col.unique && !col.primaryKey) column.unique();
-    const defaultValue = col.sqlDefault ?? (col.default as string | number | boolean | null | undefined);
-    if (defaultValue !== undefined) {
-      if (defaultValue === "CURRENT_TIMESTAMP") {
+    if (col.sqlDefault !== undefined) {
+      if (col.sqlDefault === "CURRENT_TIMESTAMP") {
         column.defaultTo(knex.raw("CURRENT_TIMESTAMP"));
       } else {
-        column.defaultTo(defaultValue);
+        column.defaultTo(col.sqlDefault);
       }
     }
     if (col.comment) column.comment(col.comment);
