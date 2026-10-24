@@ -690,6 +690,18 @@ const cases: Case[] = [
   { label: "a row with an `email` column needs no subject (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $queryInsert: "users", data: [{ email: "a@b.c" }] } },
 
+  // WebPushNode: the subscription is the value; the keys derive from the app secret.
+  { label: "webpush to a stored subscription (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $webpush: { $var: "row.subscription" }, subject: "mailto:a@b.c", title: "Hi", data: { url: "/inbox" }, badge: "/b.png" } },
+  { label: "webpush with keys of the app's own (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $webpush: { $var: "sub" }, subject: "mailto:a@b.c", publicKey: "p", privateKey: "k", title: "Hi" } },
+  { label: "webpush with true as its value (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $webpush: true, subject: "mailto:a@b.c", title: "Hi" } },
+  { label: "webpush without a subject (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $webpush: { $var: "sub" }, title: "Hi" } },
+  { label: "string-slot accepts webpushKey (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $concat: ["key: ", { $webpushKey: true }] } },
+
   // A listener's `sw` settings resolve at listen time; per-event steps go under `events`.
   { label: "sw config with routes and events (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $listen: 3000, client: true, do: [], sw: {

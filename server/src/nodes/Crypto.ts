@@ -5,7 +5,7 @@ import {
 } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
-import { Node, Context, resolve, resolveAll } from "@jexs/core";
+import { Node, Context, resolve, resolveAll, resolverFor } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { isProduction } from "../env.js";
 
@@ -65,7 +65,7 @@ function getEncryptionKey(self: CryptoNode): Buffer {
   } else if (isProduction()) {
     // A key written at startup changes with every fresh deploy or container, and
     // what it encrypted could no longer be read.
-    throw new Error("APP_SECRET must be set in production: it is the key encrypt and decrypt use");
+    throw new Error("APP_SECRET must be set in production: it is the key $encrypt, $decrypt and $webpush use");
   } else {
     const keyFile = path.join(self.keyFileDir, "secret.key");
     if (existsSync(keyFile)) {
@@ -77,6 +77,14 @@ function getEncryptionKey(self: CryptoNode): Buffer {
   }
   keys.set(self, key);
   return key;
+}
+
+/** The app secret of the resolver a context runs in, as `$encrypt` uses it, for
+ *  the other nodes that derive keys from it. */
+export function appSecret(context: Context): Buffer {
+  const node = resolverFor(context).nodeFor("encrypt");
+  if (!(node instanceof CryptoNode)) throw new Error("No CryptoNode in this resolver; build it with serverNodes().");
+  return getEncryptionKey(node);
 }
 
 /** AES-256-GCM encrypt. Returns "iv:authTag:ciphertext" (all hex). */
@@ -175,7 +183,7 @@ export class CryptoNode extends Node {
     encrypt: {
       type: "string",
       output: "string",
-      markdownDescription: "Encrypts a string with AES-256-GCM using the app secret key (`APP_SECRET` env or an auto-generated `app/secret.key`).",
+      markdownDescription: "Encrypts a string with AES-256-GCM using the app secret key (`APP_SECRET` env or an auto-generated `app/secret.key`). The same secret derives `$webpush`'s keys, so changing it also invalidates every push subscription.",
       outputDescription: "A string `\"iv:authTag:ciphertext\"` (all hex). Pass it back to `decrypt` to recover the plaintext.",
       examples: [
         "{ \"$encrypt\": { \"$var\": \"token\" } }",

@@ -31,7 +31,7 @@ npm install @jexs/server @jexs/core
 | `CryptoNode` | `hash`, `verify`, `sha256`, `hmac`, `encrypt`, `decrypt`, `randomHex`, `uuid`, `timingSafeEqual` | Crypto helpers |
 | `OAuthNode` | `oauth` | Generic OAuth2 (Google, GitHub, ...): `configure`, `authUrl`, `exchange`, `refresh`, `userInfo`; the login's state and PKCE verifier wait in the session, so a callback is just `{ "$oauth": "exchange" }` |
 | `EmailNode` | `email`, `emailConnect` | SMTP via nodemailer |
-| `WebPushNode` | `webpush` | Browser push over VAPID |
+| `WebPushNode` | `webpush`, `webpushKey` | Browser push over VAPID, with keys derived from the app secret |
 | `WebSocketNode` | `socketAccept`, `socketSend`, `socketSendTo`, `socketBroadcast`, `socketJoin`, `socketLeave`, `socketClose`, `socketCount`, `socketList` | WebSocket server |
 | `CacheNode` | `cacheConnect`, `cacheGet`, `cacheSet`, `cacheDelete`, `cacheHas`, `cache` | Named caches (memory, Redis, Memcached), picked with `connection` |
 | `TailwindNode` | `tailwind` | On-demand Tailwind CSS generation |

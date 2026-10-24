@@ -674,6 +674,11 @@ const RULES: Record<string, Rule> = {
       m.review(prop.keyStart, "`$query` is an op per operation now, valued by the table (`$querySelect`, `$queryInsert`, `$queryUpsert`, `$queryUpdate`, `$queryDelete`, `$queryCount`): use the one this step runs");
     }
   },
+  // The subscription is the value, in place of `true` and `to`.
+  webpush: (step, m) => {
+    const value = step.obj.props.find(p => p.key === "$webpush")?.value;
+    if (value?.k === "lit" && value.value === true) siblingAsOp(step, "to", "webpush", m);
+  },
   // A connection's entry carries only the `meta` it was accepted with.
   "socket-list": ({ obj }, m) => {
     m.review(obj.props[0].keyStart, "`$socketList` entries no longer carry `name` from `session.user_name`: give `$socketAccept` a `meta`, e.g. `{ \"name\": { \"$var\": \"session.user_name\" } }`");
