@@ -457,6 +457,128 @@ function siblingAsOp(step: Step, sibling: string, to: string, m: Codemod): void 
   renameSibling(step, sibling, "$" + to, m);
 }
 
+type Obj = Extract<Val, { k: "obj" }>;
+type Prop = Obj["props"][number];
+
+/** Where a key starts, its opening quote included. */
+const quoteStart = (p: Prop) => p.keyStart - (p.keyQuoted ? 1 : 0);
+
+/**
+ * Lift the settings of `owner`'s `x-db` object into `owner`, each renamed by
+ * `rename`, or left out where it gives `null`. Only the wrapper and the keys are
+ * rewritten, so edits inside the values still apply. A setting whose new name
+ * `owner` already has is left for review, and nothing moves.
+ */
+function hoistXDb(owner: Obj, rename: (p: Prop) => string | null, m: Codemod): void {
+  const xdb = owner.props.find(p => p.key === "x-db");
+  if (xdb?.value.k !== "obj") return;
+  const inner = xdb.value.props;
+  const kept = inner.filter(p => rename(p) !== null);
+  const clash = kept.find(p => owner.props.some(o => o !== xdb && o.key === rename(p)));
+  if (clash) {
+    m.review(xdb.keyStart, `\`x-db\`'s settings move up into this object, which already has \`${rename(clash)}\`: merge the two by hand`);
+    return;
+  }
+  if (kept.length === 0) {
+    removeSibling({ op: "", obj: owner }, "x-db", m);
+    return;
+  }
+  m.add({ start: quoteStart(xdb), end: quoteStart(kept[0]), text: "" });
+  m.add({ start: kept[kept.length - 1].value.end, end: xdb.value.end, text: "" });
+  for (let i = 1; i < kept.length; i++) {
+    const dropped = inner.slice(inner.indexOf(kept[i - 1]) + 1, inner.indexOf(kept[i]));
+    if (dropped.length > 0) m.add({ start: kept[i - 1].value.end, end: dropped[dropped.length - 1].value.end, text: "" });
+  }
+  for (const p of kept) {
+    const to = rename(p)!;
+    if (to !== p.key) m.add({ start: p.keyStart, end: p.keyEnd, text: to });
+  }
+}
+
+/** v1's SQL types that v2 names one way only. */
+const SQL_TYPE_ALIASES: Record<string, string> = { int: "integer", bool: "boolean", blob: "binary", string: "varchar" };
+
+/**
+ * A v1 column: its `x-db` settings move up beside its JSON Schema keywords,
+ * `default` there as `sqlDefault` and `length` as `maxLength`, and an `sqlType`
+ * alias takes its one name. v1 used the JSON Schema `default` as the SQL default
+ * when `x-db` gave none, so such a column gets a `sqlDefault` of the same value.
+ */
+function v1Column(col: Obj, m: Codemod): void {
+  const xdb = col.props.find(p => p.key === "x-db")?.value;
+  const inner = xdb?.k === "obj" ? xdb.props : [];
+  const jsonDefault = col.props.find(p => p.key === "default");
+  if (jsonDefault && !inner.some(p => p.key === "default")) {
+    if (isPlain(jsonDefault.value)) {
+      const key = jsonDefault.keyQuoted ? '"sqlDefault"' : "sqlDefault";
+      m.add({ start: quoteStart(jsonDefault), end: quoteStart(jsonDefault), text: `${key}: ${m.text(jsonDefault.value.start, jsonDefault.value.end)}, ` });
+    } else {
+      m.review(jsonDefault.keyStart, "v1 used `default` as the column's SQL default too; v2 reads that from `sqlDefault` only, so add one if the database should fill it in");
+    }
+  }
+  if (!xdb) return;
+  const hasMaxLength = col.props.some(p => p.key === "maxLength");
+  for (const p of inner) {
+    if (p.key === "sqlType" && p.value.k === "str" && SQL_TYPE_ALIASES[p.value.value.toLowerCase()]) {
+      replaceString(p.value, SQL_TYPE_ALIASES[p.value.value.toLowerCase()], m);
+    }
+    if (p.key === "length" && hasMaxLength) m.review(p.keyStart, "`length` goes: `maxLength` sets a `varchar`'s length, and this column has one already");
+    if (p.key === "onUpdate" || p.key === "secret") m.review(p.keyStart, `\`${p.key}\` had no effect in v1 and is no column setting in v2: remove it`);
+  }
+  hoistXDb(col, p => p.key === "default" ? "sqlDefault" : p.key === "length" ? (hasMaxLength ? null : "maxLength") : p.key, m);
+}
+
+/** Each column of a v1 `properties` (or `addColumns`) map. */
+function v1Columns(columns: Val, m: Codemod): void {
+  if (columns.k !== "obj") return;
+  for (const p of columns.props) if (p.value.k === "obj") v1Column(p.value, m);
+}
+
+/** A v1 table document: `properties` beside an `x-db` that names the table. */
+const isV1TableDocument = (v: Val): v is Obj => v.k === "obj"
+  && v.props.some(p => p.key === "properties" && p.value.k === "obj")
+  && v.props.some(p => p.key === "x-db" && p.value.k === "obj" && p.value.props.some(q => q.key === "table"));
+
+const migratedTables = new WeakSet<Val>();
+
+/**
+ * A v1 table document takes the v2 shape: its `x-db` settings move up beside
+ * `properties`, and so do each column's. v1 added a `system` and a
+ * `created_at` column to every table it built, so the document declares them,
+ * else writes to them would be dropped. A table `validator` ran instead of the
+ * global one in v1, and after it now; `false` opted out, which v2 has no way to.
+ */
+function v1TableDocument(doc: Obj, m: Codemod): void {
+  if (migratedTables.has(doc)) return;
+  migratedTables.add(doc);
+  const xdb = doc.props.find(p => p.key === "x-db")!;
+  const validator = xdb.value.k === "obj" ? xdb.value.props.find(p => p.key === "validator") : undefined;
+  if (validator?.value.k === "lit" && validator.value.value === false) {
+    m.review(validator.keyStart, "`validator: false` is gone: a table's `validator` runs after the connection's `rows` validator, never instead, so give the app's own queries `system: true`");
+  } else if (validator) {
+    m.review(validator.keyStart, "A table's `validator` used to run instead of the global one; it now runs after the connection's `rows` validator: check the two together");
+  }
+  hoistXDb(doc, p => (p === validator && validator.value.k === "lit" && validator.value.value === false ? null : p.key), m);
+
+  const properties = doc.props.find(p => p.key === "properties")!;
+  if (properties.value.k !== "obj") return;
+  v1Columns(properties.value, m);
+  const columns = properties.value.props;
+  const missing = ["system", "created_at"].filter(name => !columns.some(c => c.key === name));
+  if (missing.length === 0) return;
+  const quoted = columns[0]?.keyQuoted ?? properties.keyQuoted;
+  const k = (name: string) => (quoted ? `"${name}"` : name);
+  const declared: Record<string, string> = {
+    system: `${k("system")}: { ${k("type")}: "integer", ${k("default")}: 0, ${k("sqlType")}: "boolean", ${k("sqlDefault")}: 0 }`,
+    created_at: `${k("created_at")}: { ${k("type")}: "string", ${k("sqlType")}: "timestamp", ${k("sqlDefault")}: "CURRENT_TIMESTAMP" }`,
+  };
+  const text = missing.map(name => declared[name]).join(", ");
+  const last = columns[columns.length - 1];
+  if (last) m.add({ start: last.value.end, end: last.value.end, text: `, ${text}` });
+  else m.add({ start: properties.value.start + 1, end: properties.value.start + 1, text: ` ${text} ` });
+  m.review(properties.keyStart, `v1 added ${missing.map(n => `\`${n}\``).join(" and ")} to every table it built; they are declared here now, so drop them if this table has no use for them`);
+}
+
 /** The value a value-mode step names, when it is written as a literal. */
 const opValue = ({ op, obj }: Step) => {
   const value = obj.props.find(p => p.key === "$" + op)?.value;
@@ -677,10 +799,15 @@ const RULES: Record<string, Rule> = {
       const prop = step.obj.props.find(p => p.key === "$query")!;
       m.review(prop.keyStart, "`$queryUpdate` needs `where`: without one this updated every row, which is `where: {}` now");
     }
-    if (value === "create") siblingAsOp(step, "schema", "tableSync", m);
-    else if (value === "drop") siblingAsOp(step, "table", "tableDrop", m);
+    if (value === "create") {
+      const schema = step.obj.props.find(p => p.key === "schema")?.value;
+      if (schema && isV1TableDocument(schema)) v1TableDocument(schema, m);
+      siblingAsOp(step, "schema", "tableSync", m);
+    } else if (value === "drop") siblingAsOp(step, "table", "tableDrop", m);
     else if (value === "alter") {
       siblingAsOp(step, "table", "tableAlter", m);
+      const added = step.obj.props.find(p => p.key === "addColumns")?.value;
+      if (added) v1Columns(added, m);
       renameSibling(step, "addColumns", "add", m);
       const prop = step.obj.props.find(p => p.key === "$query")!;
       m.review(prop.keyStart, "`$tableAlter` adds every column in `add` and returns `null`: one that exists is an error rather than skipped, so where this runs on every start, use `$tableSync` with the table's document");
@@ -706,6 +833,8 @@ const RULES: Record<string, Rule> = {
     const prop = step.obj.props.find(p => p.key === "$schema")!;
     const value = opValue(step);
     if (value === "register") {
+      const table = step.obj.props.find(p => p.key === "table")?.value;
+      if (table && isV1TableDocument(table)) v1TableDocument(table, m);
       renameSibling(step, "table", "schema", m);
       if (step.obj.props.some(p => p.key === "$as")) {
         m.review(prop.keyStart, "`$schema: \"register\"` returns the ids it registered (`table/<name>` for a table), not `{ registered }`");
@@ -822,6 +951,8 @@ function walkExpr(v: Val): void {
   // A route tree or handler written as data, such as a file `$routes` loads a
   // subtree from.
   if (op === undefined) dataRoute(v, m);
+  // A v1 table document, in a file of its own or written inline.
+  if (op === undefined && isV1TableDocument(v)) v1TableDocument(v, m);
   // A response object is also a branch's or a `$return`'s value, which the schema
   // takes for data.
   for (const p of v.props) {
