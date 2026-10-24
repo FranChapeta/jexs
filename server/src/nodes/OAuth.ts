@@ -177,11 +177,21 @@ export class OAuthNode extends Node {
       variants: {
         configure: {
           output: "null",
-          markdownDescription: "Registers provider credentials.",
+          markdownDescription: "Registers a provider's credentials. A built-in provider needs only those; any other name is a custom provider, which needs its `authorizeUrl` and `tokenUrl` too. The other settings override a built-in's.",
+          examples: [
+            "{ \"$oauth\": \"configure\", \"provider\": \"gitlab\", \"clientId\": { \"$var\": \"env.GITLAB_ID\" }, \"clientSecret\": { \"$var\": \"env.GITLAB_SECRET\" }, \"authorizeUrl\": \"https://gitlab.com/oauth/authorize\", \"tokenUrl\": \"https://gitlab.com/oauth/token\", \"userInfoUrl\": \"https://gitlab.com/api/v4/user\", \"scopes\": [\"read_user\"], \"userNameField\": \"username\" }",
+          ],
           siblings: {
-            provider: OAUTH_PROVIDER,
+            provider: { type: "string", description: "A built-in provider's name (`\"google\"`, `\"github\"`, `\"facebook\"`, `\"discord\"`, `\"twitter\"`, `\"microsoft\"`), or a custom one's." },
             clientId: OAUTH_CLIENT_ID,
             clientSecret: OAUTH_CLIENT_SECRET,
+            authorizeUrl: { type: "string", description: "Where `authUrl` sends the user to sign in. Required for a custom provider." },
+            tokenUrl: { type: "string", description: "Where `exchange` and `refresh` get tokens. Required for a custom provider." },
+            userInfoUrl: { type: "string", description: "Where `userInfo` reads the profile." },
+            scopes: { type: ["string", "array"], items: { type: "string" }, description: "The scopes a login asks for, by default." },
+            userIdField: { type: "string", description: "The profile's id, as a dotted path into what `userInfoUrl` returns (default `id`)." },
+            userEmailField: { type: "string", description: "The profile's email, as a dotted path (default `email`)." },
+            userNameField: { type: "string", description: "The profile's name, as a dotted path (default `name`)." },
             tokenAuth: {
               type: "string",
               enum: [...TOKEN_AUTH],
@@ -196,6 +206,9 @@ export class OAuthNode extends Node {
             provider: OAUTH_PROVIDER,
             redirectUri: OAUTH_REDIRECT_URI,
             state: { type: "string", description: "State to send instead of a random one." },
+            scopes: { type: ["string", "array"], items: { type: "string" }, description: "The scopes this login asks for, in place of the provider's." },
+            prompt: { type: "string", description: "The provider's `prompt` parameter, e.g. `\"consent\"` or `\"select_account\"` on Google." },
+            accessType: { type: "string", description: "The provider's `access_type` parameter: `\"offline\"` asks Google for a refresh token." },
           },
         },
         exchange: {
@@ -223,7 +236,10 @@ export class OAuthNode extends Node {
         },
         providers: {
           output: { type: "array", items: { type: "string" } },
-          markdownDescription: "Returns the array of configured provider names.",
+          markdownDescription: "Returns the names of the configured providers, or with `builtin: true` of the built-in ones.",
+          siblings: {
+            builtin: { type: "boolean", description: "List the built-in providers instead of the configured ones." },
+          },
         },
       },
     },
@@ -268,6 +284,9 @@ function doConfigure(providers: Providers, def: Record<string, unknown>, context
       throw new Error(`OAuth provider "${name}": tokenAuth must be ${TOKEN_AUTH.map(t => `"${t}"`).join(" or ")}`);
     }
     const tokenAuth = isTokenAuth(r.tokenAuth) ? r.tokenAuth : undefined;
+    // Where the profile keeps its id, email and name, for this provider's `userInfo`.
+    const fields = Object.fromEntries((["userIdField", "userEmailField", "userNameField"] as const)
+      .filter(key => r[key] != null).map(key => [key, String(r[key])]));
 
     const builtin = PROVIDERS[name.toLowerCase()];
 
@@ -285,6 +304,7 @@ function doConfigure(providers: Providers, def: Record<string, unknown>, context
         tokenUrl: r.tokenUrl ? String(r.tokenUrl) : builtin.tokenUrl,
         userInfoUrl: r.userInfoUrl ? String(r.userInfoUrl) : builtin.userInfoUrl,
         tokenAuth: tokenAuth ?? builtin.tokenAuth,
+        ...fields,
       });
     } else {
       const authorizeUrl = r.authorizeUrl ? String(r.authorizeUrl) : "";
@@ -303,6 +323,7 @@ function doConfigure(providers: Providers, def: Record<string, unknown>, context
         userInfoUrl: r.userInfoUrl ? String(r.userInfoUrl) : undefined,
         scopes: Array.isArray(scopes) ? scopes.map(String) : [String(scopes)],
         tokenAuth,
+        ...fields,
       });
     }
 
