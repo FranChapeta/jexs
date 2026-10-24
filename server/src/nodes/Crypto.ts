@@ -183,7 +183,7 @@ export class CryptoNode extends Node {
     encrypt: {
       type: "string",
       output: "string",
-      markdownDescription: "Encrypts a string with AES-256-GCM using the app secret key (`APP_SECRET` env or an auto-generated `app/secret.key`). The same secret derives `$webpush`'s keys, so changing it also invalidates every push subscription.",
+      markdownDescription: "Encrypts a string with AES-256-GCM using the app secret: `APP_SECRET` from the environment, which production requires, or else a `secret.key` file written once into the templates root (`src/` by default) and kept out of version control. The same secret derives `$webpush`'s keys, so changing it also invalidates every push subscription.",
       outputDescription: "A string `\"iv:authTag:ciphertext\"` (all hex). Pass it back to `decrypt` to recover the plaintext.",
       examples: [
         "{ \"$encrypt\": { \"$var\": \"token\" } }",

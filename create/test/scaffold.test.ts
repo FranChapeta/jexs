@@ -69,6 +69,8 @@ test("a server project runs with jexs run and greets by the query's name", async
   assert.equal(pkg.scripts.start, "jexs run src/index.json src --prod");
   assert.match(pkg.scripts.dev, /jexs bundle/);
   assert.ok(existsSync(path.join(project, "public", ".gitkeep")));
+  // The key `$encrypt` writes outside production is a secret, never committed.
+  assert.ok(readFileSync(path.join(project, ".gitignore"), "utf8").split("\n").includes("secret.key"));
   assertValid(index);
 
   const { url, stop } = await serve(project);

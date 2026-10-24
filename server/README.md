@@ -95,7 +95,7 @@ These are on without any configuration:
 - **Session ids.** A cookie naming a session the server doesn't hold is never adopted, so a planted cookie can't choose a user's session. Log in with `{ "$session": { "user_id": ... }, "regenerate": true }`, which also moves the session to a new id and token.
 - **Session cookies.** In production (`NODE_ENV=production`, which `jexs run --prod` sets) and whenever the app's URL is https, the session's cookies are `Secure`, and its id's is named `__Host-sid`, which a browser accepts only from this exact host.
 - **Proxies.** `X-Forwarded-Host` and `X-Forwarded-Proto` are ignored, since any client can send them, unless `$listen` has `trustProxy: true` because a proxy in front sets them.
-- **Secrets.** `$encrypt` and `$decrypt` key off `APP_SECRET`. In production it must be set; elsewhere a `secret.key` file is generated once as a fallback.
+- **Secrets.** `$encrypt`, `$decrypt` and `$webpush` key off `APP_SECRET`. In production it must be set; elsewhere a `secret.key` file is generated once in the templates root (`src/` by default) as a fallback, which a scaffolded project's `.gitignore` leaves out. Changing the secret makes what was encrypted unreadable and invalidates every push subscription.
 - **Caching.** A response that sets a cookie gets `Cache-Control: private="Set-Cookie"` unless it sets its own, so a shared cache never hands one visitor's cookies to another.
 - **Source maps.** `.map` files in `public/` are not served, so a deploy can't hand out the app's own sources; the client bundle's maps still are.
 - **Values are data.** Request bodies, rows and anything read with `$var` render as values; steps inside them never run.

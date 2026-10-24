@@ -591,7 +591,8 @@ async function main(): Promise<void> {
   );
 
   // .gitignore — node_modules, generated schema (.jexs/), the browser bundle
-  // (dist/), and the tailwind CSS artifact. .jexs-schema.json is deliberately NOT
+  // (dist/), the app secret `$encrypt` writes outside production (secret.key),
+  // and the tailwind CSS artifact. .jexs-schema.json is deliberately NOT
   // ignored: it's the stable $ref the committed .vscode/settings.json depends on,
   // so it must be tracked or a fresh clone loses autocomplete until the first
   // `npm install` regenerates the .jexs/ content it points to.
@@ -599,7 +600,7 @@ async function main(): Promise<void> {
   // already covers, so only a served project needs the extra line.
   writeFileSync(
     join(dir, ".gitignore"),
-    "node_modules/\n.jexs/\ndist/\n" + (useTailwind && !useElectron ? `${cssOut}\n` : ""),
+    "node_modules/\n.jexs/\ndist/\nsecret.key\n" + (useTailwind && !useElectron ? `${cssOut}\n` : ""),
   );
 
   // .gitattributes — GitHub Linguist treats JSON as a "data" language by default
