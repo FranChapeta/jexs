@@ -4,7 +4,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createResolver, coreNodes } from "@jexs/core";
+import type { Knex } from "knex";
 import { serverNodes } from "../src/index.js";
+import { DatabaseNode } from "../src/nodes/Database.js";
 import { DatabaseTableNode } from "../src/nodes/DatabaseTable.js";
 
 // The registry is the resolver's own, so lookups go through a context attached to it.
@@ -359,6 +361,58 @@ test("sync given a name syncs what is registered: one table by name, or all of t
   await assert.rejects(async () => resolve({ $tableSync: "never", ...conn }, {}), /\$tableSync: no document registered for table "never"/);
   await assert.rejects(async () => resolve({ $tableSync: true, ...conn }, {}), /\$tableSync takes a table document or a registered table's name, or "\*"/);
   await assert.rejects(async () => resolve({ $tableCreate: "*", ...conn }, {}), /\$tableCreate: no document registered for table "\*"/);
+});
+
+// Each driver hands back raw results in a shape of its own; `raw` gives the rows
+// from all of them. Stand-in connections, since only SQLite runs here.
+test("raw gives the rows on every database", async () => {
+  const node = resolve.nodeFor("database");
+  assert.ok(node instanceof DatabaseNode);
+  const rows = [{ n: 1 }];
+  const fake = (type: "pg" | "mysql", result: unknown) => {
+    const knex = { raw: async () => result, destroy: async () => {} } as unknown as Knex;
+    node.connections.set(`fake-${type}`, { knex, info: { type, tls: false }, validators: {} });
+  };
+  fake("pg", { rows, rowCount: 1, command: "SELECT" });
+  fake("mysql", [rows, [{ name: "n" }]]);
+  try {
+    assert.deepEqual(await resolve({ $database: "raw", connection: "fake-pg", sql: "select 1 as n" }, {}), rows);
+    assert.deepEqual(await resolve({ $database: "raw", connection: "fake-mysql", sql: "select 1 as n" }, {}), rows);
+    assert.deepEqual(await resolve({ $database: "raw", ...conn, sql: "select 1 as n" }, {}), rows);
+  } finally {
+    node.connections.delete("fake-pg");
+    node.connections.delete("fake-mysql");
+  }
+});
+
+test("connecting under a name already open replaces that connection", async () => {
+  const swap = { connection: "swap" };
+  await resolve({ $database: "connect", ...swap, filename: path.join(dir, "first.db") }, {});
+  try {
+    await resolve({ $tableCreate: { table: "only_first", properties: { n: { type: "integer" } } }, ...swap }, {});
+    await resolve({ $database: "connect", ...swap, filename: path.join(dir, "second.db") }, {});
+    assert.deepEqual(await resolve({ $database: "tables", ...swap }, {}), []);
+    assert.equal((await resolve({ $database: "info", ...swap }, {}) as { filename: string }).filename, path.join(dir, "second.db"));
+  } finally {
+    await resolve({ $database: "close", ...swap }, {});
+  }
+});
+
+test("an index type other than index or unique is refused, and a null source leaves a computed column unset", async () => {
+  await assert.rejects(resolve({ $tableCreate: {
+    table: "searchable", properties: { body: { type: "string" } }, indexes: { by_body: { type: "fulltext", columns: "body" } },
+  }, ...conn }, {}), /Index "by_body" has an unknown type "fulltext"; it takes "index" or "unique"/);
+  await resolve({ $schema: "unregister", id: "table/searchable" }, {});
+
+  await resolve({ $tableCreate: { table: "logins", properties: {
+    id: { type: "integer", primaryKey: true, autoIncrement: true },
+    password_hash: { type: ["string", "null"], computed: { sha256: "password" } },
+  } }, ...conn }, {});
+  await resolve({ $queryInsert: "logins", ...conn, data: { password: null } }, {});
+  await resolve({ $queryInsert: "logins", ...conn, data: { password: "secret" } }, {});
+  const hashes = (await resolve({ $querySelect: "logins", ...conn, orderBy: { id: "asc" } }, {}) as Array<{ password_hash: unknown }>).map(r => r.password_hash);
+  assert.equal(hashes[0], null);
+  assert.match(String(hashes[1]), /^[0-9a-f]{64}$/);
 });
 
 test("register reads a directory: table documents by table, others by their $id", async () => {

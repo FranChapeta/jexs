@@ -257,6 +257,8 @@ const cases: Case[] = [
     expr: { properties: {}, table: 5 } },
   { label: "table document with an unknown sqlType (FAIL)", schemaRef: "$defs/tableSchema", expectValid: false,
     expr: { properties: { n: { sqlType: "varchr" } }, table: "t" } },
+  { label: "table document with a fulltext index (FAIL)", schemaRef: "$defs/tableSchema", expectValid: false,
+    expr: { properties: { body: { type: "string" } }, table: "t", indexes: { by_body: { type: "fulltext", columns: "body" } } } },
   { label: "table document with a sqlType alias, `int` for `integer` (FAIL)", schemaRef: "$defs/tableSchema", expectValid: false,
     expr: { properties: { n: { sqlType: "int" } }, table: "t" } },
   { label: "table document with a maxLength that is not an integer (FAIL)", schemaRef: "$defs/tableSchema", expectValid: false,

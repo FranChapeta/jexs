@@ -51,7 +51,7 @@ export interface ColumnSchema {
  * Index definition in schema
  */
 export interface IndexDef {
-  type?: "index" | "unique" | "fulltext";
+  type?: "index" | "unique";
   columns: string | string[];
 }
 
@@ -154,7 +154,7 @@ export class DatabaseTableNode extends Node {
         required: ["columns"],
         additionalProperties: false,
         properties: {
-          type:    { enum: ["index", "unique", "fulltext"], default: "index" },
+          type:    { enum: ["index", "unique"], default: "index" },
           columns: { anyOf: [{ type: "string" }, strings] },
         },
       },
@@ -644,8 +644,12 @@ function buildIndexes(
       case "unique":
         table.unique(cols, { indexName: name, useConstraint: false });
         break;
-      default:
+      case undefined:
+      case "index":
         table.index(cols, name);
+        break;
+      default:
+        throw new Error(`Index "${name}" has an unknown type ${JSON.stringify(idx.type)}; it takes "index" or "unique"`);
     }
   }
 }

@@ -558,6 +558,13 @@ function v1TableDocument(doc: Obj, m: Codemod): void {
   } else if (validator) {
     m.review(validator.keyStart, "A table's `validator` used to run instead of the global one; it now runs after the connection's `rows` validator: check the two together");
   }
+  const indexes = xdb.value.k === "obj" ? xdb.value.props.find(p => p.key === "indexes")?.value : undefined;
+  for (const index of indexes?.k === "obj" ? indexes.props : []) {
+    const type = index.value.k === "obj" ? index.value.props.find(p => p.key === "type") : undefined;
+    if (type?.value.k === "str" && type.value.value === "fulltext") {
+      m.review(type.keyStart, "A `fulltext` index was built as a plain one, and no `where` operator searches with it: make it `\"index\"`, or drop it");
+    }
+  }
   hoistXDb(doc, p => (p === validator && validator.value.k === "lit" && validator.value.value === false ? null : p.key), m);
 
   const properties = doc.props.find(p => p.key === "properties")!;

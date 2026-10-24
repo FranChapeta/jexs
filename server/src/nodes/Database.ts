@@ -136,7 +136,7 @@ export class DatabaseNode extends Node {
       variants: {
         connect: {
           output: { $ref: "#/$defs/_dbConnection" },
-          markdownDescription: "Opens (and registers) a connection, from a `url` connection string or from discrete `host`/`port`/`user` properties.",
+          markdownDescription: "Opens (and registers) a connection, from a `url` connection string or from discrete `host`/`port`/`user` properties. Connecting under a name already open closes that connection and replaces it; its validators stay.",
           outputDescription: "Where the connection points, under the names `connect` takes, defaults filled in. Carries no credentials.",
           examples: [
             "{ \"$database\": \"connect\", \"connection\": \"main\", \"url\": { \"$var\": \"env.DATABASE_URL\" } }",
@@ -198,7 +198,7 @@ export class DatabaseNode extends Node {
         },
         raw: {
           markdownDescription: "Runs a raw SQL string with positional bindings.",
-          outputDescription: "The driver result: a rows array on SQLite, the first result set otherwise.",
+          outputDescription: "The rows the statement returns, as an array (empty for a statement that returns none), on every database. A write on MySQL gives the driver's summary instead (`affectedRows`, `insertId`).",
           siblings: {
             sql: { type: "string", description: "Raw SQL string." },
             bindings: { type: "array", description: "Positional bindings for the SQL." },
@@ -328,24 +328,17 @@ function transactionsIn(context: Context): Map<string, KnexType.Transaction> {
   return open instanceof Map ? open : new Map();
 }
 
-/** Open `name`, replacing any connection already under it but keeping its validators. */
+/**
+ * Open `name`, replacing any connection already under it but keeping its
+ * validators. The new one opens first, so a config that fails leaves the old
+ * connection as it was.
+ */
 function openConnection(self: DatabaseNode, name: string, config: DatabaseConfig): void {
-  const old = self.connections.get(name);
-  old?.knex.destroy();
   const knex = createConnection(config);
+  const old = self.connections.get(name);
   // `config` goes no further than this call: knex has what it needs to dial.
   self.connections.set(name, { knex, info: describe(config), validators: old?.validators ?? {} });
-}
-
-/** The connection under `name`, opening a default SQLite file if there is none. */
-function openOrReuse(self: DatabaseNode, name: string, config?: DatabaseConfig): DatabaseConnection {
-  if (!self.connections.has(name)) {
-    openConnection(self, name, config ?? {
-      type: "sqlite",
-      filename: path.join(process.cwd(), name === "default" ? "data.db" : `${name}.db`),
-    });
-  }
-  return self.connections.get(name)!;
+  if (old) void Promise.resolve(old.knex.destroy()).catch(() => { /* best-effort */ });
 }
 
 /** Type, target and TLS state for a connection, or null if it is unknown. */
@@ -592,7 +585,7 @@ function doConnect(self: DatabaseNode, def: Record<string, unknown>, context: Co
       if (ssl !== undefined) config.ssl = ssl;
     }
 
-    openOrReuse(self, name, config);
+    openConnection(self, name, config);
 
     if (!self.defaultConnectionName) {
       self.defaultConnectionName = name;
@@ -619,8 +612,13 @@ function doRaw(self: DatabaseNode, def: Record<string, unknown>, context: Contex
     const bindings = toBindings(bindingsRaw);
     // knex has no "bindings: undefined" overload — omitted means the 1-arg call.
     const result = await (bindings ? knex.raw(sql, bindings) : knex.raw(sql));
-    // SQLite hands back the rows; the others wrap them in a result-set array.
-    return requireConnection(self, connectionRaw).info.type === "sqlite" ? result : result[0];
+    // Each driver shapes its result its own way: SQLite hands back the rows,
+    // MySQL a [rows, fields] pair, and PostgreSQL a result object holding them.
+    switch (requireConnection(self, connectionRaw).info.type) {
+      case "sqlite": return result;
+      case "mysql": return result[0];
+      case "pg": return result.rows;
+    }
   });
 }
 

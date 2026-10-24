@@ -448,8 +448,11 @@ function fillComputed(
 ): void {
   for (const [fn, sourceCol] of Object.entries(computed)) {
     const computeFn = COMPUTE_FNS[fn];
-    if (computeFn && source[sourceCol] !== undefined) {
-      target[colName] = computeFn(String(source[sourceCol]));
+    // A `null` source is no value to derive from, as a missing one is: it
+    // leaves the column unset rather than hashing the text "null".
+    const value = source[sourceCol];
+    if (computeFn && value !== undefined && value !== null) {
+      target[colName] = computeFn(String(value));
     }
   }
 }
