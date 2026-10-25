@@ -101,8 +101,6 @@ function systemInfo(): Record<string, unknown> {
  * fields, so each `listen` step is fully independent (its own request pipeline and config).
  */
 interface Listener {
-  /** The node that started it, so module helpers reach the resolver's own state. */
-  node: ServerNode;
   httpServer: http.Server;
   port: number;
   steps: unknown[];
@@ -811,7 +809,6 @@ export class ServerNode extends Node {
       }
 
       const listener: Listener = {
-        node: this,
         httpServer: null as unknown as http.Server, // assigned below
         port: requested, // the bound port once listening
         steps,

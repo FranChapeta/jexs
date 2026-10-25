@@ -9,8 +9,6 @@ import {
   type DatabaseConfig, type DatabaseType,
 } from "../connection.js";
 
-export type { DatabaseConfig };
-
 /**
  * What an open connection remembers about itself — deliberately NOT the
  * `DatabaseConfig`.

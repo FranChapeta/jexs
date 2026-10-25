@@ -74,7 +74,7 @@ export class MemoryCache implements CacheAdapter {
     return this.cache.delete(this.key(key));
   }
 
-  async deletePattern(pattern: string): Promise<number> {
+  private async deletePattern(pattern: string): Promise<number> {
     const fullPattern = this.key(pattern);
     const regex = this.patternToRegex(fullPattern);
     let count = 0;
@@ -96,19 +96,6 @@ export class MemoryCache implements CacheAdapter {
     } else {
       this.cache.clear();
     }
-  }
-
-  async remember<T>(
-    key: string,
-    ttl: number,
-    factory: () => Promise<T>,
-  ): Promise<T> {
-    const cached = await this.get<T>(key);
-    if (cached !== undefined) return cached;
-
-    const value = await factory();
-    await this.set(key, value, ttl);
-    return value;
   }
 
   async close(): Promise<void> {

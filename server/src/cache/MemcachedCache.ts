@@ -86,15 +86,6 @@ export class MemcachedCache implements CacheAdapter {
     });
   }
 
-  async deletePattern(_pattern: string): Promise<number> {
-    // Memcached doesn't support pattern deletion
-    // Would need to track keys separately or use flush
-    console.warn(
-      "[MemcachedCache] deletePattern not supported, use clear() instead",
-    );
-    return 0;
-  }
-
   async clear(): Promise<void> {
     return new Promise((resolve, reject) => {
       this.client.flush((err: Error | null) => {
@@ -102,19 +93,6 @@ export class MemcachedCache implements CacheAdapter {
         else resolve();
       });
     });
-  }
-
-  async remember<T>(
-    key: string,
-    ttl: number,
-    factory: () => Promise<T>,
-  ): Promise<T> {
-    const cached = await this.get<T>(key);
-    if (cached !== undefined) return cached;
-
-    const value = await factory();
-    await this.set(key, value, ttl);
-    return value;
   }
 
   async close(): Promise<void> {

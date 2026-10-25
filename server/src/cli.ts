@@ -141,7 +141,8 @@ async function run(args: string[]): Promise<void> {
     const { watch } = await import("node:fs");
     const { fileURLToPath } = await import("node:url");
     const self = fileURLToPath(import.meta.url);
-    const childArgs = ["run", ...args.filter((a) => a !== "--watch")];
+    // Only jexs's own `--watch` goes: an app's arguments after `--` pass through whole.
+    const childArgs = ["run", ...cliArgs.filter((a) => a !== "--watch"), ...(sep === -1 ? [] : ["--", ...appArgs])];
     const watchDir = root ?? path.dirname(entry);
 
     let child: import("node:child_process").ChildProcess | null = null;

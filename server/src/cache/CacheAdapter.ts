@@ -30,20 +30,9 @@ export interface CacheAdapter {
   delete(key: string): Promise<boolean>;
 
   /**
-   * Delete all keys matching a pattern
-   * @param pattern Glob pattern (e.g., "routes:*")
-   */
-  deletePattern(pattern: string): Promise<number>;
-
-  /**
    * Clear all cache entries
    */
   clear(): Promise<void>;
-
-  /**
-   * Get or set: return cached value, or compute and cache if missing
-   */
-  remember<T>(key: string, ttl: number, factory: () => Promise<T>): Promise<T>;
 
   /**
    * Close connection (for adapters that need cleanup)

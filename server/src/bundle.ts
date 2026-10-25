@@ -2,8 +2,8 @@
 // the project's browser node packages and produces a project-local dist/browser
 // containing @jexs/client's runtime PLUS any third-party browser nodes, all
 // sharing one @jexs/core (a single bundle, so they register into the one page
-// resolver @jexs/client builds rather than each getting their own). The
-// server prefers this local bundle over @jexs/client's prebuilt one when present.
+// resolver @jexs/client builds rather than each getting their own). It is the
+// bundle a listener with `client` serves; no prebuilt one ships.
 
 import { rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";

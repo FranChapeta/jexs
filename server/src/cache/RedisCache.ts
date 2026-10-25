@@ -102,7 +102,7 @@ export class RedisCache implements CacheAdapter {
     return deleted > 0;
   }
 
-  async deletePattern(pattern: string): Promise<number> {
+  private async deletePattern(pattern: string): Promise<number> {
     const fullPattern = this.key(pattern);
     let cursor = "0";
     let totalDeleted = 0;
@@ -132,19 +132,6 @@ export class RedisCache implements CacheAdapter {
     } else {
       await this.client.flushdb();
     }
-  }
-
-  async remember<T>(
-    key: string,
-    ttl: number,
-    factory: () => Promise<T>,
-  ): Promise<T> {
-    const cached = await this.get<T>(key);
-    if (cached !== undefined) return cached;
-
-    const value = await factory();
-    await this.set(key, value, ttl);
-    return value;
   }
 
   async close(): Promise<void> {

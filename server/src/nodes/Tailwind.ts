@@ -230,7 +230,6 @@ function traverse(value: unknown, classes: Set<string>): void {
 
   if (isObject(value)) {
     if ("class" in value) extractFromClass(value.class, classes);
-    if (isObject(value.attrs) && "class" in value.attrs) extractFromClass(value.attrs.class, classes);
     for (const v of Object.values(value)) traverse(v, classes);
   }
 }

@@ -36,7 +36,7 @@ npm install @jexs/server @jexs/core
 | `CacheNode` | `cacheConnect`, `cacheGet`, `cacheSet`, `cacheDelete`, `cacheHas`, `cache` | Named caches (memory, Redis, Memcached), picked with `connection` |
 | `TailwindNode` | `tailwind` | On-demand Tailwind CSS generation |
 | `TranslationNode` | `translate` | i18n |
-| `DeferNode` | `defer` | Run steps after the response is sent |
+| `DeferNode` | `defer` | Stream a slow part of a page: a `loader` placeholder renders at once, and the content replaces it once resolved |
 | `StdioNode` | `stdioListen`, `stdioWrite`, `stdioPrompt`, `stdioClose` | Process I/O |
 
 ## Quick example — full server in JSON
@@ -106,7 +106,7 @@ Run with the `jexs` CLI — it resolves the entry as steps, and each `listen` st
 jexs run app/index.json app
 ```
 
-`jexs schema` writes the project's `.jexs/` schemas for editor autocomplete and the MCP server, and `jexs schema --package` prebuilds a node package's own `dist/schema.json`. `jexs --help` lists every command.
+`jexs run --watch` restarts the app when a file under its root (or, without one, its entry's directory) changes; the app's own arguments after `--` reach every restart. `jexs bundle` builds the browser bundle a `client` listener serves, `@jexs/client` with the project's browser node packages, into `dist/browser` (`--watch` rebuilds it on changes). `jexs schema` writes the project's `.jexs/` schemas for editor autocomplete and the MCP server, and `jexs schema --package` prebuilds a node package's own `dist/schema.json`. `jexs --help` lists every command.
 
 Or programmatically — build a resolver and resolve the entry; an HTTP app is just an entry with `listen` step(s):
 

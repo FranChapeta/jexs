@@ -50,8 +50,8 @@ function resolvePkgJson(fromPkgJson: string, name: string): string | null {
 
 /**
  * Walk `projectDir`'s dependency graph and return every package carrying a
- * `"jexs"` manifest. Deterministic: reads declared deps, resolves each via
- * `createRequire`, recurses only THROUGH jexs packages (so the whole non-jexs
+ * `"jexs"` manifest. Deterministic: reads declared deps, finds each in the
+ * nearest `node_modules` up the tree, recurses only THROUGH jexs packages (so the whole non-jexs
  * tree isn't traversed), and dedupes by realpath. Reproducible across
  * npm/pnpm/yarn hoisting.
  *
