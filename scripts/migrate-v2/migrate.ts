@@ -204,11 +204,16 @@ function scopedWrites(steps: Val, note: string, m: Codemod): void {
   for (const p of steps.props) scopedWrites(p.value, note, m);
 }
 
-/** An element's event handlers run in a scope of their own. */
+/**
+ * An element's event handlers run in a scope of their own. The handler that ran
+ * when the element was hydrated is `mount`, so `load` is the element's own DOM
+ * event (an image's, a frame's), which v1 never bound.
+ */
 function eventScopes(obj: Extract<Val, { k: "obj" }>, m: Codemod): void {
   const events = obj.props.find(p => p.key === "events")?.value;
   if (events?.k !== "obj" || events.props.some(p => p.key.startsWith("$"))) return;
   for (const handler of events.props) {
+    if (handler.key === "load") m.add({ start: handler.keyStart, end: handler.keyEnd, text: "mount" });
     scopedWrites(handler.value, "An event handler runs in a scope of its own now: if this write is page state that later handlers read, add `\"$bubble\": true`", m);
   }
 }

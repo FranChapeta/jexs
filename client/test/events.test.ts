@@ -91,18 +91,32 @@ test("a firing sees its own value, never one an earlier event left behind", asyn
   assert.deepEqual(context.seen, ["typed", null]);
 });
 
-test("a handler reads the variables of the scope around it, and `load` runs in a scope too", async () => {
+test("a handler reads the variables of the scope around it, and `mount` runs in a scope too", async () => {
   const context: Record<string, unknown> = {};
   createResolver(coreNodes(), { context });
   const row = new FakeElement();
   row.setAttribute("data-jexs-scope", JSON.stringify({ path: "0.children.1", type: "div", depth: 1 }));
-  const button = handling("load", [{ $setVars: { picked: { $var: "path" } }, $bubble: true }]);
+  const button = handling("mount", [{ $setVars: { picked: { $var: "path" } }, $bubble: true }]);
   button.parent = row;
   connected = [button];
   hydrate(fakeDocument as unknown as Document, context);
-  // `load` runs during hydrate, and what it bubbles is there when hydrate returns.
+  // `mount` runs during hydrate, and what it bubbles is there when hydrate returns.
   assert.equal(context.picked, "0.children.1");
   assert.equal("path" in context, false);
+});
+
+// An image, a frame or a script fires a `load` of its own, which a handler waits for.
+test("a `load` handler waits for the element's own load event", async () => {
+  const context: Record<string, unknown> = {};
+  createResolver(coreNodes(), { context });
+  const img = handling("load", [{ $setVars: { loaded: true }, $bubble: true }]);
+  connected = [img];
+  hydrate(fakeDocument as unknown as Document, context);
+  await settle();
+  assert.equal(context.loaded, undefined, "hydrating is not the image loading");
+  img.dispatchEvent(new Event("load"));
+  await settle();
+  assert.equal(context.loaded, true);
 });
 
 // A row that moved has its scope rewritten in place; its handlers, bound when

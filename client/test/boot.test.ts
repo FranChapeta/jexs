@@ -15,9 +15,9 @@ class MarkNode extends Node {
 }
 
 test("importing the client starts nothing; boot() does, with the nodes it is given, once", async () => {
-  // A `load` handler that uses the app's op, on the page before it boots.
+  // A `mount` handler that uses the app's op, on the page before it boots.
   window.document.body.innerHTML =
-    `<div data-jexs-events='${JSON.stringify([{ type: "load", do: [{ $mark: "loaded" }] }])}'></div>`;
+    `<div data-jexs-events='${JSON.stringify([{ type: "mount", do: [{ $mark: "loaded" }] }])}'></div>`;
 
   const { boot } = await import("../src/index.js");
   const g = window as unknown as Record<string, unknown>;
@@ -27,7 +27,7 @@ test("importing the client starts nothing; boot() does, with the nodes it is giv
   const mark = new MarkNode();
   const resolver = boot({ nodes: [mark] });
 
-  // The nodes were registered before hydrating, so the `load` handler found its op.
+  // The nodes were registered before hydrating, so the `mount` handler found its op.
   assert.deepEqual(mark.seen, ["loaded"]);
   assert.ok(window.document.querySelector("[data-jexs-events-bound]"));
 

@@ -122,7 +122,7 @@ On a page served by a Jexs server with sessions, a POST, PUT, PATCH or DELETE to
 
 ## Usage from JS
 
-Importing `@jexs/client` starts nothing on its own. Boot the page once, with any nodes of your own; they are registered before the page hydrates, so a `load` handler can use them:
+Importing `@jexs/client` starts nothing on its own. Boot the page once, with any nodes of your own; they are registered before the page hydrates, so a `mount` handler can use them:
 
 ```ts
 import { boot, hydrate } from "@jexs/client";

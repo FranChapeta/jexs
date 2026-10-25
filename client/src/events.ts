@@ -15,6 +15,9 @@ interface EventDef {
   $catch?: unknown;
 }
 
+/** Event name for the element being hydrated, once: no DOM event has it, so an
+ *  element's own `load` (an image, a frame, a script) stays a DOM event. */
+const MOUNT = "mount";
 /** Event name for messages the service worker posts (`$swPost`); `value` is the message. */
 const SW_MESSAGE = "sw-message";
 const SW_MESSAGE_ATTR = "data-jexs-sw-message";
@@ -130,7 +133,7 @@ function targetPosition(e: Event, match: Element): Record<string, unknown> {
 
 /**
  * The single hydration helper — scan `root`, itself included, for
- * `data-jexs-events`, bind the listeners (and run any `load` events now),
+ * `data-jexs-events`, bind the listeners (and run any `mount` events now),
  * skipping already-bound elements. Used everywhere content appears: at page
  * init, and after any DOM insertion (the DomNode ops that write markup), so
  * freshly rendered templates wire up the same way with no per-node plumbing.
@@ -162,13 +165,13 @@ export function hydrate(root: Element | Document = document, context: Context = 
     try {
       const events = JSON.parse(raw) as EventDef[];
       for (const evt of events) {
-        if (evt.type === "load") {
-          // `load` must stay SYNCHRONOUS: it runs during hydrate(), and callers
-          // read state a load handler seeds (with `$bubble`) as soon as hydrate()
+        if (evt.type === MOUNT) {
+          // `mount` must stay SYNCHRONOUS: it runs during hydrate(), and callers
+          // read state a mount handler seeds (with `$bubble`) as soon as hydrate()
           // returns. A detached run starts its steps on this stack, so that
           // holds; only the outcome is a promise.
           const scope = childContext(context, { ...scopeVars(el), event: null, target: el, value: (el as HTMLInputElement).value ?? null });
-          void runStepsDetached(evt.do, scope, { step: evt, logAs: `[Jexs] "load" handler failed:` });
+          void runStepsDetached(evt.do, scope, { step: evt, logAs: `[Jexs] "mount" handler failed:` });
         } else {
           if (evt.type === SW_MESSAGE) receiveServiceWorkerMessages(el);
           const selector = evt.target;

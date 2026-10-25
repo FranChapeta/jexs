@@ -24,7 +24,7 @@ const tag = (siblings: Record<string, A>) => ({ siblings });
 const GLOBAL: Record<string, A> = {
   content: { description: "Children of the element: a string or mixed array of strings and expressions." },
   raw:     bool("Render this element's string content as written, without interpolating `$identifier` tokens or translating it: for code samples and literal `$` text. Nested elements keep their own setting."),
-  events:  { $ref: "#/$defs/_eventMap", description: "DOM event handlers, keyed by event name: `{ \"$tag\": \"button\", \"events\": { \"click\": { \"do\": [...] } } }`, or a step that resolves to such a map, read as data. Two names are not DOM events: `load` runs once when the element is hydrated, and `sw-message` runs for each message the service worker posts (`$swPost`), with the message as `value`." },
+  events:  { $ref: "#/$defs/_eventMap", description: "DOM event handlers, keyed by event name: `{ \"$tag\": \"button\", \"events\": { \"click\": { \"do\": [...] } } }`, or a step that resolves to such a map, read as data. Two names are not DOM events: `mount` runs once when the element is hydrated, and `sw-message` runs for each message the service worker posts (`$swPost`), with the message as `value`." },
   class:   { type: ["string", "array", "object"], description: "Class list: a string, array, or `{ className: bool }` map." },
   id:      str("Element id."),
   style:   { type: ["object", "string"], description: "Inline style: a camel/kebab-case object, or a string." },
