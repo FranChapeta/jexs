@@ -128,18 +128,6 @@ test("timingSafeEqual: a missing side is an error, not a false", () => {
   assert.throws(() => resolve({ $verify: ["password"] }, {}), /verify needs two values: \[password, hash\]/);
 });
 
-test("randomHex: absent means 32 bytes, unreadable means an error", () => {
-  assert.equal((resolve({ $randomHex: null }, {}) as string).length, 64);
-  assert.equal((resolve({ $randomHex: 16 }, {}) as string).length, 32);
-  for (const bytes of ["abc", "", 0, -8, 1.5]) {
-    assert.throws(
-      () => resolve({ $randomHex: bytes }, {}),
-      /Invalid randomHex .*expected a positive whole number of bytes/,
-      `randomHex: ${JSON.stringify(bytes)} should have been refused`,
-    );
-  }
-});
-
 // ── UUID ──────────────────────────────────────────────────────────────────────
 
 test("uuid: a version 4 uuid, different every time", () => {

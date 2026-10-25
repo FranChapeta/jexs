@@ -835,6 +835,23 @@ const RULES: Record<string, Rule> = {
       m.review(prop.keyStart, "`$query` is an op per operation now, valued by the table (`$querySelect`, `$queryInsert`, `$queryUpsert`, `$queryUpdate`, `$queryDelete`, `$queryCount`): use the one this step runs");
     }
   },
+  // A random hex token is core's `$randomString`, counted in characters, two per byte.
+  randomHex: (step, m) => {
+    const prop = step.obj.props.find(p => p.key === "$randomHex");
+    if (!prop || prop.shorthand) return;
+    const v = prop.value;
+    const bytes = v.k === "lit" && v.value === null ? 32
+      : v.k === "lit" && typeof v.value === "number" ? v.value
+      : v.k === "str" && /^\d+$/.test(v.value) ? Number(v.value)
+      : undefined;
+    if (bytes === undefined) {
+      m.review(prop.keyStart, "`$randomHex` is gone: `{ \"$randomString\": <twice the bytes>, \"chars\": \"0123456789abcdef\" }` makes the same token");
+      return;
+    }
+    renameOp(step, "randomString", m);
+    m.add({ start: v.start, end: v.end, text: String(bytes * 2) });
+    m.add({ start: v.end, end: v.end, text: `, ${prop.keyQuoted ? '"chars"' : "chars"}: "0123456789abcdef"` });
+  },
   // The subscription is the value, in place of `true` and `to`.
   webpush: (step, m) => {
     const value = step.obj.props.find(p => p.key === "$webpush")?.value;

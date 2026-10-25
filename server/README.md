@@ -28,7 +28,7 @@ npm install @jexs/server @jexs/core
 | `DatabaseQueryNode` | `querySelect`, `queryInsert`, `queryUpsert`, `queryUpdate`, `queryDelete`, `queryCount` | Rows, each op valued by its table |
 | `SchemaNode` | `schema` | JSON Schema: `register` schemas (a table document as `table/<name>`) that route bodies, rows and other schemas can `$ref`, `unregister`, `list`, `validate` |
 | `SessionNode` | `session` | Cookie-backed sessions, kept in a cache: `load`, set values (with `regenerate: true` at login), `destroy` |
-| `CryptoNode` | `hash`, `verify`, `sha256`, `hmac`, `encrypt`, `decrypt`, `randomHex`, `uuid`, `timingSafeEqual` | Crypto helpers |
+| `CryptoNode` | `hash`, `verify`, `sha256`, `hmac`, `encrypt`, `decrypt`, `uuid`, `timingSafeEqual` | Crypto helpers |
 | `OAuthNode` | `oauth` | Generic OAuth2 (Google, GitHub, ...): `configure`, `authUrl`, `exchange`, `refresh`, `userInfo`; the login's state and PKCE verifier wait in the session, so a callback is just `{ "$oauth": "exchange" }` |
 | `EmailNode` | `email`, `emailConnect` | SMTP via nodemailer |
 | `WebPushNode` | `webpush`, `webpushKey` | Browser push over VAPID, with keys derived from the app secret |

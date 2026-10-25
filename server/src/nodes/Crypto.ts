@@ -109,18 +109,6 @@ export function decrypt(self: CryptoNode, ciphertext: string): string {
   return decrypted.toString("utf8");
 }
 
-/**
- * Handles cryptographic operations (server-only, requires Node.js).
- *
- * Supported operations:
- * - { "$hash": "password" }              -> "$2b$12$..." (bcrypt hash)
- * - { "$hash": "password", "rounds": 12 } -> bcrypt with custom rounds
- * - { "$verify": ["password", "$2b$..."] } -> true/false (bcrypt compare)
- * - { "$randomHex": 32 }                 -> random hex string (32 bytes)
- * - { "$sha256": "text" }                -> SHA-256 hex digest
- * - { "$encrypt": "plaintext" }          -> AES-256-GCM encrypted string
- * - { "$decrypt": "ciphertext" }         -> decrypted plaintext
- */
 export class CryptoNode extends Node {
   static schema: JexsNodeSchema = {
     sha256: {
@@ -226,15 +214,6 @@ export class CryptoNode extends Node {
         "{ \"$verify\": [{ \"$var\": \"body.password\" }, { \"$var\": \"user.password_hash\" }] }",
       ],
     },
-    randomHex: {
-      type: "number",
-      output: "string",
-      markdownDescription: "Generates cryptographically random bytes (default 32).",
-      outputDescription: "A hex string `2 × bytes` characters long.",
-      examples: [
-        "{ \"$randomHex\": 16 }",
-      ],
-    },
     uuid: {
       type: "boolean",
       output: "string",
@@ -307,21 +286,6 @@ export class CryptoNode extends Node {
     });
   }
 
-  randomHex(def: Record<string, unknown>, context: Context) {
-    return resolve(def.$randomHex, context, v => {
-      // Absent means the documented 32. Anything else has to be a real count:
-      // `toNumber` reads "abc" as 0, and the `|| 32` that followed then handed
-      // back a token of a size nobody asked for.
-      if (v === null || v === undefined) return randomBytes(32).toString("hex");
-      const bytes = typeof v === "number" ? v
-        : typeof v === "string" && v.trim() !== "" ? Number(v)
-        : NaN;
-      if (!Number.isInteger(bytes) || bytes < 1) {
-        throw new Error(`Invalid randomHex "${String(v)}": expected a positive whole number of bytes`);
-      }
-      return randomBytes(bytes).toString("hex");
-    });
-  }
 
   uuid(): string {
     return randomUUID();
