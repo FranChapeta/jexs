@@ -22,14 +22,12 @@ test("importing the client starts nothing; boot() does, with the nodes it is giv
   const { boot } = await import("../src/index.js");
   const g = window as unknown as Record<string, unknown>;
   assert.equal(g.jexs, undefined, "importing alone builds no resolver");
-  assert.equal(window.document.querySelector("[data-jexs-events-bound]"), null, "and hydrates nothing");
 
   const mark = new MarkNode();
   const resolver = boot({ nodes: [mark] });
 
   // The nodes were registered before hydrating, so the `mount` handler found its op.
   assert.deepEqual(mark.seen, ["loaded"]);
-  assert.ok(window.document.querySelector("[data-jexs-events-bound]"));
 
   // The page's handle carries the same resolver boot returned, with core's nodes and the app's.
   const handle = g.jexs as { resolver: unknown };

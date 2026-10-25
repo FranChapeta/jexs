@@ -81,6 +81,19 @@ test("every op that writes markup wires up its events", async () => {
   assert.equal(context.clicks, 3);
 });
 
+// A copy made from bound markup is a new element, so it binds its own handler;
+// nothing in the markup says it is bound already.
+test("a row duplicated through its outerHTML binds its handler too", async () => {
+  const context: Record<string, unknown> = { clicks: 0 };
+  await run({ $setProp: ["#box", "innerHTML", counter("row")] }, context);
+  const markup = await run({ $getProp: ["#row", "outerHTML"] }) as string;
+  await run({ $insertHtml: ["#box", markup.replace('id="row"', 'id="copy"')], index: 1 }, context);
+  $("#row").click();
+  $("#copy").click();
+  await settle();
+  assert.equal(context.clicks, 2);
+});
+
 /** A dragstart carrying `data`, which happy-dom's DragEvent does not keep from its init. */
 function dragStart(data: DataTransfer): Event {
   const e = new window.DragEvent("dragstart", { bubbles: true });

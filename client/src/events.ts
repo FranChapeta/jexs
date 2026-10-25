@@ -23,6 +23,11 @@ const SW_MESSAGE = "sw-message";
 const SW_MESSAGE_ATTR = "data-jexs-sw-message";
 let swMessagesBridged = false;
 
+/** The elements whose handlers are bound. Kept off the DOM, so a copy made from
+ *  their markup (`outerHTML`, `innerHTML`) is a new element and binds its own,
+ *  while a moved element keeps the listeners it has. */
+const bound = new WeakSet<Element>();
+
 /**
  * Mark `el` to receive service worker messages as `sw-message` DOM events.
  *
@@ -159,8 +164,8 @@ export function hydrate(root: Element | Document = document, context: Context = 
   if ("hasAttribute" in root && root.hasAttribute("data-jexs-events")) elements.unshift(root as HTMLElement);
   for (const el of elements) {
     const raw = el.getAttribute("data-jexs-events");
-    if (!raw || el.hasAttribute("data-jexs-events-bound")) continue;
-    el.setAttribute("data-jexs-events-bound", "");
+    if (!raw || bound.has(el)) continue;
+    bound.add(el);
 
     try {
       const events = JSON.parse(raw) as EventDef[];
