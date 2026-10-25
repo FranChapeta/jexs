@@ -102,19 +102,24 @@ Every handler sees `version`, the worker's version (the hash the server generate
 
 ## Usage from HTML
 
-`jexs bundle` builds the page's bundle, which boots Jexs when it loads:
+`jexs bundle` builds the page's bundle, which boots Jexs when it loads. A page Jexs renders gets the script tag on its own, and an element's `events` become handlers the client binds:
 
-```html
-<script type="module" src="/jexs/client.js"></script>
-
-<button data-jexs-events='[{
-  "type": "click",
-  "do": [
-    { "$fetch": "/api/like", "method": "POST", "$as": "result" },
-    { "$toggleClass": [{ "$var": "target" }, "liked"] }
-  ]
-}]'>Like</button>
+```json
+{ "$tag": "button", "content": ["Like"], "events": { "click": { "do": [
+  { "$fetch": "/api/like", "method": "POST", "$as": "result" },
+  { "$toggleClass": [{ "$var": "target" }, "liked"] }
+] } } }
 ```
+
+An element's `params` are variables for its handlers and those of the elements inside it, which is how one row's handlers know which row they are on:
+
+```json
+{ "$tag": "li", "params": { "index": { "$var": "index" } }, "content": [
+  { "$tag": "button", "content": ["x"], "events": { "click": { "do": [{ "$remove": [{ "$var": "items" }, { "$var": "index" }] }] } } }
+] }
+```
+
+When the row moves, `{ "$setAttr": [row, "data-jexs-params", { "index": 2 }] }` gives its handlers the new value.
 
 Booting builds the resolver, hydrates the page, and registers the service worker the server named. It also exposes `window.jexs = { context, hydrate, resolver }` — `context` for inspecting/seeding shared state, `hydrate` for (re)binding events after you inject content.
 
@@ -134,7 +139,7 @@ hydrate(myElement);     // bind events in content you inject later
 
 `jexs bundle` writes this entry for you, with the nodes of every browser node package the project has installed.
 
-Each firing of a handler runs in a scope of its own on top of the page's context, holding `event`, `target` (the element the handler is on, or with a `target` selector the matching element the event happened in, plus its `index` and pointer `side`), `value`, and the variables of the nearest `data-jexs-scope` attribute around it. A value from an earlier event never lingers into the next, and two handlers awaiting at once each keep their own. A handler reads page state as any step does; a write meant as page state, for later handlers to read, takes `$bubble`:
+Each firing of a handler runs in a scope of its own on top of the page's context, holding `event`, `target` (the element the handler is on, or with a `target` selector the matching element the event happened in, plus its `index` and pointer `side`), `value`, and the `params` of the nearest element around it that has them. A value from an earlier event never lingers into the next, and two handlers awaiting at once each keep their own. A handler reads page state as any step does; a write meant as page state, for later handlers to read, takes `$bubble`:
 
 ```json
 { "$setVars": { "count": { "$add": [{ "$var": "count" }, 1] } }, "$bubble": true }

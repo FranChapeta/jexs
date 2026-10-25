@@ -25,6 +25,7 @@ const GLOBAL: Record<string, A> = {
   content: { description: "Children of the element: a string or mixed array of strings and expressions." },
   raw:     bool("Render this element's string content as written, without interpolating `$identifier` tokens or translating it: for code samples and literal `$` text. Nested elements keep their own setting."),
   events:  { $ref: "#/$defs/_eventMap", description: "DOM event handlers, keyed by event name: `{ \"$tag\": \"button\", \"events\": { \"click\": { \"do\": [...] } } }`, or a step that resolves to such a map, read as data. Two names are not DOM events: `mount` runs once when the element is hydrated, and `sw-message` runs for each message the service worker posts (`$swPost`), with the message as `value`." },
+  params:  { map: true, description: "Variables for the handlers of this element and of the elements inside it, read when an event fires: a row's `{ \"path\": ... }` is `{ \"$var\": \"path\" }` in them, the nearest element's `params` winning. Rendered as the `data-jexs-params` attribute, which `$setAttr` rewrites (with an object) when the row moves." },
   class:   { type: ["string", "array", "object"], description: "Class list: a string, array, or `{ className: bool }` map." },
   id:      str("Element id."),
   style:   { type: ["object", "string"], description: "Inline style: a camel/kebab-case object, or a string." },
@@ -72,7 +73,7 @@ export class ElementNode extends Node {
             if: { type: "array" },
             then: { items: { $ref: "#/$defs/exprFlat" } },
             else: { $ref: "#/$defs/exprFlat" },
-            description: "Steps to run when the event fires, in a scope of their own holding `event`, `target` (the element the handler is on, or the match when the handler has a `target` selector) and `value` (the target's value; for `sw-message`, the message), plus the variables of the nearest `data-jexs-scope` around the element. With a `target` selector the scope also has `index` and, for an event with a pointer position, `side`. A write meant as page state, for later handlers to read, takes `$bubble`. A single expression is also accepted.",
+            description: "Steps to run when the event fires, in a scope of their own holding `event`, `target` (the element the handler is on, or the match when the handler has a `target` selector) and `value` (the target's value; for `sw-message`, the message), plus the `params` of the nearest element around it that has them. With a `target` selector the scope also has `index` and, for an event with a pointer position, `side`. A write meant as page state, for later handlers to read, takes `$bubble`. A single expression is also accepted.",
           },
           target: {
             $ref: "#/$defs/strOrExpr",
@@ -321,6 +322,12 @@ function attrsString(entries: [string, unknown][], resolved: unknown[]): string 
     if (value === false || value === null || value === undefined) continue;
     if (value === true) { parts.push(key); continue; }
 
+    if (key === "params") {
+      if (!isObject(value)) throw new Error(`$tag: params must be an object of variables, got ${Array.isArray(value) ? "an array" : typeof value}`);
+      parts.push(`data-jexs-params="${escapeHtml(JSON.stringify(value))}"`);
+      continue;
+    }
+
     if (key === "class" && typeof value === "object") {
       const classes = Array.isArray(value)
         ? value.filter(Boolean).map(String).join(" ")
@@ -341,7 +348,8 @@ function attrsString(entries: [string, unknown][], resolved: unknown[]): string 
       continue;
     }
 
-    parts.push(`${key}="${escapeHtml(String(value))}"`);
+    // An object or array is data an attribute carries as JSON (a `data-*` one, say).
+    parts.push(`${key}="${escapeHtml(typeof value === "object" ? JSON.stringify(value) : String(value))}"`);
   }
 
   return parts.length > 0 ? " " + parts.join(" ") : "";

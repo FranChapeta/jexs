@@ -15,16 +15,16 @@ const settle = () => new Promise(r => setTimeout(r, 10));
 
 const rows = () => Array.from(document.querySelectorAll("#list > li")) as unknown as HTMLLIElement[];
 const labels = () => rows().map(li => (li.querySelector("input") as HTMLInputElement).value);
-const indexes = () => rows().map(li => JSON.parse(li.getAttribute("data-jexs-scope")!).index);
+const indexes = () => rows().map(li => JSON.parse(li.getAttribute("data-jexs-params")!).index);
 
 /** The page's state: the data, and the steps it keeps as variables. */
 function page(): Record<string, unknown> {
   return {
     items: [{ label: "a" }, { label: "b" }, { label: "c" }],
-    // One row. Its handlers find the item by the `index` its scope holds.
+    // One row. Its handlers find the item by the `index` its params hold.
     row: {
       $tag: "li",
-      "data-jexs-scope": { $stringify: { index: { $var: "index" } } },
+      params: { index: { $var: "index" } },
       content: [
         { $tag: "input", value: { $var: "item.label" }, events: { input: { do: [
           { $as: "it", $index: [{ $var: "items" }, { $var: "index" }] },
@@ -33,10 +33,10 @@ function page(): Record<string, unknown> {
         { $tag: "button", class: "remove", events: { click: { do: { $runVar: "removeRow" } } }, content: ["x"] },
       ],
     },
-    // After rows shift, each one's scope gets its new index.
+    // After rows shift, each one's params get its new index.
     renumber: {
       $foreach: { $querySelectorAll: ":scope > li", in: "#list" },
-      do: { $setAttr: [{ $var: "item" }, "data-jexs-scope", { $stringify: { index: { $var: "index" } } }] },
+      do: { $setAttr: [{ $var: "item" }, "data-jexs-params", { index: { $var: "index" } }] },
     },
     removeRow: [
       { $remove: [{ $var: "items" }, { $var: "index" }] },

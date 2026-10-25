@@ -77,3 +77,12 @@ test("a target that is not a selector is an error", () => {
   assert.throws(() => resolve({ $tag: "ul", events: { click: { target: { $var: "n" }, do: [] } } }, { n: 3 }),
     /\$tag: the "click" handler's target must be a CSS selector, got 3/);
 });
+
+// `params` are variables for the handlers inside, carried as JSON; any other
+// attribute given an object carries it as JSON too.
+test("params render as data-jexs-params, and an object attribute as JSON", () => {
+  const html = String(resolve({ $tag: "li", params: { path: { $var: "p" } }, "data-meta": { tags: ["a"] } }, { p: "0.children.1" }));
+  assert.equal(html, `<li data-jexs-params="{&quot;path&quot;:&quot;0.children.1&quot;}" data-meta="{&quot;tags&quot;:[&quot;a&quot;]}"></li>`);
+  assert.throws(() => resolve({ $tag: "li", params: ["a"] }, {}), /\$tag: params must be an object of variables, got an array/);
+  assert.throws(() => resolve({ $tag: "li", params: "path" }, {}), /got string/);
+});

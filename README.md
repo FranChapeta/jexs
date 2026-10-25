@@ -73,13 +73,13 @@ Setting `"client": true` makes the server serve the `@jexs/client` browser bundl
 ] }
 ```
 
-**A DOM event handler** — runs in the browser, attached via `data-jexs-events`:
+**A DOM event handler** — an element's `events`, rendered on the server and run in the browser:
 
 ```json
-[{ "type": "click", "do": [
+{ "$tag": "button", "content": ["Like"], "events": { "click": { "do": [
   { "$fetch": "/api/like", "method": "POST", "$as": "result" },
   { "$toggleClass": [{ "$var": "target" }, "liked"] }
-] }]
+] } } }
 ```
 
 ## Evaluation model

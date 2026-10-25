@@ -86,7 +86,7 @@ const COMMON_ATTRS = [
   "draggable", "contenteditable",
   "aria-label", "aria-hidden", "aria-expanded", "aria-selected", "aria-pressed", "aria-current",
   "aria-controls", "aria-describedby",
-  "data-jexs-scope",
+  "data-jexs-params",
 ];
 
 // The siblings that say where markup or a moved element goes.
@@ -230,11 +230,11 @@ export class DomNode extends Node {
       prefixItems: [
         { $ref: "#/$defs/_elementRef", description:"The element: a CSS selector or an HTMLElement." },
         { $ref: "#/$defs/_attrName", description: "The attribute name: a common one, or any other (e.g. \"data-id\")." },
-        { description: "The attribute value (coerced to a string)." },
+        { description: "The attribute value: text, or an object or array, written as JSON." },
       ],
       output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
-      markdownDescription: "Sets an attribute on an element. Pass `[selectorOrElement, attrName, value]`.",
+      markdownDescription: "Sets an attribute on an element. Pass `[selectorOrElement, attrName, value]`. An object is written as JSON, so `[row, \"data-jexs-params\", { \"path\": ... }]` gives a moved row's handlers its new variables.",
     },
     getAttr: {
       tuple: 2,
@@ -596,7 +596,7 @@ export class DomNode extends Node {
     return resolve(def.$setAttr, context, args => {
       const [ref, name, value] = operands("setAttr", args, 3);
       const el = getElement(ref, "setAttr");
-      el.setAttribute(String(name), String(value));
+      el.setAttribute(String(name), typeof value === "object" && value !== null ? JSON.stringify(value) : String(value));
       return el;
     });
   }

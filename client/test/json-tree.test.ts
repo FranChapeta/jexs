@@ -21,10 +21,10 @@ function shape(container: Element = document.querySelector("#tree") as unknown a
     return kids.length ? [label(li), kids] : label(li);
   });
 }
-/** Every row's path, from its data-path and from the scope its handlers read. */
+/** Every row's path, from its data-path and from the params its handlers read. */
 function paths(): string[] {
   return Array.from(document.querySelectorAll("#tree li")).map(li => {
-    const scoped = JSON.parse(li.getAttribute("data-jexs-scope")!).path;
+    const scoped = JSON.parse(li.getAttribute("data-jexs-params")!).path;
     assert.equal(scoped, li.getAttribute("data-path"));
     return scoped;
   });
@@ -40,7 +40,7 @@ function page(): Record<string, unknown> {
     node: {
       $tag: "li",
       "data-path": { $var: "path" },
-      "data-jexs-scope": { $stringify: { path: { $var: "path" } } },
+      params: { path: { $var: "path" } },
       content: [
         { $tag: "span", content: [{ $var: "item.label" }] },
         { $tag: "ul", content: { $map: { $var: "item.children" }, item: "child", do: {
@@ -67,7 +67,7 @@ function page(): Record<string, unknown> {
       $foreach: { $querySelectorAll: ":scope > li", in: { $var: "container" } }, item: "li", do: [
         { $as: "p", $concat: [{ $var: "prefix" }, { $var: "index" }] },
         { $setAttr: [{ $var: "li" }, "data-path", { $var: "p" }] },
-        { $setAttr: [{ $var: "li" }, "data-jexs-scope", { $stringify: { path: { $var: "p" } } }] },
+        { $setAttr: [{ $var: "li" }, "data-jexs-params", { path: { $var: "p" } }] },
         { $runVar: "renumber", params: {
           container: { $querySelector: ":scope > ul", in: { $var: "li" } },
           prefix: { $concat: [{ $var: "p" }, ".children."] },

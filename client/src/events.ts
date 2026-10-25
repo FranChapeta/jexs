@@ -15,6 +15,12 @@ interface EventDef {
   $catch?: unknown;
 }
 
+/** A handler as `data-jexs-events` lists it: a named event with steps to run. */
+function isEventDef(value: unknown): value is EventDef {
+  return isObject(value) && typeof value.type === "string" && value.do !== undefined
+    && (value.target === undefined || typeof value.target === "string");
+}
+
 /** Event name for the element being hydrated, once: no DOM event has it, so an
  *  element's own `load` (an image, a frame, a script) stays a DOM event. */
 const MOUNT = "mount";
@@ -48,31 +54,34 @@ function receiveServiceWorkerMessages(el: HTMLElement): void {
   });
 }
 
+/** The attribute an element's `params` render as. */
+const PARAMS_ATTR = "data-jexs-params";
 /**
- * Each scope element's attribute as last parsed. A handler can fire many times
- * a second (a drag, a pointer move), and the attribute rarely changes between
- * firings, so it is parsed again only when its text differs.
+ * Each element's params as last parsed. A handler can fire many times a second
+ * (a drag, a pointer move), and the attribute rarely changes between firings,
+ * so it is parsed again only when its text differs.
  */
-const parsedScopes = new WeakMap<Element, { raw: string; vars: Record<string, unknown> }>();
+const parsedParams = new WeakMap<Element, { raw: string; vars: Record<string, unknown> }>();
 
 /**
- * The variables of the nearest `data-jexs-scope` (JSON) around `el`, such as a
+ * The variables of the nearest element with `params` around `el`, such as a
  * row's `path`. A malformed one is logged, once per change, and adds none.
  */
-function scopeVars(el: Element): Record<string, unknown> {
-  const scoped = el.closest?.("[data-jexs-scope]");
-  const raw = scoped?.getAttribute("data-jexs-scope");
-  if (!scoped || !raw) return {};
-  const cached = parsedScopes.get(scoped);
+function paramsAround(el: Element): Record<string, unknown> {
+  const holder = el.closest?.(`[${PARAMS_ATTR}]`);
+  const raw = holder?.getAttribute(PARAMS_ATTR);
+  if (!holder || !raw) return {};
+  const cached = parsedParams.get(holder);
   if (cached?.raw === raw) return cached.vars;
   let vars: Record<string, unknown> = {};
   try {
     const parsed: unknown = JSON.parse(raw);
     if (isObject(parsed)) vars = parsed;
+    else console.error(`[Jexs] ${PARAMS_ATTR} is not an object of variables, around`, el);
   } catch (err) {
-    console.error("[Jexs] Failed to parse data-jexs-scope around", el, err);
+    console.error(`[Jexs] Failed to parse ${PARAMS_ATTR} around`, el, err);
   }
-  parsedScopes.set(scoped, { raw, vars });
+  parsedParams.set(holder, { raw, vars });
   return vars;
 }
 
@@ -151,8 +160,8 @@ function targetPosition(e: Event, match: Element): Record<string, unknown> {
  * Each firing runs in a child scope of its own holding `event`, `target` and
  * `value`, so a value from an earlier event never lingers, and two handlers
  * awaiting at once keep their own. Beneath them are the variables of the
- * nearest `data-jexs-scope` around the target, read when the event fires, so
- * a row whose scope was rewritten after it moved hands over its current `path`.
+ * nearest element's `params` around the target, read when the event fires, so
+ * a row whose params were rewritten after it moved hands over its current `path`.
  *
  * `target` is the element the handler is on, unless the handler has a `target`
  * selector: then it is the matching element the event happened in (one handler
@@ -168,14 +177,22 @@ export function hydrate(root: Element | Document = document, context: Context = 
     bound.add(el);
 
     try {
-      const events = JSON.parse(raw) as EventDef[];
+      const events: unknown = JSON.parse(raw);
+      if (!Array.isArray(events)) {
+        console.error("[Jexs] data-jexs-events is not a list of handlers, on", el);
+        continue;
+      }
       for (const evt of events) {
+        if (!isEventDef(evt)) {
+          console.error("[Jexs] a data-jexs-events entry needs a `type` and `do` steps, on", el, evt);
+          continue;
+        }
         if (evt.type === MOUNT) {
           // `mount` must stay SYNCHRONOUS: it runs during hydrate(), and callers
           // read state a mount handler seeds (with `$bubble`) as soon as hydrate()
           // returns. A detached run starts its steps on this stack, so that
           // holds; only the outcome is a promise.
-          const scope = childContext(context, { ...scopeVars(el), event: null, target: el, value: (el as HTMLInputElement).value ?? null });
+          const scope = childContext(context, { ...paramsAround(el), event: null, target: el, value: (el as HTMLInputElement).value ?? null });
           void runStepsDetached(evt.do, scope, { step: evt, logAs: `[Jexs] "mount" handler failed:` });
         } else {
           if (evt.type === SW_MESSAGE) receiveServiceWorkerMessages(el);
@@ -205,7 +222,7 @@ export function hydrate(root: Element | Document = document, context: Context = 
             const value = evt.type === SW_MESSAGE && e instanceof CustomEvent
               ? e.detail
               : (target as HTMLInputElement).value ?? null;
-            const scope = childContext(context, { ...scopeVars(target), ...(match && targetPosition(e, match)), event: e, target, value });
+            const scope = childContext(context, { ...paramsAround(target), ...(match && targetPosition(e, match)), event: e, target, value });
             void runStepsDetached(evt.do, scope, { step: evt, logAs: `[Jexs] "${evt.type}" handler failed:` });
           });
         }
