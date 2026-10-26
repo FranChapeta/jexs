@@ -26,11 +26,18 @@ test("show, hide and toggle set inline display, by selector or element, and retu
   assert.equal($("#box").style.display, "none");
 });
 
-test("showAll and hideAll return how many elements matched", async () => {
-  assert.equal(await run({ $hideAll: ".item" }), 2);
-  assert.equal($(".item").style.display, "none");
-  assert.equal(await run({ $showAll: ".item" }), 2);
-  assert.equal(await run({ $hideAll: ".missing" }), 0);
+// Every match of a selector composes from $foreach, and an element that cannot
+// be shown or clicked is an error rather than a step that does nothing.
+test("hide each match with $foreach, and refuse what cannot be shown or clicked", async () => {
+  await run({ $foreach: { $querySelectorAll: ".item" }, do: { $hide: { $var: "item" } } });
+  assert.deepEqual(Array.from(document.querySelectorAll<HTMLElement>(".item")).map(el => el.style.display), ["none", "none"]);
+  const math = document.createElementNS("http://www.w3.org/1998/Math/MathML", "math");
+  document.body.append(math);
+  await assert.rejects(async () => run({ $show: math }), /\$show: <math> is not an HTML or SVG element/);
+  await assert.rejects(async () => run({ $focus: math }), /\$focus: <math> is not an HTML or SVG element/);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  document.body.append(svg);
+  await assert.rejects(async () => run({ $click: svg }), /\$click: <svg> has no click\(\)/);
 });
 
 test("class ops add, remove and toggle a class", async () => {
@@ -61,7 +68,7 @@ test("values, text, html and disabled through the props", async () => {
   assert.equal($("#box").textContent, "<b>plain</b>");
   await run({ $setProp: ["#box", "innerHTML", "<b>bold</b>"] });
   assert.equal($("#box").innerHTML, "<b>bold</b>");
-  await run({ $append: ["#box", "<i>more</i>"] });
+  await run({ $insertHtml: ["#box", "<i>more</i>"] });
   assert.equal($("#box").innerHTML, "<b>bold</b><i>more</i>");
 });
 
@@ -73,7 +80,7 @@ const settle = () => new Promise(r => setTimeout(r, 10));
 test("every op that writes markup wires up its events", async () => {
   const context: Record<string, unknown> = { clicks: 0 };
   await run({ $setProp: ["#box", "innerHTML", counter("a")] }, context);
-  await run({ $append: ["#box", counter("b")] }, context);
+  await run({ $insertHtml: ["#box", counter("b")] }, context);
   await run({ $insertHtml: ["#box", counter("c")], index: 0 }, context);
   await run({ $setProp: ["#c", "outerHTML", counter("d")] }, context);
   for (const id of ["a", "b", "d"]) $(`#${id}`).click();
@@ -191,7 +198,6 @@ test("setRangeText replaces a range of a textarea", async () => {
 test("finding elements", async () => {
   assert.equal(await run({ $querySelector: "#box" }), $("#box"));
   assert.equal((await run({ $querySelectorAll: ".item" }) as unknown[]).length, 2);
-  assert.equal(await run({ $getElementById: "name" }), $("#name"));
   assert.equal(await run({ $closest: [$(".item"), "#box"] }), $("#box"));
   assert.equal(await run({ $removeElement: ".item" }), true);
   assert.equal(document.querySelectorAll(".item").length, 1);
@@ -211,11 +217,17 @@ test("preventDefault and stopPropagation act on the event in context", async (t)
   assert.equal(stop.mock.callCount(), 1);
 });
 
-test("submit \"form\" submits the event target's form", async (t) => {
+test("submit submits a form, the one around the target by $closest, and refuses anything else", async (t) => {
   const form = $("#f") as HTMLFormElement;
   const submit = t.mock.method(form, "submit", () => {});
-  await run({ $submit: "form" }, { target: $("#go") });
+  await run({ $submit: { $closest: [{ $var: "target" }, "form"] } }, { target: $("#go") });
   assert.equal(submit.mock.callCount(), 1);
+  await assert.rejects(async () => run({ $submit: "#box" }), /\$submit: <div> is not a form/);
+});
+
+test("scrollIntoView takes the listed block and behavior, and refuses any other", async () => {
+  assert.equal(await run({ $scrollIntoView: "#box", block: "start", behavior: "smooth" }), $("#box"));
+  await assert.rejects(async () => run({ $scrollIntoView: "#box", block: "top" }), /Invalid scrollIntoView block "top": expected start, center, end, nearest/);
 });
 
 // Acting on nothing is an error that reaches $catch; reading from nothing answers
@@ -232,6 +244,6 @@ test("acting on a missing element, a short tuple, a missing method or clipboard 
   await assert.rejects(async () => run({ $showModal: "#box" }), /\$showModal: <div> has no showModal\(\)/);
   await assert.rejects(async () => run({ $setProp: ["#box", "nope.deeper", 1] }), /\$setProp: "nope" is not an object to set "deeper" on/);
   await assert.rejects(async () => run({ $preventDefault: true }), /\$preventDefault runs in an event handler/);
-  await assert.rejects(async () => run({ $copy: "text" }), /\$copy: no clipboard here/);
+  await assert.rejects(async () => run({ $clipboardWrite: "text" }), /\$clipboardWrite: no clipboard here/);
   assert.equal(await run({ $removeElement: "#missing" }), false);
 });

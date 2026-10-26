@@ -106,6 +106,17 @@ const PLACEMENT_VARIANTS = {
 // enabling chaining. Declared via the `_element` output + this description.
 const RETURNS_TARGET = "The element operated on (an HTMLElement), for chaining.";
 
+// `scrollIntoView`'s options, shared by the schema `enum` and the runtime check.
+const SCROLL_BLOCKS: readonly ScrollLogicalPosition[] = ["start", "center", "end", "nearest"];
+const SCROLL_BEHAVIORS: readonly ScrollBehavior[] = ["auto", "instant", "smooth"];
+
+/** An element that can be shown, hidden and focused: an HTML or SVG one, which
+ *  have a `style` and `focus()`. Anything else is an error naming the op. */
+function styled(op: string, el: Element): HTMLElement | SVGElement {
+  if (!isHtmlOrSvg(el)) throw new Error(`$${op}: <${el.tagName.toLowerCase()}> is not an HTML or SVG element`);
+  return el;
+}
+
 export class DomNode extends Node {
   // getProp/setProp accept a plain property name OR a dot-path to a nested one
   // (e.g. "style.color"), like setVars; getAttr/setAttr take any attribute name.
@@ -150,7 +161,7 @@ export class DomNode extends Node {
       $ref: "#/$defs/_elementRef",
       output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
-      markdownDescription: "Shows an element by clearing its inline `display` style. Accepts a CSS selector or HTMLElement.",
+      markdownDescription: "Shows an element by clearing its inline `display` style. Accepts a CSS selector or HTMLElement. For every match of a selector, `{ \"$foreach\": { \"$querySelectorAll\": \".tip\" }, \"do\": { \"$show\": { \"$var\": \"item\" } } }`.",
     },
     hide: {
       $ref: "#/$defs/_elementRef",
@@ -163,16 +174,6 @@ export class DomNode extends Node {
       output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Toggles `display: none` on an element.",
-    },
-    showAll: {
-      type: "string",
-      output: "number",
-      markdownDescription: "Shows all elements matching a CSS selector. Returns the count of matched elements.",
-    },
-    hideAll: {
-      type: "string",
-      output: "number",
-      markdownDescription: "Hides all elements matching a CSS selector. Returns the count of matched elements.",
     },
     focus: {
       $ref: "#/$defs/_elementRef",
@@ -278,23 +279,24 @@ export class DomNode extends Node {
     submit: {
       $ref: "#/$defs/_elementRef",
       output: "null",
-      markdownDescription: "Submits a form. Pass `\"form\"` to submit the closest ancestor form of the event target, or a CSS selector.",
+      markdownDescription: "Submits a form: a CSS selector or the form element. For the form a handler's element is in, `{ \"$submit\": { \"$closest\": [{ \"$var\": \"target\" }, \"form\"] } }`.",
     },
-    copy: {
+    clipboardWrite: {
       type: "string",
       output: "string",
       outputDescription: "The text that was written to the clipboard (once the async write resolves).",
       markdownDescription: "Copies text to the clipboard via `navigator.clipboard.writeText()`. Pass the text or an expression resolving to it. Requires a secure context and a user gesture (e.g. inside a click handler).",
       examples: [
-        "{ \"$copy\": { \"$var\": \"shareUrl\" } }",
+        "{ \"$clipboardWrite\": { \"$var\": \"shareUrl\" } }",
       ],
     },
-    getClipboard: {
+    clipboardRead: {
+      type: "boolean",
       output: "string",
       outputDescription: "The clipboard's text, `\"\"` when it is empty. A denied read is an error.",
       markdownDescription: "Reads text from the clipboard. Requires a secure context, and the browser may prompt for permission the first time.",
       examples: [
-        "{ \"$getClipboard\": true, \"$as\": \"clip\" }",
+        "{ \"$clipboardRead\": true, \"$as\": \"clip\" }",
       ],
     },
     showModal: {
@@ -324,11 +326,6 @@ export class DomNode extends Node {
       examples: [
         "{ \"$if\": { \"$var\": \"someCondition\" }, \"then\": { \"$stopPropagation\": true } }",
       ],
-    },
-    getElementById: {
-      type: "string",
-      output: { $ref: "#/$defs/_element" },
-      markdownDescription: "Returns the element with the given id via `document.getElementById`.",
     },
     querySelector: {
       type: "string",
@@ -428,16 +425,6 @@ export class DomNode extends Node {
       outputDescription: RETURNS_TARGET,
       markdownDescription: "Selects all text in an `<input>`/`<textarea>` via `.select()`. Accepts a CSS selector or HTMLElement.",
     },
-    append: {
-      tuple: 2,
-      prefixItems: [
-        { $ref: "#/$defs/_elementRef", description:"The element: a CSS selector or an HTMLElement." },
-        { type: "string", description: "The HTML string to append." },
-      ],
-      output: { $ref: "#/$defs/_element" },
-      outputDescription: RETURNS_TARGET,
-      markdownDescription: "Appends HTML to the end of an element, wires up its `events`, and scrolls the element to the bottom, as a chat log wants. Pass `[selectorOrElement, html]`. To put markup anywhere else, use `insertHtml`.",
-    },
     insertHtml: {
       tuple: 2,
       prefixItems: [
@@ -476,17 +463,11 @@ export class DomNode extends Node {
       markdownDescription: "Removes an element from the page via `Element.remove()`. Accepts a CSS selector or HTMLElement. A removal, so one that is not there is reported rather than an error.",
       outputDescription: "`true` if there was an element to remove, otherwise `false`.",
     },
-    scrollTo: {
-      $ref: "#/$defs/_elementRef",
-      output: { $ref: "#/$defs/_element" },
-      outputDescription: RETURNS_TARGET,
-      markdownDescription: "Scrolls an element to its bottom by setting `scrollTop = scrollHeight`. Useful for chat containers.",
-    },
     scrollIntoView: {
       $ref: "#/$defs/_elementRef",
       output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
-      markdownDescription: "Scrolls an element into view via `Element.scrollIntoView`. Accepts a CSS selector or HTMLElement.\nOptional siblings: `block` (`\"start\"` | `\"center\"` | `\"end\"` | `\"nearest\"`, default `\"center\"`) for vertical alignment, and `behavior` (`\"auto\"` | `\"smooth\"`, default `\"auto\"`) for animation.",
+      markdownDescription: "Scrolls an element into view via `Element.scrollIntoView`. Accepts a CSS selector or HTMLElement. To scroll a container to its bottom, as a chat log wants, `{ \"$setProp\": [\"#log\", \"scrollTop\", { \"$getProp\": [\"#log\", \"scrollHeight\"] }] }`.",
       examples: [
         "{ \"$scrollIntoView\": \"#active\" }",
         "{ \"$scrollIntoView\": \"#row-42\", \"block\": \"start\", \"behavior\": \"smooth\" }",
@@ -494,11 +475,15 @@ export class DomNode extends Node {
       siblings: {
         block: {
           type: "string",
-          description: "Vertical alignment: \"start\", \"center\", \"end\", or \"nearest\". Defaults to \"center\".",
+          enum: SCROLL_BLOCKS,
+          default: "center",
+          description: "Where the element lands vertically.",
         },
         behavior: {
           type: "string",
-          description: "Scroll behavior: \"auto\" (instant) or \"smooth\". Defaults to \"auto\".",
+          enum: SCROLL_BEHAVIORS,
+          default: "auto",
+          description: "`\"auto\"` jumps there, `\"smooth\"` animates.",
         },
       },
     },
@@ -535,37 +520,23 @@ export class DomNode extends Node {
 
   show(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$show, context, v => {
-      const el = getElement(v, "show");
-      if (isHtmlOrSvg(el)) el.style.display = "";
+      const el = styled("show", getElement(v, "show"));
+      el.style.display = "";
       return el;
     });
   }
   hide(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$hide, context, v => {
-      const el = getElement(v, "hide");
-      if (isHtmlOrSvg(el)) el.style.display = "none";
+      const el = styled("hide", getElement(v, "hide"));
+      el.style.display = "none";
       return el;
     });
   }
   toggle(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$toggle, context, v => {
-      const el = getElement(v, "toggle");
-      if (isHtmlOrSvg(el)) el.style.display = el.style.display === "none" ? "" : "none";
+      const el = styled("toggle", getElement(v, "toggle"));
+      el.style.display = el.style.display === "none" ? "" : "none";
       return el;
-    });
-  }
-  showAll(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$showAll, context, v => {
-      const els = document.querySelectorAll<HTMLElement>(String(v));
-      els.forEach(el => el.style.display = "");
-      return els.length;
-    });
-  }
-  hideAll(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$hideAll, context, v => {
-      const els = document.querySelectorAll<HTMLElement>(String(v));
-      els.forEach(el => el.style.display = "none");
-      return els.length;
     });
   }
   addClass(def: Record<string, unknown>, context: Context): NodeValue {
@@ -628,15 +599,15 @@ export class DomNode extends Node {
   }
   focus(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$focus, context, v => {
-      const el = getElement(v, "focus");
-      if (isHtmlOrSvg(el)) el.focus();
+      const el = styled("focus", getElement(v, "focus"));
+      el.focus();
       return el;
     });
   }
   blur(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$blur, context, v => {
-      const el = getElement(v, "blur");
-      if (isHtmlOrSvg(el)) el.blur();
+      const el = styled("blur", getElement(v, "blur"));
+      el.blur();
       return el;
     });
   }
@@ -690,7 +661,8 @@ export class DomNode extends Node {
   click(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$click, context, v => {
       const el = getElement(v, "click");
-      if (el instanceof HTMLElement) el.click();
+      // Only HTML elements have `click()`; an SVG one is an error, not a no-op.
+      callMethod("click", el, "click");
       return el;
     });
   }
@@ -709,15 +681,15 @@ export class DomNode extends Node {
       return el;
     });
   }
-  copy(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$copy, context, text => {
+  clipboardWrite(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$clipboardWrite, context, text => {
       const str = String(text ?? "");
-      return clipboard("copy").writeText(str).then(() => str);
+      return clipboard("clipboardWrite").writeText(str).then(() => str);
     });
   }
-  getClipboard(_def: Record<string, unknown>, _context: Context): NodeValue {
+  clipboardRead(_def: Record<string, unknown>, _context: Context): NodeValue {
     // A denied permission rejects, and reaches `$catch` like any failure.
-    return clipboard("getClipboard").readText();
+    return clipboard("clipboardRead").readText();
   }
   showModal(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$showModal, context, v => {
@@ -750,18 +722,11 @@ export class DomNode extends Node {
   }
   submit(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$submit, context, val => {
-      const form = val === "form"
-        ? (context.target instanceof Element ? context.target.closest("form") : null)
-        : getElement(val, "submit");
-      if (!(form instanceof HTMLFormElement)) {
-        throw new Error(val === "form" ? '$submit "form": the event\'s target is in no form' : `$submit: ${JSON.stringify(val)} is not a form`);
-      }
+      const form = getElement(val, "submit");
+      if (!(form instanceof HTMLFormElement)) throw new Error(`$submit: <${form.tagName.toLowerCase()}> is not a form`);
       form.submit();
       return null;
     });
-  }
-  getElementById(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$getElementById, context, v => document.getElementById(String(v)));
   }
   querySelector(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll([def.$querySelector, def.in ?? null], context, ([selector, scope]) =>
@@ -775,15 +740,6 @@ export class DomNode extends Node {
     return resolve(def.$closest, context, args => {
       const [ref, selector] = operands("closest", args, 2);
       return getElement(ref)?.closest(String(selector)) ?? null;
-    });
-  }
-  append(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$append, context, args => {
-      const [ref, html] = operands("append", args, 2);
-      const el = getElement(ref, "append");
-      insertMarkup(html, context, nodes => el.append(...nodes));
-      el.scrollTop = el.scrollHeight;
-      return el;
     });
   }
   insertHtml(def: Record<string, unknown>, context: Context): NodeValue {
@@ -809,19 +765,13 @@ export class DomNode extends Node {
       return el;
     });
   }
-  scrollTo(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$scrollTo, context, v => {
-      const el = getElement(v, "scrollTo");
-      el.scrollTop = el.scrollHeight;
-      return el;
-    });
-  }
   scrollIntoView(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll([def.$scrollIntoView, def.block ?? null, def.behavior ?? null], context, ([target, blockRaw, behaviorRaw]) => {
       const el = getElement(target, "scrollIntoView");
-      const block = (typeof blockRaw === "string" ? blockRaw : "center") as ScrollLogicalPosition;
-      const behavior = (typeof behaviorRaw === "string" ? behaviorRaw : "auto") as ScrollBehavior;
-      el.scrollIntoView({ block, behavior });
+      el.scrollIntoView({
+        block: this.getOption(blockRaw, SCROLL_BLOCKS, "scrollIntoView block") ?? "center",
+        behavior: this.getOption(behaviorRaw, SCROLL_BEHAVIORS, "scrollIntoView behavior") ?? "auto",
+      });
       return el;
     });
   }

@@ -602,6 +602,45 @@ function coalesceKeys(payload: Val | undefined, m: Codemod): void {
   }
 }
 
+/** Put `pre` before a value and `post` after it, its own text untouched, so edits inside it still apply. */
+function wrapValue(v: Val, pre: string, post: string, m: Codemod): void {
+  m.add({ start: v.start, end: v.start, text: pre });
+  m.add({ start: v.end, end: v.end, text: post });
+}
+
+/** A key as the step writes its own: quoted in JSON, bare in a JS literal. */
+const keyLike = (prop: Prop, name: string) => (prop.keyQuoted ? `"${name}"` : name);
+
+/** v1's DOM shorthands that set or read one property: `{ "$disable": el }` is `{ "$setProp": [el, "disabled", true] }`. */
+function domProp(step: Step, op: "setProp" | "getProp", prop: string, value: string | null, m: Codemod): void {
+  const p = step.obj.props.find(q => q.key === "$" + step.op);
+  if (!p || p.shorthand) return;
+  renameOp(step, op, m);
+  wrapValue(p.value, "[", `, "${prop}"${value === null ? "" : `, ${value}`}]`, m);
+}
+
+/** v1's `[el, value]` setters: `{ "$setText": [el, t] }` is `{ "$setProp": [el, "textContent", t] }`. */
+function domSetter(step: Step, prop: string, m: Codemod): void {
+  const p = step.obj.props.find(q => q.key === "$" + step.op);
+  if (!p || p.shorthand) return;
+  if (p.value.k !== "arr" || p.value.items.length !== 2) {
+    m.review(p.keyStart, `\`$${step.op}\` is gone: \`{ "$setProp": [element, "${prop}", value] }\` sets it`);
+    return;
+  }
+  renameOp(step, "setProp", m);
+  m.add({ start: p.value.items[1].start, end: p.value.items[1].start, text: `"${prop}", ` });
+}
+
+/** v1's `showAll`/`hideAll`: each match of the selector, by `$foreach`. */
+function eachMatch(step: Step, op: "show" | "hide", m: Codemod): void {
+  const p = step.obj.props.find(q => q.key === "$" + step.op);
+  if (!p || p.shorthand) return;
+  renameOp(step, "foreach", m);
+  wrapValue(p.value, `{ ${keyLike(p, "$querySelectorAll")}: `, ` }, ${keyLike(p, "do")}: { ${keyLike(p, `$${op}`)}: { ${keyLike(p, "$var")}: "item" } }`, m);
+  const as = step.obj.props.find(q => q.key === "$as");
+  if (as) m.review(as.keyStart, `\`$${step.op}\` returned how many matched; \`$foreach\` returns the last: count with \`{ "$count": { "$querySelectorAll": ... } }\``);
+}
+
 /** The value a value-mode step names, when it is written as a literal. */
 const opValue = ({ op, obj }: Step) => {
   const value = obj.props.find(p => p.key === "$" + op)?.value;
@@ -757,6 +796,50 @@ const RULES: Record<string, Rule> = {
   "storage-remove": (step, m) => renameOp(step, "storageDelete", m),
   // A level's name and value are its two operands.
   "audio-volume": (step, m) => siblingToTuple(step, "volume", m),
+  // v1's DOM shorthands compose from the property, query and placement ops now.
+  enable: (step, m) => domProp(step, "setProp", "disabled", "false", m),
+  disable: (step, m) => domProp(step, "setProp", "disabled", "true", m),
+  getValue: (step, m) => domProp(step, "getProp", "value", null, m),
+  setValue: (step, m) => domSetter(step, "value", m),
+  setHtml: (step, m) => domSetter(step, "innerHTML", m),
+  setText: (step, m) => domSetter(step, "textContent", m),
+  removeEl: (step, m) => renameOp(step, "removeElement", m),
+  showAll: (step, m) => eachMatch(step, "show", m),
+  hideAll: (step, m) => eachMatch(step, "hide", m),
+  getElementById: (step, m) => {
+    const p = step.obj.props.find(q => q.key === "$getElementById");
+    if (!p || p.shorthand) return;
+    renameOp(step, "querySelector", m);
+    if (p.value.k === "str" && /^[A-Za-z][\w-]*$/.test(p.value.value)) replaceString(p.value, "#" + p.value.value, m);
+    else {
+      wrapValue(p.value, `{ ${keyLike(p, "$concat")}: ["#", `, "] }", m);
+      m.review(p.keyStart, "`$getElementById` is `$querySelector` with `#` and the id: one with characters CSS gives a meaning to needs escaping");
+    }
+  },
+  scrollTo: (step, m) => {
+    const p = step.obj.props.find(q => q.key === "$scrollTo");
+    if (!p || p.shorthand) return;
+    if (!isPlain(p.value)) {
+      m.review(p.keyStart, "`$scrollTo` is gone: `{ \"$setProp\": [el, \"scrollTop\", { \"$getProp\": [el, \"scrollHeight\"] }] }` scrolls to the bottom");
+      return;
+    }
+    renameOp(step, "setProp", m);
+    wrapValue(p.value, "[", `, "scrollTop", { ${keyLike(p, "$getProp")}: [${m.text(p.value.start, p.value.end)}, "scrollHeight"] }]`, m);
+  },
+  append: (step, m) => {
+    const p = step.obj.props.find(q => q.key === "$append");
+    if (!p || p.shorthand) return;
+    renameOp(step, "insertHtml", m);
+    m.review(p.keyStart, "`$append` is `$insertHtml`, which does not scroll: to keep a log at its bottom, follow it with `{ \"$setProp\": [el, \"scrollTop\", { \"$getProp\": [el, \"scrollHeight\"] }] }`");
+  },
+  submit: ({ obj }, m) => {
+    const p = obj.props.find(q => q.key === "$submit");
+    if (p?.value.k === "str" && p.value.value === "form") {
+      m.add({ start: p.value.start, end: p.value.end, text: `{ ${keyLike(p, "$closest")}: [{ ${keyLike(p, "$var")}: "target" }, "form"] }` });
+    }
+  },
+  copy: (step, m) => renameOp(step, "clipboardWrite", m),
+  getClipboard: (step, m) => renameOp(step, "clipboardRead", m),
   // Coalescing is the receiver's `coalesce` on `listen`, not keys in the payload.
   "rtc-send": (step, m) => coalesceKeys(step.obj.props.find(p => p.key === "data")?.value, m),
   "rtc-broadcast": (step, m) => coalesceKeys(step.obj.props.find(p => p.key === "$rtc-broadcast")?.value, m),
