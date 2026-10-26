@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue, createHttpError } from "@jexs/core";
-import { resolve, resolveAll } from "@jexs/core";
+import { operands, resolve, resolveAll } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
 // ─── Audio state per instance ────────────────────────────────────────────────
@@ -43,6 +43,17 @@ function levelFor(node: AudioNode, name: string): GainNode {
   level.connect(master);
   node.levels.set(name, level);
   return level;
+}
+
+/** A gain level: 0 for silent, 1 for as recorded, above 1 to amplify. A numeric
+ *  string counts, since a slider's `value` is one. Anything else would set the
+ *  gain to NaN, which the browser plays as silence. */
+function gainOf(op: string, value: unknown): number {
+  const gain = typeof value === "number" ? value
+    : typeof value === "string" && value.trim() !== "" ? Number(value)
+    : Number.NaN;
+  if (!Number.isFinite(gain) || gain < 0) throw new Error(`$${op}: the level is a number from 0, not ${JSON.stringify(value)}`);
+  return gain;
 }
 
 async function fetchAudio(name: string, url: string): Promise<ArrayBuffer> {
@@ -280,9 +291,8 @@ export class AudioNode extends Node {
 
   audioVolume(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$audioVolume, context, args => {
-      if (!Array.isArray(args) || args.length !== 2) throw new Error("audioVolume takes [name, level]");
-      const [name, level] = args;
-      levelFor(this, this.toString(name)).gain.value = Number(level);
+      const [name, level] = operands("audioVolume", args, 2);
+      levelFor(this, this.toString(name)).gain.value = gainOf("audioVolume", level);
       return null;
     });
   }
@@ -290,7 +300,7 @@ export class AudioNode extends Node {
   audioMaster(def: Record<string, unknown>, context: Context): NodeValue {
     const { master } = audioGraph(this);
     return resolve(def.$audioMaster, context, volume => {
-      master.gain.value = Number(volume);
+      master.gain.value = gainOf("audioMaster", volume);
       return null;
     });
   }

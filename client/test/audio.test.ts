@@ -140,6 +140,18 @@ test("audioVolume: one level for the name, shared by every sound under it", asyn
 
 // The reason it is a level and not a live nudge: a settings slider is moved
 // before anything plays, and used to do nothing at all.
+// A slider hands over its value as text; anything that is no level at all would
+// set the gain to NaN, which plays as silence, so it is refused.
+test("audioVolume takes a slider's text, and refuses what is no level", async () => {
+  await resolve({ "$audioVolume": ["music", "0.4"] }, {});
+  await resolve({ "$audioMaster": "0.9" }, {});
+  for (const bad of ["loud", "", -1, null]) {
+    await assert.rejects(async () => resolve({ "$audioVolume": ["music", { $var: "v" }] }, { v: bad }), /\$audioVolume: the level is a number from 0/);
+  }
+  await assert.rejects(async () => resolve({ "$audioMaster": "loud" }, {}), /\$audioMaster: the level is a number from 0, not "loud"/);
+  await assert.rejects(async () => resolve({ "$audioVolume": ["music"] }, {}), /audioVolume takes 2 operands, got 1/);
+});
+
 test("audioVolume: set before anything plays, and it still applies", async () => {
   await load("music");
   await resolve({ "$audioVolume": ["music", 0.3] }, {});

@@ -6,7 +6,7 @@ import { PushNode } from "../src/nodes/Push.js";
 
 const window = installDom();
 const resolve = createResolver([...coreNodes(), new PushNode()]);
-const run = (step: unknown) => resolve(step, {});
+const run = (step: unknown, context: Record<string, unknown> = {}) => resolve(step, context);
 
 const json = { endpoint: "https://push.example/abc", expirationTime: null, keys: { p256dh: "p", auth: "a" } };
 
@@ -42,13 +42,11 @@ test("unsubscribe drops the subscription whose endpoint matches", async () => {
   assert.equal(await run({ "$pushUnsubscribe": json }), true);
 });
 
-// What these return today; each is a candidate to throw instead (see the v2
-// plan), so these pin the behaviour that changes.
-// Subscribing without support, a key or permission is an error; unsubscribing
-// is a removal, so having nothing to unsubscribe is reported as false.
-test("subscribing without support, permission or a key is an error; unsubscribing nothing is false", async () => {
-  await assert.rejects(async () => run({ "$pushSubscribe": "BAAA" }), /this browser has no Web Push/);
-  assert.equal(await run({ "$pushUnsubscribe": json }), false, "no service worker");
+// Without support, a key or permission, or given no subscription, push is an
+// error; unsubscribing is a removal, so having nothing to unsubscribe is false.
+test("push without support, permission, a key or a subscription is an error; unsubscribing nothing is false", async () => {
+  await assert.rejects(async () => run({ "$pushSubscribe": "BAAA" }), /\$pushSubscribe: this browser has no Web Push/);
+  await assert.rejects(async () => run({ "$pushUnsubscribe": json }), /\$pushUnsubscribe: this browser has no Web Push/);
 
   supportPush("denied");
   await assert.rejects(async () => run({ "$pushSubscribe": "BAAA" }), /notification permission is denied/);
@@ -59,4 +57,7 @@ test("subscribing without support, permission or a key is an error; unsubscribin
 
   supportPush("granted", { endpoint: "https://push.example/other" });
   assert.equal(await run({ "$pushUnsubscribe": json }), false, "another endpoint");
+  for (const notOne of [null, "https://push.example/abc", { keys: {} }]) {
+    await assert.rejects(async () => run({ "$pushUnsubscribe": { $var: "sub" } }, { sub: notOne }), /\$pushUnsubscribe takes the subscription to drop/);
+  }
 });

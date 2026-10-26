@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, resolve } from "@jexs/core";
+import { Node, Context, NodeValue, isObject, resolve } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
 export class PushNode extends Node {
@@ -28,8 +28,9 @@ export class PushNode extends Node {
       ],
     },
     pushUnsubscribe: {
+      $ref: "#/$defs/_pushSubscription",
       output: "boolean",
-      markdownDescription: "Unsubscribes from Web Push. Pass the stored `PushSubscription` JSON object to verify the endpoint.\nReturns `true` on success, `false` if no matching subscription was found.",
+      markdownDescription: "Unsubscribes this browser from Web Push. Pass the stored `PushSubscription` JSON, so a subscription for another endpoint is left alone.\nReturns `true` once unsubscribed, `false` when this browser holds no such subscription. A browser without Web Push, or a value that is not a subscription, is an error.",
       examples: [
         "{ \"$pushUnsubscribe\": { \"$var\": \"session.pushSubscription\" } }",
       ],
@@ -55,14 +56,17 @@ export class PushNode extends Node {
   }
 
   pushUnsubscribe(def: Record<string, unknown>, context: Context): NodeValue {
-    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return false;
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+      throw new Error("$pushUnsubscribe: this browser has no Web Push (it needs a service worker and PushManager)");
+    }
     return resolve(def.$pushUnsubscribe, context, async stored => {
+      if (!isObject(stored) || typeof stored.endpoint !== "string") {
+        throw new Error("$pushUnsubscribe takes the subscription to drop, `{ endpoint, keys }` as `$pushSubscribe` returned it");
+      }
       const registration = await navigator.serviceWorker.ready;
       const existing = await registration.pushManager.getSubscription();
-      if (!existing) return false;
-      if (!stored || typeof stored !== "object") return false;
-      const storedEndpoint = (stored as Record<string, unknown>).endpoint;
-      if (storedEndpoint && existing.endpoint !== String(storedEndpoint)) return false;
+      // A removal, so a subscription that is already gone is reported, not an error.
+      if (!existing || existing.endpoint !== stored.endpoint) return false;
       return existing.unsubscribe();
     });
   }
