@@ -182,6 +182,27 @@ test("a handler may be a single expression, not only an array", async () => {
   assert.deepEqual(ctx.seen, { hello: "there" });
 });
 
+// A reconnect asks for what the connect step asked for, and one that fails to
+// open is followed by the next attempt rather than ending the reconnecting.
+test("a reconnect keeps the protocols and binary type, and a failed one is retried", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  await connect({ "$wsConnect": "/ws", protocols: ["v2"], binaryType: "arraybuffer", retry: 3 });
+
+  FakeSocket.last().drop();
+  t.mock.timers.tick(1000);
+  assert.equal(FakeSocket.live.length, 2);
+  assert.deepEqual(FakeSocket.last().protocols, ["v2"]);
+  assert.equal(FakeSocket.last().binaryType, "arraybuffer");
+
+  // The server is still down: this attempt closes before it opens.
+  FakeSocket.last().drop();
+  t.mock.timers.tick(2000);
+  assert.equal(FakeSocket.live.length, 3, "a failed reconnect schedules the next");
+  FakeSocket.last().accept();
+  await resolve({ "$wsSend": "hi" }, {});
+  assert.deepEqual(FakeSocket.last().sent, ["hi"]);
+});
+
 test("onClose: the code and reason reach the steps", async () => {
   const ctx: Record<string, unknown> = {};
   const pending = resolve(

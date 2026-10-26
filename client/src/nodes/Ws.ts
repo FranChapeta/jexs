@@ -18,6 +18,12 @@ interface Conn {
   /** The connect step's def and context, replayed on every reconnect. */
   def: Record<string, unknown>;
   context: Context;
+  /** What the connect step asked the socket for, which every reconnect asks again. */
+  protocols?: string | string[];
+  binaryType?: BinaryType;
+  /** Whether a socket has opened once: before that, failing to open is the
+   *  connect step's error; after it, the cue for the next attempt. */
+  hasOpened: boolean;
   closing: boolean;
   /** Attempts left, `Infinity` for the default backoff-forever behavior. */
   retries: number;
@@ -211,6 +217,9 @@ export class WsNode extends Node {
           socket: null,
           def,
           context,
+          protocols,
+          binaryType,
+          hasOpened: false,
           closing: false,
           retries: retryCount(retry),
           attempts: 0,
@@ -219,7 +228,7 @@ export class WsNode extends Node {
           queue: [],
         };
         this.connections.set(name, conn);
-        return openSocket(conn, protocols, binaryType);
+        return openSocket(conn);
       },
     );
   }
@@ -287,20 +296,28 @@ export class WsNode extends Node {
  * Awaiting the handshake is what lets a failed connect reach `$catch`: a step
  * that returned before the socket settled would be long gone by then.
  */
-function openSocket(conn: Conn, protocols?: string | string[], binaryType?: BinaryType): Promise<null> {
+function openSocket(conn: Conn): Promise<null> {
   // Lazy-init the visibility handler on first connect (idempotent, safe to call
   // repeatedly). Done here rather than at module top level so the module can be
   // imported in Node.js (e.g. by the schema generator) without touching `document`.
   initVisibility(conn.node);
-  const socket = protocols === undefined ? new WebSocket(conn.url) : new WebSocket(conn.url, protocols);
-  if (binaryType) socket.binaryType = binaryType;
+  const socket = conn.protocols === undefined ? new WebSocket(conn.url) : new WebSocket(conn.url, conn.protocols);
+  if (conn.binaryType) socket.binaryType = conn.binaryType;
   conn.socket = socket;
+
+  // After a close: try again while retries last, else forget the connection.
+  const retryOrForget = () => {
+    if (conn.closing) return;
+    if (conn.attempts < conn.retries) scheduleReconnect(conn);
+    else conn.node.connections.delete(conn.name);
+  };
 
   return new Promise<null>((settled, failed) => {
     let opened = false;
 
     socket.onopen = () => {
       opened = true;
+      conn.hasOpened = true;
       conn.attempts = 0;
       conn.delay = 1000;
       for (const frame of conn.queue.splice(0)) socket.send(frame);
@@ -320,19 +337,21 @@ function openSocket(conn: Conn, protocols?: string | string[], binaryType?: Bina
 
     socket.onclose = (e: CloseEvent) => {
       conn.socket = null;
-      // Before it ever opened, the close IS the failure: there is no separate
-      // error event worth listening for, since the spec fires close after error
-      // and the error event carries no detail by design.
+      // Before this socket opened, the close IS the failure: there is no
+      // separate error event worth listening for, since the spec fires close
+      // after error and the error event carries no detail by design. On a
+      // connection that has opened before it is a reconnect failing, and the
+      // next attempt follows; on the first it is the connect step's error.
       if (!opened) {
-        conn.node.connections.delete(conn.name);
+        if (conn.hasOpened) retryOrForget();
+        else conn.node.connections.delete(conn.name);
         failed(new Error(
           `WebSocket to ${conn.url} failed to open (code ${e.code}${e.reason ? `: ${e.reason}` : ""})`,
         ));
         return;
       }
       run(conn, "onClose", { code: e.code, reason: e.reason, clean: e.wasClean });
-      if (!conn.closing && conn.attempts < conn.retries) scheduleReconnect(conn);
-      else if (!conn.closing) conn.node.connections.delete(conn.name);
+      retryOrForget();
     };
   });
 }
