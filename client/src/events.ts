@@ -1,9 +1,5 @@
 import { childContext, isObject, runStepsDetached, type Context } from "@jexs/core";
 
-/** The shared render context for a browser page. Event handlers read it, each in
- *  a scope of its own, and write page state to it with `$bubble`. */
-export const pageContext: Context = {};
-
 interface EventDef {
   type: string;
   /** One step or an array of them. */
@@ -152,10 +148,10 @@ function targetPosition(e: Event, match: Element): Record<string, unknown> {
  * init, and after any DOM insertion (the DomNode ops that write markup), so
  * freshly rendered templates wire up the same way with no per-node plumbing.
  *
- * `context` is the context handlers' scopes derive from: the shared `pageContext`
- * by default; a caller that owns a scoped context (the step that inserted the
- * markup, a template loaded with params) passes its own so the inserted
- * content's handlers see it.
+ * `context` is the context handlers' scopes derive from: the app's own, which
+ * `boot()` makes and its `hydrate` passes, or a scope of it held by a caller
+ * (the step that inserted the markup, a template loaded with params), so the
+ * inserted content's handlers see it.
  *
  * Each firing runs in a child scope of its own holding `event`, `target` and
  * `value`, so a value from an earlier event never lingers, and two handlers
@@ -168,7 +164,7 @@ function targetPosition(e: Event, match: Element): Record<string, unknown> {
  * on a list serves every row, rows added later included), with its `index` and
  * pointer `side` beside it, and the handler runs only on a match.
  */
-export function hydrate(root: Element | Document = document, context: Context = pageContext): void {
+export function hydrate(root: Element | Document, context: Context): void {
   const elements = Array.from(root.querySelectorAll<HTMLElement>("[data-jexs-events]"));
   if ("hasAttribute" in root && root.hasAttribute("data-jexs-events")) elements.unshift(root as HTMLElement);
   for (const el of elements) {

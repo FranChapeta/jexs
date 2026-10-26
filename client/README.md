@@ -121,23 +121,31 @@ An element's `params` are variables for its handlers and those of the elements i
 
 When the row moves, `{ "$setAttr": [row, "data-jexs-params", { "index": 2 }] }` gives its handlers the new value.
 
-Booting builds the resolver, hydrates the page, and registers the service worker the server named. It also exposes `window.jexs = { context, hydrate, resolver }` — `context` for inspecting/seeding shared state, `hydrate` for (re)binding events after you inject content.
+Booting builds the app's resolver and context, hydrates the page, and registers the service worker the server named. The app is also `window.jexs = { resolver, context, hydrate }`: `context` for inspecting or seeding its state, `hydrate` for binding the handlers in content injected later.
 
 On a page served by a Jexs server with sessions, a POST, PUT, PATCH or DELETE to the page's own origin, by `$fetch` like the one above or by a form, carries the session's CSRF token on its own, read from the `csrf` cookie. Nothing in the template needs to send it.
 
 ## Usage from JS
 
-Importing `@jexs/client` starts nothing on its own. Boot the page once, with any nodes of your own; they are registered before the page hydrates, so a `mount` handler can use them:
+Importing `@jexs/client` starts nothing on its own. Boot the app with any nodes of your own; they are registered before the page hydrates, so a `mount` handler can use them:
 
 ```ts
-import { boot, hydrate } from "@jexs/client";
+import { boot } from "@jexs/client";
 
-const resolver = boot({ nodes: [new MyNode()] });
+const app = boot({ nodes: [new MyNode()] });  // { resolver, context, hydrate }
 
-hydrate(myElement);     // bind events in content you inject later
+app.hydrate(myElement);  // bind the handlers in content you inject later
 ```
 
 `jexs bundle` writes this entry for you, with the nodes of every browser node package the project has installed.
+
+A page can hold two apps, each with its own resolver and state. The page's app is `window.jexs` and takes a native host bridge if there is one; another is booted with `global: false`, and `root` keeps each to its part of the page:
+
+```ts
+boot({ nodes: [new WidgetNode()], root: document.querySelector("#widget")!, global: false });
+```
+
+`serviceWorker: false` skips registering the service worker the server named.
 
 Each firing of a handler runs in a scope of its own on top of the page's context, holding `event`, `target` (the element the handler is on, or with a `target` selector the matching element the event happened in, plus its `index` and pointer `side`), `value`, and the `params` of the nearest element around it that has them. A value from an earlier event never lingers into the next, and two handlers awaiting at once each keep their own. A handler reads page state as any step does; a write meant as page state, for later handlers to read, takes `$bubble`:
 

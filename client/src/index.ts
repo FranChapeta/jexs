@@ -1,13 +1,13 @@
 import {
   WorkerNode, ProxyNode, createResolver, childContext, stepFields,
-  coreNodes, Node, type Resolver, type StepFields,
+  coreNodes, Node, type Context, type Resolver, type StepFields,
 } from "@jexs/core";
 import { DomNode } from "./nodes/Dom.js";
 import { AudioNode } from "./nodes/Audio.js";
 import { StorageNode } from "./nodes/Storage.js";
 import { registerComputeLazy, registerDomLazy } from "./registerNodes.js";
 import { makeModuleWorker } from "./makeWorker.js";
-import { hydrate, pageContext } from "./events.js";
+import { hydrate } from "./events.js";
 import { addCsrfField } from "./csrf.js";
 import { serializable } from "./serializable.js";
 
@@ -62,7 +62,7 @@ export function clientNodes(): Node[] {
   ];
 }
 
-export { hydrate, pageContext };
+export { hydrate };
 // Every node class, for wiring a resolver by hand rather than through `boot()`,
 // which registers the eager three itself and loads the rest on first use. A
 // bundle drops the ones it does not import, so the page pays nothing for these.
@@ -72,28 +72,53 @@ export { PushNode } from "./nodes/Push.js";
 export { WebRTCNode } from "./nodes/WebRTC.js";
 export { ServiceWorkerNode } from "./nodes/ServiceWorker.js";
 
-let booted = false;
+/** A booted app: its resolver, the context its handlers share, and the
+ *  `hydrate` that binds the handlers in markup added to its part of the page. */
+export interface App {
+  resolver: Resolver;
+  context: Context;
+  hydrate: (root?: Element | Document) => void;
+}
+
+export interface BootOptions {
+  /** The app's own nodes, or a third-party package's, beside core's and the client's. */
+  nodes?: Node[];
+  /** The part of the page the app hydrates (default the whole document). */
+  root?: Element | Document;
+  /**
+   * Whether this is the page's app: it is `window.jexs`, and takes the native
+   * host bridge if there is one. A second app on the page sets `false`.
+   */
+  global?: boolean;
+  /** Whether to register the service worker the server named (default `true`). */
+  serviceWorker?: boolean;
+}
 
 /**
- * Start Jexs on this page: build its resolver with the core and client nodes and
- * any `nodes` given (an app's own, or a third-party package's), wire the lazy
- * node groups, the worker and any native host bridge, then hydrate the page and
- * register the service worker the server named. The nodes are registered before
- * hydrating, so a `load` handler can use them. Once per page; the entry
- * `jexs bundle` writes calls it with the project's browser node packages.
+ * Start a Jexs app on this page: build its resolver with the core and client
+ * nodes and any `nodes` given, wire the lazy node groups, the worker and any
+ * native host bridge, then hydrate its `root` and register the service worker
+ * the server named. The nodes are registered before hydrating, so a `mount`
+ * handler can use them. The entry `jexs bundle` writes calls it once, with the
+ * project's browser node packages; a page with two apps boots each, one of them
+ * with `global: false`.
  */
-export function boot({ nodes = [] }: { nodes?: Node[] } = {}): Resolver {
+export function boot({ nodes = [], root = document, global = true, serviceWorker = true }: BootOptions = {}): App {
   if (typeof window === "undefined") throw new Error("boot() runs in a browser window.");
-  if (booted) throw new Error("This page is already booted: boot() runs once, with every node the page needs.");
-  booted = true;
+  const page = window as unknown as Record<string, unknown>;
+  if (global && page.jexs !== undefined) {
+    throw new Error("This page already has a global app (window.jexs): boot a second one with `global: false`.");
+  }
 
-  // `pageContext` is the resolver's root scope: DOM event handlers run steps
-  // against it long after any resolve returned, so it has to be attached up
-  // front rather than by the first call. Every scope derived from it inherits.
-  const resolver = createResolver([...coreNodes(), ...clientNodes(), ...nodes], { context: pageContext });
-  // `window.jexs` is a small handle: `context` for inspecting/seeding shared state,
-  // `hydrate` for (re)binding events on server-injected content (see Server SSR).
-  (window as unknown as Record<string, unknown>).jexs = { context: pageContext, hydrate, resolver };
+  // The app's root scope: DOM event handlers run steps against it long after
+  // any resolve returned, so it is attached up front rather than by the first
+  // call. Every scope derived from it inherits.
+  const context: Context = {};
+  const resolver = createResolver([...coreNodes(), ...clientNodes(), ...nodes], { context });
+  const app: App = { resolver, context, hydrate: (at = root) => hydrate(at, context) };
+  // `window.jexs` is the page's app, for inspecting or seeding its state and for
+  // markup the server streams in later (a `$defer` part) to bind its handlers.
+  if (global) page.jexs = app;
 
   // Lazy node groups (loaded on first use). Compute groups are worker-safe; DOM
   // groups need the main thread. The resolver worker reuses registerComputeLazy
@@ -113,7 +138,7 @@ export function boot({ nodes = [] }: { nodes?: Node[] } = {}): Resolver {
   // JSON. First-wins registration means only the keys the renderer LACKS are
   // proxied; local nodes (dom, var, storage, …) stay local. Inert in a plain
   // browser with no host bridge.
-  const host = (window as unknown as { jexsHost?: JexsHost }).jexsHost;
+  const host = global ? (window as unknown as { jexsHost?: JexsHost }).jexsHost : undefined;
   if (host?.keys && host.invoke) {
     const invoke = host.invoke.bind(host);
     const toHost = new ProxyNode(host.keys, (call) => invoke(call), host.steps);
@@ -145,19 +170,19 @@ export function boot({ nodes = [] }: { nodes?: Node[] } = {}): Resolver {
       });
     }
 
-    // Run work pushed from the host against the SAME pageContext DOM event
-    // handlers use, so host-driven state is visible to the page and vice versa.
-    // `steps` gets a child scope for its params, which also gives `$as` + `$bubble`
-    // write-through to pageContext, matching FileNode's params semantics.
+    // Run work pushed from the host against the SAME context DOM event handlers
+    // use, so host-driven state is visible to the page and vice versa. `steps`
+    // gets a child scope for its params, which also gives `$as` + `$bubble`
+    // write-through to the app's context, matching FileNode's params semantics.
     if (host.onCall && host.reply) {
       const reply = host.reply.bind(host);
       host.onCall((message) => {
         Promise.resolve()
           .then(() => {
-            if (!("steps" in message)) return resolver(message.call, pageContext);
+            if (!("steps" in message)) return resolver(message.call, context);
             const scope = message.params
-              ? childContext(pageContext, message.params)
-              : pageContext;
+              ? childContext(context, message.params)
+              : context;
             return resolver(message.steps, scope);
           })
           .then(
@@ -169,14 +194,14 @@ export function boot({ nodes = [] }: { nodes?: Node[] } = {}): Resolver {
   }
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => hydrate());
+    document.addEventListener("DOMContentLoaded", () => app.hydrate());
   } else {
-    hydrate();
+    app.hydrate();
   }
 
   // The server names its service worker on this script's tag (`data-sw`).
   // Registered after load so its install does not compete with the page.
-  const swScript = document.querySelector<HTMLScriptElement>("script[data-sw]")?.dataset.sw;
+  const swScript = serviceWorker ? document.querySelector<HTMLScriptElement>("script[data-sw]")?.dataset.sw : undefined;
   if (swScript && "serviceWorker" in navigator) {
     const register = () => {
       navigator.serviceWorker.register(swScript, { scope: "/", type: "module" })
@@ -186,5 +211,5 @@ export function boot({ nodes = [] }: { nodes?: Node[] } = {}): Resolver {
     else window.addEventListener("load", register, { once: true });
   }
 
-  return resolver;
+  return app;
 }

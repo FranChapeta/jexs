@@ -52,7 +52,7 @@ export async function bundleClient(
 
   // Each package's nodes module, as discovery loads it: its default export is a
   // factory or an array of nodes. They go to boot(), which registers them before
-  // hydrating, so a `load` handler can use them.
+  // hydrating, so a `mount` handler can use them.
   const imports = [`import { boot } from "@jexs/client";`];
   const lists: string[] = [];
   pkgs.forEach((p, i) => {
