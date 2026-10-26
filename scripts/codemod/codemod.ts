@@ -288,11 +288,12 @@ export function createCodemod(schema: CombinedSchema, hooks: CodemodHooks): Code
     let s: Schema = props?.[key];
     const isStub = (x: Schema) => !x || (typeof x === "object" && Object.keys(x).every(k => k === "description" || k === "markdownDescription"));
     if (isStub(s)) {
-      for (const branch of (m.allOf as Array<Record<string, unknown>> | undefined) ?? []) {
-        const then = branch.then as Record<string, unknown> | undefined;
-        const t = (then?.properties as Record<string, Schema> | undefined)?.[key];
-        if (t && !isStub(t)) { s = t; break; }
-      }
+      // Each operation can give the sibling a shape of its own (`options` holds
+      // `where` on a select and `data` on an insert), so every one is walked.
+      const shapes = ((m.allOf as Array<Record<string, unknown>> | undefined) ?? [])
+        .map(branch => ((branch.then as Record<string, unknown> | undefined)?.properties as Record<string, Schema> | undefined)?.[key])
+        .filter(t => !isStub(t));
+      if (shapes.length > 0) s = shapes.length === 1 ? shapes[0] : { anyOf: shapes };
     }
     if (isStub(s) && typeof m.$ref === "string") s = ((deref(m.$ref) as Record<string, unknown>)?.properties as Record<string, Schema> | undefined)?.[key] ?? s;
     if (isStub(s)) s = (m.additionalProperties as Schema) ?? ANY;

@@ -26,6 +26,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const C = JSON.parse(readFileSync(path.join(HERE, "pre-dollar.combined.schema.json"), "utf8")) as CombinedSchema;
 const HANDLERS = new Set(Object.keys(C.byKey));
 const GLOBALS = new Set(["as", "then", "catch", "return", "bubble"]);
+const ROUTE_NODE_KEYS = new Set(Object.keys((C.$defs._routeNode as { properties?: object }).properties ?? {}));
 
 const m = createCodemod(C, { expr: walkExpr, ref: walkRoute });
 
@@ -41,6 +42,9 @@ const renameKey = (p: Prop) => m.add({ start: p.keyStart, end: p.keyEnd, text: p
  */
 function walkRoute(ref: string, v: Val): boolean {
   if (ref === "#/$defs/_routeNode" && v.k === "obj") {
+    // A tree read from elsewhere (`{ "var": "$routes" }`) stands in the node's place.
+    const first = v.props[0]?.key;
+    if (first !== undefined && HANDLERS.has(first) && !ROUTE_NODE_KEYS.has(first)) { m.walk(ANY, v); return true; }
     const guard = v.props.find(p => p.key === "if");
     if (guard) m.review(guard.keyStart, "route node has an `if` guard; rewrite it as { \"$if\": <cond>, \"then\": <subtree by reference> }");
   }
@@ -181,7 +185,10 @@ function walkExpr(v: Val): void {
       }
       if (op === "var" || op.startsWith("tree-")) stripPathDollar(p.value);
       if (op === "setVars") stripMapKeyDollars(p.value);
+      // Values stored raw are mostly steps kept for `$exec`, so each is walked
+      // as an expression: data holding no op passes through as it is.
       if (!rawValues) m.walk(C.vp[op] ?? m.siblingSchema(op, op), p.value);
+      else if (p.value.k === "obj") for (const stored of p.value.props) m.walk(ANY, stored.value);
       continue;
     }
     const renamed = SIBLING_RENAMES[op]?.[key];

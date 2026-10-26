@@ -360,6 +360,26 @@ function dataRoute(v: Val, m: Codemod): void {
   else if (isRunHandler(v)) routeHandler(v, [], m);
 }
 
+/**
+ * v1 kept `$query`'s clauses in `options`; they are the step's own siblings now.
+ * Only the object's braces go, so edits inside its entries still apply. Returns
+ * the clauses it moved.
+ */
+function hoistOptions(step: Step, m: Codemod): Prop[] {
+  const options = step.obj.props.find(p => p.key === "options");
+  const v = options?.value;
+  if (!options) return [];
+  if (v?.k !== "obj") {
+    m.review(options.keyStart, "`options` is gone: its clauses (`where`, `data`, `first`, ...) are siblings of the step");
+    return [];
+  }
+  if (v.props.length === 0) { removeSibling(step, "options", m); return []; }
+  const opening = (p: Prop) => p.keyStart - (p.keyQuoted ? 1 : 0);
+  m.add({ start: opening(options), end: opening(v.props[0]), text: "" });
+  m.add({ start: v.props[v.props.length - 1].value.end, end: v.end, text: "" });
+  return v.props;
+}
+
 /** The `$query` operations that read and write rows, each an op of its own. */
 const ROW_OPS = ["select", "insert", "upsert", "update", "delete", "count"];
 
@@ -666,8 +686,69 @@ function arrayDoAsReturn({ op, obj }: Step, m: Codemod): void {
   m.add({ start: v.end, end: v.end, text: " }]" });
 }
 
+/** A string v1 read as a regular expression: `/source/flags`. */
+const V1_REGEX = /^\/(.+)\/([a-z]*)$/;
+
+/**
+ * A literal `/source/flags` pattern in slot 1 as v2 writes it: the bare source,
+ * with `regex: true` and the flags beside it, or plain text when the source has
+ * no metacharacter and there are no flags. `g` is gone from the flags; what it
+ * meant is returned for the op to place. Returns null when the slot is not such
+ * a literal, and leaves flags v2 has no use for to review.
+ */
+function v1Pattern({ op, obj }: Step, m: Codemod): { global: boolean; siblings: string[] } | null {
+  const prop = obj.props.find(p => p.key === "$" + op);
+  const pattern = prop?.value.k === "arr" ? prop.value.items[1] : undefined;
+  const parsed = pattern?.k === "str" ? V1_REGEX.exec(pattern.value) : null;
+  if (!prop || pattern?.k !== "str" || !parsed || obj.props.some(p => p.key === "regex" || p.key === "flags")) return null;
+  const [, source, flagsIn] = parsed;
+  const flags = flagsIn.replace("g", "");
+  if (/[^imsuv]/.test(flags)) {
+    m.review(pattern.start, `\`${pattern.value}\` is literal text now: write the bare pattern with \`regex: true\`; v2 takes the flags \`i\`, \`m\`, \`s\`, \`u\` and \`v\``);
+    return null;
+  }
+  const key = (name: string) => (prop.keyQuoted ? `"${name}"` : name);
+  replaceString(pattern, source, m);
+  const isRegex = op === "match" || flags !== "" || /[\\^$.*+?()[\]{}|]/.test(source);
+  const siblings = [
+    ...(isRegex && op !== "match" ? [`${key("regex")}: true`] : []),
+    ...(flags ? [`${key("flags")}: "${flags}"`] : []),
+  ];
+  return { global: flagsIn.includes("g"), siblings };
+}
+
+/** Siblings written after a step's value. */
+function addSiblings({ op, obj }: Step, siblings: string[], m: Codemod): void {
+  const prop = obj.props.find(p => p.key === "$" + op);
+  if (prop && siblings.length > 0) m.add({ start: prop.value.end, end: prop.value.end, text: ", " + siblings.join(", ") });
+}
+
 /** The v2 rewrites, by the op they apply to. */
 const RULES: Record<string, Rule> = {
+  // A `/source/flags` string is literal text now; a regular expression is opted
+  // into with `regex: true`. v1 replaced only the first match of one without `g`.
+  replace: (step, m) => {
+    const p = v1Pattern(step, m);
+    if (!p) return;
+    const all = step.obj.props.some(q => q.key === "all");
+    const key = step.obj.props.find(q => q.key === "$replace")!.keyQuoted ? '"all"' : "all";
+    addSiblings(step, [...p.siblings, ...(p.global || all ? [] : [`${key}: false`])], m);
+  },
+  split: (step, m) => { const p = v1Pattern(step, m); if (p) addSiblings(step, p.siblings, m); },
+  contains: (step, m) => { const p = v1Pattern(step, m); if (p) addSiblings(step, p.siblings, m); },
+  // `$match` returns a match object now; `g` returned every match's text.
+  match: (step, m) => {
+    const prop = step.obj.props.find(q => q.key === "$match")!;
+    if (step.obj.props.some(q => q.key === "all" || q.key === "capture")) return;
+    const p = v1Pattern(step, m);
+    const key = (name: string) => (prop.keyQuoted ? `"${name}"` : name);
+    if (p?.global) {
+      addSiblings(step, [...p.siblings, `${key("all")}: true`, `${key("capture")}: 0`], m);
+      return;
+    }
+    if (p) addSiblings(step, p.siblings, m);
+    m.review(prop.keyStart, "`$match` returns `{ match, index, captures, groups }` or null now, not the match array: `\"capture\": n` gives group n's text (`0` the whole match)");
+  },
   // The per-item template is a `do` sibling, as on `map` and `foreach`, and the
   // reducer's start an `initial` one.
   filter: (step, m) => { tupleToSiblings(step, ["do"], m); arrayDoAsReturn(step, m); },
@@ -914,12 +995,14 @@ const RULES: Record<string, Rule> = {
   // valued by what `schema` gave, `$tableAlter`, `$tableDrop`); and the
   // connection is `connection`.
   query: (step, m) => {
-    const where = step.obj.props.find(p => p.key === "where");
+    const clauses = [...step.obj.props, ...hoistOptions(step, m)];
+    const where = clauses.find(p => p.key === "where");
     if (where) whereOperators(where.value, m);
     renameSibling(step, "database", "connection", m);
-    renameSibling(step, "group_concat", "groupConcat", m);
+    const concat = clauses.find(p => p.key === "group_concat");
+    if (concat) m.add({ start: concat.keyStart, end: concat.keyEnd, text: "groupConcat" });
     const value = opValue(step);
-    if (value === "update" && !step.obj.props.some(p => p.key === "where")) {
+    if (value === "update" && !where) {
       const prop = step.obj.props.find(p => p.key === "$query")!;
       m.review(prop.keyStart, "`$queryUpdate` needs `where`: without one this updated every row, which is `where: {}` now");
     }
@@ -1111,10 +1194,12 @@ function walkExpr(v: Val): void {
   if (asKey && v.props.some(p => p.key === "$then")) {
     m.review(asKey.keyStart, "`$as` is refused beside `$then`, whose result arrives later: read it as `result` inside `$then`, or drop the `$as`");
   }
-  // `$setVars` with `data: true` stores its values as written, steps included.
+  // `$setVars` with `data: true` stores its values as written, mostly steps kept
+  // for `$runVar` or a route tree, so each is walked as an expression: data
+  // holding no op passes through as it is.
   const rawValues = op === "setVars" && v.props.some(p => p.key === "data" && p.value.k === "lit" && p.value.value === true);
   const stored = v.props.find(p => p.key === "$setVars")?.value;
-  if (rawValues && stored?.k === "obj") for (const p of stored.props) dataRoute(p.value, m);
+  if (rawValues && stored?.k === "obj") for (const p of stored.props) m.walk(ANY, p.value);
   for (const p of v.props) {
     const owned = p.key.startsWith("$") ? p.key.slice(1) : null;
     if (owned !== null && GLOBALS.has(owned)) m.walk(owned === "then" || owned === "catch" ? STEPS : ANY, p.value);
