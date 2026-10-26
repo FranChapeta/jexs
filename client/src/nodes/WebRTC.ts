@@ -447,7 +447,7 @@ function runHandler(mesh: Mesh, key: HandlerKey, extra: Record<string, unknown>)
 
 function fireHandler(mesh: Mesh, key: HandlerKey, extra: Record<string, unknown>): void {
   const running = runHandler(mesh, key, extra);
-  if (running) running.catch((e: unknown) => console.error(`[WebRTC] ${key} error:`, e));
+  if (running) running.catch((e: unknown) => console.error(`[Jexs WebRTC] ${key} error:`, e));
 }
 
 /** Hand one payload to the template to deliver. `peer` addresses it, so an

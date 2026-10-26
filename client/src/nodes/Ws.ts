@@ -90,7 +90,7 @@ function run(conn: Conn, key: string, extra: Record<string, unknown>): void {
   // A child scope per event, not a write onto the captured context: the handler
   // outlives the step, so binding into the parent would leak `message` into
   // everything else sharing that context and leave the last one behind for good.
-  void runStepsDetached(body, childContext(conn.context, extra), { step: conn.def, logAs: `[WS] ${key} error:` });
+  void runStepsDetached(body, childContext(conn.context, extra), { step: conn.def, logAs: `[Jexs WS] ${key} error:` });
 }
 
 export class WsNode extends Node {

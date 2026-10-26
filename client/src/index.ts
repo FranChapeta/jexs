@@ -11,28 +11,29 @@ import { hydrate } from "./events.js";
 import { addCsrfField } from "./csrf.js";
 import { serializable } from "./serializable.js";
 
-/**
- * The bridge a native host (Electron main) injects. Every member is optional so
- * an older host, or a plain browser, simply gets fewer capabilities rather than
- * an error.
- */
 /** A single node call to resolve here — one proxied op. */
-interface HostCall {
+export interface HostCall {
   id: number;
   call: unknown;
 }
 
 /** A step array to run here, with `params` scoped into it. */
-interface HostSteps {
+export interface HostSteps {
   id: number;
   steps: unknown[];
   params?: Record<string, unknown>;
 }
 
 /** Exactly one of the two, discriminated by the presence of `steps`. */
-type HostMessage = HostCall | HostSteps;
+export type HostMessage = HostCall | HostSteps;
 
-interface JexsHost {
+/**
+ * The bridge a native host (Electron main) injects as `window.jexsHost`, which
+ * the page's app (`boot()` with `global`) takes. Every member is optional so an
+ * older host, or a plain browser, simply gets fewer capabilities rather than an
+ * error.
+ */
+export interface JexsHost {
   /** Handler keys the host owns, read synchronously before any step runs. */
   keys?: string[];
   /** The fields of the host's ops that hold steps, forwarded unresolved. */

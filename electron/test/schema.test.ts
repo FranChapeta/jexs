@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import Ajv2020 from "ajv/dist/2020.js";
 import { coreNodes, stepFields } from "@jexs/core";
 import { buildPackageSchema, mergePackageSchemas } from "@jexs/core/schema";
-import { clientNodes } from "@jexs/client";
+import { clientNodes, PushNode, ServiceWorkerNode, WebRTCNode, WsNode } from "@jexs/client";
 import { serverNodes } from "@jexs/server";
 import {
   AppNode, DialogNode, MenuNode, NotificationNode, ShellNode, ShortcutNode, TrayNode, WindowNode,
@@ -18,11 +18,12 @@ const electronNodeClasses = [
 ];
 
 // An Electron app is all of these: the main process runs the server nodes (`file`,
-// `query`) and `windowRun` runs its steps in the renderer, where the DOM ops
-// live, so the examples name ops from both.
+// `querySelect`) and `windowRun` runs its steps in the renderer, where the DOM ops
+// live, so the examples name ops from both. The client's schema covers its lazy
+// nodes too, which `clientNodes()` leaves out because the page loads them on use.
 const combined = mergePackageSchemas([
   buildPackageSchema(coreNodes(), "@jexs/core"),
-  buildPackageSchema(clientNodes(), "@jexs/client"),
+  buildPackageSchema([...clientNodes(), new WsNode(), new PushNode(), new WebRTCNode(), new ServiceWorkerNode()], "@jexs/client"),
   buildPackageSchema(serverNodes(), "@jexs/server"),
   buildPackageSchema(electronNodeClasses.map((C) => new C()), "@jexs/electron"),
 ]);

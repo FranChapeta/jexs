@@ -1,4 +1,5 @@
 import type { Resolver } from "@jexs/core";
+import { makeModuleWorker } from "./makeWorker.js";
 
 /**
  * Rethrow a failed optional-package import with something the author can act on.
@@ -58,18 +59,15 @@ export function registerComputeLazy(resolver: Resolver): void {
      "collisionOn", "collisionOff",
      "jointAdd", "jointRemove",
      "parseGLB", "parseGLTF", "meshRegister"],
-    (r) => Promise.all([
-      import("@jexs/physics").catch(
-        missingPackage("@jexs/physics", "entity, vector, physics, collision, joint and mesh ops"),
-      ),
-      import("./physicsClient.js"),
-    ]).then(([{ EntityNode, VectorNode, PhysicsNode, CollisionNode, JointNode, MeshNode }, { makePhysicsWorker }]) => {
+    (r) => import("@jexs/physics").catch(
+      missingPackage("@jexs/physics", "entity, vector, physics, collision, joint and mesh ops"),
+    ).then(({ EntityNode, VectorNode, PhysicsNode, CollisionNode, JointNode, MeshNode }) => {
       r.registerNode(new EntityNode());
       r.registerNode(new VectorNode());
       // Off-thread physics when shared:true: the node gets the env worker
       // constructor. The worker bundle (./physicsWorker) is only FETCHED when the
       // first shared world registers — the URL here is resolved, not loaded.
-      r.registerNode(new PhysicsNode(makePhysicsWorker(new URL("./physicsWorker.js", import.meta.url))));
+      r.registerNode(new PhysicsNode(makeModuleWorker(new URL("./physicsWorker.js", import.meta.url))));
       r.registerNode(new CollisionNode());
       r.registerNode(new JointNode());
       r.registerNode(new MeshNode());
@@ -107,7 +105,7 @@ export function registerDomLazy(resolver: Resolver): void {
      "glRegisterMesh", "glAtlas", "glFrame", "glTilemap", "glTilemapSet",
      "glTrail", "glTrailRemove", "glRaycast", "glParticle"],
     (r) => import("@jexs/gl")
-      .catch(missingPackage("@jexs/gl", "gl-* ops"))
+      .catch(missingPackage("@jexs/gl", "gl ops"))
       .then(({ GlNode }) => {
         r.registerNode(new GlNode());
       }),

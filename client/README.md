@@ -2,7 +2,7 @@
 
 Browser runtime for **Jexs** — DOM rendering, audio, WebSocket, web-push, WebRTC, and a service-worker entrypoint.
 
-The package ships both an ESM library (for bundling) and a pre-built browser bundle that [@jexs/server](https://github.com/FranChapeta/jexs/tree/master/server) can serve automatically.
+The package is an ESM library. No prebuilt bundle ships: `jexs bundle`, from [@jexs/server](https://github.com/FranChapeta/jexs/tree/master/server), builds a project's bundle from it and the project's browser node packages, into `dist/browser`, which a `client` listener serves.
 
 > Part of [Jexs](https://github.com/FranChapeta/jexs).
 
@@ -12,7 +12,7 @@ The package ships both an ESM library (for bundling) and a pre-built browser bun
 npm install @jexs/client @jexs/core
 ```
 
-`@jexs/physics` and `@jexs/gl` are optional peer dependencies — lazy-loaded only when an entity-, physics-, or gl-prefixed key appears in the JSON.
+`@jexs/physics` and `@jexs/gl` are optional peer dependencies, loaded only when a template first uses one of their ops.
 
 ## What's inside
 
@@ -22,17 +22,19 @@ npm install @jexs/client @jexs/core
 |---|---|---|
 | `DomNode` | `getProp`, `setProp`, `addClass`, `toggleClass`, `setAttr`, `querySelector`, `insertHtml`, `moveElement`, `removeElement`, ... | Read and mutate the DOM |
 | `AudioNode` | `audioLoad`, `audioPlay`, `audioStop`, `audioVolume`, `audioMaster`, ... | Web Audio playback |
-| `StorageNode` | `storageGet`, `storageSet`, `storageDelete`, `storageHas`, `storage` | `localStorage` / `sessionStorage`, named as `cache-*` names the server's cache |
+| `StorageNode` | `storageGet`, `storageSet`, `storageDelete`, `storageHas`, `storage` | `localStorage` / `sessionStorage`, named as `cacheGet` and the rest name the server's cache |
 
 **Lazy-loaded nodes** (only fetched when first used):
 
-- `ws-*` — WebSocket client
-- `push-*` — web-push subscription
-- `rtc-*` — WebRTC peer connection
-- `gl-*` — pulls in `@jexs/gl`
-- `entity-*`, `physics-*`, `v-*`, `collision-*`, `joint-*`, `parseGLB`, ... — pulls in `@jexs/physics`
+| Node | Keys | Purpose |
+|---|---|---|
+| `WsNode` | `wsConnect`, `wsSend`, `wsClose`, `wsStatus` | WebSocket client, reconnecting on its own |
+| `PushNode` | `pushSubscribe`, `pushUnsubscribe` | Web Push subscription |
+| `WebRTCNode` | `rtc`, `rtcConnect`, `rtcSignal`, `rtcSend`, `rtcBroadcast`, `rtcClose`, `rtcStatus` | WebRTC peers, in named meshes |
+| from `@jexs/gl` | `glInit`, `glCamera`, `glTexture`, ... | WebGL rendering |
+| from `@jexs/physics` | `entityAdd`, `physicsInit`, `vectorAdd`, `collisionOn`, `jointAdd`, `parseGLB`, ... | Entities, physics, collision and vector math |
 
-`sw-*` (`ServiceWorkerNode`) is not in this set: it runs in the service worker, which has its own resolver (see below).
+`ServiceWorkerNode` (`swNotify`, `swOpen`, `swPost`, ...) is not in this set: it runs in the service worker, which has its own resolver (see below).
 
 ## Service worker
 

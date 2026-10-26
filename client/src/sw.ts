@@ -144,7 +144,7 @@ function readConfig(input: unknown): Required<Omit<ServiceWorkerConfig, "routes"
 }
 
 function fail(msg: string): never {
-  throw new Error(`[jexs sw] ${msg}`);
+  throw new Error(`[Jexs sw] ${msg}`);
 }
 
 function isRoute(v: unknown): v is Route {
@@ -194,7 +194,7 @@ async function settle(type: string, fn: () => unknown): Promise<void> {
   try {
     await fn();
   } catch (err) {
-    console.error(`[jexs sw] "${type}" handler failed:`, err);
+    console.error(`[Jexs sw] "${type}" handler failed:`, err);
     throw err;
   }
 }

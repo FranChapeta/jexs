@@ -4,9 +4,9 @@
  *
  * `structuredClone` is the exact oracle: it is the same algorithm the channel
  * applies, so whatever survives it will cross. A handful of DOM ops return live
- * elements — `querySelector`, `querySelectorAll`, `closest` all declare
- * `output: "object"` — and replying with one unsanitized would reject the whole
- * call with an opaque error.
+ * elements (`querySelector`, `querySelectorAll`, `closest`, and every op that
+ * acts on an element and hands it back), and replying with one unsanitized would
+ * reject the whole call with an opaque error.
  *
  * Preferred to a deny-list of those keys: a list goes stale as new ops land,
  * while this covers ops nobody has written yet. Recursing one level keeps the
