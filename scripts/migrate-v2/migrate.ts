@@ -288,14 +288,22 @@ function wrapInReturn(v: Val, quoted: boolean, m: Codemod): void {
  * A `$listen` request ends with what its steps yield, so a response object no
  * longer ends them early: one before the last step, written there or as an `$if`
  * or `$switch` branch, is wrapped in `$return`. A `$routes` step before the last
- * ended them whenever a route matched, so it is left for review.
+ * ended them whenever a route matched, so it is left for review. A step is an
+ * object now: a last step written as a plain value (`"Hello"`) is `$return`ed,
+ * and one before it, which did nothing, is left for review.
  */
 function listenSteps({ obj }: Step, m: Codemod): void {
   const steps = obj.props.find(p => p.key === "do");
   if (steps?.value.k !== "arr") return;
   const quoted = steps.keyQuoted;
   const wrap = (v: Val) => { if (v.k === "obj" && !isStep(v)) wrapInReturn(v, quoted, m); };
-  for (const item of steps.value.items.slice(0, -1)) {
+  const { items } = steps.value;
+  items.forEach((item, i) => {
+    if (item.k !== "str" && item.k !== "lit") return;
+    if (i === items.length - 1) wrapInReturn(item, quoted, m);
+    else m.review(item.start, "A step is an object now, and this plain value before the last step did nothing: remove it");
+  });
+  for (const item of items.slice(0, -1)) {
     if (item.k !== "obj") continue;
     if (!isStep(item)) { wrap(item); continue; }
     const op = item.props.find(p => p.key.startsWith("$"))?.key;
@@ -464,6 +472,7 @@ function flagToOp(step: Step, flags: string[], m: Codemod): void {
   }
   renameOp(step, op, m);
   removeSibling(step, flag.key, m);
+  if (op === "fileStat") m.review(flag.keyStart, "`$fileStat` throws for a path that is not there, where `stat` gave null: ask `$fileExists` first if it may be missing");
 }
 
 /**
@@ -686,6 +695,66 @@ function arrayDoAsReturn({ op, obj }: Step, m: Codemod): void {
   m.add({ start: v.end, end: v.end, text: " }]" });
 }
 
+/** The iterators that bound v1's `loop`, by their v1 names. */
+const LOOP_OPS = new Set(["map", "filter", "find", "reduce", "foreach", "mapValues"]);
+
+/** `loop` reads an iterator rewrote, which the `var` rule then leaves alone. */
+const loopRetargeted = new WeakSet<Val>();
+
+/**
+ * v1's iterators bound `loop` (`item`, `index`, `key`, `first`, `last`,
+ * `length`) beside the item; v2 binds the item and index under the names the
+ * step gives them. A read of `loop.item`, `loop.index` or `loop.key` in the
+ * iterator's own template reads that name now. A nested iterator binds its own
+ * `loop`, so the walk stops there; `first`, `last` and `length` are left to the
+ * `var` rule's review.
+ */
+function loopReads({ op, obj }: Step, m: Codemod): void {
+  const named = (key: string, fallback: string) => {
+    const v = obj.props.find(p => p.key === key)?.value;
+    return v?.k === "str" ? v.value : fallback;
+  };
+  const index = op === "foreach" ? named("key", named("index", "index")) : named("index", "index");
+  const to: Record<string, string> = { item: named("item", "item"), index, key: op === "mapValues" ? "key" : index };
+  const value = obj.props.find(p => p.key === "$" + op)?.value;
+  const template = obj.props.find(p => p.key === "do")?.value ?? (value?.k === "arr" ? value.items[1] : undefined);
+  const walk = (x: Val | undefined): void => {
+    if (x?.k === "arr") x.items.forEach(walk);
+    if (x?.k !== "obj") return;
+    if (x.props.some(p => p.key.startsWith("$") && LOOP_OPS.has(p.key.slice(1)))) return;
+    for (const p of x.props) {
+      const read = p.key === "$var" && p.value.k === "str" ? /^loop\.(item|index|key)(?=\.|$)(.*)$/.exec(p.value.value) : null;
+      if (read) { replaceString(p.value as Extract<Val, { k: "str" }>, to[read[1]] + read[2], m); loopRetargeted.add(p.value); }
+      else walk(p.value);
+    }
+  };
+  walk(template);
+}
+
+/** `$match` steps a `$first` or `$index` rewrote into a `capture`, which the `match` rule then leaves alone. */
+const captured = new WeakSet<Val>();
+
+/**
+ * `{ "$first": <match> }` and `{ "$index": [<match>, n] }` picked from the
+ * match array v1's `$match` returned without `g`: the whole match, or group n.
+ * That is `capture` now, so the wrapper goes and the `$match` takes its place.
+ * A `g` match returned every match's text, which `$first` still picks from, so
+ * it is left to the `match` rule.
+ */
+function pickCapture({ op, obj }: Step, inner: Val | undefined, group: number, m: Codemod): void {
+  const prop = obj.props.find(p => p.key === "$" + op);
+  if (!prop || inner?.k !== "obj" || inner.props.some(p => p.key === "all" || p.key === "capture")) return;
+  const match = inner.props.find(p => p.key === "$match");
+  const pattern = match?.value.k === "arr" ? match.value.items[1] : undefined;
+  if (!match || (pattern?.k === "str" && /^\/.+\/[a-z]*g[a-z]*$/.test(pattern.value))) return;
+  const p = v1Pattern({ op: "match", obj: inner }, m);
+  const key = (name: string) => (match.keyQuoted ? `"${name}"` : name);
+  const opening = (x: Prop) => x.keyStart - (x.keyQuoted ? 1 : 0);
+  m.add({ start: opening(prop), end: opening(inner.props[0]), text: "" });
+  m.add({ start: inner.props[inner.props.length - 1].value.end, end: prop.value.end, text: [...(p?.siblings ?? []), `${key("capture")}: ${group}`].map(s => ", " + s).join("") });
+  captured.add(inner);
+}
+
 /** A string v1 read as a regular expression: `/source/flags`. */
 const V1_REGEX = /^\/(.+)\/([a-z]*)$/;
 
@@ -739,7 +808,7 @@ const RULES: Record<string, Rule> = {
   // `$match` returns a match object now; `g` returned every match's text.
   match: (step, m) => {
     const prop = step.obj.props.find(q => q.key === "$match")!;
-    if (step.obj.props.some(q => q.key === "all" || q.key === "capture")) return;
+    if (captured.has(step.obj) || step.obj.props.some(q => q.key === "all" || q.key === "capture")) return;
     const p = v1Pattern(step, m);
     const key = (name: string) => (prop.keyQuoted ? `"${name}"` : name);
     if (p?.global) {
@@ -751,13 +820,20 @@ const RULES: Record<string, Rule> = {
   },
   // The per-item template is a `do` sibling, as on `map` and `foreach`, and the
   // reducer's start an `initial` one.
-  filter: (step, m) => { tupleToSiblings(step, ["do"], m); arrayDoAsReturn(step, m); },
-  find: (step, m) => { tupleToSiblings(step, ["do"], m); arrayDoAsReturn(step, m); },
-  reduce: (step, m) => { tupleToSiblings(step, ["do", "initial"], m); arrayDoAsReturn(step, m); },
-  map: arrayDoAsReturn,
-  mapValues: arrayDoAsReturn,
+  filter: (step, m) => { loopReads(step, m); tupleToSiblings(step, ["do"], m); arrayDoAsReturn(step, m); },
+  find: (step, m) => { loopReads(step, m); tupleToSiblings(step, ["do"], m); arrayDoAsReturn(step, m); },
+  reduce: (step, m) => { loopReads(step, m); tupleToSiblings(step, ["do", "initial"], m); arrayDoAsReturn(step, m); },
+  map: (step, m) => { loopReads(step, m); arrayDoAsReturn(step, m); },
+  mapValues: (step, m) => { loopReads(step, m); arrayDoAsReturn(step, m); },
   // The index variable is named by `index`, as on the array ops.
-  foreach: (step, m) => renameSibling(step, "key", "index", m),
+  foreach: (step, m) => { loopReads(step, m); renameSibling(step, "key", "index", m); },
+  // Picking from a match array is a `capture` of the match now.
+  first: (step, m) => pickCapture(step, step.obj.props.find(p => p.key === "$first")?.value, 0, m),
+  index: (step, m) => {
+    const v = step.obj.props.find(p => p.key === "$index")?.value;
+    const n = v?.k === "arr" && v.items.length === 2 && v.items[1].k === "lit" ? v.items[1].value : undefined;
+    if (typeof n === "number" && Number.isInteger(n) && n >= 0) pickCapture(step, v!.k === "arr" ? v!.items[0] : undefined, n, m);
+  },
   // `then` is required: a branch on a falsy condition alone negates it.
   if: (step, m) => {
     const { obj } = step;
@@ -867,10 +943,17 @@ const RULES: Record<string, Rule> = {
       m.review(prop.keyStart, "`$fetch`'s `throw` is gone: a failure throws, and `$catch` on the step gets the failing `response`");
       return;
     }
+    // v1 gave a request that never completed `null`, or with `full` a response
+    // with `status: 0`, which a catch gets no `response` for: it stands one in.
     const full = step.obj.props.find(p => p.key === "full");
-    const read = full?.value.k === "lit" && full.value.value === true ? "response" : "response.body";
     const q = prop.keyQuoted ? '"' : "";
-    m.add({ start: prop.keyStart, end: prop.value.end, text: `$catch${q}: [{ ${q}$var${q}: "${read}" }]` });
+    const read = (path: string) => `{ ${q}$var${q}: "${path}" }`;
+    const url = step.obj.props.find(p => p.key === "$fetch")?.value;
+    const failed = `{ ${q}status${q}: 0, ${q}ok${q}: false, ${q}headers${q}: {}, ${q}body${q}: null${url?.k === "str" ? `, ${q}url${q}: ${m.text(url.start, url.end)}` : ""} }`;
+    const caught = full?.value.k === "lit" && full.value.value === true
+      ? `{ ${q}$coalesce${q}: [${read("response")}, ${failed}] }`
+      : `{ ${q}$coalesce${q}: [${read("response.body")}, null] }`;
+    m.add({ start: prop.keyStart, end: prop.value.end, text: `$catch${q}: [${caught}]` });
   },
   // Storage reads like the cache: `storageSet` takes `value`, and removing is `storageDelete`.
   "storage-set": (step, m) => tupleToSiblings(step, ["value"], m),
@@ -1146,7 +1229,7 @@ const RULES: Record<string, Rule> = {
   // enclosing iterator's names, so it is left for review.
   var: ({ obj }, m) => {
     const path = obj.props.find(p => p.key === "$var")?.value;
-    if (path?.k === "str" && /^loop(\.|$)/.test(path.value)) {
+    if (path?.k === "str" && !loopRetargeted.has(path) && /^loop(\.|$)/.test(path.value)) {
       m.review(path.start, `\`${path.value}\` is gone: \`loop.item\` and \`loop.index\` are the iteration's \`item\` and \`index\` (or the names its \`item\`/\`index\` siblings give), \`loop.key\` is \`index\` (or \`key\` in \`$mapValues\`), \`loop.first\` is \`{ "$eq": [index, 0] }\`, and \`loop.length\`/\`loop.last\` come from \`$count\` of the array`);
     }
   },

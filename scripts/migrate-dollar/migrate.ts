@@ -73,6 +73,35 @@ const SIBLING_RENAMES: Record<string, Record<string, string>> = {
 };
 
 /**
+ * A tuple whose later slots became siblings: `[value, x]` is `value` with
+ * `<names[0]>: x` beside it. Only the brackets and the commas between slots are
+ * rewritten, so edits inside the slots still apply. Returns false, editing
+ * nothing, when the value is not a literal tuple of a fitting length.
+ */
+function tupleToSiblings(p: Prop, names: string[]): boolean {
+  const v = p.value;
+  if (v.k !== "arr" || v.items.length === 0 || v.items.length > names.length + 1) return false;
+  const key = (name: string) => (p.keyQuoted ? `"${name}"` : name);
+  const { items } = v;
+  m.add({ start: v.start, end: items[0].start, text: "" });
+  for (let i = 1; i < items.length; i++) m.add({ start: items[i - 1].end, end: items[i].start, text: `, ${key(names[i - 1])}: ` });
+  m.add({ start: items[items.length - 1].end, end: v.end, text: "" });
+  return true;
+}
+
+/** Whether `key` is one of the options `op` takes, in any of its operations. */
+function takesSibling(op: string, key: string): boolean {
+  const s = C.byKey[op] as { properties?: object; patternProperties?: object; allOf?: Array<{ then?: { properties?: object } }>; $ref?: string } | undefined;
+  if (!s) return false;
+  const shapes = [s, ...(s.allOf ?? []).map(b => b.then ?? {})];
+  if (typeof s.$ref === "string") shapes.push(C.$defs[s.$ref.replace("#/$defs/", "")] as object);
+  return shapes.some(shape => {
+    const { properties, patternProperties } = (shape ?? {}) as { properties?: object; patternProperties?: object };
+    return (properties && key in properties) || Object.keys(patternProperties ?? {}).some(re => new RegExp(re).test(key));
+  });
+}
+
+/**
  * A context path (a `var` or a tree op's value) no longer takes a leading `$`,
  * and nothing strips one any more. Covers a literal path and one built with
  * `concat` whose first piece carries the `$` (`["$byKey.", { "$var": "op" }]`).
@@ -142,6 +171,15 @@ function walkExpr(v: Val): void {
   if (!migrated && op && first && first.key !== op) {
     m.review(first.keyStart, `dispatches on "${op}" though "${first.key}" comes first (data holding an op name, or a step written out of order)`);
   }
+  // Keys none of which the op takes are data that happens to hold an op's name
+  // (a content file's `slug` field): it is left as it is, its values walked.
+  const others = v.props.filter(p => p.key !== op && !GLOBALS.has(bare(p)) && p.key !== "comment");
+  if (!migrated && op && others.length >= 2 && others.every(p => !takesSibling(op, p.key))) {
+    const at = v.props.find(p => p.key === op)!;
+    m.review(at.keyStart, `"${op}" is left as data: it is an op's name, but ${others.map(p => `"${p.key}"`).join(", ")} ${others.length === 1 ? "is not one of its options" : "are none of its options"}; if this is a step, prefix its key with \`$\``);
+    for (const p of v.props) m.walk(ANY, p.value);
+    return;
+  }
   const rawValues = op === "setVars" && v.props.some(p => (p.key === "raw" || p.key === "data") && p.value.k === "lit" && p.value.value === true);
   for (const p of v.props) {
     const key = bare(p);
@@ -167,10 +205,11 @@ function walkExpr(v: Val): void {
         m.review(p.keyStart, "`$exec` is now `$runVar`, which runs the steps a variable holds by its path: keep these steps in a variable (`$setVars` with `data: true`) and run `{ \"$runVar\": \"name\" }`");
       }
       if (!migrated) renameKey(p);
-      if (!migrated && op === "stringify" && p.value.k === "arr") {
+      // v1 took both as a tuple, so its later slot becomes the sibling it is now.
+      if (!migrated && op === "stringify" && p.value.k === "arr" && !tupleToSiblings(p, ["indent"])) {
         m.review(p.keyStart, "`$stringify` serializes its value as given now, arrays included; `[value, indent]` becomes `value` with an `indent` sibling");
       }
-      if (!migrated && op === "join" && p.value.k === "arr") {
+      if (!migrated && op === "join" && p.value.k === "arr" && !tupleToSiblings(p, ["separator"])) {
         m.review(p.keyStart, "`$join` takes the array itself now; `[array, separator]` becomes `array` with a `separator` sibling");
       }
       // Rotating the session is a sibling of setting values now, so a login is one step.
