@@ -192,12 +192,13 @@ export abstract class Node {
    * Helper: the member of an enum sibling's allowed list that a value names, or
    * undefined when absent, so a caller spells its default with `??`. Anything
    * present must be a member, an empty string included: a value quietly ignored
-   * makes the step do something other than what it says. Folds case, and `name`
-   * reaches the message, so qualify it ("fetch type", not "type").
+   * makes the step do something other than what it says. Spelled exactly as
+   * listed, as the schema's `enum` checks it, and `name` reaches the message, so
+   * qualify it ("fetch type", not "type").
    */
   protected getOption<T extends string>(value: unknown, allowed: readonly T[], name: string): T | undefined {
     if (value === null || value === undefined) return undefined;
-    const found = allowed.find(a => a === String(value).toLowerCase());
+    const found = allowed.find(a => a === value);
     if (!found) {
       throw new Error(`Invalid ${name} "${String(value)}": expected ${allowed.join(", ")}`);
     }

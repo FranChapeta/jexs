@@ -354,6 +354,32 @@ test("a second listen replaces the handlers of the first", async () => {
   assert.deepEqual(first.sent, [], "the replaced sink should be silent too");
 });
 
+// Each mesh has its own handlers, ICE servers and peers: a game mesh and a
+// voice mesh share nothing but the node.
+test("two meshes keep their own handlers, ICE servers and peers", async () => {
+  const game = base();
+  const voice = base();
+  await listen(game);
+  await listen(voice, { mesh: "voice", iceServers: [{ urls: "turn:turn.test:3478", username: "u", credential: "c" }] });
+
+  const dialing = resolve({ "$rtcConnect": "B", mesh: "voice", timeout: 5000 }, voice) as Promise<unknown>;
+  await tick();
+  assert.deepEqual(FakePeer.last().config.iceServers, [{ urls: "turn:turn.test:3478", username: "u", credential: "c" }]);
+  assert.equal(voice.sent.length, 1, "the voice mesh's offer went through its own sink");
+  assert.deepEqual(game.sent, []);
+  assert.equal(await resolve({ "$rtcStatus": "B", mesh: "voice" }, voice), "connecting");
+  assert.equal(await resolve({ "$rtcStatus": "B" }, game), "none", "a peer id names a peer per mesh");
+
+  await resolve({ $rtc: "closeAll" }, game);
+  assert.equal(await resolve({ "$rtcStatus": "B", mesh: "voice" }, voice), "connecting", "closing one mesh leaves the other");
+  await resolve({ $rtc: "closeAll", mesh: "voice" }, voice);
+  await assert.rejects(dialing, /was closed before it opened/);
+  await assert.rejects(
+    async () => { await resolve({ "$rtcConnect": "C", mesh: "chat" }, base()); },
+    /needs a prior rtc "listen" on mesh "chat"/,
+  );
+});
+
 test("listen without onSignal is refused: an offer would have nowhere to go", async () => {
   await assert.rejects(
     async () => { await resolve({ $rtc: "listen" }, base()); },
@@ -456,8 +482,7 @@ test("dispose closes peers, rejects pending dials and forgets the handlers", asy
   node.dispose();
   await assert.rejects(dialing, /was closed before it opened/);
   assert.equal(peer.closed, true);
-  assert.equal(node.peers.size, 0);
-  assert.equal(node.handlers.size, 0);
+  assert.equal(node.meshes.size, 0);
   await assert.rejects(
     async () => { await own({ "$rtcConnect": "C" }, ctx); },
     /needs a prior rtc "listen"/,

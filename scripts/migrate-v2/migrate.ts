@@ -746,7 +746,12 @@ const RULES: Record<string, Rule> = {
   "storage-remove": (step, m) => renameOp(step, "storageDelete", m),
   // A level's name and value are its two operands.
   "audio-volume": (step, m) => siblingToTuple(step, "volume", m),
-  rtc: (step, m) => handlerReads(step, { rtcSignal: "signal", rtcPeerId: "peer", rtcInbound: "inbound", rtcMessage: "message", rtcChannel: "channel" }, m),
+  // `close-all` is `closeAll`, as every other value-mode op names its operations.
+  rtc: (step, m) => {
+    handlerReads(step, { rtcSignal: "signal", rtcPeerId: "peer", rtcInbound: "inbound", rtcMessage: "message", rtcChannel: "channel" }, m);
+    const value = step.obj.props.find(p => p.key === "$rtc")?.value;
+    if (value?.k === "str" && value.value === "close-all") replaceString(value, "closeAll", m);
+  },
   // The selection is one `selected`, and `on-change` no longer hands over the
   // tree serialized: it is `$stringify` of the tree's path.
   "tree-init": (step, m) => {

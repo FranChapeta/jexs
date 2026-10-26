@@ -1,11 +1,12 @@
 import { Node, Context, NodeValue, childContext, runStepsDetached } from "@jexs/core";
 import { resolve, resolveAll, isObject } from "@jexs/core";
-import type { JexsNodeSchema } from "@jexs/core";
+import type { JexsNodeSchema, JexsPropertySchema } from "@jexs/core";
 
 const FAST_BUFFERED_AMOUNT_LIMIT = 128 * 1024;
 const FAST_COALESCE_FLUSH_MS = 16;
 const DEFAULT_TIMEOUT_MS = 15000;
 const DEFAULT_ICE_SERVERS: readonly RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
+const DEFAULT_MESH = "default";
 
 /** A handler registered by `listen`, kept with the step that registered it so a
  *  `$catch` on that step still applies when it fires long after it returned. */
@@ -22,6 +23,45 @@ interface PendingOpen {
   timer: ReturnType<typeof setTimeout>;
 }
 
+/**
+ * One peer in a mesh: its connection, the channels the browser hands out once
+ * and never lists again, and what the node knows of it that the browser does
+ * not keep. One record, so a peer is looked up once and closed in one place.
+ */
+interface Peer {
+  id: string;
+  pc: RTCPeerConnection;
+  data?: RTCDataChannel;
+  fast?: RTCDataChannel;
+  /** A dial waiting for both channels to open. */
+  pending?: PendingOpen;
+  /** Whether both channels have opened, so `onClose` fires only for a peer that did. */
+  opened: boolean;
+  /** Whether the peer dialed us, for `inbound`. */
+  inbound: boolean;
+}
+
+/**
+ * One mesh: the handlers and ICE settings its `listen` gave, and the peers in
+ * it. Each is separate, so a page can run a game mesh and a voice mesh with
+ * their own handlers and TURN servers, and a peer id names a peer per mesh.
+ */
+interface Mesh {
+  name: string;
+  /** Registered by `listen`, replaced wholesale by the next one. */
+  handlers: Map<HandlerKey, Handler>;
+  iceServers: readonly RTCIceServer[];
+  timeout: number;
+  trickle: boolean;
+  peers: Map<string, Peer>;
+  /** Candidates that arrived before the peer or its remote description did,
+   *  by peer id: one can come before the peer exists at all. */
+  pendingIce: Map<string, RTCIceCandidateInit[]>;
+  pendingFastCoalescedByKey: Map<string, { peerId: string; data: unknown }>;
+  fastCoalesceFlushScheduled: boolean;
+  fastCoalesceProcessing: boolean;
+}
+
 // Shared sibling defs, declared before the class so the static schema
 // initializer can read them (a `const` is not hoisted).
 
@@ -30,7 +70,7 @@ interface PendingOpen {
  *  theirs. Everything peer-scoped names its peer, so it gets its own key.
  *
  *  Shared by the schema `enum` and the runtime check, so neither can drift. */
-const RTC_OPS = ["listen", "close-all"] as const;
+const RTC_OPS = ["listen", "closeAll"] as const;
 
 const RTC_CHANNELS = ["data", "fast"] as const;
 type ChannelKind = typeof RTC_CHANNELS[number];
@@ -45,21 +85,29 @@ const RTC_CHANNEL = {
 };
 
 export class WebRTCNode extends Node {
+  static commonSiblings: Record<string, JexsPropertySchema> = {
+    mesh: {
+      type: "string",
+      description: "The mesh: its own peers, handlers and ICE settings, set up by its `listen` (default `\"default\"`). A peer id names a peer within one mesh.",
+    },
+  };
+
   static schema: JexsNodeSchema = {
     rtc: {
       type: "string",
       enum: RTC_OPS,
-      markdownDescription: "The two WebRTC operations that name no peer. Everything peer-scoped has its own key: `rtcConnect`, `rtcSignal`, `rtcSend`, `rtcBroadcast`, `rtcClose`, `rtcStatus`.\nThe node never touches a socket: it hands each signalling payload to your `onSignal` steps to deliver however you like (a WebSocket, `fetch`, `windowRun`, even a copy-paste box), and you hand replies back with `rtcSignal`.",
+      markdownDescription: "The two WebRTC operations that name no peer. Everything peer-scoped has its own key: `rtcConnect`, `rtcSignal`, `rtcSend`, `rtcBroadcast`, `rtcClose`, `rtcStatus`.\nThe node never touches a socket: it hands each signalling payload to your `onSignal` steps to deliver however you like (a WebSocket, `fetch`, `windowRun`, even a copy-paste box), and you hand replies back with `rtcSignal`.\nEvery op works in one `mesh`, `\"default\"` unless it names another, so a page can keep separate meshes, each with its own handlers and ICE servers.",
       examples: [
         "{ \"$rtc\": \"listen\", \"onSignal\": { \"$wsSend\": { \"$var\": \"signal\" } } }",
-        "{ \"$rtc\": \"close-all\" }",
+        "{ \"$rtc\": \"closeAll\" }",
       ],
       variants: {
         listen: {
           output: "null",
-          markdownDescription: "Registers the signalling sink and the peer handlers, and configures ICE. Run by **both** sides: the answering peer never calls `rtcConnect`, so this is its only chance to supply them.\nCreates nothing by itself. A second `listen` replaces the first.",
+          markdownDescription: "Sets up the mesh: registers its signalling sink and peer handlers, and configures its ICE. Run by **both** sides: the answering peer never calls `rtcConnect`, so this is its only chance to supply them.\nCreates no peer by itself. A second `listen` on the same mesh replaces its handlers and settings; its peers stay.",
           examples: [
             "{ \"$rtc\": \"listen\", \"onSignal\": { \"$wsSend\": { \"type\": \"peer-signal\", \"to\": { \"$var\": \"peer\" }, \"sig\": { \"$var\": \"signal\" } } } }",
+            "{ \"$rtc\": \"listen\", \"mesh\": \"voice\", \"iceServers\": [{ \"urls\": \"turn:turn.example.com:3478\", \"username\": \"u\", \"credential\": \"c\" }], \"onSignal\": { \"$wsSend\": { \"mesh\": \"voice\", \"to\": { \"$var\": \"peer\" }, \"sig\": { \"$var\": \"signal\" } } } }",
           ],
           siblings: {
             iceServers: {
@@ -107,9 +155,9 @@ export class WebRTCNode extends Node {
             },
           },
         },
-        "close-all": {
+        closeAll: {
           output: "null",
-          markdownDescription: "Closes every peer connection.",
+          markdownDescription: "Closes every peer connection in the mesh.",
         },
       },
     },
@@ -118,14 +166,14 @@ export class WebRTCNode extends Node {
       type: "string",
       output: "string",
       outputDescription: "The peer id, once **both** channels are open, so a `send` on either is safe immediately. Most templates put their \"peer is usable\" logic in `onOpen` instead, since that covers peers arriving from either direction; what `rtcConnect` adds is carrying a failed dial to `$catch`.",
-      markdownDescription: "Dials the given peer: creates the connection and both data channels, emits an offer through `onSignal`, and waits for the channels to open. Rejects on `timeout`, on a failed connection, and if the peer closes while waiting.\nUse `$then` for the non-blocking version.",
+      markdownDescription: "Dials the given peer: creates the connection and both data channels, emits an offer through the mesh's `onSignal`, and waits for the channels to open. Rejects on `timeout`, on a failed connection, and if the peer closes while waiting.\nUse `$then` for the non-blocking version.",
       examples: [
         "{ \"$rtcConnect\": { \"$var\": \"peerId\" } }",
       ],
       siblings: {
         timeout: {
           type: "number",
-          description: "Milliseconds to wait for the channels to open before giving up. Defaults to the `listen` value.",
+          description: "Milliseconds to wait for the channels to open before giving up. Defaults to the mesh's `listen` value.",
         },
       },
     },
@@ -157,7 +205,7 @@ export class WebRTCNode extends Node {
 
     rtcBroadcast: {
       output: "null",
-      markdownDescription: "Sends the value to every connected peer. The one operation with no peer to name, so the data takes the value slot.\nUnlike `rtcSend`, a peer that is not ready is skipped rather than refused: a broadcast addresses whoever is currently there.",
+      markdownDescription: "Sends the value to every connected peer in the mesh. The one operation with no peer to name, so the data takes the value slot.\nUnlike `rtcSend`, a peer that is not ready is skipped rather than refused: a broadcast addresses whoever is currently there.",
       examples: [
         "{ \"$rtcBroadcast\": { \"$var\": \"state\" }, \"channel\": \"fast\" }",
       ],
@@ -167,7 +215,7 @@ export class WebRTCNode extends Node {
     rtcClose: {
       type: "string",
       output: "null",
-      markdownDescription: "Closes one peer connection. Use `{ \"$rtc\": \"close-all\" }` for every peer at once.",
+      markdownDescription: "Closes one peer connection. Use `{ \"$rtc\": \"closeAll\" }` for every peer in the mesh at once.",
     },
 
     rtcStatus: {
@@ -182,56 +230,36 @@ export class WebRTCNode extends Node {
   };
 
   // Everything below belongs to this node, so it belongs to one resolver: two
-  // apps on a page get their own peers rather than sharing a process-wide table,
-  // and `resolver.destroy()` has something it can reach. There is no socket here
-  // and no identity, because signalling is a seam the template fills: the node
-  // never learns how a payload travelled or who it decided the sender was.
+  // apps on a page get their own meshes rather than sharing a process-wide
+  // table, and `resolver.destroy()` has something it can reach. There is no
+  // socket here and no identity, because signalling is a seam the template
+  // fills: the node never learns how a payload travelled or who it decided the
+  // sender was.
 
-  readonly peers = new Map<string, RTCPeerConnection>();
-  readonly channels = new Map<string, RTCDataChannel>();
-  readonly fastChannels = new Map<string, RTCDataChannel>();
-
-  /** Candidates that arrived before the peer or its remote description did. */
-  readonly pendingIce = new Map<string, RTCIceCandidateInit[]>();
-
-  /** Dials blocked until their channels open. */
-  readonly pendingOpens = new Map<string, PendingOpen>();
-
-  /** Peers that actually reached open, so `onClose` fires only for those. */
-  readonly opened = new Set<string>();
-
-  /** Peers that dialed us, for `inbound`. */
-  readonly inbound = new Set<string>();
-
-  /** Registered by `listen`, replaced wholesale by the next one. */
-  readonly handlers = new Map<HandlerKey, Handler>();
-
-  readonly pendingFastCoalescedByKey = new Map<string, { peerId: string; data: unknown }>();
-  fastCoalesceFlushScheduled = false;
-  fastCoalesceProcessing = false;
-
-  iceServers: readonly RTCIceServer[] = DEFAULT_ICE_SERVERS;
-  timeout = DEFAULT_TIMEOUT_MS;
-  trickle = true;
-  listening = false;
+  /** The meshes their `listen` set up, by name. */
+  readonly meshes = new Map<string, Mesh>();
 
   // Values are resolved and coerced in these methods rather than in the helpers
   // below, because the coercion helpers are members and every member of a Node
   // is a dispatch key: only the ops and `dispose` can be methods.
 
   rtc(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$rtc, context, raw => {
+    return resolveAll([def.$rtc, def.mesh ?? null], context, ([raw, meshRaw]) => {
+      const name = meshRaw == null ? DEFAULT_MESH : this.toString(meshRaw);
       switch (this.getOption(raw, RTC_OPS, "rtc operation")) {
         case "listen":
           return resolveAll([def.iceServers, def.timeout, def.trickle], context, ([ice, ms, trickle]) =>
-            doListen(this, def, context, {
+            doListen(this, name, def, context, {
               iceServers: iceServersFrom(ice),
               timeout: ms == null ? DEFAULT_TIMEOUT_MS : this.toNumber(ms),
               trickle: trickle == null ? true : this.toBoolean(trickle),
             }));
 
-        case "close-all":
-          return closeAll(this);
+        case "closeAll": {
+          const mesh = this.meshes.get(name);
+          if (mesh) closeAll(mesh);
+          return null;
+        }
 
         default:
           // `getOption` has already refused anything unlisted, so this is the
@@ -242,12 +270,14 @@ export class WebRTCNode extends Node {
   }
 
   rtcConnect(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def.$rtcConnect, def.timeout], context, ([id, ms]) =>
-      doConnect(this, this.toString(id), ms == null ? this.timeout : this.toNumber(ms)));
+    return resolveAll([def.$rtcConnect, def.timeout, def.mesh ?? null], context, ([id, ms, meshRaw]) => {
+      const mesh = requireMesh(this, meshRaw, "rtcConnect");
+      return doConnect(mesh, this.toString(id), ms == null ? mesh.timeout : this.toNumber(ms));
+    });
   }
 
   rtcSignal(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def.$rtcSignal, def.data], context, ([from, data]) => {
+    return resolveAll([def.$rtcSignal, def.data, def.mesh ?? null], context, ([from, data, meshRaw]) => {
       // The peer is the primary value, not a field of the payload, and that
       // placement is the security rule made visible: the node cannot see who
       // sent anything, so whatever the transport vouched for is the only
@@ -255,46 +285,73 @@ export class WebRTCNode extends Node {
       if (from == null || this.toString(from) === "") {
         throw new Error("rtcSignal needs the peer the payload came from as its value");
       }
-      return doSignal(this, data, this.toString(from));
+      const payload = signalPayload(data);
+      return doSignal(requireMesh(this, meshRaw, "rtcSignal"), payload, this.toString(from));
     });
   }
 
   // `channel` is checked with getOption rather than compared: an unlisted name
   // used to fall through to the reliable channel, which is not what the step said.
   rtcSend(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def.$rtcSend, def.data, def.channel], context, ([id, data, ch]) =>
-      doSend(this, this.toString(id), data, this.getOption(ch, RTC_CHANNELS, "rtc channel") ?? "data"));
+    return resolveAll([def.$rtcSend, def.data, def.channel, def.mesh ?? null], context, ([id, data, ch, meshRaw]) => {
+      const kind = this.getOption(ch, RTC_CHANNELS, "rtc channel") ?? "data";
+      return doSend(this.meshes.get(meshName(meshRaw)), this.toString(id), data, kind);
+    });
   }
 
   rtcBroadcast(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def.$rtcBroadcast, def.channel], context, ([data, ch]) =>
-      doBroadcast(this, data, this.getOption(ch, RTC_CHANNELS, "rtc channel") ?? "data"));
+    return resolveAll([def.$rtcBroadcast, def.channel, def.mesh ?? null], context, ([data, ch, meshRaw]) => {
+      const kind = this.getOption(ch, RTC_CHANNELS, "rtc channel") ?? "data";
+      const mesh = this.meshes.get(meshName(meshRaw));
+      return mesh ? doBroadcast(mesh, data, kind) : null;
+    });
   }
 
   rtcClose(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$rtcClose, context, id => {
-      closePeer(this, this.toString(id));
+    return resolveAll([def.$rtcClose, def.mesh ?? null], context, ([id, meshRaw]) => {
+      const mesh = this.meshes.get(meshName(meshRaw));
+      if (mesh) closePeer(mesh, this.toString(id));
       return null;
     });
   }
 
   rtcStatus(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$rtcStatus, context, id => statusOf(this, this.toString(id)));
+    return resolveAll([def.$rtcStatus, def.mesh ?? null], context, ([id, meshRaw]) => {
+      const mesh = this.meshes.get(meshName(meshRaw));
+      return mesh ? statusOf(mesh, this.toString(id)) : "none";
+    });
   }
 
-  /** Closes every peer connection. Called by `resolver.destroy()`. */
+  /** Closes every peer connection in every mesh. Called by `resolver.destroy()`. */
   dispose(): void {
-    // Handlers first, so a teardown does not run steps against a resolver that
-    // is going away. Pending dials are still rejected, by closePeer.
-    this.handlers.clear();
-    this.listening = false;
-    closeAll(this);
+    for (const mesh of this.meshes.values()) {
+      // Handlers first, so a teardown does not run steps against a resolver that
+      // is going away. Pending dials are still rejected, by closePeer.
+      mesh.handlers.clear();
+      closeAll(mesh);
+    }
+    this.meshes.clear();
   }
 }
 
-// The helpers below take the node rather than living on it: every method
-// on a Node registers as a dispatch key, so only the ops and `dispose` can be
-// methods.
+// The helpers below take the node or a mesh rather than living on the node:
+// every method on a Node registers as a dispatch key, so only the ops and
+// `dispose` can be methods.
+
+/** A resolved `mesh` sibling's name: absent means the default mesh. */
+function meshName(raw: unknown): string {
+  return raw == null ? DEFAULT_MESH : String(raw);
+}
+
+/** The mesh an op that signals works in, which its `listen` must have set up. */
+function requireMesh(node: WebRTCNode, raw: unknown, op: string): Mesh {
+  const name = meshName(raw);
+  const mesh = node.meshes.get(name);
+  if (!mesh) {
+    throw new Error(`${op} needs a prior rtc "listen" on mesh "${name}": that is what supplies onSignal, so there is nowhere to send anything`);
+  }
+  return mesh;
+}
 
 /**
  * Read the `iceServers` sibling. Anything that is not a list of `{ urls }`
@@ -321,72 +378,86 @@ function iceServersFrom(value: unknown): readonly RTCIceServer[] {
 
 function doListen(
   node: WebRTCNode,
+  name: string,
   def: Record<string, unknown>,
   context: Context,
   config: { iceServers: readonly RTCIceServer[]; timeout: number; trickle: boolean },
 ): null {
-  node.handlers.clear();
+  const handlers = new Map<HandlerKey, Handler>();
   for (const key of HANDLER_KEYS) {
     const body = def[key];
     // A lone expression is a one-step sequence, the same normalization the
     // `steps` schema def accepts, so a handler that does one thing needs no array.
-    if (body !== undefined) node.handlers.set(key, { body, context, def });
+    if (body !== undefined) handlers.set(key, { body, context, def });
   }
-  if (!node.handlers.has("onSignal")) {
+  if (!handlers.has("onSignal")) {
     throw new Error('rtc "listen" needs "onSignal": it is the only way a payload reaches the other peer');
   }
-  node.iceServers = config.iceServers;
-  node.timeout = config.timeout;
-  node.trickle = config.trickle;
-  node.listening = true;
+  // A second `listen` on a mesh replaces its handlers and settings; its peers stay.
+  const mesh = node.meshes.get(name) ?? newMesh(name);
+  mesh.handlers = handlers;
+  mesh.iceServers = config.iceServers;
+  mesh.timeout = config.timeout;
+  mesh.trickle = config.trickle;
+  node.meshes.set(name, mesh);
   return null;
 }
 
-function requireListening(node: WebRTCNode, op: string): void {
-  if (!node.listening) {
-    throw new Error(`${op} needs a prior rtc "listen": that is what supplies onSignal, so there is nowhere to send anything`);
-  }
+function newMesh(name: string): Mesh {
+  return {
+    name,
+    handlers: new Map(),
+    iceServers: DEFAULT_ICE_SERVERS,
+    timeout: DEFAULT_TIMEOUT_MS,
+    trickle: true,
+    peers: new Map(),
+    pendingIce: new Map(),
+    pendingFastCoalescedByKey: new Map(),
+    fastCoalesceFlushScheduled: false,
+    fastCoalesceProcessing: false,
+  };
 }
 
 /** Run a registered handler, handing back its result for the callers that read
  *  one. Null when nothing is registered, which is not the same as a falsy result. */
-function runHandler(node: WebRTCNode, key: HandlerKey, extra: Record<string, unknown>): Promise<unknown> | null {
-  const handler = node.handlers.get(key);
+function runHandler(mesh: Mesh, key: HandlerKey, extra: Record<string, unknown>): Promise<unknown> | null {
+  const handler = mesh.handlers.get(key);
   if (!handler) return null;
   // Detached: these fire long after the `listen` step returned, so its own
   // `$catch` is the last handler left and anything past it reaches the console.
   return runStepsDetached(handler.body, childContext(handler.context, extra), { step: handler.def });
 }
 
-function fireHandler(node: WebRTCNode, key: HandlerKey, extra: Record<string, unknown>): void {
-  const running = runHandler(node, key, extra);
+function fireHandler(mesh: Mesh, key: HandlerKey, extra: Record<string, unknown>): void {
+  const running = runHandler(mesh, key, extra);
   if (running) running.catch((e: unknown) => console.error(`[WebRTC] ${key} error:`, e));
 }
 
 /** Hand one payload to the template to deliver. `peer` addresses it, so an
  *  envelope can be routed without the payload being opened. */
-function emitSignal(node: WebRTCNode, peerId: string, payload: unknown): void {
-  fireHandler(node, "onSignal", { signal: payload, peer: peerId });
+function emitSignal(mesh: Mesh, peerId: string, payload: unknown): void {
+  fireHandler(mesh, "onSignal", { signal: payload, peer: peerId });
 }
 
-function createPeer(node: WebRTCNode, peerId: string): RTCPeerConnection {
-  if (node.peers.has(peerId)) closePeer(node, peerId);
+function createPeer(mesh: Mesh, peerId: string, inbound: boolean): Peer {
+  if (mesh.peers.has(peerId)) closePeer(mesh, peerId);
 
-  const pc = new RTCPeerConnection({ iceServers: [...node.iceServers] });
+  const pc = new RTCPeerConnection({ iceServers: [...mesh.iceServers] });
 
   pc.onicecandidate = (event) => {
     // Under `trickle: false` nothing goes out per candidate: the description
     // emitted once gathering finishes already carries them all.
-    if (!node.trickle || !event.candidate) return;
-    emitSignal(node, peerId, event.candidate.toJSON());
+    if (!mesh.trickle || !event.candidate) return;
+    emitSignal(mesh, peerId, event.candidate.toJSON());
   };
 
   pc.onconnectionstatechange = () => {
-    if (pc.connectionState === "failed" || pc.connectionState === "closed") closePeer(node, peerId);
+    if (pc.connectionState === "failed" || pc.connectionState === "closed") closePeer(mesh, peerId);
   };
 
-  node.peers.set(peerId, pc);
-  return pc;
+  const peer: Peer = { id: peerId, pc, opened: false, inbound };
+  mesh.peers.set(peerId, peer);
+  return peer;
 }
 
 /** Resolve once ICE gathering finishes, so the local description carries every
@@ -409,52 +480,49 @@ function waitForGathering(pc: RTCPeerConnection): Promise<void> {
  * signalling server understands it without unwrapping.
  */
 async function describeLocal(
-  node: WebRTCNode,
+  mesh: Mesh,
   pc: RTCPeerConnection,
   desc: RTCSessionDescriptionInit,
 ): Promise<RTCSessionDescriptionInit> {
   await pc.setLocalDescription(desc);
-  if (node.trickle) return { type: desc.type, sdp: desc.sdp };
+  if (mesh.trickle) return { type: desc.type, sdp: desc.sdp };
   await waitForGathering(pc);
   const local = pc.localDescription;
   return local ? { type: local.type, sdp: local.sdp } : { type: desc.type, sdp: desc.sdp };
 }
 
-async function doConnect(node: WebRTCNode, peerId: string, timeout: number): Promise<string> {
-  requireListening(node, "rtcConnect");
-  const pc = createPeer(node, peerId);
+async function doConnect(mesh: Mesh, peerId: string, timeout: number): Promise<string> {
+  const peer = createPeer(mesh, peerId, false);
 
-  const channel = pc.createDataChannel("data");
-  setupChannel(node, channel, peerId, "data");
-  node.channels.set(peerId, channel);
+  peer.data = peer.pc.createDataChannel("data");
+  setupChannel(mesh, peer, peer.data, "data");
 
-  const fast = pc.createDataChannel("fast", { ordered: false, maxRetransmits: 0 });
-  setupChannel(node, fast, peerId, "fast");
-  node.fastChannels.set(peerId, fast);
+  peer.fast = peer.pc.createDataChannel("fast", { ordered: false, maxRetransmits: 0 });
+  setupChannel(mesh, peer, peer.fast, "fast");
 
   try {
-    const offer = await pc.createOffer();
-    emitSignal(node, peerId, await describeLocal(node, pc, offer));
+    const offer = await peer.pc.createOffer();
+    emitSignal(mesh, peerId, await describeLocal(mesh, peer.pc, offer));
   } catch (err) {
     // Nothing is waiting yet, so this tears down without rejecting a promise
     // the caller has not been handed.
-    closePeer(node, peerId);
+    closePeer(mesh, peerId);
     throw err;
   }
 
-  return waitForOpen(node, peerId, timeout);
+  return waitForOpen(mesh, peer, timeout);
 }
 
-function waitForOpen(node: WebRTCNode, peerId: string, timeout: number): Promise<string> {
-  if (node.opened.has(peerId)) return Promise.resolve(peerId);
+function waitForOpen(mesh: Mesh, peer: Peer, timeout: number): Promise<string> {
+  if (peer.opened) return Promise.resolve(peer.id);
   return new Promise<string>((settle, fail) => {
     const timer = setTimeout(() => {
       // Dropped before closePeer, so the teardown does not reject this twice.
-      node.pendingOpens.delete(peerId);
-      closePeer(node, peerId);
-      fail(new Error(`rtcConnect to "${peerId}" timed out after ${timeout}ms: no answer came back, or no network path was found`));
+      peer.pending = undefined;
+      closePeer(mesh, peer.id);
+      fail(new Error(`rtcConnect to "${peer.id}" timed out after ${timeout}ms: no answer came back, or no network path was found`));
     }, timeout);
-    node.pendingOpens.set(peerId, { settle, fail, timer });
+    peer.pending = { settle, fail, timer };
   });
 }
 
@@ -462,21 +530,18 @@ function waitForOpen(node: WebRTCNode, peerId: string, timeout: number): Promise
  * A channel reported open. The peer counts as usable only once BOTH are, so a
  * `send` on either is safe the moment `connect` returns.
  */
-function channelOpened(node: WebRTCNode, peerId: string): void {
-  const data = node.channels.get(peerId);
-  const fast = node.fastChannels.get(peerId);
-  if (!data || data.readyState !== "open") return;
-  if (!fast || fast.readyState !== "open") return;
-  if (node.opened.has(peerId)) return;
-  node.opened.add(peerId);
+function channelOpened(mesh: Mesh, peer: Peer): void {
+  if (peer.data?.readyState !== "open" || peer.fast?.readyState !== "open") return;
+  if (peer.opened) return;
+  peer.opened = true;
 
-  const pending = node.pendingOpens.get(peerId);
+  const pending = peer.pending;
   if (pending) {
     clearTimeout(pending.timer);
-    node.pendingOpens.delete(peerId);
-    pending.settle(peerId);
+    peer.pending = undefined;
+    pending.settle(peer.id);
   }
-  fireHandler(node, "onOpen", { peer: peerId, inbound: node.inbound.has(peerId) });
+  fireHandler(mesh, "onOpen", { peer: peer.id, inbound: peer.inbound });
 }
 
 /** One of the two native signalling shapes. A description carries `type`; a
@@ -512,77 +577,71 @@ function signalPayload(data: unknown): SignalPayload {
  * transport can vouch for is the only identity there is, and reading one out of
  * the payload would let a sender name itself.
  */
-async function doSignal(node: WebRTCNode, data: unknown, from: string): Promise<null> {
-  const payload = signalPayload(data);
-  requireListening(node, "rtcSignal");
-
+async function doSignal(mesh: Mesh, payload: SignalPayload, from: string): Promise<null> {
   if (payload.kind === "ice") {
-    const pc = node.peers.get(from);
+    const peer = mesh.peers.get(from);
     // A candidate can beat the description it belongs to, and it can beat the
     // peer itself: both are ordinary trickle ordering rather than a fault, so
     // queue until a remote description arrives and flushes.
-    if (!pc || !pc.remoteDescription) {
-      const queued = node.pendingIce.get(from);
+    if (!peer || !peer.pc.remoteDescription) {
+      const queued = mesh.pendingIce.get(from);
       if (queued) queued.push(payload.candidate);
-      else node.pendingIce.set(from, [payload.candidate]);
+      else mesh.pendingIce.set(from, [payload.candidate]);
       return null;
     }
-    await pc.addIceCandidate(new RTCIceCandidate(payload.candidate));
+    await peer.pc.addIceCandidate(new RTCIceCandidate(payload.candidate));
     return null;
   }
 
   if (payload.kind === "offer") {
-    await acceptOffer(node, from, payload.description);
+    await acceptOffer(mesh, from, payload.description);
     return null;
   }
 
-  const pc = node.peers.get(from);
-  if (!pc) {
+  const peer = mesh.peers.get(from);
+  if (!peer) {
     throw new Error(`rtcSignal has no pending connection to "${from}": it was never dialed, or it has since closed`);
   }
-  await pc.setRemoteDescription(payload.description);
-  flushIceCandidates(node, from);
+  await peer.pc.setRemoteDescription(payload.description);
+  flushIceCandidates(mesh, peer);
   return null;
 }
 
-async function acceptOffer(node: WebRTCNode, from: string, description: RTCSessionDescriptionInit): Promise<void> {
+async function acceptOffer(mesh: Mesh, from: string, description: RTCSessionDescriptionInit): Promise<void> {
   // The gate runs before anything is answered: once an answer is out, refusing
   // would cost a connection the other side already believes in.
-  const verdict = runHandler(node, "onPeer", { peer: from });
+  const verdict = runHandler(mesh, "onPeer", { peer: from });
   if (verdict && !Node.toBooleanValue(await verdict)) return;
 
-  const pc = createPeer(node, from);
-  node.inbound.add(from);
+  const peer = createPeer(mesh, from, true);
 
   // The dialer created both channels, so this side adopts them as they arrive.
-  pc.ondatachannel = (event) => {
-    const label = event.channel.label;
-    setupChannel(node, event.channel, from, label);
-    if (label === "fast") node.fastChannels.set(from, event.channel);
-    else node.channels.set(from, event.channel);
+  peer.pc.ondatachannel = (event) => {
+    const kind: ChannelKind = event.channel.label === "fast" ? "fast" : "data";
+    peer[kind] = event.channel;
+    setupChannel(mesh, peer, event.channel, kind);
     // An adopted channel can already be open, in which case no onopen follows.
-    channelOpened(node, from);
+    channelOpened(mesh, peer);
   };
 
-  await pc.setRemoteDescription(description);
-  flushIceCandidates(node, from);
-  const answer = await pc.createAnswer();
-  emitSignal(node, from, await describeLocal(node, pc, answer));
+  await peer.pc.setRemoteDescription(description);
+  flushIceCandidates(mesh, peer);
+  const answer = await peer.pc.createAnswer();
+  emitSignal(mesh, from, await describeLocal(mesh, peer.pc, answer));
 }
 
-function flushIceCandidates(node: WebRTCNode, peerId: string): void {
-  const queued = node.pendingIce.get(peerId);
-  const pc = node.peers.get(peerId);
-  if (!queued || !pc) return;
-  node.pendingIce.delete(peerId);
+function flushIceCandidates(mesh: Mesh, peer: Peer): void {
+  const queued = mesh.pendingIce.get(peer.id);
+  if (!queued) return;
+  mesh.pendingIce.delete(peer.id);
   for (const candidate of queued) {
-    pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => { /* a stale candidate is not a fault */ });
+    peer.pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => { /* a stale candidate is not a fault */ });
   }
 }
 
-function doSend(node: WebRTCNode, peerId: string, data: unknown, kind: ChannelKind): null {
+function doSend(mesh: Mesh | undefined, peerId: string, data: unknown, kind: ChannelKind): null {
   const isFast = kind === "fast";
-  const channel = (isFast ? node.fastChannels : node.channels).get(peerId);
+  const channel = mesh?.peers.get(peerId)?.[kind];
   if (!channel) {
     throw new Error(`rtcSend has no ${kind} channel to "${peerId}": run rtcConnect first`);
   }
@@ -597,30 +656,31 @@ function doSend(node: WebRTCNode, peerId: string, data: unknown, kind: ChannelKi
   return null;
 }
 
-function doBroadcast(node: WebRTCNode, data: unknown, kind: ChannelKind): null {
+function doBroadcast(mesh: Mesh, data: unknown, kind: ChannelKind): null {
   const isFast = kind === "fast";
-  const map = isFast ? node.fastChannels : node.channels;
   const payload = typeof data === "string" ? data : JSON.stringify(data);
   // Unlike `send`, a peer that is not ready is skipped rather than refused: a
   // broadcast addresses whoever is currently there.
-  for (const [, channel] of map) {
-    if (channel.readyState !== "open") continue;
+  for (const peer of mesh.peers.values()) {
+    const channel = peer[kind];
+    if (!channel || channel.readyState !== "open") continue;
     if (isFast && channel.bufferedAmount > FAST_BUFFERED_AMOUNT_LIMIT) continue;
     channel.send(payload);
   }
   return null;
 }
 
-function statusOf(node: WebRTCNode, peerId: string): string {
-  const pc = node.peers.get(peerId);
-  if (!pc) return "none";
-  if (node.opened.has(peerId)) return "open";
-  if (pc.connectionState === "failed" || pc.connectionState === "closed") return "closed";
+function statusOf(mesh: Mesh, peerId: string): string {
+  const peer = mesh.peers.get(peerId);
+  if (!peer) return "none";
+  if (peer.opened) return "open";
+  if (peer.pc.connectionState === "failed" || peer.pc.connectionState === "closed") return "closed";
   return "connecting";
 }
 
-function setupChannel(node: WebRTCNode, channel: RTCDataChannel, peerId: string, label: string): void {
-  channel.onopen = () => channelOpened(node, peerId);
+function setupChannel(mesh: Mesh, peer: Peer, channel: RTCDataChannel, label: ChannelKind): void {
+  const peerId = peer.id;
+  channel.onopen = () => channelOpened(mesh, peer);
 
   channel.onmessage = (event) => {
     let data: unknown;
@@ -633,28 +693,26 @@ function setupChannel(node: WebRTCNode, channel: RTCDataChannel, peerId: string,
     if (label === "fast") {
       const coalesceKey = getFastCoalesceKey(peerId, data);
       if (coalesceKey) {
-        node.pendingFastCoalescedByKey.set(coalesceKey, { peerId, data });
-        scheduleFastCoalesceFlush(node);
+        mesh.pendingFastCoalescedByKey.set(coalesceKey, { peerId, data });
+        scheduleFastCoalesceFlush(mesh);
         return;
       }
-      dispatchRtcMessage(node, peerId, data, "fast");
+      dispatchRtcMessage(mesh, peerId, data, "fast");
       return;
     }
 
-    dispatchRtcMessage(node, peerId, data, "data");
+    dispatchRtcMessage(mesh, peerId, data, "data");
   };
 
   channel.onclose = () => {
-    // The map this channel actually lives in. Closing the fast channel used to
-    // evict the reliable one and leave the fast one registered, so `send` went
-    // on addressing a dead channel and refused a live one.
-    const map = label === "fast" ? node.fastChannels : node.channels;
-    if (map.get(peerId) === channel) map.delete(peerId);
+    // Only the slot this channel holds: closing the fast channel must leave the
+    // reliable one in place, and a replaced peer's old channel touches nothing.
+    if (peer[label] === channel) peer[label] = undefined;
 
     // Only the fast channel fills the coalesce buffer, so only its close clears it.
     if (label !== "fast") return;
-    for (const [key, entry] of node.pendingFastCoalescedByKey) {
-      if (entry.peerId === peerId) node.pendingFastCoalescedByKey.delete(key);
+    for (const [key, entry] of mesh.pendingFastCoalescedByKey) {
+      if (entry.peerId === peerId) mesh.pendingFastCoalescedByKey.delete(key);
     }
   };
 }
@@ -670,67 +728,61 @@ function getFastCoalesceKey(peerId: string, data: unknown): string | null {
   return `${peerId}:${type}`;
 }
 
-function scheduleFastCoalesceFlush(node: WebRTCNode): void {
-  if (node.fastCoalesceFlushScheduled) return;
-  node.fastCoalesceFlushScheduled = true;
+function scheduleFastCoalesceFlush(mesh: Mesh): void {
+  if (mesh.fastCoalesceFlushScheduled) return;
+  mesh.fastCoalesceFlushScheduled = true;
   setTimeout(() => {
-    node.fastCoalesceFlushScheduled = false;
-    if (node.pendingFastCoalescedByKey.size === 0) return;
-    if (node.fastCoalesceProcessing) {
-      scheduleFastCoalesceFlush(node);
+    mesh.fastCoalesceFlushScheduled = false;
+    if (mesh.pendingFastCoalescedByKey.size === 0) return;
+    if (mesh.fastCoalesceProcessing) {
+      scheduleFastCoalesceFlush(mesh);
       return;
     }
 
-    const batch = Array.from(node.pendingFastCoalescedByKey.values());
-    node.pendingFastCoalescedByKey.clear();
+    const batch = Array.from(mesh.pendingFastCoalescedByKey.values());
+    mesh.pendingFastCoalescedByKey.clear();
 
-    node.fastCoalesceProcessing = true;
-    for (const entry of batch) dispatchRtcMessage(node, entry.peerId, entry.data, "fast");
-    node.fastCoalesceProcessing = false;
-    if (node.pendingFastCoalescedByKey.size > 0) scheduleFastCoalesceFlush(node);
+    mesh.fastCoalesceProcessing = true;
+    for (const entry of batch) dispatchRtcMessage(mesh, entry.peerId, entry.data, "fast");
+    mesh.fastCoalesceProcessing = false;
+    if (mesh.pendingFastCoalescedByKey.size > 0) scheduleFastCoalesceFlush(mesh);
   }, FAST_COALESCE_FLUSH_MS);
 }
 
-function dispatchRtcMessage(node: WebRTCNode, peerId: string, data: unknown, channel: ChannelKind): void {
-  fireHandler(node, "onMessage", { message: data, peer: peerId, channel });
+function dispatchRtcMessage(mesh: Mesh, peerId: string, data: unknown, channel: ChannelKind): void {
+  fireHandler(mesh, "onMessage", { message: data, peer: peerId, channel });
 }
 
-function closePeer(node: WebRTCNode, peerId: string): void {
-  const pending = node.pendingOpens.get(peerId);
+function closePeer(mesh: Mesh, peerId: string): void {
+  mesh.pendingIce.delete(peerId);
+  for (const [key, entry] of mesh.pendingFastCoalescedByKey) {
+    if (entry.peerId === peerId) mesh.pendingFastCoalescedByKey.delete(key);
+  }
+  const peer = mesh.peers.get(peerId);
+  if (!peer) return;
+  // Dropped from the mesh and unwired before anything closes, because closing
+  // fires the state change that lands back here.
+  mesh.peers.delete(peerId);
+  peer.pc.onconnectionstatechange = null;
+  peer.pc.onicecandidate = null;
+  peer.pc.ondatachannel = null;
+
+  const pending = peer.pending;
   if (pending) {
     clearTimeout(pending.timer);
-    node.pendingOpens.delete(peerId);
+    peer.pending = undefined;
     pending.fail(new Error(`rtcConnect to "${peerId}" was closed before it opened`));
   }
-
-  const channel = node.channels.get(peerId);
-  if (channel) { node.channels.delete(peerId); channel.close(); }
-  const fast = node.fastChannels.get(peerId);
-  if (fast) { node.fastChannels.delete(peerId); fast.close(); }
-
-  const pc = node.peers.get(peerId);
-  if (pc) {
-    // Dropped from the map and unwired before `close()`, because closing fires
-    // the state change that lands back here.
-    node.peers.delete(peerId);
-    pc.onconnectionstatechange = null;
-    pc.onicecandidate = null;
-    pc.ondatachannel = null;
-    pc.close();
-  }
-
-  node.pendingIce.delete(peerId);
-  node.inbound.delete(peerId);
-  for (const [key, entry] of node.pendingFastCoalescedByKey) {
-    if (entry.peerId === peerId) node.pendingFastCoalescedByKey.delete(key);
-  }
+  peer.data?.close();
+  peer.fast?.close();
+  peer.pc.close();
 
   // Only a peer that actually opened is announced, so a refused offer or a dial
   // that timed out is reported once, by the step that asked for it.
-  if (node.opened.delete(peerId)) fireHandler(node, "onClose", { peer: peerId });
+  if (peer.opened) fireHandler(mesh, "onClose", { peer: peerId });
 }
 
-function closeAll(node: WebRTCNode): null {
-  for (const peerId of [...node.peers.keys()]) closePeer(node, peerId);
+function closeAll(mesh: Mesh): null {
+  for (const peerId of [...mesh.peers.keys()]) closePeer(mesh, peerId);
   return null;
 }
