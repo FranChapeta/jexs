@@ -591,6 +591,17 @@ function v1TableDocument(doc: Obj, m: Codemod): void {
   m.review(properties.keyStart, `v1 added ${missing.map(n => `\`${n}\``).join(" and ")} to every table it built; they are declared here now, so drop them if this table has no use for them`);
 }
 
+/**
+ * A payload written with `__coalesce`: the receiver coalesces now, by its own
+ * `listen`, which is usually in another template, so this is left for review.
+ */
+function coalesceKeys(payload: Val | undefined, m: Codemod): void {
+  const flag = payload?.k === "obj" ? payload.props.find(p => p.key === "__coalesce" || p.key === "__coalesceKey") : undefined;
+  if (flag) {
+    m.review(flag.keyStart, "Coalescing is the receiver's now: drop `__coalesce` and `__coalesceKey`, and give the receiving `$rtc: \"listen\"` `coalesce: true`, or the name of the field to group by (what `__coalesceKey` named, or `\"type\"`)");
+  }
+}
+
 /** The value a value-mode step names, when it is written as a literal. */
 const opValue = ({ op, obj }: Step) => {
   const value = obj.props.find(p => p.key === "$" + op)?.value;
@@ -746,6 +757,9 @@ const RULES: Record<string, Rule> = {
   "storage-remove": (step, m) => renameOp(step, "storageDelete", m),
   // A level's name and value are its two operands.
   "audio-volume": (step, m) => siblingToTuple(step, "volume", m),
+  // Coalescing is the receiver's `coalesce` on `listen`, not keys in the payload.
+  "rtc-send": (step, m) => coalesceKeys(step.obj.props.find(p => p.key === "data")?.value, m),
+  "rtc-broadcast": (step, m) => coalesceKeys(step.obj.props.find(p => p.key === "$rtc-broadcast")?.value, m),
   // `close-all` is `closeAll`, as every other value-mode op names its operations.
   rtc: (step, m) => {
     handlerReads(step, { rtcSignal: "signal", rtcPeerId: "peer", rtcInbound: "inbound", rtcMessage: "message", rtcChannel: "channel" }, m);

@@ -17,7 +17,7 @@ class FakeChannel {
   bufferedAmount = 0;
   sent: unknown[] = [];
   onopen: (() => void) | null = null;
-  onmessage: ((e: { data: string }) => void) | null = null;
+  onmessage: ((e: { data: string | ArrayBuffer }) => void) | null = null;
   onclose: (() => void) | null = null;
 
   constructor(readonly label: string) {}
@@ -31,7 +31,7 @@ class FakeChannel {
 
   open(): void { this.readyState = "open"; this.onopen?.(); }
   deliver(data: unknown): void {
-    this.onmessage?.({ data: typeof data === "string" ? data : JSON.stringify(data) });
+    this.onmessage?.({ data: typeof data === "string" || data instanceof ArrayBuffer ? data : JSON.stringify(data) });
   }
 }
 
@@ -311,6 +311,59 @@ test("onMessage binds the message, the peer and the channel it came over", async
   peer.channel("fast").deliver({ n: 2 });
   await tick();
   assert.deepEqual(ctx.seen, ["B/data/1", "B/fast/2"]);
+});
+
+/** Listen with `extra`, dial B and open its channels: a peer ready to message. */
+async function connected(ctx: Ctx, extra: Record<string, unknown> = {}): Promise<FakePeer> {
+  await listen(ctx, extra);
+  const dialing = resolve({ "$rtcConnect": "B", timeout: 200 }, ctx) as Promise<unknown>;
+  await tick();
+  const peer = FakePeer.last();
+  peer.openChannels();
+  await dialing;
+  return peer;
+}
+
+const frame = (): Promise<void> => new Promise(done => { setTimeout(done, 30); });
+
+// Binary goes over the wire as bytes, not as JSON of its indexes, and comes back
+// as an ArrayBuffer.
+test("binary is sent as it is and arrives as an ArrayBuffer", async () => {
+  const ctx = base();
+  const peer = await connected(ctx, { onMessage: { $push: [{ $var: "seen" }, { $var: "message" }] } });
+  const positions = new Float32Array([1.5, 2.5]);
+  await resolve({ "$rtcSend": "B", data: { $var: "positions" }, channel: "fast" }, { ...ctx, positions });
+  await resolve({ "$rtcBroadcast": { $var: "positions" } }, { ...ctx, positions });
+  assert.equal(peer.channel("fast").sent[0], positions);
+  assert.equal(peer.channel("data").sent[0], positions);
+
+  const bytes = new Uint8Array([7, 8]).buffer;
+  peer.channel("data").deliver(bytes);
+  await tick();
+  assert.equal(ctx.seen[0], bytes);
+});
+
+// Coalescing is the receiver's: a burst of fast updates runs onMessage once
+// per group, and nothing on the data channel is ever dropped.
+test("coalesce: true keeps the newest fast message per peer, and the data channel all of them", async () => {
+  const ctx = base();
+  const peer = await connected(ctx, { coalesce: true, onMessage: { $push: [{ $var: "seen" }, { $var: "message.n" }] } });
+  for (const n of [1, 2, 3]) peer.channel("fast").deliver({ n });
+  for (const n of [4, 5]) peer.channel("data").deliver({ n });
+  await frame();
+  assert.deepEqual(ctx.seen, [4, 5, 3]);
+});
+
+test("coalesce by a field keeps the newest of each value, and lets a message without it through", async () => {
+  const ctx = base();
+  const peer = await connected(ctx, { coalesce: "type", onMessage: { $push: [{ $var: "seen" }, { $var: "message.n" }] } });
+  peer.channel("fast").deliver({ type: "pos", n: 1 });
+  peer.channel("fast").deliver({ type: "aim", n: 2 });
+  peer.channel("fast").deliver({ type: "pos", n: 3 });
+  peer.channel("fast").deliver({ n: 4 });
+  await frame();
+  assert.deepEqual(ctx.seen, [4, 3, 2]);
+  await assert.rejects(async () => { await listen(base(), { coalesce: 5 }); }, /rtc coalesce is true, false or a field name, not 5/);
 });
 
 test("send refuses an unknown peer and an unlisted channel", async () => {

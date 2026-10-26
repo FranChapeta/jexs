@@ -53,6 +53,9 @@ interface Mesh {
   iceServers: readonly RTCIceServer[];
   timeout: number;
   trickle: boolean;
+  /** How fast-channel messages coalesce: not at all, per peer, or per peer and
+   *  the value of the named field. */
+  coalesce: boolean | string;
   peers: Map<string, Peer>;
   /** Candidates that arrived before the peer or its remote description did,
    *  by peer id: one can come before the peer exists at all. */
@@ -132,6 +135,10 @@ export class WebRTCNode extends Node {
               type: "boolean",
               markdownDescription: "Whether ICE candidates are signalled as they are found (the default). Set `false` to emit nothing until gathering completes, then one description carrying every candidate inline: slower to connect, but it reduces the exchange to a single payload each way, which is what a human-carried transport needs.",
             },
+            coalesce: {
+              type: ["boolean", "string"],
+              markdownDescription: "Hand `onMessage` only the newest of the `fast`-channel messages that arrive together (within a frame, about 16ms), so a burst of state updates runs the steps once. `true` keeps the newest per peer; a field name keeps the newest per peer and per value of that field, so `\"type\"` collapses each kind of update on its own. A message without the field, and everything on the `data` channel, always gets through. Off by default.",
+            },
             onSignal: {
               steps: true,
               required: true,
@@ -147,7 +154,7 @@ export class WebRTCNode extends Node {
             },
             onMessage: {
               steps: true,
-              markdownDescription: "Steps run on each incoming message, with `message`, `peer` and `channel` (`\"data\"` or `\"fast\"`) in scope.",
+              markdownDescription: "Steps run on each incoming message, with `message`, `peer` and `channel` (`\"data\"` or `\"fast\"`) in scope. `message` is the JSON value sent, the text when it is not JSON, or an `ArrayBuffer` for a binary message.",
             },
             onClose: {
               steps: true,
@@ -198,14 +205,14 @@ export class WebRTCNode extends Node {
         "{ \"$rtcSend\": { \"$var\": \"peer\" }, \"data\": { \"$var\": \"state\" }, \"channel\": \"fast\" }",
       ],
       siblings: {
-        data: { required: true, description: "Data to send. Non-string values are JSON-encoded." },
+        data: { required: true, description: "Data to send: text, or binary (an `ArrayBuffer`, a typed array or a `Blob`) as it is, and anything else as JSON." },
         channel: RTC_CHANNEL,
       },
     },
 
     rtcBroadcast: {
       output: "null",
-      markdownDescription: "Sends the value to every connected peer in the mesh. The one operation with no peer to name, so the data takes the value slot.\nUnlike `rtcSend`, a peer that is not ready is skipped rather than refused: a broadcast addresses whoever is currently there.",
+      markdownDescription: "Sends the value to every connected peer in the mesh, as `rtcSend` sends its `data`. The one operation with no peer to name, so the data takes the value slot.\nUnlike `rtcSend`, a peer that is not ready is skipped rather than refused: a broadcast addresses whoever is currently there.",
       examples: [
         "{ \"$rtcBroadcast\": { \"$var\": \"state\" }, \"channel\": \"fast\" }",
       ],
@@ -248,11 +255,12 @@ export class WebRTCNode extends Node {
       const name = meshRaw == null ? DEFAULT_MESH : this.toString(meshRaw);
       switch (this.getOption(raw, RTC_OPS, "rtc operation")) {
         case "listen":
-          return resolveAll([def.iceServers, def.timeout, def.trickle], context, ([ice, ms, trickle]) =>
+          return resolveAll([def.iceServers, def.timeout, def.trickle, def.coalesce ?? null], context, ([ice, ms, trickle, coalesce]) =>
             doListen(this, name, def, context, {
               iceServers: iceServersFrom(ice),
               timeout: ms == null ? DEFAULT_TIMEOUT_MS : this.toNumber(ms),
               trickle: trickle == null ? true : this.toBoolean(trickle),
+              coalesce: coalesceFrom(coalesce),
             }));
 
         case "closeAll": {
@@ -376,12 +384,19 @@ function iceServersFrom(value: unknown): readonly RTCIceServer[] {
   });
 }
 
+/** Read the `coalesce` sibling: off when absent, `true` or `false`, or the name of a field. */
+function coalesceFrom(value: unknown): boolean | string {
+  if (value === null) return false;
+  if (typeof value === "boolean" || (typeof value === "string" && value !== "")) return value;
+  throw new Error(`rtc coalesce is true, false or a field name, not ${JSON.stringify(value)}`);
+}
+
 function doListen(
   node: WebRTCNode,
   name: string,
   def: Record<string, unknown>,
   context: Context,
-  config: { iceServers: readonly RTCIceServer[]; timeout: number; trickle: boolean },
+  config: { iceServers: readonly RTCIceServer[]; timeout: number; trickle: boolean; coalesce: boolean | string },
 ): null {
   const handlers = new Map<HandlerKey, Handler>();
   for (const key of HANDLER_KEYS) {
@@ -399,6 +414,7 @@ function doListen(
   mesh.iceServers = config.iceServers;
   mesh.timeout = config.timeout;
   mesh.trickle = config.trickle;
+  mesh.coalesce = config.coalesce;
   node.meshes.set(name, mesh);
   return null;
 }
@@ -410,6 +426,7 @@ function newMesh(name: string): Mesh {
     iceServers: DEFAULT_ICE_SERVERS,
     timeout: DEFAULT_TIMEOUT_MS,
     trickle: true,
+    coalesce: false,
     peers: new Map(),
     pendingIce: new Map(),
     pendingFastCoalescedByKey: new Map(),
@@ -639,6 +656,43 @@ function flushIceCandidates(mesh: Mesh, peer: Peer): void {
   }
 }
 
+/**
+ * What goes over a channel: text, or binary as it is. Not `ArrayBufferLike`,
+ * which also covers SharedArrayBuffer: `send` refuses one, and `frameOf` never
+ * admits one, since it is not an `instanceof ArrayBuffer`.
+ */
+type Frame = string | Blob | ArrayBuffer | ArrayBufferView<ArrayBuffer>;
+
+/** A typed array or DataView over an ordinary ArrayBuffer, which `send` takes. */
+function isBufferView(value: unknown): value is ArrayBufferView<ArrayBuffer> {
+  return ArrayBuffer.isView(value) && value.buffer instanceof ArrayBuffer;
+}
+
+/** Text and binary go as they are, so a typed array of positions costs no JSON; anything else goes as JSON. */
+function frameOf(data: unknown): Frame {
+  if (typeof data === "string" || data instanceof ArrayBuffer || isBufferView(data)) return data;
+  if (typeof Blob !== "undefined" && data instanceof Blob) return data;
+  return JSON.stringify(data);
+}
+
+/** `send` is declared once per kind of frame, so each kind gets its own call. */
+function sendFrame(channel: RTCDataChannel, frame: Frame): void {
+  if (typeof frame === "string") channel.send(frame);
+  else if (frame instanceof ArrayBuffer) channel.send(frame);
+  else if (frame instanceof Blob) channel.send(frame);
+  else channel.send(frame);
+}
+
+/** What arrived: JSON as its value, other text as it is, binary as an `ArrayBuffer`. */
+function messageOf(data: unknown): unknown {
+  if (typeof data !== "string") return data;
+  try {
+    return JSON.parse(data);
+  } catch {
+    return data;
+  }
+}
+
 function doSend(mesh: Mesh | undefined, peerId: string, data: unknown, kind: ChannelKind): null {
   const isFast = kind === "fast";
   const channel = mesh?.peers.get(peerId)?.[kind];
@@ -652,20 +706,20 @@ function doSend(mesh: Mesh | undefined, peerId: string, data: unknown, kind: Cha
   // channel: a backed-up fast lane sheds the update rather than queueing a
   // position the receiver would render late anyway.
   if (isFast && channel.bufferedAmount > FAST_BUFFERED_AMOUNT_LIMIT) return null;
-  channel.send(typeof data === "string" ? data : JSON.stringify(data));
+  sendFrame(channel, frameOf(data));
   return null;
 }
 
 function doBroadcast(mesh: Mesh, data: unknown, kind: ChannelKind): null {
   const isFast = kind === "fast";
-  const payload = typeof data === "string" ? data : JSON.stringify(data);
+  const frame = frameOf(data);
   // Unlike `send`, a peer that is not ready is skipped rather than refused: a
   // broadcast addresses whoever is currently there.
   for (const peer of mesh.peers.values()) {
     const channel = peer[kind];
     if (!channel || channel.readyState !== "open") continue;
     if (isFast && channel.bufferedAmount > FAST_BUFFERED_AMOUNT_LIMIT) continue;
-    channel.send(payload);
+    sendFrame(channel, frame);
   }
   return null;
 }
@@ -680,19 +734,17 @@ function statusOf(mesh: Mesh, peerId: string): string {
 
 function setupChannel(mesh: Mesh, peer: Peer, channel: RTCDataChannel, label: ChannelKind): void {
   const peerId = peer.id;
+  // A binary message arrives as an ArrayBuffer, not a Blob that would need
+  // reading before anything could use it.
+  channel.binaryType = "arraybuffer";
   channel.onopen = () => channelOpened(mesh, peer);
 
   channel.onmessage = (event) => {
-    let data: unknown;
-    try {
-      data = JSON.parse(event.data);
-    } catch {
-      data = event.data;
-    }
+    const data = messageOf(event.data);
 
     if (label === "fast") {
-      const coalesceKey = getFastCoalesceKey(peerId, data);
-      if (coalesceKey) {
+      const coalesceKey = coalesceKeyOf(mesh, peerId, data);
+      if (coalesceKey !== null) {
         mesh.pendingFastCoalescedByKey.set(coalesceKey, { peerId, data });
         scheduleFastCoalesceFlush(mesh);
         return;
@@ -717,15 +769,17 @@ function setupChannel(mesh: Mesh, peer: Peer, channel: RTCDataChannel, label: Ch
   };
 }
 
-function getFastCoalesceKey(peerId: string, data: unknown): string | null {
-  if (!isObject(data)) return null;
-  if (data.__coalesce !== true) return null;
-
-  const customKey = typeof data.__coalesceKey === "string" ? data.__coalesceKey.trim() : "";
-  if (customKey) return `${peerId}:${customKey}`;
-
-  const type = typeof data.type === "string" ? data.type : "message";
-  return `${peerId}:${type}`;
+/**
+ * The group a fast-channel message coalesces in, by the mesh's `coalesce`: the
+ * peer, or the peer and the message's value of the named field. Null for one
+ * that goes straight through: coalescing is off, or the message has no such
+ * field to group it by.
+ */
+function coalesceKeyOf(mesh: Mesh, peerId: string, data: unknown): string | null {
+  if (mesh.coalesce === false) return null;
+  if (mesh.coalesce === true) return peerId;
+  if (!isObject(data) || data[mesh.coalesce] === undefined) return null;
+  return `${peerId}\u0000${JSON.stringify(data[mesh.coalesce])}`;
 }
 
 function scheduleFastCoalesceFlush(mesh: Mesh): void {
