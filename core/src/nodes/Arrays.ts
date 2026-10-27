@@ -431,7 +431,7 @@ export class ArrayNode extends Node {
   }
 
   reverse(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.$reverse, def.clone], c, ([v, cl]) => mutArr(v, this.toBoolean(cl)).reverse());
+    return resolveAll([def.$reverse, def.clone], c, ([v, cl]) => mutArr(v, this.toBoolean(cl), "reverse").reverse());
   }
 
   unique(def: Record<string, unknown>, c: Context) {
@@ -439,7 +439,7 @@ export class ArrayNode extends Node {
       const clone = this.toBoolean(cl);
       const u = [...new Set(this.toArray(v))];
       if (clone || !Array.isArray(v)) return u;
-      v.splice(0, v.length, ...u);
+      editable(v, "unique").splice(0, v.length, ...u);
       return v;
     });
   }
@@ -451,7 +451,7 @@ export class ArrayNode extends Node {
       if (!(depth >= 0)) throw new Error(`flatten depth must be a number of levels, not ${JSON.stringify(depthRaw)}`);
       const f = this.toArray(v).flat(depth);
       if (clone || !Array.isArray(v)) return f;
-      v.splice(0, v.length, ...f);
+      editable(v, "flatten").splice(0, v.length, ...f);
       return v;
     });
   }
@@ -459,18 +459,18 @@ export class ArrayNode extends Node {
   sort(def: Record<string, unknown>, c: Context) {
     return resolveAll([def.$sort, def.clone, def.order], c, ([v, cl, order]) => {
       const direction = this.getOption(order, ORDERS, "sort order") === "desc" ? -1 : 1;
-      return mutArr(v, this.toBoolean(cl)).sort((a, b) => compareValues(a, b) * direction);
+      return mutArr(v, this.toBoolean(cl), "sort").sort((a, b) => compareValues(a, b) * direction);
     });
   }
 
   shuffle(def: Record<string, unknown>, c: Context) {
-    return resolveAll([def.$shuffle, def.clone], c, ([v, cl]) => shuffleInPlace(mutArr(v, this.toBoolean(cl)), c));
+    return resolveAll([def.$shuffle, def.clone], c, ([v, cl]) => shuffleInPlace(mutArr(v, this.toBoolean(cl), "shuffle"), c));
   }
 
   sortBy(def: Record<string, unknown>, c: Context) {
     return resolveAll([def.$sortBy, def.clone, def.order], c, ([args, cl, order]) => {
       const a = this.toArray(args);
-      const arr = mutArr(a[0], this.toBoolean(cl));
+      const arr = mutArr(a[0], this.toBoolean(cl), "sortBy");
       const key = this.toString(a[1]);
       const direction = this.getOption(order, ORDERS, "sort order") === "desc" ? -1 : 1;
       return arr.sort((x, y) => compareValues(getNestedValue(x, key), getNestedValue(y, key)) * direction);
@@ -502,7 +502,7 @@ export class ArrayNode extends Node {
       const a = this.toArray(args);
       const item = a.length > 1 ? a[1] : undefined;
       if (!Array.isArray(a[0])) return [item];
-      const arr = clone ? [...a[0]] : a[0];
+      const arr = mutArr(a[0], clone, "push");
       arr.push(item);
       return arr;
     });
@@ -514,7 +514,7 @@ export class ArrayNode extends Node {
       const a = this.toArray(args);
       const item = a.length > 1 ? a[1] : undefined;
       if (!Array.isArray(a[0])) return [item];
-      const arr = clone ? [...a[0]] : a[0];
+      const arr = mutArr(a[0], clone, "unshift");
       arr.unshift(item);
       return arr;
     });
@@ -524,7 +524,7 @@ export class ArrayNode extends Node {
     return resolveAll([def.$pop, def.clone], c, ([v, cl]) => {
       const clone = this.toBoolean(cl);
       if (!Array.isArray(v)) return undefined;
-      return clone ? v[v.length - 1] : v.pop();
+      return clone ? v[v.length - 1] : editable(v, "pop").pop();
     });
   }
 
@@ -532,7 +532,7 @@ export class ArrayNode extends Node {
     return resolveAll([def.$shift, def.clone], c, ([v, cl]) => {
       const clone = this.toBoolean(cl);
       if (!Array.isArray(v)) return undefined;
-      return clone ? v[0] : v.shift();
+      return clone ? v[0] : editable(v, "shift").shift();
     });
   }
 
@@ -544,7 +544,7 @@ export class ArrayNode extends Node {
       if (!Array.isArray(arr)) return undefined;
       const i = this.toNumber(a[1]);
       if (i < 0 || i >= arr.length) return undefined;
-      return clone ? arr[i] : arr.splice(i, 1)[0];
+      return clone ? arr[i] : editable(arr, "remove").splice(i, 1)[0];
     });
   }
 
@@ -553,7 +553,7 @@ export class ArrayNode extends Node {
       const clone = this.toBoolean(cl);
       const a = this.toArray(args);
       if (!Array.isArray(a[0])) return a[0];
-      const arr = clone ? [...a[0]] : a[0];
+      const arr = mutArr(a[0], clone, "insert");
       const i = Math.max(0, Math.min(this.toNumber(a[1]), arr.length));
       arr.splice(i, 0, a[2]);
       return arr;
@@ -565,7 +565,7 @@ export class ArrayNode extends Node {
       const clone = this.toBoolean(cl);
       const a = this.toArray(args);
       if (!Array.isArray(a[0])) return a[0];
-      const arr = clone ? [...a[0]] : a[0];
+      const arr = mutArr(a[0], clone, "move");
       const from = this.toNumber(a[1]);
       if (from < 0 || from >= arr.length) return arr;
       const to = Math.max(0, Math.min(this.toNumber(a[2]), arr.length - 1));
@@ -729,9 +729,16 @@ export class ArrayNode extends Node {
 
 /** The array to edit in place — the source itself, or a shallow copy when
  *  `clone`. A non-array is wrapped into a fresh array (nothing to mutate). */
-function mutArr(value: unknown, clone: boolean): unknown[] {
+function mutArr(value: unknown, clone: boolean, op: string): unknown[] {
   if (!Array.isArray(value)) return value != null ? [value] : [];
-  return clone ? [...value] : value;
+  return clone ? [...value] : editable(value, op);
+}
+
+/** `arr`, which `op` edits in place, unless it is read-only data (frozen, as
+ *  `$setVars` with `readonly` writes it). */
+function editable(arr: unknown[], op: string): unknown[] {
+  if (Object.isFrozen(arr)) throw new Error(`$${op}: the array is read-only data; pass \`clone: true\` to change a copy`);
+  return arr;
 }
 
 /** Ascending order: numbers numerically, anything else as text. */

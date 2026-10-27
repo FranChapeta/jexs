@@ -252,14 +252,21 @@ function writeContextValue(context: Context, varName: string, value: unknown): v
     context[parts[0]] = value;
     return;
   }
+  // A frozen object along the path is read-only data (`$setVars` with
+  // `readonly`): said plainly, before the strict-mode TypeError would be.
+  const writable = (target: object, depth: number) => {
+    if (Object.isFrozen(target)) throw new Error(`Cannot write "${varName}": "${parts.slice(0, depth).join(".")}" is read-only data. Copy it into a variable to change it.`);
+  };
   let target: Record<string, unknown> = context;
   for (let i = 0; i < parts.length - 1; i++) {
     if (target[parts[i]] && typeof target[parts[i]] === "object") {
       target = target[parts[i]] as Record<string, unknown>;
     } else {
+      writable(target, i);
       target[parts[i]] = {};
       target = target[parts[i]] as Record<string, unknown>;
     }
   }
+  writable(target, parts.length - 1);
   target[parts[parts.length - 1]] = value;
 }

@@ -1,6 +1,6 @@
 import { Node, Context, NodeValue, childContext } from "./Node.js";
 import { resolve, resolveAll, isStep, runSteps } from "../Resolver.js";
-import { getNestedValue } from "../helpers.js";
+import { freezeData, getNestedValue } from "../helpers.js";
 import type { JexsNodeSchema } from "../schema.js";
 
 export class VariablesNode extends Node {
@@ -15,7 +15,7 @@ export class VariablesNode extends Node {
     setVars: {
       map: true,
       output: "null",
-      markdownDescription: "Resolves each value in the map, in order, and writes the result back into the context (supports dot-paths, e.g. `\"request.body.id\"`). A step in place of the map resolves to an object whose keys are all written.\nPass `\"data\": true` to write the values as data, without resolving them.\nPass `\"$bubble\": true` to write them in an enclosing scope instead (the nearest that has each as its own, else the outermost the write can reach), so they survive after the current file/loop/handler returns.",
+      markdownDescription: "Resolves each value in the map, in order, and writes the result back into the context (supports dot-paths, e.g. `\"request.body.id\"`). A step in place of the map resolves to an object whose keys are all written.\nPass `\"data\": true` to write the values as data, without resolving them.\nPass `\"$bubble\": true` to write them in an enclosing scope instead (the nearest that has each as its own, else the outermost the write can reach), so they survive after the current file/loop/handler returns.\nPass `\"readonly\": true` to make the values read-only, so no step can change the objects and arrays they hold.",
       outputDescription: "Always `null`. `setVars` is used for its side-effect of writing into the context, which later steps read via `{ \"$var\": \"…\" }`.",
       examples: [
         "{ \"$setVars\": { \"count\": 0, \"name\": { \"$var\": \"user.name\" } } }",
@@ -24,6 +24,10 @@ export class VariablesNode extends Node {
         data: {
           type: "boolean",
           description: "Write a literal map's values as data, without resolving them, as `$file` does with `data: true`.",
+        },
+        readonly: {
+          type: "boolean",
+          description: "Make each value read-only as it is written: no step can change its objects and arrays afterwards, at any depth, whether through a dot-path `$setVars`, another variable holding the same object, or `$push`, `$sort` and the other ops that change an array (with `clone: true` they work on a copy instead). For data that many flows read and none should change, such as a server's startup data, which every request shares. The variable itself can still be set to a new value.",
         },
       },
     },
@@ -69,13 +73,15 @@ export class VariablesNode extends Node {
     const vars = def.$setVars;
     // `$bubble` (the global write modifier) may be an expression: resolve it once,
     // then coerce with the shared node truthiness rules before writing the entries.
-    return resolveAll([def.$bubble, def.data], context, ([bubbleRaw, dataRaw]) => {
+    return resolveAll([def.$bubble, def.data, def.readonly], context, ([bubbleRaw, dataRaw, readonlyRaw]) => {
       const bubble = this.toBoolean(bubbleRaw);
+      const readonly = this.toBoolean(readonlyRaw);
+      const write = (key: string, value: unknown) => Node.setContextValue(context, key, readonly ? freezeData(value) : value, bubble);
       // A step resolves to an object whose keys are all written at once.
       if (isStep(vars)) {
         return resolve(vars, context, values => {
           if (!this.isObject(values)) throw new Error(`$setVars: the step must resolve to an object of names and values, got ${JSON.stringify(values)}`);
-          for (const key of Object.keys(values)) Node.setContextValue(context, key, values[key], bubble);
+          for (const key of Object.keys(values)) write(key, values[key]);
           return null;
         });
       }
@@ -87,8 +93,8 @@ export class VariablesNode extends Node {
       const next = (): unknown => {
         if (i >= keys.length) return null;
         const key = keys[i++];
-        if (data) { Node.setContextValue(context, key, vars[key], bubble); return next(); }
-        return resolve(vars[key], context, v => { Node.setContextValue(context, key, v, bubble); return next(); });
+        if (data) { write(key, vars[key]); return next(); }
+        return resolve(vars[key], context, v => { write(key, v); return next(); });
       };
       return next();
     });

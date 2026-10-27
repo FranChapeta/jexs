@@ -33,6 +33,21 @@ export function splitPath(path: string): readonly string[] {
 }
 
 /**
+ * Deep-freeze the plain data in `value`: arrays, and objects whose prototype is
+ * `Object.prototype` or `null`. Anything else (a `Map`, a `Date`, a typed array,
+ * a class instance, a function) is left as it is, with what it holds. Each
+ * object is frozen before its contents, so a cycle ends at the frozen one.
+ */
+export function freezeData<T>(value: T): T {
+  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
+  const proto = Object.getPrototypeOf(value);
+  if (!Array.isArray(value) && proto !== Object.prototype && proto !== null) return value;
+  Object.freeze(value);
+  for (const item of Object.values(value)) freezeData(item);
+  return value;
+}
+
+/**
  * The keys that lead from an object to its prototype, or to its constructor's,
  * instead of to its data. Through one, a path would reach the scope above a
  * boundary, or the prototype every object shares, so no path or binding may
