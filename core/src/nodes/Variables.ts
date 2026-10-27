@@ -15,7 +15,7 @@ export class VariablesNode extends Node {
     setVars: {
       map: true,
       output: "null",
-      markdownDescription: "Resolves each value in the map, in order, and writes the result back into the context (supports dot-paths, e.g. `\"request.body.id\"`). A step in place of the map resolves to an object whose keys are all written.\nPass `\"data\": true` to write the values as data, without resolving them.\nPass `\"$bubble\": true` to also write into every enclosing scope, so the values survive after the current file/loop/branch returns.",
+      markdownDescription: "Resolves each value in the map, in order, and writes the result back into the context (supports dot-paths, e.g. `\"request.body.id\"`). A step in place of the map resolves to an object whose keys are all written.\nPass `\"data\": true` to write the values as data, without resolving them.\nPass `\"$bubble\": true` to write them in an enclosing scope instead (the nearest that has each as its own, else the outermost the write can reach), so they survive after the current file/loop/handler returns.",
       outputDescription: "Always `null`. `setVars` is used for its side-effect of writing into the context, which later steps read via `{ \"$var\": \"…\" }`.",
       examples: [
         "{ \"$setVars\": { \"count\": 0, \"name\": { \"$var\": \"user.name\" } } }",

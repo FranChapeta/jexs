@@ -98,7 +98,7 @@ A few rules govern how every expression is resolved. Worth internalizing — the
 - `$return` — short-circuit: a step resolving to `{ "$return": X }` ends the current array early and yields `X`. It escapes only that array; nest the wrapper to exit an outer one.
 - `$catch` — a step array run if the expression throws, with `error` (`{ status, message }`) in context. A node that knows more about the failure binds it as a further variable: a failing `fetch` adds `response` (`{ status, ok, headers, body, url }`).
 - `$then` — run the step without waiting for it, then run these steps with its value as `result`.
-- `$bubble` — alongside `$as` or on a `$setVars`, also write into every enclosing scope.
+- `$bubble` — alongside `$as` or on a `$setVars`, write the variable in an enclosing scope: the nearest that has it as its own (a loop's item, a file's params, or one written there without `$bubble`), else the outermost the write can reach (the page, or the edge of a request).
 
 **Iterating.** `map`, `filter`, `find` and `reduce` take the array as their value and the per-item template in `do`: `map` transforms each element, `filter` and `find` test it, and `reduce` folds it into an `accumulator` that starts at `initial`. Each exposes the current element as `item` (and `index`, plus `accumulator` for `reduce`); rename it with the `item` sibling — `{ "$filter": { "$var": "users" }, "do": { "$eq": [{ "$var": "u.role" }, "admin"] }, "item": "u" }`. Read it with `{ "$var": "item" }`. Inside a string, `$item` interpolates it: `"Hello $user.name"`.
 

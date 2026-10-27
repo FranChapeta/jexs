@@ -344,17 +344,14 @@ function loadFile(
 
     if (data) return parsed;
 
-    // Run the loaded file's steps against a context that records ITS directory,
-    // so nested relative `{ file }` / `{ directory }` loads resolve against this
-    // file (not the caller's). Params, if any, merge on top. The context is
-    // linked back to the caller (via `childContext`) so `$setVars` / `$as` with
-    // `$bubble` inside the file can write state upward past the file boundary.
+    // Run the loaded file's steps in a child scope of the caller's that records
+    // ITS directory, so nested relative `{ file }` / `{ directory }` loads resolve
+    // against this file (not the caller's). Params, if any, are the scope's own
+    // too. A `$bubble` inside the file writes past it, into the caller's scopes.
     const fileDir = path.dirname(filePath);
     let fileContext: Context = childContext(context, { [FILE_DIR]: fileDir });
     if (def.params !== undefined) {
-      // A map, or a step resolving to one. Re-derive from the caller so params
-      // merge on top AND the parent link (non-enumerable, so dropped by a plain
-      // spread) still points at the caller.
+      // A map, or a step resolving to one, resolved in the caller's scope.
       const params = await resolve(def.params, context);
       if (isObject(params)) fileContext = childContext(context, { [FILE_DIR]: fileDir, ...params });
     }

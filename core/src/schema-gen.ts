@@ -1229,7 +1229,7 @@ export const GLOBAL_KEY_DOCS: Record<string, { markdownDescription: string; exam
   },
   bubble: {
     markdownDescription:
-      "Modifier for a write, only valid alongside `$as` or `$setVars`. Also writes the result up into every enclosing scope, so it survives after the current file / loop / branch returns. Without it, writes are scoped to the copied context and lost on return.",
+      "Modifier for a write, only valid alongside `$as` or `$setVars`. Writes the variable in an enclosing scope instead of the current one, so it survives after the current file / loop / handler returns: the nearest enclosing scope that has the variable as its own (one that bound it, such as a loop's item or a file's params, or wrote it without `$bubble`), or with none, the outermost scope the write can reach (the page, or the edge of a request or validator). Every scope inside reads it from there. Without it, a write is the current scope's own and is gone when that scope returns.",
     examples: ["{ \"$var\": \"total\", \"$as\": \"total\", \"$bubble\": true }"],
   },
 };

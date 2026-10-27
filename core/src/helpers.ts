@@ -33,6 +33,18 @@ export function splitPath(path: string): readonly string[] {
 }
 
 /**
+ * The keys that lead from an object to its prototype, or to its constructor's,
+ * instead of to its data. Through one, a path would reach the scope above a
+ * boundary, or the prototype every object shares, so no path or binding may
+ * name them: a read finds nothing there, and a write or a binding throws.
+ */
+const PROTOTYPE_KEYS: ReadonlySet<string> = new Set(["__proto__", "constructor", "prototype"]);
+
+export function isPrototypeKey(key: string): boolean {
+  return PROTOTYPE_KEYS.has(key);
+}
+
+/**
  * Deep get a value from an object using dot notation
  * e.g., getNestedValue(obj, 'user.profile.name')
  */
@@ -43,7 +55,7 @@ export function getNestedValue(obj: unknown, path: string): unknown {
   let current: unknown = obj;
 
   for (const key of keys) {
-    if (current === null || current === undefined) {
+    if (current === null || current === undefined || isPrototypeKey(key)) {
       return undefined;
     }
     if (isObject(current) || Array.isArray(current)) {

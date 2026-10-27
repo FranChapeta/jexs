@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue } from "@jexs/core";
-import { operands, resolve, resolveAll } from "@jexs/core";
+import { isPrototypeKey, operands, resolve, resolveAll } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { hydrate } from "../events.js";
 import { getElement, isHtmlOrSvg, parseHtml, place, POSITIONS, type Placement } from "../dom.js";
@@ -801,12 +801,13 @@ function isTraversable(v: unknown): v is object {
 }
 
 // Read a property off an object by name, or by dot-path for a nested one
-// (e.g. "style.color"). Returns undefined if the path breaks on a non-object.
+// (e.g. "style.color"). Returns undefined if the path breaks on a non-object,
+// or names a prototype key, which would lead to what every element shares.
 function getPropPath(obj: object, path: string): unknown {
   const keys = path.split(".");
   let cur: unknown = obj;
   for (const k of keys) {
-    if (!isTraversable(cur)) return undefined;
+    if (!isTraversable(cur) || isPrototypeKey(k)) return undefined;
     cur = Reflect.get(cur, k);
   }
   return cur;
@@ -814,9 +815,12 @@ function getPropPath(obj: object, path: string): unknown {
 
 // Write a property by name or dot-path. Walks EXISTING objects only — never
 // creates intermediates (unlike setVars), since DOM sub-objects like `style`
-// already exist; a broken path is an error naming where it breaks.
+// already exist; a broken path is an error naming where it breaks. A prototype
+// key is refused, since through one the write would change every element.
 function setPropPath(obj: object, path: string, value: unknown): void {
   const keys = path.split(".");
+  const reserved = keys.find(isPrototypeKey);
+  if (reserved !== undefined) throw new Error(`$setProp: "${path}" names "${reserved}", the prototype, not a property of the element`);
   let cur: object = obj;
   for (let i = 0; i < keys.length - 1; i++) {
     const next: unknown = Reflect.get(cur, keys[i]);

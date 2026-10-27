@@ -173,8 +173,8 @@ export function boot({ nodes = [], root = document, global = true, serviceWorker
 
     // Run work pushed from the host against the SAME context DOM event handlers
     // use, so host-driven state is visible to the page and vice versa. `steps`
-    // gets a child scope for its params, which also gives `$as` + `$bubble`
-    // write-through to the app's context, matching FileNode's params semantics.
+    // gets a child scope for its params, from which a `$bubble` writes the app's
+    // context, matching FileNode's params semantics.
     if (host.onCall && host.reply) {
       const reply = host.reply.bind(host);
       host.onCall((message) => {

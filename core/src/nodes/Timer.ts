@@ -49,7 +49,7 @@ export class TimerNode extends Node {
         "resume",
       ],
       output: "null",
-      markdownDescription: "Repeats steps at a fixed interval, compensating for drift, from a frame loop (`rate: 16`) to a scheduled task (`every: \"5m\"`). Each run waits for the last one's steps unless `detach` is set. Each run has a scope of its own, holding `count` (runs so far, this one included), `dt` (milliseconds since the last run), `elapsed` (milliseconds since start, pauses excluded) and `lastRun` (the run's time, in Unix milliseconds); a write that later runs or the caller read needs `$bubble`.",
+      markdownDescription: "Repeats steps at a fixed interval, compensating for drift, from a frame loop (`rate: 16`) to a scheduled task (`every: \"5m\"`). Each run waits for the last one's steps unless `detach` is set. Each run has a scope of its own, holding `count` (runs so far, this one included), `dt` (milliseconds since the last run), `elapsed` (milliseconds since start, pauses excluded) and `lastRun` (the run's time, in Unix milliseconds). A run reads the caller's variables as they are when it runs, so it sees what a handler changes after the timer started; a write that later runs or the caller read needs `$bubble`.",
       examples: [
         "{ \"$interval\": \"start\", \"id\": \"poll\", \"every\": \"30s\", \"do\": [{ \"$fetch\": \"/api/status\" }] }",
         "{ \"$interval\": \"start\", \"id\": \"game\", \"rate\": 16, \"detach\": true, \"do\": [{ \"$var\": \"dt\" }] }",

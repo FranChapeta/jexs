@@ -5,7 +5,7 @@ import path from "node:path";
 import { URL } from "node:url";
 import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
-import { CLIENT_SCRIPT, Context, Node, NodeValue, SW_SCRIPT, createHttpError, isHttpError, isObject, isStep, loggerFor, resolve, resolveAll, resolveFields, runSteps } from "@jexs/core";
+import { CLIENT_SCRIPT, Context, Node, NodeValue, SW_SCRIPT, boundaryContext, createHttpError, isHttpError, isObject, isStep, loggerFor, resolve, resolveAll, resolveFields, runSteps } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { COOKIES, DEFERRED, UPGRADE, type Deferred } from "../context.js";
 import { safeRelative } from "./File.js";
@@ -201,8 +201,7 @@ async function handleUpgrade(
   try {
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
     // The same context a request gets, so the steps that route one route the other.
-    const context: Context = {
-      ...listener.startupContext,
+    const context = boundaryContext(listener.startupContext, {
       baseUrl: getBaseUrl(listener, req),
       request: {
         method: "WS",
@@ -215,7 +214,7 @@ async function handleUpgrade(
       },
       [COOKIES]: [],
       [UPGRADE]: upgrade,
-    };
+    });
     if (listener.system) context.system = systemInfo();
 
     await runSteps(listener.steps, context);
@@ -278,11 +277,11 @@ async function handleRequest(
 
     const baseUrl = getBaseUrl(listener, req);
 
-    // Build per-request context, inheriting from startup context
+    // A request reads the startup context, and its `$bubble` writes stop at its
+    // own scope, so no request changes what the next one reads.
     const setCookies: string[] = [];
     const deferred: Deferred[] = [];
-    const context: Context = {
-      ...listener.startupContext,
+    const context = boundaryContext(listener.startupContext, {
       baseUrl,
       request: {
         method,
@@ -295,7 +294,7 @@ async function handleRequest(
       },
       [COOKIES]: setCookies,
       [DEFERRED]: deferred,
-    };
+    });
     if (listener.system) context.system = systemInfo();
 
     // The steps yield the response: what a `$return` gives, or the last step's value.

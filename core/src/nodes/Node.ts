@@ -8,7 +8,7 @@
 
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
 import {
-  splitPath, isObject,
+  splitPath, isObject, isPrototypeKey,
   toStringValue, toNumberValue, toBooleanValue, toArrayValue,
 } from "../helpers.js";
 
@@ -21,27 +21,16 @@ export interface Context {
 export type NodeValue = unknown;
 
 /**
- * Links a derived (child) scope back to the context it was spread from, so a
- * write can travel upward past the copy that made it (see `setContextValue`'s
- * `$bubble`). Symbol-keyed AND non-enumerable, on purpose:
- *  - templates can't read it as a `$var`, and request data / `$as` (string keys
- *    only) can't forge it;
- *  - JSON and structuredClone drop symbols, so the chain never serializes to a
- *    worker or a log;
- *  - being NON-enumerable, object spread `{ ...ctx }` does NOT copy it. A scope
- *    only gains a parent link when a site explicitly derives one via
- *    `childContext`. This is deliberate: it means a plain spread — e.g. the
- *    server's per-request context spread from the shared startup context — never
- *    inherits a stale link and can never leak a `$bubble` write into an
- *    unrelated scope. Untouched child-context sites are simply bubble
- *    boundaries, never mis-routes.
+ * Marks a scope `boundaryContext` made, where a `$bubble` stops climbing. Read
+ * as an own property only, since the scopes under a boundary inherit it.
+ * Symbol-keyed so templates and request data can't reach or forge it, and
+ * non-enumerable so a spread or a serialization of the scope never carries it.
  */
-export const PARENT = Symbol("jexs.parent");
+const BOUNDARY = Symbol("jexs.boundary");
 
 // What one package's nodes set on the context for another's to read. Symbol
 // keys, so a template can't read them with `$var` (string paths) and request
-// data or `$as` can't forge them. They are enumerable, so a spread or a child
-// scope keeps them.
+// data or `$as` can't forge them. A derived scope reads them from its parent.
 
 /** The browser bundle's URL, when the page is served with it: a `<head>` loads it. */
 export const CLIENT_SCRIPT = Symbol("jexs.clientScript");
@@ -55,15 +44,35 @@ export const TRANSLATE = Symbol("jexs.translate");
 export type Translator = (text: string) => string | Promise<string>;
 
 /**
- * Derive a child scope from `parent`, linked back via PARENT so `$setVars` / `$as`
- * with `$bubble` can write through to it. `extra` is merged on top (loop
- * bindings, fileDir, params) and may carry symbol keys (e.g. the fileDir marker).
- * The link is non-enumerable, so it never shows up in a later spread/serialize.
+ * Derive a child scope from `parent`. It reads every variable of `parent` as it
+ * is now, through its prototype, so nothing is copied; what it binds itself
+ * (`extra`: loop bindings, params, symbol-keyed markers, and later what its steps
+ * write without `$bubble`) is its own and shadows the parent's. A `$bubble` from
+ * it passes up to `parent`. An extra named after a prototype key throws: params
+ * parsed from JSON can hold an own `__proto__`, and binding it would re-parent
+ * the scope.
  */
 export function childContext(parent: Context, extra?: Record<PropertyKey, unknown>): Context {
-  const child: Context = extra ? { ...parent, ...(extra as Record<string, unknown>) } : { ...parent };
-  Object.defineProperty(child, PARENT, { value: parent, writable: true, configurable: true });
-  return child;
+  const scope = Object.create(parent) as Context;
+  if (extra) {
+    for (const key of Reflect.ownKeys(extra)) {
+      if (typeof key === "string" && isPrototypeKey(key)) throw new Error(`Cannot bind "${key}" in a scope: it names the prototype, not a variable`);
+      scope[key] = extra[key];
+    }
+  }
+  return scope;
+}
+
+/**
+ * Derive a scope that reads `parent` as a child does, but where a `$bubble`
+ * stops: its steps can never write `parent`'s variables. For a scope that must
+ * leave its caller's state alone, such as a request's (the startup context is
+ * every request's) or a validator's.
+ */
+export function boundaryContext(parent: Context, extra?: Record<PropertyKey, unknown>): Context {
+  const scope = childContext(parent, extra);
+  Object.defineProperty(scope, BOUNDARY, { value: true });
+  return scope;
 }
 
 export abstract class Node {
@@ -141,18 +150,16 @@ export abstract class Node {
    * Helper: Set nested value in context using dot notation for "as" support.
    * e.g. setContextValue(ctx, "request.body.value", hash) sets ctx.request.body.value
    *
-   * With `$bubble`, the same write is also applied to every enclosing scope up
-   * the PARENT chain, so the value survives after the current file/loop/branch
-   * (each a copied context) returns — this is how state moves upward.
+   * Without `bubble` the write lands in `context`, which then has the variable
+   * as its own. With `bubble` it lands in an enclosing scope: the nearest one
+   * above `context` that has the variable (the path's first segment) as its
+   * own, or when none does, the first boundary or top scope on the way, which
+   * then has it. A boundary or top scope has nothing above it to write, so a
+   * bubble from one lands in it. Every scope below the one written reads the
+   * variable from there.
    */
   static setContextValue(context: Context, varName: string, value: unknown, bubble = false): void {
-    writeContextValue(context, varName, value);
-    if (!bubble) return;
-    let ancestor = (context as { [PARENT]?: Context })[PARENT];
-    while (ancestor) {
-      writeContextValue(ancestor, varName, value);
-      ancestor = (ancestor as { [PARENT]?: Context })[PARENT];
-    }
+    writeContextValue(bubble ? bubbleTarget(context, splitPath(varName)[0]) : context, varName, value);
   }
 
   // Coercion sugar for handler bodies. The rules live in helpers.ts as free
@@ -214,9 +221,33 @@ export abstract class Node {
  */
 const nodeProtoKeys = new Set([...Object.getOwnPropertyNames(Node.prototype), "dispose"]);
 
-/** Write a single dot-path value into one context (no propagation). */
+/**
+ * The scope a bubbled write of `name` lands in (see `setContextValue`). A top
+ * scope is a plain object, so its prototype is `Object.prototype` (or `null`),
+ * which is where the climb ends when no boundary ends it first.
+ */
+function bubbleTarget(context: Context, name: string): Context {
+  let scope = context;
+  while (!Object.hasOwn(scope, BOUNDARY)) {
+    const parent = Object.getPrototypeOf(scope) as Context | null;
+    if (parent === null || parent === Object.prototype) break;
+    scope = parent;
+    if (Object.hasOwn(scope, name)) break;
+  }
+  return scope;
+}
+
+/**
+ * Write a single dot-path value into one context. A path through an object the
+ * scope reads from its parent writes into that same object, as an assignment
+ * through a shared reference does in JS. A path naming a prototype key throws,
+ * since through one it would write the scope above a boundary, or the
+ * prototype every object shares.
+ */
 function writeContextValue(context: Context, varName: string, value: unknown): void {
   const parts = splitPath(varName);
+  const reserved = parts.find(isPrototypeKey);
+  if (reserved !== undefined) throw new Error(`Cannot write "${varName}": "${reserved}" names the prototype, not a variable or its data`);
   if (parts.length === 1) {
     context[parts[0]] = value;
     return;

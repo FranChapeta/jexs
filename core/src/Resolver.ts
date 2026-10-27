@@ -86,11 +86,10 @@ type Loader = (resolver: Resolver) => void | Promise<void>;
 /**
  * Where a context records the resolver it is running in.
  *
- * ENUMERABLE on purpose, and that is the whole mechanism: object spread copies
- * own enumerable symbol keys, so every `{ ...context }` and every
- * `childContext(...)` carries the resolver into the derived scope without a
- * single call site having to thread it. (`PARENT` in Node.ts is non-enumerable
- * for the opposite reason — a plain spread must NOT inherit a bubble target.)
+ * A derived scope (`childContext`, `boundaryContext`) reads it through its
+ * prototype, and it is ENUMERABLE so a plain spread `{ ...context }` copies it
+ * too: either way the scope runs in its parent's resolver without a single call
+ * site having to thread it.
  *
  * Symbol-keyed so templates cannot reach it: `var` reads string paths, and
  * `Object.keys` never lists symbols.
@@ -124,7 +123,7 @@ export function resolverFor(context: Context): Resolver {
     throw new Error(
       "No resolver for this context. Resolve through a resolver at least once " +
       "(call the resolver with it), derive it from a scope that already has " +
-      "one (childContext, or a plain spread), or pass it as createResolver's " +
+      "one (childContext, boundaryContext, or a plain spread), or pass it as createResolver's " +
       "`context` option.",
     );
   }

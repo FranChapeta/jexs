@@ -149,7 +149,7 @@ boot({ nodes: [new WidgetNode()], root: document.querySelector("#widget")!, glob
 
 `serviceWorker: false` skips registering the service worker the server named.
 
-Each firing of a handler runs in a scope of its own on top of the page's context, holding `event`, `target` (the element the handler is on, or with a `target` selector the matching element the event happened in, plus its `index` and pointer `side`), `value`, and the `params` of the nearest element around it that has them. A value from an earlier event never lingers into the next, and two handlers awaiting at once each keep their own. A handler reads page state as any step does; a write meant as page state, for later handlers to read, takes `$bubble`:
+Each firing of a handler runs in a scope of its own on top of the page's context, holding `event`, `target` (the element the handler is on, or with a `target` selector the matching element the event happened in, plus its `index` and pointer `side`), `value`, and the `params` of the nearest element around it that has them. A value from an earlier event never lingers into the next, and two handlers awaiting at once each keep their own. A handler reads page state as it is at that moment, including what another handler changed while it was awaiting; a write meant as page state, for later handlers to read, takes `$bubble`, which writes it in the page's context (or in a scope between, if one has the variable as its own):
 
 ```json
 { "$setVars": { "count": { "$add": [{ "$var": "count" }, 1] } }, "$bubble": true }

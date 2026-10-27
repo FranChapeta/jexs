@@ -1,5 +1,5 @@
 import { Knex as KnexType } from "knex";
-import { Node, Context, NodeValue, isOwnedKey, resolveFields, runSteps } from "@jexs/core";
+import { Node, Context, NodeValue, boundaryContext, isOwnedKey, resolveFields, runSteps } from "@jexs/core";
 import { DatabaseNode } from "./Database.js";
 import { COMPUTE_FNS, DatabaseTableNode, type ColumnSchema, type TableJsonSchema } from "./DatabaseTable.js";
 import { requireSchemaNode, validate } from "./Schema.js";
@@ -344,14 +344,14 @@ async function runValidators(query: QueryDefinition, connection: unknown, contex
   const schema: TableJsonSchema = DatabaseTableNode.get(context, query.table) ?? { table: query.table, properties: {} };
   const own = schema.validator;
   if (global == null && own == null) return;
-  // A copy of the caller's context, not a child scope: a validator refuses or
-  // narrows the query, and never writes the caller's variables. `query` is the
-  // object that runs, so a dot-path write narrows it; `schema` is a copy, so
-  // the registered document stays as registered. `VALIDATING` carries into
-  // nested scopes, so a query run inside skips validation.
-  const validatorContext: Context = {
-    ...context, [VALIDATING]: true, schema: structuredClone(schema), query, operation,
-  };
+  // A boundary, not a child scope: a validator reads the caller's variables,
+  // refuses or narrows the query, and never writes the caller's variables.
+  // `query` is the object that runs, so a dot-path write narrows it; `schema` is
+  // a copy, so the registered document stays as registered. Nested scopes read
+  // `VALIDATING`, so a query run inside skips validation.
+  const validatorContext = boundaryContext(context, {
+    [VALIDATING]: true, schema: structuredClone(schema), query, operation,
+  });
   for (const steps of [global, own]) {
     if (steps != null) await runSteps(steps, validatorContext);
   }

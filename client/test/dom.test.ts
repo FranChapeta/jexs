@@ -57,6 +57,13 @@ test("attributes and properties, dot-paths included", async () => {
   assert.equal(await run({ $getProp: ["#box", "nope.deeper"] }), undefined);
 });
 
+test("a property path cannot reach what every element shares", async () => {
+  await assert.rejects(async () => run({ $setProp: ["#box", "constructor.prototype.polluted", 1] }), /names "constructor", the prototype/);
+  await assert.rejects(async () => run({ $setProp: ["#box", "__proto__.polluted", 1] }), /names "__proto__", the prototype/);
+  assert.equal(await run({ $getProp: ["#box", "__proto__"] }), undefined);
+  assert.equal(($("#go") as unknown as Record<string, unknown>).polluted, undefined);
+});
+
 test("values, text, html and disabled through the props", async () => {
   assert.equal(await run({ $getProp: ["#name", "value"] }), "Ada");
   await run({ $setProp: ["#name", "value", "Grace"] });

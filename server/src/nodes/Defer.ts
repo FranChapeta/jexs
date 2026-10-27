@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, loggerFor, resolve } from "@jexs/core";
+import { Node, Context, NodeValue, boundaryContext, loggerFor, resolve } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { DEFERRED } from "../context.js";
 
@@ -41,7 +41,7 @@ export class DeferNode extends Node {
 
     return resolve(loaderExpr, context, loaderResult => {
       const loaderHtml = loaderResult != null ? String(loaderResult) : "";
-      const deferredContext = { ...context };
+      const deferredContext = boundaryContext(context);
 
       const expr = def.$defer;
       // Started from a promise, so a synchronous throw fails the part instead of

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createResolver, coreNodes, childContext, Node } from "../src/index.js";
+import { createResolver, coreNodes, childContext, boundaryContext, Node } from "../src/index.js";
 
 // createResolver installs the global resolver that runSteps/resolve delegate to.
 const resolve = createResolver(coreNodes());
@@ -87,27 +87,101 @@ test("dot-path write is trapped without bubble", () => {
   assert.equal(ctx.meta, undefined);
 });
 
-test("PARENT link is non-enumerable: invisible to spread, keys, and JSON", () => {
+test("a child scope owns only its extras, and reads the rest from its parent", () => {
   const parent: Record<string, unknown> = { a: 1 };
   const child = childContext(parent, { b: 2 });
-  // the link never shows up in enumeration or serialization
-  assert.deepEqual(Object.keys(child).sort(), ["a", "b"]);
-  assert.equal(JSON.stringify(child), JSON.stringify({ a: 1, b: 2 }));
-  // yet propagation still works through it
-  Node.setContextValue(child, "escaped", true, true);
-  assert.equal(parent.escaped, true);
-  // a plain spread does NOT carry the parent link forward (no stale inheritance)
-  const grandchild = { ...child } as Record<string, unknown>;
-  Node.setContextValue(grandchild, "trapped", true, true);
-  assert.equal(parent.trapped, undefined); // propagation stopped at the un-linked copy
+  assert.deepEqual(Object.keys(child), ["b"]);
+  assert.equal(JSON.stringify(child), JSON.stringify({ b: 2 }));
+  assert.equal(child.a, 1);
+  // A plain spread is a top scope: a bubble from it has nowhere above to go.
+  const copy = { ...child } as Record<string, unknown>;
+  Node.setContextValue(copy, "trapped", true, true);
+  assert.equal(parent.trapped, undefined);
+  assert.equal(copy.trapped, true);
 });
 
-test("childContext merges extra on top of the parent and links back", () => {
+test("childContext's extras shadow the parent's, and a bubble from it writes the parent", () => {
   const parent: Record<string, unknown> = { a: 1, shared: "parent" };
   const child = childContext(parent, { shared: "child", local: 2 });
-  assert.equal(child.a, 1); // inherited
-  assert.equal(child.shared, "child"); // extra overrides
+  assert.equal(child.a, 1);
+  assert.equal(child.shared, "child");
   assert.equal(child.local, 2);
   Node.setContextValue(child, "a", 42, true);
-  assert.equal(parent.a, 42); // link works
+  assert.equal(parent.a, 42);
+  assert.equal(child.a, 42); // read from the parent, not a copy
+});
+
+test("a child scope reads its parent's variables as they are now, not as they were when it was made", () => {
+  const parent: Record<string, unknown> = { paused: false };
+  const child = childContext(parent);
+  parent.paused = true;
+  assert.equal(child.paused, true);
+});
+
+test("a write without bubble shadows the parent's variable in the writing scope", () => {
+  const ctx: Record<string, unknown> = { total: 1 };
+  const result = resolve([
+    { $map: [1], do: [{ $setVars: { total: 2 } }, { $var: "total" }] },
+  ], ctx);
+  assert.deepEqual(result, [2]);
+  assert.equal(ctx.total, 1);
+});
+
+test("a bubble writes the nearest enclosing scope that has the variable, and no scope above it", () => {
+  const ctx: Record<string, unknown> = { total: 0 };
+  // Each row declares its own `total`; the cells add into the row's, not the root's.
+  const result = resolve(
+    {
+      $map: [[1, 2], [3, 4]],
+      item: "row",
+      do: [
+        { $setVars: { total: 0 } },
+        { $foreach: { $var: "row" }, item: "cell", do: [{ $setVars: { total: { $add: [{ $var: "total" }, { $var: "cell" }] } }, $bubble: true }] },
+        { $var: "total" },
+      ],
+    },
+    ctx,
+  );
+  assert.deepEqual(result, [3, 7]);
+  assert.equal(ctx.total, 0);
+});
+
+test("a bubble passes over the writing scope's own variable of that name", () => {
+  // The loop binds `index`; bubbling `index` from its steps writes the scope above.
+  const ctx: Record<string, unknown> = { index: -1 };
+  resolve({ $foreach: ["a", "b"], do: [{ $setVars: { index: { $var: "index" } }, $bubble: true }] }, ctx);
+  assert.equal(ctx.index, 1);
+});
+
+test("a bubble stops at a boundary, which still reads its parent", () => {
+  const parent: Record<string, unknown> = { seen: 0 };
+  const boundary = boundaryContext(parent, { local: 1 });
+  const inner = childContext(boundary);
+  assert.equal(inner.seen, 0);
+  Node.setContextValue(inner, "seen", 5, true);
+  assert.equal(parent.seen, 0);
+  assert.equal(boundary.seen, 5);
+  assert.equal(inner.seen, 5);
+});
+
+test("nested boundaries each stop a bubble, and a top scope's bubble lands in it", () => {
+  const top: Record<string, unknown> = {};
+  const outer = boundaryContext(top);
+  const inner = boundaryContext(childContext(outer));
+  Node.setContextValue(childContext(inner), "seen", 1, true);
+  assert.equal(inner.seen, 1);
+  assert.equal(Object.hasOwn(outer, "seen"), false);
+  Node.setContextValue(top, "own", 2, true);
+  assert.equal(top.own, 2);
+});
+
+test("an interval started in a child scope reads a variable its caller changes later", async () => {
+  const resolver = createResolver(coreNodes());
+  const ctx: Record<string, unknown> = { paused: false };
+  await resolver({ $map: [1], do: [{ $interval: "start", id: "live", every: "10ms", do: [{ $var: "paused", $as: "seen", $bubble: true }] }] }, ctx);
+  ctx.paused = true;
+  for (let i = 0; i < 50 && ctx.seen !== true; i++) await new Promise(r => setTimeout(r, 10));
+  resolver({ $interval: "stop", id: "live" }, ctx);
+  resolver.destroy();
+  assert.equal(ctx.seen, true);
 });

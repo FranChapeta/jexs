@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue } from "@jexs/core";
+import { Node, Context, NodeValue, childContext } from "@jexs/core";
 import { resolve, resolveAll, resolveFields, resolverFor, runSteps } from "@jexs/core";
 import {
   EntityStore,
@@ -161,7 +161,7 @@ export class GlNode extends Node {
       glInit: {
       type: "string",
       output: "null",
-      markdownDescription: "Initializes a WebGL canvas (WebGL2 with WebGL1 fallback). Pass the canvas CSS selector as `glInit`.\nUse `width`/`height` to set logical size, `clear` for background color, `depth: true` for 3D depth test.\nPass `onFrame` steps to run every animation frame, with `dt` (delta seconds) and `time` in context.",
+      markdownDescription: "Initializes a WebGL canvas (WebGL2 with WebGL1 fallback). Pass the canvas CSS selector as `glInit`.\nUse `width`/`height` to set logical size, `clear` for background color, `depth: true` for 3D depth test.\nPass `onFrame` steps to run every animation frame, with `glDelta` (seconds since the last frame) and `glTime` (milliseconds) in context.",
       examples: [
         "{ \"$glInit\": \"#canvas\", \"width\": 800, \"height\": 600, \"clear\": [0, 0, 0, 1], \"onFrame\": [] }",
       ],
@@ -181,7 +181,7 @@ export class GlNode extends Node {
         },
         onFrame: {
           steps: true,
-          description: "Steps to run each animation frame (`dt`, `time` available).",
+          description: "Steps to run each animation frame, in a scope of their own holding `glTime` (the frame's timestamp, in milliseconds) and `glDelta` (seconds since the last frame). They read the variables of the scope `glInit` ran in as they are each frame; a write that later frames or that scope read needs `$bubble`.",
         },
         virtualWidth:  { type: "number", description: "Width of the coordinate space entities are placed in, scaled to the canvas by `fit` (default: the canvas width)." },
         virtualHeight: { type: "number", description: "Height of the coordinate space entities are placed in (default: the canvas height)." },
@@ -2001,11 +2001,10 @@ export class GlNode extends Node {
     }
 
     inst.onFrameRunning = true;
-    const frameCtx = {
-      ...inst.frameContext,
+    const frameCtx = childContext(inst.frameContext, {
       glTime: inst.onFrameLatestTime,
       glDelta: inst.onFrameLatestDelta,
-    };
+    });
 
     const _t0 = performance.now();
     const drain = (): void => {
