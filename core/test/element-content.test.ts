@@ -17,20 +17,14 @@ test("content renders a step's result once, without running steps inside it", as
   assert.equal(context.ranInList, undefined);
 });
 
-test("raw: true keeps an element's string content as written, where it is otherwise interpolated", async () => {
+test("strings in content render as written, `$` included, and a step reads a variable into the text", async () => {
   const context = { price: 5 };
-  assert.equal(await resolve({ $tag: "code", raw: true, content: '{ "$var": "x" }' }, context), '<code>{ "$var": "x" }</code>');
-  assert.equal(
-    await resolve({ $tag: "p", content: ["Now $price, ", { $tag: "s", raw: true, content: ["was $price"] }] }, context),
-    "<p>Now 5, <s>was $price</s></p>",
-    "it applies to its own element only",
-  );
-  assert.equal(await resolve({ $tag: "p", raw: { $var: "verbatim" }, content: "$price" }, { ...context, verbatim: true }), "<p>$price</p>");
-  assert.doesNotMatch(await resolve({ $tag: "p", raw: true, content: "x" }, {}) as string, /raw=/, "raw is not an attribute");
+  assert.equal(await resolve({ $tag: "code", content: '{ "$var": "price" }' }, context), '<code>{ "$var": "price" }</code>');
+  assert.equal(await resolve({ $tag: "p", content: ["Now $", { $var: "price" }] }, context), "<p>Now $5</p>");
 });
 
-test("an object with a `raw` key is data in content, rendering as nothing", async () => {
-  assert.equal(await resolve({ $tag: "p", content: [{ raw: "$x" }] }, {}), "<p></p>");
+test("translate is rendered as the attribute", async () => {
+  assert.equal(await resolve({ $tag: "code", translate: "no", content: "x" }, {}), '<code translate="no">x</code>');
 });
 
 test("a template held in a variable renders when asked to, with $runVar", async () => {
@@ -39,14 +33,12 @@ test("a template held in a variable renders when asked to, with $runVar", async 
   assert.equal(html, "<p><b>Ada</b></p>");
 });
 
-// The template's own strings interpolate `$name`; a value a step returns is
-// data, so a `$` token in it stays as written.
-test("a style's own values interpolate, and values from a step do not", async () => {
+test("a style's values are written as they are, and steps among them resolve", async () => {
   const css = await resolve({
     $tag: "style",
-    content: { ".a": { color: "$brand", background: { $var: "posted" } } },
+    content: { ".a": { color: { $var: "brand" }, background: "$brand", border: { $var: "posted" } } },
   }, { brand: "red", posted: "$secret", secret: "leaked" });
-  assert.equal(css, "<style>.a { color: red; background: $secret; }</style>");
+  assert.equal(css, "<style>.a { color: red; background: $brand; border: $secret; }</style>");
 });
 
 test("steps written in the content still render", async () => {

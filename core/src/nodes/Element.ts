@@ -1,6 +1,5 @@
 import { Node, Context, NodeValue, CLIENT_SCRIPT, SW_SCRIPT, CSRF_TOKEN, TRANSLATE, type Translator } from "./Node.js";
 import { andThen, resolve, resolveAll, isOwnedKey, isStep } from "../Resolver.js";
-import { hasVariables, interpolate } from "./Variables.js";
 import { escapeHtml, escapeScriptJson, isObject, toBooleanValue } from "../helpers.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
 
@@ -23,7 +22,7 @@ const tag = (siblings: Record<string, A>) => ({ siblings });
 // (not per-variant). `class`/`style` accept their special shapes.
 const GLOBAL: Record<string, A> = {
   content: { description: "Children of the element: a string or mixed array of strings and expressions." },
-  raw:     bool("Render this element's string content as written, without interpolating `$identifier` tokens or translating it: for code samples and literal `$` text. Nested elements keep their own setting."),
+  translate: en(["yes", "no"], "`\"no\"` keeps this element's own text out of `$translate`: code samples, names, brands. An element inside it is translated unless it says `\"no\"` too. Rendered as the HTML attribute, which translation tools read too."),
   events:  { $ref: "#/$defs/_eventMap", description: "DOM event handlers, keyed by event name: `{ \"$tag\": \"button\", \"events\": { \"click\": { \"do\": [...] } } }`, or a step that resolves to such a map, read as data. Two names are not DOM events: `mount` runs once when the element is hydrated, and `sw-message` runs for each message the service worker posts (`$swPost`), with the message as `value`." },
   params:  { map: true, description: "Variables for the handlers of this element and of the elements inside it, read when an event fires: a row's `{ \"path\": ... }` is `{ \"$var\": \"path\" }` in them, the nearest element's `params` winning. Rendered as the `data-jexs-params` attribute, which `$setAttr` rewrites (with an object) when the row moves." },
   class:   { type: ["string", "array", "object"], description: "Class list: a string, array, or `{ className: bool }` map." },
@@ -43,7 +42,7 @@ const GLOBAL: Record<string, A> = {
 
 /** Siblings the element reads itself rather than rendering as attributes. The `$`
  *  keys (the op, and the global step keys) belong to the resolver and never render. */
-const RESERVED_KEYS = new Set(["content", "events", "raw"]);
+const RESERVED_KEYS = new Set(["content", "events"]);
 const SELF_CLOSING = new Set([
   "area", "base", "br", "col", "embed", "hr", "img", "input",
   "link", "meta", "source", "track", "wbr",
@@ -104,7 +103,7 @@ export class ElementNode extends Node {
       variantBy: "value",
       exclusive: false,
       markdownDescription: "Renders an HTML element. Attributes are flat keys on the object; `content` holds children.\r\n`class` accepts a string, array, or `{ className: bool }` map. `style` accepts a camel- or kebab-case object.\r\nFor `<style>`/`<script>` the `content` is emitted as literal text (no escaping/translation); a `<style>` object `content` is compiled to CSS, and a `<script>` with a JSON `type` (`application/json` or a `+json` media type such as `application/ld+json`) has its `content` resolved and serialized to safely-escaped JSON.\r\nWire DOM events via an `\"events\"` object. To render conditionally, wrap the element in `$if`/`then`.\r\nA step in `content` renders what it returns as a value: an object it returns is data and renders as nothing, so a template held in a variable renders only through `$runVar` (`{ \"$runVar\": \"card\" }`).",
-      outputDescription: "An HTML **string**. String content has `$identifier` tokens interpolated, so give an element with literal `$` content `raw: true`.",
+      outputDescription: "An HTML **string**. Strings in `content` render as written; read a variable into the text with a step: `[\"Hello, \", { \"$var\": \"name\" }]`.",
       examples: [
         "{ \"$tag\": \"button\", \"class\": \"btn\", \"events\": { \"click\": { \"do\": [...] } }, \"content\": [\"Submit\"] }",
       ],
@@ -163,13 +162,11 @@ function renderElement(def: Record<string, unknown>, context: Context): unknown 
     // only a step among them sends them through the resolver.
     const resolveOptions = literal?.some(hasStepOption) ?? false;
     // Everything the element is built from is resolved once, together: the
-    // attributes, then the handlers' options (or the step making the map), then
-    // the content's `raw` flag when it has one.
+    // attributes, then the handlers' options (or the step making the map).
     const inputs: unknown[] = attrs.map(([, v]) => v);
-    if (resolveOptions) pushOptions(inputs, literal!);
+    if (resolveOptions && literal) pushOptions(inputs, literal);
     else if (!literal) inputs.push(def.events);
-    const hasRaw = def.raw !== undefined;
-    if (hasRaw) inputs.push(def.raw);
+    const translateAt = attrs.findIndex(([k]) => k === "translate");
 
     return resolveAll(inputs, context, values => {
       const at = attrs.length;
@@ -182,7 +179,8 @@ function renderElement(def: Record<string, unknown>, context: Context): unknown 
       const open = `${prefix}<${tag}${attrsString(attrs, values)}${events}>`;
       if (isSelfClosing) return open;
       const close = (content: string) => `${open}${buildInjections(tag, def, context)}${content}</${tag}>`;
-      return renderBody(tag, def, context, hasRaw && values[values.length - 1] === true, close);
+      const translator = translateAt >= 0 && values[translateAt] === "no" ? undefined : context[TRANSLATE];
+      return renderBody(tag, def, context, translator, close);
     });
   });
 }
@@ -196,12 +194,9 @@ function renderElement(def: Record<string, unknown>, context: Context): unknown 
  * JSON `type` serializes its content to escaped JSON (see below); every other
  * <script> (and any other raw-text tag) is emitted verbatim.
  */
-function renderBody(tag: string, def: Record<string, unknown>, context: Context, raw: boolean, close: (content: string) => string): unknown {
+function renderBody(tag: string, def: Record<string, unknown>, context: Context, translator: Translator | undefined, close: (content: string) => string): unknown {
   if (tag === "style") {
-    // The template's own declaration values interpolate `$identifier` tokens
-    // before resolving, so a value a step returns is never interpolated.
-    const authored = isObject(def.content) && !isStep(def.content) ? interpolateValues(def.content, context) : def.content;
-    return resolve(authored, context, val => close(isObject(val) ? compileCss(val) : String(val ?? "")));
+    return resolve(def.content, context, val => close(isObject(val) ? compileCss(val) : String(val ?? "")));
   }
   if (tag === "script") {
     // Resolve `type` first (it may be an expression), then decide how to treat
@@ -221,7 +216,7 @@ function renderBody(tag: string, def: Record<string, unknown>, context: Context,
       return close(typeof def.content === "string" ? def.content : String(def.content ?? ""));
     });
   }
-  return andThen(renderContent(def.content, context, raw), close);
+  return andThen(renderContent(def.content, context, translator), close);
 }
 
 interface EventHandler {
@@ -328,10 +323,10 @@ function attrsString(entries: [string, unknown][], resolved: unknown[]): string 
       continue;
     }
 
-    if (key === "class" && typeof value === "object") {
+    if (key === "class" && (Array.isArray(value) || isObject(value))) {
       const classes = Array.isArray(value)
         ? value.filter(Boolean).map(String).join(" ")
-        : Object.entries(value as Record<string, unknown>)
+        : Object.entries(value)
             .filter(([, v]) => v)
             .map(([k]) => k)
             .join(" ");
@@ -339,8 +334,8 @@ function attrsString(entries: [string, unknown][], resolved: unknown[]): string 
       continue;
     }
 
-    if (key === "style" && typeof value === "object" && !Array.isArray(value)) {
-      const style = Object.entries(value as Record<string, unknown>)
+    if (key === "style" && isObject(value)) {
+      const style = Object.entries(value)
         .filter(([, v]) => v != null)
         .map(([k, v]) => `${camelToKebab(k)}: ${v}`)
         .join("; ");
@@ -364,17 +359,6 @@ function camelToKebab(key: string): string {
   return key.startsWith("--") ? key : key.replace(UPPER_CHAR, "-$1").toLowerCase();
 }
 
-/** A CSS-in-JSON object as written, with `$identifier` tokens in its string
- *  values interpolated from context. Steps inside it are left for the resolver. */
-function interpolateValues(obj: Record<string, unknown>, context: Context): Record<string, unknown> {
-  return Object.fromEntries(Object.entries(obj).map(([key, value]) => [
-    key,
-    typeof value === "string" && hasVariables(value) ? interpolate(value, context)
-      : isObject(value) && !isStep(value) ? interpolateValues(value, context)
-      : value,
-  ]));
-}
-
 // Compiles a CSS-in-JSON object to a stylesheet string. Object values are
 // nested rule blocks (selectors and at-rules recurse the same way); scalar
 // values are declarations. Property names may be camelCase or kebab-case.
@@ -392,41 +376,71 @@ function compileCss(obj: Record<string, unknown>): string {
   return [decls.join(" "), ...rules].filter(Boolean).join(" ");
 }
 
-/** Render an element's children. Its literal strings are interpolated and
- *  translated, unless the element is `raw`, which keeps them as written. */
-function renderContent(content: unknown, context: Context, raw: boolean): string | Promise<string> {
+// Text worth translating: a letter in any script, a currency sign or a percent.
+const TRANSLATABLE = /[\p{L}\p{Sc}%]/u;
+// A sentence's `{n}`, the place of its nth item that is not text.
+const HAS_PLACEHOLDER = /\{\d+\}/;
+// `/g` const used only with String.replace (lastIndex-safe); never call .test/.exec.
+const PLACEHOLDER = /\{(\d+)\}/g;
+
+/** Render an element's children. `translator` is the `$translate` in effect,
+ *  none when the element has `translate="no"`. */
+function renderContent(content: unknown, context: Context, translator: Translator | undefined): string | Promise<string> {
   if (content === undefined || content === null) return "";
-  if (Array.isArray(content)) return renderItems(content, context, !raw);
-  return renderItem(content, context, !raw);
+  if (Array.isArray(content)) return renderItems(content, context, translator);
+  return renderItem(content, context, translator);
 }
 
-function renderItems(items: unknown[], context: Context, shouldTranslate: boolean): string | Promise<string> {
-  return resolveAll(
-    items.map(item => renderItem(item, context, shouldTranslate)),
-    context,
-    parts => (parts as string[]).join(""),
-  ) as string | Promise<string>;
+/**
+ * An array of content is one sentence to a translator: its text is looked up
+ * with `{0}`, `{1}`... standing for its other items in order, and the items are
+ * put where the translation puts them, so it can reorder them.
+ */
+function renderItems(items: unknown[], context: Context, translator: Translator | undefined): string | Promise<string> {
+  const sentence = translator ? sentenceOf(items) : undefined;
+  if (translator && sentence !== undefined) {
+    const parts = items.filter(item => typeof item !== "string").map(item => renderItem(item, context, translator));
+    return resolveAll([translator(sentence), ...parts], context, ([translated, ...rendered]) =>
+      String(translated).replace(PLACEHOLDER, (whole, i: string) => (Number(i) < rendered.length ? String(rendered[Number(i)]) : whole)),
+    );
+  }
+  return resolveAll(items.map(item => renderItem(item, context, translator)), context, parts => parts.join(""));
 }
 
-function renderItem(item: unknown, context: Context, shouldTranslate: boolean): string | Promise<string> {
+/**
+ * The sentence `items` make: their text as written, with `{n}` for each other
+ * item. Undefined when there is no text worth translating, or text holding a
+ * `{n}` of its own, which would be taken for a place; its strings are then
+ * translated one by one.
+ */
+function sentenceOf(items: unknown[]): string | undefined {
+  let sentence = "";
+  let places = 0;
+  let translatable = false;
+  for (const item of items) {
+    if (typeof item !== "string") { sentence += `{${places++}}`; continue; }
+    if (HAS_PLACEHOLDER.test(item)) return undefined;
+    sentence += item;
+    translatable ||= TRANSLATABLE.test(item);
+  }
+  return translatable ? sentence : undefined;
+}
+
+function renderItem(item: unknown, context: Context, translator: Translator | undefined): string | Promise<string> {
   if (item === null || item === undefined) return "";
   if (typeof item === "number" || typeof item === "boolean") return String(item);
 
   if (typeof item === "string") {
-    if (!shouldTranslate) return item;
-    const text = hasVariables(item) ? interpolate(item, context) : item;
-    // Only text with letters in it has anything to translate.
-    const translator = context[TRANSLATE];
-    return typeof translator === "function" && /[a-zA-Z]/.test(text) ? (translator as Translator)(text) : text;
+    return translator && TRANSLATABLE.test(item) ? translator(item) : item;
   }
 
   if (Array.isArray(item)) {
-    return renderItems(item, context, shouldTranslate);
+    return renderItems(item, context, translator);
   }
 
   if (typeof item !== "object") return "";
 
-  return resolve(item, context, renderValue) as string | Promise<string>;
+  return resolve(item, context, renderValue);
 }
 
 /**

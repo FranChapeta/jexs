@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, TRANSLATE, isObject, resolveFields, type Translator } from "@jexs/core";
+import { Node, Context, NodeValue, TRANSLATE, isObject, resolveFields } from "@jexs/core";
 import { DatabaseNode } from "./Database.js";
 import { CacheNode, optionalName } from "./Cache.js";
 import { sha256 } from "./Crypto.js";
@@ -20,7 +20,7 @@ export class TranslationNode extends Node {
     translate: {
       type: "string",
       output: "null",
-      markdownDescription: "Translates the text elements render, from here on in the request, into the given language. Each literal string in an element's content (after `$name` interpolation) is looked up by its SHA-256 in a table, kept in a cache once found, and rendered as the translation, or as written when there is none. An element with `raw: true`, and what a step returns, are not translated. Give `null` or `\"\"` to stop translating.",
+      markdownDescription: "Translates the text elements render, from here on in the request, into the given language. The text in an element's content is looked up by its SHA-256 in a table, kept in a cache once found, and rendered as the translation, or as written when there is none. A content array is one sentence: its text is looked up with `{0}`, `{1}`... standing for its other items in order (steps, elements), so `[\"You have \", { \"$var\": \"n\" }, \" items\"]` is looked up as `\"You have {0} items\"`, and each item goes where the translation puts its `{n}`, which may reorder them. What a step returns is not translated (an element it returns has its own text translated), nor is the text of an element with `translate: \"no\"`. Text is looked up when it has a letter (in any script), a currency sign or a `%`. Give `null` or `\"\"` to stop translating.",
       outputDescription: "Always `null`: it sets how the rest of the request's content renders.",
       examples: [
         "{ \"$translate\": { \"$var\": \"session.lang\" }, \"table\": \"translations\" }",
@@ -54,7 +54,8 @@ export class TranslationNode extends Node {
   translate(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveFields(def, context, r => {
       if (r.$translate == null || r.$translate === "") {
-        delete context[TRANSLATE];
+        // Set, not deleted, so a translator an enclosing scope set is hidden too.
+        context[TRANSLATE] = undefined;
         return null;
       }
       const columns = isObject(r.columns) ? r.columns : {};
@@ -69,8 +70,7 @@ export class TranslationNode extends Node {
         cache: optionalName(r.cache),
         database: optionalName(r.database),
       };
-      const translator: Translator = text => translateText(text, config, context);
-      context[TRANSLATE] = translator;
+      context[TRANSLATE] = text => translateText(text, config, context);
       return null;
     });
   }

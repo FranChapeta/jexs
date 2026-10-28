@@ -129,10 +129,12 @@ function isPlain(v: Val): boolean {
   return v.k === "obj" && v.props.length === 1 && v.props[0].key === "$var" && v.props[0].value.k === "str";
 }
 
+/** `text` as a string literal in `quote`s. */
+const quoted = (text: string, quote: string) => (quote === '"' ? JSON.stringify(text) : quote + text.replaceAll(quote, "\\" + quote) + quote);
+
 /** Rewrite a string literal to `text`, keeping its quotes. */
 function replaceString(v: Extract<Val, { k: "str" }>, text: string, m: Codemod): void {
-  const quoted = v.quote === '"' ? JSON.stringify(text) : v.quote + text.replaceAll(v.quote, "\\" + v.quote) + v.quote;
-  m.add({ start: v.start, end: v.end, text: quoted });
+  m.add({ start: v.start, end: v.end, text: quoted(text, v.quote) });
 }
 
 /**
@@ -242,24 +244,89 @@ function intervalRuns({ obj }: Step, m: Codemod, root = "interval"): void {
   retargetReads(steps, [root], p => p.slice(root.length + 1).replace(/^runCount(?=\.|$)/, "count"), m);
 }
 
+/** A `$identifier` that element content used to read from a variable. */
+const CONTENT_READ = /\$([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)/g;
+
 /**
- * An element whose content is one `{ "raw": "text" }` item becomes
- * `"content": "text", "raw": true`. One mixed in with other content is left for
- * review: giving it an element of its own would change the markup.
+ * Element content renders its strings as written: `$name` in one is text, and a
+ * variable is read with a `$var` step. An element's own text, and a `{ "raw": x }`
+ * item, were kept out of interpolation and translation by `raw`; the text needs
+ * nothing now, and staying untranslated is `translate: "no"`.
  */
-function rawContent(obj: Extract<Val, { k: "obj" }>, m: Codemod): void {
+function elementContent(obj: Extract<Val, { k: "obj" }>, m: Codemod): void {
   const content = obj.props.find(p => p.key === "content");
-  if (!content || obj.props.some(p => p.key === "raw")) return;
+  const raw = obj.props.find(p => p.key === "raw");
+  const key = (name: string) => ((content ?? raw)?.keyQuoted ? `"${name}"` : name);
+  if (raw) {
+    if (raw.value.k === "lit" && m.text(raw.value.start, raw.value.end) === "true") {
+      m.add({ start: quoteStart(raw), end: raw.value.end, text: `${key("translate")}: "no"` });
+    } else {
+      m.review(raw.keyStart, "`raw` is gone: content renders as written now, and `translate: \"no\"` keeps it out of `$translate`");
+    }
+    return;
+  }
+  if (!content) return;
+  const tag = obj.props.find(p => p.key === "$tag")?.value;
+  const name = tag?.k === "str" ? tag.value : "";
+  if (name === "script") return;
+  if (name === "style") return styleReads(content.value, key, m);
   const v = content.value;
   const only = rawItem(v) ?? (v.k === "arr" && v.items.length === 1 ? rawItem(v.items[0]) : undefined);
-  if (only?.k === "str") {
+  if (only !== undefined) {
     m.add({ start: v.start, end: v.end, text: m.text(only.start, only.end) });
-    m.add({ start: v.end, end: v.end, text: `, ${content.keyQuoted ? '"raw"' : "raw"}: true` });
-  } else if (only?.k === "obj" && isPlain(only)) {
-    // A step's result in content is never interpolated, so a lone `$var` needs no `raw`.
-    m.add({ start: v.start, end: v.end, text: m.text(only.start, only.end) });
-  } else if (only !== undefined || (v.k === "arr" && v.items.some(item => rawItem(item) !== undefined))) {
-    m.review(content.keyStart, "`{ \"raw\": ... }` content is gone: give the element `\"raw\": true` (its string content then renders as written), or put the literal text in an element of its own that has it");
+    if (only.k === "str") m.add({ start: v.end, end: v.end, text: `, ${key("translate")}: "no"` });
+    return;
+  }
+  if (v.k === "str") {
+    const items = contentReads(v, key, m);
+    if (items) m.add({ start: v.start, end: v.end, text: items.length === 1 ? items[0] : `[${items.join(", ")}]` });
+    return;
+  }
+  const items = (x: Val): void => {
+    if (x.k !== "arr") return;
+    for (const item of x.items) {
+      const inner = rawItem(item);
+      if (inner !== undefined) m.add({ start: item.start, end: item.end, text: m.text(inner.start, inner.end) });
+      else if (item.k === "str") {
+        const split = contentReads(item, key, m);
+        if (split) m.add({ start: item.start, end: item.end, text: split.join(", ") });
+      } else items(item);
+    }
+  };
+  items(v);
+}
+
+/**
+ * `v`'s text as content items, its literal runs and a `$var` step for each
+ * `$identifier`, or undefined when it has none. Text where a `$` follows a
+ * quote is code, which interpolation garbled: it renders as written now.
+ */
+function contentReads(v: Extract<Val, { k: "str" }>, key: (name: string) => string, m: Codemod): string[] | undefined {
+  const matches = [...v.value.matchAll(CONTENT_READ)];
+  if (matches.length === 0) return undefined;
+  if (matches.some(match => /["'`]/.test(v.value[match.index - 1] ?? ""))) {
+    m.review(v.start, "This text renders as written now, `$` included; if a `$name` in it read a variable, read it with a `$var` step");
+    return undefined;
+  }
+  const items: string[] = [];
+  let at = 0;
+  for (const match of matches) {
+    if (match.index > at) items.push(quoted(v.value.slice(at, match.index), v.quote));
+    items.push(`{ ${key("$var")}: ${quoted(match[1], v.quote)} }`);
+    at = match.index + match[0].length;
+  }
+  if (at < v.value.length) items.push(quoted(v.value.slice(at), v.quote));
+  return items;
+}
+
+/** A `<style>` object's values: one `$identifier` is a `$var` step, text around one a `$concat`. */
+function styleReads(v: Val, key: (name: string) => string, m: Codemod): void {
+  if (v.k !== "obj" || isStep(v)) return;
+  for (const p of v.props) {
+    if (p.value.k !== "str") { styleReads(p.value, key, m); continue; }
+    const items = contentReads(p.value, key, m);
+    if (!items) continue;
+    m.add({ start: p.value.start, end: p.value.end, text: items.length === 1 ? items[0] : `{ ${key("$concat")}: [${items.join(", ")}] }` });
   }
 }
 
@@ -911,9 +978,9 @@ const RULES: Record<string, Rule> = {
     }
     m.review(prop.keyStart, "`$merge` merges objects only now: if this concatenates arrays, use `$flatten` with `depth: 1`");
   },
-  // Literal content is the element's `raw: true`, not an object with a `raw` key.
+  // Content renders its strings as written, and `raw` is `translate: "no"`.
   tag: ({ obj }, m) => {
-    rawContent(obj, m);
+    elementContent(obj, m);
     eventScopes(obj, m);
   },
   // A request's response is what its steps yield.

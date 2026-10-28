@@ -42,9 +42,9 @@ test("style: nested at-rules recurse", () => {
   );
 });
 
-test("style: declaration values interpolate $identifier tokens", () => {
+test("style: a declaration value can be a step", () => {
   const out = resolve(
-    { $tag: "style", content: { ".btn": { color: "$theme.fg" } } },
+    { $tag: "style", content: { ".btn": { color: { $var: "theme.fg" } } } },
     { theme: { fg: "#222" } },
   );
   assert.equal(out, '<style>.btn { color: #222; }</style>');

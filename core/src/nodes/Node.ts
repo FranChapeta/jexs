@@ -16,6 +16,7 @@ export interface Context {
   [key: string]: unknown;
   /** What the runtime keeps for its nodes, out of templates' reach (see CLIENT_SCRIPT). */
   [key: symbol]: unknown;
+  [TRANSLATE]?: Translator;
 }
 
 export type NodeValue = unknown;

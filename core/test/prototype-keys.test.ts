@@ -28,7 +28,6 @@ test("a read through a prototype key finds nothing", () => {
   const ctx: Record<string, unknown> = { user: { name: "Ada" } };
   assert.equal(resolve({ $var: "__proto__" }, ctx), undefined);
   assert.equal(resolve({ $var: "user.constructor" }, ctx), undefined);
-  assert.equal(resolve({ $tag: "p", content: "$constructor" }, ctx), "<p></p>");
 });
 
 test("a scope cannot bind a prototype key, which params parsed from JSON can hold", () => {

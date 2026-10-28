@@ -16,7 +16,7 @@ The generator scaffolds a project, wires up a JSON schema for IDE autocomplete (
 
 ## A taste
 
-**Pure logic** — variables, conditionals, string interpolation:
+**Pure logic** — variables, conditionals, building strings:
 
 ```json
 [
@@ -90,7 +90,7 @@ A few rules govern how every expression is resolved. Worth internalizing — the
 
 **No `$` key, no dispatch.** An object without one is **data**: the resolver resolves each value and returns the object, so a row with a `count` or `file` column is never mistaken for an op. Files are the exception, since a whole file is resolved as a template: load data files with `"data": true` — `{ "$file": "data/posts.json", "data": true }` returns the parsed JSON untouched.
 
-**Values are data; they never run.** A slot may take an expression, which resolves once into what the slot needs. What it returns is data: a value read with `$var`, a request's body or a database row is not resolved again, even if it holds `$` keys, and its strings are not interpolated (only strings written in the template are). To run steps kept in a variable, ask for it with `{ "$runVar": "card" }`.
+**Values are data; they never run.** A slot may take an expression, which resolves once into what the slot needs. What it returns is data: a value read with `$var`, a request's body or a database row is not resolved again, even if it holds `$` keys. To run steps kept in a variable, ask for it with `{ "$runVar": "card" }`.
 
 **Arrays are step lists; the last value wins.** A top-level array (and an `if`/`switch` branch that is an array) runs its elements in order and yields the **last** one's value. The global step keys, usable on any step, are `$`-prefixed too:
 
@@ -100,7 +100,7 @@ A few rules govern how every expression is resolved. Worth internalizing — the
 - `$then` — run the step without waiting for it, then run these steps with its value as `result`.
 - `$bubble` — alongside `$as` or on a `$setVars`, write the variable in an enclosing scope: the nearest that has it as its own (a loop's item, a file's params, or one written there without `$bubble`), else the outermost the write can reach (the page, or the edge of a request).
 
-**Iterating.** `map`, `filter`, `find` and `reduce` take the array as their value and the per-item template in `do`: `map` transforms each element, `filter` and `find` test it, and `reduce` folds it into an `accumulator` that starts at `initial`. Each exposes the current element as `item` (and `index`, plus `accumulator` for `reduce`); rename it with the `item` sibling — `{ "$filter": { "$var": "users" }, "do": { "$eq": [{ "$var": "u.role" }, "admin"] }, "item": "u" }`. Read it with `{ "$var": "item" }`. Inside a string, `$item` interpolates it: `"Hello $user.name"`.
+**Iterating.** `map`, `filter`, `find` and `reduce` take the array as their value and the per-item template in `do`: `map` transforms each element, `filter` and `find` test it, and `reduce` folds it into an `accumulator` that starts at `initial`. Each exposes the current element as `item` (and `index`, plus `accumulator` for `reduce`); rename it with the `item` sibling — `{ "$filter": { "$var": "users" }, "do": { "$eq": [{ "$var": "u.role" }, "admin"] }, "item": "u" }`. Read it with `{ "$var": "item" }`.
 
 ## Packages
 

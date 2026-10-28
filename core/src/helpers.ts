@@ -8,9 +8,8 @@ export function isObject(value: unknown): value is Record<string, unknown> {
 /**
  * Split a dot-path into its segments, memoized.
  *
- * `getNestedValue` / `setNestedValue` / `Node.setContextValue` run this on the
- * hottest string in the engine — every `{ "$var": ... }` lookup and `$x.y`
- * interpolation. Paths come from static templates so their cardinality is
+ * `getNestedValue` / `Node.setContextValue` run this on the hottest string in
+ * the engine, every `{ "$var": ... }` lookup. Paths come from static templates so their cardinality is
  * bounded; the cap only guards against dynamically built paths. When full we
  * evict the oldest entry (FIFO, via Map insertion order) so a working set a
  * little over the cap degrades gracefully instead of flushing wholesale. We do
