@@ -253,7 +253,9 @@ const CONTENT_READ = /\$([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)/g;
  * Element content renders its strings as written: `$name` in one is text, and a
  * variable is read with a `$var` step. An element's own text, and a `{ "raw": x }`
  * item, were kept out of interpolation and translation by `raw`; the text needs
- * nothing now, and staying untranslated is `translate: "no"`.
+ * nothing now, and staying untranslated is `translate: "no"`. That is also what
+ * `raw: true` became, so the `$identifier`s in an element with it are left for
+ * review: it was interpolated only if v1 wrote it so.
  */
 function elementContent(obj: Extract<Val, { k: "obj" }>, m: Codemod): void {
   const content = obj.props.find(p => p.key === "content");
@@ -268,6 +270,8 @@ function elementContent(obj: Extract<Val, { k: "obj" }>, m: Codemod): void {
     return;
   }
   if (!content) return;
+  const translate = obj.props.find(p => p.key === "translate")?.value;
+  const reads = !(translate?.k === "str" && translate.value === "no");
   const tag = obj.props.find(p => p.key === "$tag")?.value;
   const name = tag?.k === "str" ? tag.value : "";
   if (name === "script") return;
@@ -280,7 +284,7 @@ function elementContent(obj: Extract<Val, { k: "obj" }>, m: Codemod): void {
     return;
   }
   if (v.k === "str") {
-    const items = contentText(v, key, m);
+    const items = contentText(v, key, m, reads);
     if (items) m.add({ start: v.start, end: v.end, text: items.length === 1 ? items[0] : `[${items.join(", ")}]` });
     return;
   }
@@ -290,7 +294,7 @@ function elementContent(obj: Extract<Val, { k: "obj" }>, m: Codemod): void {
       const inner = rawItem(item);
       if (inner !== undefined) m.add({ start: item.start, end: item.end, text: rawText(inner, m) });
       else if (item.k === "str") {
-        const split = contentText(item, key, m);
+        const split = contentText(item, key, m, reads);
         if (split) m.add({ start: item.start, end: item.end, text: split.join(", ") });
       } else items(item);
     }
@@ -301,11 +305,18 @@ function elementContent(obj: Extract<Val, { k: "obj" }>, m: Codemod): void {
 /** A v1 `{ "raw": x }` item's value as written in its place: text with its references decoded. */
 const rawText = (v: Val, m: Codemod) => (v.k === "str" ? quoted(markupText(v, m), v.quote) : m.text(v.start, v.end));
 
-/** A content string as items: its text with character references decoded and a
- *  `$var` step for each read, or undefined when it stays as written. */
-function contentText(v: Extract<Val, { k: "str" }>, key: (name: string) => string, m: Codemod): string[] | undefined {
+/** A content string as items: its text with character references decoded and,
+ *  when `reads`, a `$var` step for each read; undefined when it stays as written. */
+function contentText(v: Extract<Val, { k: "str" }>, key: (name: string) => string, m: Codemod, reads: boolean): string[] | undefined {
   const text = markupText(v, m);
-  return contentReads({ ...v, value: text }, key, m) ?? (text !== v.value ? [quoted(text, v.quote)] : undefined);
+  const split = reads ? contentReads({ ...v, value: text }, key, m) : reviewReads(v, m);
+  return split ?? (text !== v.value ? [quoted(text, v.quote)] : undefined);
+}
+
+/** Leave the `$identifier`s in `v` for review, as text. */
+function reviewReads(v: Extract<Val, { k: "str" }>, m: Codemod): undefined {
+  if (v.value.search(CONTENT_READ) >= 0) m.review(v.start, "This text renders as written now, `$` included; if a `$name` in it read a variable, read it with a `$var` step");
+  return undefined;
 }
 
 /** The named character references v1 content was written with. */
@@ -798,14 +809,15 @@ const opValue = ({ op, obj }: Step) => {
 /**
  * An iterator's `do` runs as steps, so an array there is a step sequence rather
  * than the array it used to build. `[{ "$return": [...] }]` builds it as before:
- * a sequence of one step, which ends the sequence with that value.
- * An array whose items write with `$as` reads as steps already, so it is left
- * for review rather than kept as the array it built.
+ * a sequence of one step, which ends the sequence with that value, and is left
+ * as it is. An array whose items write with `$as` reads as steps already, so it
+ * is left for review rather than kept as the array it built.
  */
 function arrayDoAsReturn({ op, obj }: Step, m: Codemod): void {
   const prop = obj.props.find(p => p.key === "do");
   const v = prop?.value;
   if (!prop || v?.k !== "arr") return;
+  if (v.items.length === 1 && v.items[0].k === "obj" && v.items[0].props.some(p => p.key === "$return")) return;
   if (v.items.some(it => it.k === "obj" && it.props.some(p => p.key === "$as"))) {
     m.review(prop.keyStart, `\`$${op}\`'s \`do\` runs as steps now: this array was resolved as a literal, each item in parallel, so check it gives what the steps should, the last step's value being the result`);
     return;
