@@ -89,8 +89,9 @@ function tupleToSiblings(p: Prop, names: string[]): boolean {
   return true;
 }
 
-/** Whether `key` is one of the options `op` takes, in any of its operations. */
+/** Whether `key` is one of the options `op` takes, in any of its operations. An element takes any attribute. */
 function takesSibling(op: string, key: string): boolean {
+  if (op === "tag") return true;
   const s = C.byKey[op] as { properties?: object; patternProperties?: object; allOf?: Array<{ then?: { properties?: object } }>; $ref?: string } | undefined;
   if (!s) return false;
   const shapes = [s, ...(s.allOf ?? []).map(b => b.then ?? {})];
@@ -157,9 +158,48 @@ function migrateServiceWorker(op: string, key: string, p: Prop): boolean {
   return true;
 }
 
+/** The operators a `where` column's value may hold, as `query` read them. */
+const WHERE_OPS = new Set(["eq", "neq", "ne", "!=", "gt", ">", "gte", ">=", "lt", "<", "lte", "<=", "like", "notLike", "in", "notIn", "between", "notBetween", "null"]);
+
+/**
+ * A `query`'s `where`, `data` or `orderBy`: column names mapped to values, which
+ * `query` resolved one by one so a column named like an op (`email`, `slug`) was
+ * never dispatched. Its keys stay as written: `or`/`and` hold more of the same,
+ * a `where` operator object (`{ "in": [...] }`) keeps its operator, and each
+ * value is an expression. An array is rows, and `{ "var": ... }` reads the whole
+ * map from a variable.
+ */
+function walkColumns(v: Val): void {
+  if (v.k === "arr") { for (const it of v.items) walkColumns(it); return; }
+  if (v.k !== "obj" || (v.props.length === 1 && v.props[0].key === "var")) { m.walk(ANY, v); return; }
+  for (const p of v.props) {
+    const value = p.value;
+    if ((p.key === "or" || p.key === "and") && value.k === "arr") { for (const it of value.items) walkColumns(it); continue; }
+    if (value.k === "obj" && value.props.some(o => WHERE_OPS.has(o.key))) { for (const o of value.props) m.walk(ANY, o.value); continue; }
+    m.walk(ANY, value);
+  }
+}
+
+/** A route tree written as data, as a file `routes` loads with `data: true` holds: route keys only, with methods or children. */
+const isRouteTree = (v: Extract<Val, { k: "obj" }>) =>
+  v.props.length > 0 && v.props.every(p => ROUTE_NODE_KEYS.has(p.key)) && v.props.some(p => p.key === "methods" || p.key === "children");
+
 function walkExpr(v: Val): void {
   if (v.k === "arr") { for (const it of v.items) m.walk(ANY, it); return; }
   if (v.k !== "obj") return;
+  // Its handlers' `body` and `query` hold JSON Schema and its children are named
+  // by path segment, so it is walked as a route node, not as an expression.
+  if (isRouteTree(v)) { m.walk({ $ref: "#/$defs/_routeNode" }, v); return; }
+  // A table document's `properties` describe columns (`unique`, `computed: { sha256 }`),
+  // never steps: only its `x-db.validator` runs, and its `x-entity` is the app's own.
+  if (v.props.some(p => p.key === "x-db") && v.props.some(p => p.key === "properties")) {
+    for (const p of v.props) {
+      const validator = p.key === "x-db" && p.value.k === "obj" ? p.value.props.find(d => d.key === "validator") : undefined;
+      if (validator) m.walk(STEPS, validator.value);
+      if (p.key.startsWith("x-") && p.key !== "x-db") m.walk(ANY, p.value);
+    }
+    return;
+  }
   // Already migrated (a `$op` key, or only `$` globals): walk it the same way, renaming nothing.
   const migratedOp = v.props.find(p => p.key.startsWith("$") && HANDLERS.has(p.key.slice(1)))?.key.slice(1);
   const migrated = migratedOp !== undefined || v.props.some(p => p.key.startsWith("$") && GLOBALS.has(p.key.slice(1)));
@@ -233,6 +273,13 @@ function walkExpr(v: Val): void {
     const renamed = SIBLING_RENAMES[op]?.[key];
     if (renamed) m.add({ start: p.keyStart, end: p.keyEnd, text: p.shorthand ? `${renamed}: ${p.key}` : renamed });
     if (migrateServiceWorker(op, key, p)) continue;
+    if (op === "query" && key === "options" && p.value.k === "obj") {
+      for (const o of p.value.props) {
+        if (o.key === "where" || o.key === "data" || o.key === "orderBy") walkColumns(o.value);
+        else m.walk(ANY, o.value);
+      }
+      continue;
+    }
     m.walk(m.siblingSchema(op, p.key), p.value);
   }
 }

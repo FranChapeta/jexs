@@ -492,10 +492,35 @@ function routeTree(v: Val, params: string[], m: Codemod): void {
   }
 }
 
-/** A route tree or handler held as data, migrated without the params above it. */
+/**
+ * A route tree or handler held as data, migrated without the params above it.
+ * A file that is a route tree becomes a `$routes` step, the shape the schema
+ * checks a tree in; the `$routes` that loaded it as data loads it as a step.
+ */
 function dataRoute(v: Val, m: Codemod): void {
-  if (isRouteTree(v)) routeTree(v, [], m);
-  else if (isRunHandler(v)) routeHandler(v, [], m);
+  if (isRouteTree(v)) {
+    routeTree(v, [], m);
+    if (!m.isRoot(v)) return;
+    m.add({ start: v.start, end: v.start, text: '{ "$routes": ' });
+    m.add({ start: v.end, end: v.end, text: " }" });
+    m.review(v.start, "This route tree is a `$routes` step now, which the schema checks: load it with `{ \"$file\": ... }` rather than as data with `data: true`");
+  } else if (isRunHandler(v)) routeHandler(v, [], m);
+}
+
+/**
+ * `{ "$routes": { "$file": path, "data": true } }` loaded a file holding a bare
+ * route tree; that file is a `$routes` step now (see `dataRoute`), so the step
+ * loads it as one: `{ "$file": path }`.
+ */
+function routesFromFile({ obj }: Step, m: Codemod): void {
+  const prop = obj.props.find(p => p.key === "$routes");
+  const v = prop?.value;
+  if (!prop || prop.shorthand || v?.k !== "obj" || v.props.length !== 2) return;
+  const file = v.props.find(p => p.key === "$file");
+  const data = v.props.find(p => p.key === "data");
+  if (!file || data?.value.k !== "lit" || data.value.value !== true) return;
+  m.add({ start: quoteStart(prop), end: v.end, text: `${keyLike(prop, "$file")}: ${m.text(file.value.start, file.value.end)}` });
+  m.review(prop.keyStart, "The route tree this loaded as data is a `$routes` step now, so it is loaded as one: check that the file holds the tree itself (the codemod wraps a file whose root is a route tree)");
 }
 
 /**
@@ -1052,9 +1077,10 @@ const RULES: Record<string, Rule> = {
   // A request's response is what its steps yield.
   listen: listenSteps,
   // Handlers run `do`, and read params from `request.params`.
-  routes: ({ obj }, m) => {
-    const tree = obj.props.find(p => p.key === "$routes")?.value;
+  routes: (step, m) => {
+    const tree = step.obj.props.find(p => p.key === "$routes")?.value;
     if (tree) routeTree(tree, [], m);
+    routesFromFile(step, m);
   },
   // A connection's handlers: `on-connect` is `onOpen`, and its id is `id`.
   "socket-accept": (step, m) => {

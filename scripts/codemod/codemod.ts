@@ -221,6 +221,8 @@ export interface Codemod {
   review(at: number, message: string): void;
   /** The source text of a span of the value being walked, e.g. a slot to move. */
   text(start: number, end: number): string;
+  /** Whether `v` is a whole document: a .json file's root, or a JSON block's. */
+  isRoot(v: Val): boolean;
 }
 
 const edits = new Map<number, Edit>();
@@ -307,6 +309,7 @@ export function createCodemod(schema: CombinedSchema, hooks: CodemodHooks): Code
     add: (e) => { edits.set(e.start, e); },
     review: (at, message) => { reviews.push({ at, message }); },
     text: (start, end) => source.slice(start, end),
+    isRoot: v => source.slice(0, v.start).trim() === "" && source.slice(v.end).trim() === "",
   };
 }
 
