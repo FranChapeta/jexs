@@ -175,7 +175,7 @@ test("translations are looked up in the named cache", async () => {
     await resolver({ "$cacheSet": `t:es:${sha256("Hello")}`, value: "not from words" }, {});
 
     const html = await resolver([{ $translate: "es", cache: "words" }, { $tag: "p", content: "Hello" }], {});
-    assert.equal(html, "<p>Hola</p>");
+    assert.equal(String(html), "<p>Hola</p>");
   } finally {
     resolver.destroy();
   }

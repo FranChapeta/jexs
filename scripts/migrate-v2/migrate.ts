@@ -130,7 +130,9 @@ function isPlain(v: Val): boolean {
 }
 
 /** `text` as a string literal in `quote`s. */
-const quoted = (text: string, quote: string) => (quote === '"' ? JSON.stringify(text) : quote + text.replaceAll(quote, "\\" + quote) + quote);
+// A no-break space is written as its escape, which a reader can see.
+const quoted = (text: string, quote: string) =>
+  (quote === '"' ? JSON.stringify(text) : quote + text.replaceAll(quote, "\\" + quote) + quote).replaceAll(" ", "\\u00a0");
 
 /** Rewrite a string literal to `text`, keeping its quotes. */
 function replaceString(v: Extract<Val, { k: "str" }>, text: string, m: Codemod): void {
@@ -273,12 +275,12 @@ function elementContent(obj: Extract<Val, { k: "obj" }>, m: Codemod): void {
   const v = content.value;
   const only = rawItem(v) ?? (v.k === "arr" && v.items.length === 1 ? rawItem(v.items[0]) : undefined);
   if (only !== undefined) {
-    m.add({ start: v.start, end: v.end, text: m.text(only.start, only.end) });
+    m.add({ start: v.start, end: v.end, text: rawText(only, m) });
     if (only.k === "str") m.add({ start: v.end, end: v.end, text: `, ${key("translate")}: "no"` });
     return;
   }
   if (v.k === "str") {
-    const items = contentReads(v, key, m);
+    const items = contentText(v, key, m);
     if (items) m.add({ start: v.start, end: v.end, text: items.length === 1 ? items[0] : `[${items.join(", ")}]` });
     return;
   }
@@ -286,14 +288,64 @@ function elementContent(obj: Extract<Val, { k: "obj" }>, m: Codemod): void {
     if (x.k !== "arr") return;
     for (const item of x.items) {
       const inner = rawItem(item);
-      if (inner !== undefined) m.add({ start: item.start, end: item.end, text: m.text(inner.start, inner.end) });
+      if (inner !== undefined) m.add({ start: item.start, end: item.end, text: rawText(inner, m) });
       else if (item.k === "str") {
-        const split = contentReads(item, key, m);
+        const split = contentText(item, key, m);
         if (split) m.add({ start: item.start, end: item.end, text: split.join(", ") });
       } else items(item);
     }
   };
   items(v);
+}
+
+/** A v1 `{ "raw": x }` item's value as written in its place: text with its references decoded. */
+const rawText = (v: Val, m: Codemod) => (v.k === "str" ? quoted(markupText(v, m), v.quote) : m.text(v.start, v.end));
+
+/** A content string as items: its text with character references decoded and a
+ *  `$var` step for each read, or undefined when it stays as written. */
+function contentText(v: Extract<Val, { k: "str" }>, key: (name: string) => string, m: Codemod): string[] | undefined {
+  const text = markupText(v, m);
+  return contentReads({ ...v, value: text }, key, m) ?? (text !== v.value ? [quoted(text, v.quote)] : undefined);
+}
+
+/** The named character references v1 content was written with. */
+const ENTITIES: Record<string, string> = {
+  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", copy: "©", reg: "®", trade: "™",
+  hellip: "…", mdash: "—", ndash: "–", laquo: "«", raquo: "»", lsquo: "‘", rsquo: "’",
+  ldquo: "“", rdquo: "”", middot: "·", bull: "•", times: "×", deg: "°", euro: "€",
+};
+const CHAR_REF = /&(#\d+|#x[0-9a-fA-F]+|[a-zA-Z]+);/g;
+/** A tag in text, which v1 content rendered as markup. */
+const MARKUP_TAG = /<\/?[a-zA-Z][^<>]*>/;
+
+/**
+ * Content escapes its strings now, so a character reference in one would show
+ * as written, and a tag as text. A reference becomes its character; a tag, or a
+ * reference not known here, is left for review.
+ */
+function markupText(v: Extract<Val, { k: "str" }>, m: Codemod): string {
+  if (MARKUP_TAG.test(v.value)) m.review(v.start, "Content escapes strings now, so this tag shows as text: write it as a `$tag` element, or wrap markup the app wrote in `$html`");
+  return v.value.replace(CHAR_REF, (whole, ref: string) => {
+    const code = /^#x/i.test(ref) ? parseInt(ref.slice(2), 16) : ref.startsWith("#") ? Number(ref.slice(1)) : undefined;
+    if (code !== undefined && code <= 0x10ffff) return String.fromCodePoint(code);
+    if (ref in ENTITIES) return ENTITIES[ref];
+    m.review(v.start, `\`${whole}\` shows as written now: write the character itself`);
+    return whole;
+  });
+}
+
+/** Whether `v` holds an element, or text with a tag in it. */
+const holdsMarkup = (v: Val): boolean =>
+  v.k === "obj" ? v.props.some(p => p.key === "$tag" || holdsMarkup(p.value))
+  : v.k === "arr" ? v.items.some(holdsMarkup)
+  : v.k === "str" && MARKUP_TAG.test(v.value);
+
+/** `$concat` or `$join` building markup gives a plain string now, which content escapes and a response sends as text. */
+function markupString({ op, obj }: Step, m: Codemod): void {
+  const prop = obj.props.find(p => p.key === "$" + op);
+  if (prop && holdsMarkup(prop.value)) {
+    m.review(prop.keyStart, `\`$${op}\` builds markup as a string here, which content escapes now and a response sends as text: put the elements in a content array, or wrap markup the app wrote in \`$html\``);
+  }
 }
 
 /**
@@ -983,6 +1035,8 @@ const RULES: Record<string, Rule> = {
     elementContent(obj, m);
     eventScopes(obj, m);
   },
+  concat: markupString,
+  join: markupString,
   // A request's response is what its steps yield.
   listen: listenSteps,
   // Handlers run `do`, and read params from `request.params`.
@@ -1135,6 +1189,10 @@ const RULES: Record<string, Rule> = {
   email: ({ obj }, m) => {
     const as = obj.props.find(p => p.key === "$as");
     if (as) m.review(as.keyStart, "`$email`'s report names the server's reply `reply`, no longer `response`: read it under the new name");
+    // `html` escapes a string now: markup written here is the app's own, so it is trusted as written.
+    const html = obj.props.find(p => p.key === "html");
+    if (html?.value.k === "str") wrapValue(html.value, `{ ${keyLike(html, "$html")}: `, " }", m);
+    else if (html && !holdsMarkup(html.value)) m.review(html.keyStart, "`$email`'s `html` escapes a string now: build it with `$tag`, or wrap markup the app wrote in `$html`");
   },
   defer: ({ obj }, m) => {
     const delay = obj.props.find(p => p.key === "delay");

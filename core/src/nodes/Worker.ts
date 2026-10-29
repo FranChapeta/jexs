@@ -24,7 +24,7 @@ export class WorkerNode extends Node {
     thread: {
       output: "any",
       markdownDescription: "Runs the `do` steps on another thread (off the main thread), keeping the main thread responsive. The value names the thread: the SAME name shares one warm worker (work time-shares that one CPU), DIFFERENT names run on parallel threads. `params` is the only data that crosses and becomes the worker's context (`x`); `ArrayBuffer`s in `params` transfer zero-copy (and detach on the sender). The node resolves to the worker's result, so run N at once with `{ $foreach, parallel: true, do: { $thread } }`, or add the universal `$then` to make the call FIRE-AND-FORGET (returns immediately; `$then` runs on the main thread with `result`). Note: a worker has no DOM/`window`/`localStorage`/WebGL, so it is for compute, `fetch`, and crypto. `thread` is a MAIN-thread node: don't nest it inside another `thread`'s `do` (it isn't available there). For parallelism use sibling threads from the main thread, e.g. `{ $foreach, parallel: true, do: { $thread } }`.",
-      outputDescription: "The worker's result (a Promise the resolver awaits). Errors run the `$catch` array with `error` bound, like any node.",
+      outputDescription: "The worker's result (a Promise the resolver awaits), copied across as data: HTML a worker renders arrives as `{ \"markup\": ... }`, so pass it through `$html` on this side (`{ \"$html\": { \"$var\": \"result.markup\" } }`). Errors run the `$catch` array with `error` bound, like any node.",
       examples: [
         "{ \"$thread\": \"hash\", \"params\": { \"bytes\": { \"$var\": \"bytes\" } }, \"do\": [ { \"$hash\": { \"$var\": \"bytes\" } } ] }",
       ],

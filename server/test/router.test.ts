@@ -31,15 +31,12 @@ after(async () => {
 
 test("a file handler renders its template", async () => {
   const routes = { methods: { GET: { $file: "/page.json" } } };
-  assert.deepEqual(await get(routes, { greeting: "hi" }), "<p>hi</p>");
+  assert.equal(String(await get(routes, { greeting: "hi" })), "<p>hi</p>");
 });
 
 test("a file handler takes an expression, not just a literal path", async () => {
   const routes = { methods: { GET: { $file: { $var: "page" } } } };
-  assert.deepEqual(
-    await get(routes, { page: "/page.json", greeting: "from expr" }),
-    "<p>from expr</p>",
-  );
+  assert.equal(String(await get(routes, { page: "/page.json", greeting: "from expr" })), "<p>from expr</p>");
 });
 
 test("a do handler yields its last step", async () => {
@@ -55,7 +52,7 @@ test("a do handler may be a single step", async () => {
 test("an expression resolving to a file handler takes the file path", async () => {
   const routes = { methods: { GET: { $var: "handler" } } };
   const ctx = { handler: { $file: "/page.json" }, greeting: "indirect" };
-  assert.equal(await get(routes, ctx), "<p>indirect</p>");
+  assert.equal(String(await get(routes, ctx)), "<p>indirect</p>");
 });
 
 test("an expression resolving to a do handler takes the do path", async () => {

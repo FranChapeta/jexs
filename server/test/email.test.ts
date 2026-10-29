@@ -296,6 +296,22 @@ test("email: a reply threads with In-Reply-To and References", async () => {
   }
 });
 
+test("email: html renders as element content does, a string as text", async () => {
+  const server = await smtpServer(() => "250 OK\r\n");
+  try {
+    await resolve({ "$emailConnect": "smtp://127.0.0.1", port: server.port, tls: false, from: "me@x.com" }, {});
+    const context = { name: "<i>Ada</i>" };
+    await resolve({ $email: "a@x.com", subject: "Hi", html: { $tag: "p", content: ["Hi ", { $var: "name" }] } }, context);
+    await resolve({ $email: "a@x.com", subject: "Hi", html: { $var: "name" } }, context);
+    await resolve({ $email: "a@x.com", subject: "Hi", html: { $html: { $var: "name" } } }, context);
+    assert.match(server.sent[0], /^<p>Hi &lt;i&gt;Ada&lt;\/i&gt;<\/p>$/m);
+    assert.match(server.sent[1], /^&lt;i&gt;Ada&lt;\/i&gt;$/m);
+    assert.match(server.sent[2], /^<i>Ada<\/i>$/m);
+  } finally {
+    server.close();
+  }
+});
+
 test("email: priority writes the headers clients read, and a typo says so", async () => {
   const server = await smtpServer(() => "250 OK\r\n");
   try {

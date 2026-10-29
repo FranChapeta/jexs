@@ -100,6 +100,31 @@ export function escapeHtml(str: string): string {
   return str.replace(HTML_ESCAPE_RE, (char) => HTML_ENTITIES[char] || char);
 }
 
+/**
+ * Markup, as `$tag` and `$html` make it. Where a string is text, escaped when it
+ * renders, this renders as written. It reads as its markup wherever a string is
+ * taken: string ops, JSON, a response body.
+ */
+export class Html {
+  constructor(readonly markup: string) {}
+  toString(): string {
+    return this.markup;
+  }
+  toJSON(): string {
+    return this.markup;
+  }
+}
+
+/** `value` as markup: `Html` as written, a string escaped, a number or boolean as
+ *  text, an array item by item, and anything else (missing, an object) as nothing. */
+export function markupOf(value: unknown): string {
+  if (value instanceof Html) return value.markup;
+  if (typeof value === "string") return escapeHtml(value);
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return value.map(markupOf).join("");
+  return "";
+}
+
 // Escape a JSON string for safe embedding inside a <script> element. The HTML
 // tokenizer ends a <script> at a literal "</script>" regardless of the script's
 // `type`, so any "<" in a serialized value could break out (or inject markup).
@@ -191,6 +216,7 @@ export function collectTransferables(value: unknown): Transferable[] {
   return out;
 }
 
+
 /**
  * True if the object has at least one own enumerable key — an allocation-free
  * `Object.keys(obj).length > 0`. The hasOwnProperty guard keeps the same
@@ -217,6 +243,7 @@ export function toStringValue(value: unknown): string {
   if (value === null || value === undefined) return "";
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (value instanceof Html) return value.markup;
   return JSON.stringify(value);
 }
 

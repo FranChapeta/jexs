@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, childContext, isObject, resolve, resolveAll, runStepsDetached, createHttpError } from "@jexs/core";
+import { Node, Context, NodeValue, Html, childContext, isObject, resolve, resolveAll, runStepsDetached, createHttpError } from "@jexs/core";
 import crypto from "node:crypto";
 import type { Duplex } from "node:stream";
 import type { IncomingMessage } from "node:http";
@@ -36,7 +36,7 @@ function currentPath(context: Context): string {
 }
 
 function encodePayload(data: unknown): string {
-  return typeof data === "string" ? data : JSON.stringify(data);
+  return typeof data === "string" || data instanceof Html ? String(data) : JSON.stringify(data);
 }
 
 export class WebSocketNode extends Node {

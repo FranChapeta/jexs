@@ -1,6 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
-import { Node, Context, NodeValue, resolve, resolveAll, runSteps, childContext, isObject } from "@jexs/core";
+import { Node, Context, NodeValue, Html, resolve, resolveAll, runSteps, childContext, isObject } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
 function toBoolean(value: unknown): boolean {
@@ -372,7 +372,7 @@ function writeFile(
 ): unknown {
   return resolveAll([def.$file, def.write], context, async ([filePathValue, data]) => {
     const filePath = resolvePath(filePathValue, rootAbs, getFileDir(context));
-    await fs.writeFile(filePath, typeof data === "string" ? data : JSON.stringify(data, null, 2));
+    await fs.writeFile(filePath, typeof data === "string" || data instanceof Html ? String(data) : JSON.stringify(data, null, 2));
     return null;
   });
 }

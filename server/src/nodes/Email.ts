@@ -1,7 +1,7 @@
 import nodemailer from "nodemailer";
 import type { Transporter, SendMailOptions } from "nodemailer";
 import type SMTPTransport from "nodemailer/lib/smtp-transport/index.js";
-import { Node, Context, NodeValue, loggerFor, resolveFields, createHttpError, isObject } from "@jexs/core";
+import { Node, Context, NodeValue, loggerFor, markupOf, resolveFields, createHttpError, isObject } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { parseTls, redactUrl, TLS_STRINGS } from "../connection.js";
 
@@ -317,7 +317,7 @@ export class EmailNode extends Node {
       markdownDescription: "Sends an email via SMTP to one address or a list of them, over the transport `emailConnect` opened. Requires `subject`; use `body` for plain text, `html` for an HTML body, or both.\n\nA delivery failure throws a `502` HTTP error, so an enclosing `$catch` gets `error.status` and `error.message`, plus `smtp` (`{ code, responseCode, command }`) telling apart an auth rejection from a refused connection. A send where every recipient was rejected throws the same way, so nothing is reported as sent that was not.",
       outputDescription: "What the server did with it. `accepted` and `rejected` are address lists, so a send that reached some recipients but not all is visible rather than silent.",
       examples: [
-        "{ \"$email\": { \"$var\": \"user.email\" }, \"subject\": \"Welcome!\", \"html\": \"<p>Hi there</p>\" }",
+        "{ \"$email\": { \"$var\": \"user.email\" }, \"subject\": \"Welcome!\", \"html\": { \"$tag\": \"p\", \"content\": [\"Hi \", { \"$var\": \"user.name\" }] } }",
         "{ \"$email\": [\"a@example.com\", \"b@example.com\"], \"cc\": { \"$var\": \"manager\" }, \"subject\": \"Report\", \"body\": \"Attached.\", \"attachments\": [{ \"filename\": \"report.pdf\", \"content\": { \"$var\": \"pdf\" } }] }",
         "{ \"$email\": { \"$var\": \"ticket.reporter\" }, \"subject\": { \"$concat\": [\"Re: \", { \"$var\": \"ticket.subject\" }] }, \"body\": { \"$var\": \"reply\" }, \"inReplyTo\": { \"$var\": \"ticket.messageId\" }, \"references\": { \"$var\": \"ticket.thread\" } }",
       ],
@@ -333,7 +333,7 @@ export class EmailNode extends Node {
         },
         html: {
           type: "string",
-          description: "HTML body.",
+          description: "HTML body, rendered as element content is: HTML (`$tag`, `$html`) as markup, and a string as text, escaped. Build it with `$tag`, or give markup the app wrote (a template file) through `$html`.",
         },
         from: {
           type: "string",
@@ -498,7 +498,7 @@ export class EmailNode extends Node {
       const message: SendMailOptions = { to, subject: this.toString(o.subject) };
       if (o.from != null) message.from = this.toString(o.from);
       if (o.body != null) message.text = this.toString(o.body);
-      if (o.html != null) message.html = this.toString(o.html);
+      if (o.html != null) message.html = markupOf(o.html);
       const cc = addresses(o.cc);
       if (cc) message.cc = cc;
       const bcc = addresses(o.bcc);

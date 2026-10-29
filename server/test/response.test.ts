@@ -25,7 +25,9 @@ before(async () => {
       { $if: at("/stored"), then: { $return: { $var: "stored" } } },
       // A response object that is not the steps' value does not end them.
       { $if: at("/later"), then: { response: "early", responseStatus: 500 } },
-      { $concat: ["<p>page</p>"] },
+      { $if: at("/string"), then: { $return: { $concat: ["<p>", "text</p>"] } } },
+      { $if: at("/missing"), then: { $return: null } },
+      { $tag: "p", content: "page" },
     ],
   }, { report: { response: "250 OK", accepted: ["a@b.c"] }, stored: { $email: "a@b.c", response: "x" } });
   base = `http://127.0.0.1:${port}`;
@@ -57,8 +59,20 @@ test("a response object sets the type and headers", async () => {
 
 test("a response object's other keys are not sent", async () => {
   const res = await fetch(`${base}/extra`);
-  assert.equal(res.headers.get("content-type"), "text/html; charset=utf-8");
+  assert.equal(res.headers.get("content-type"), "text/plain; charset=utf-8");
   assert.equal(await res.text(), "hi");
+});
+
+test("HTML is sent as text/html, a string as text/plain, and nothing as a 404 page", async () => {
+  const page = await fetch(`${base}/`);
+  assert.equal(page.headers.get("content-type"), "text/html; charset=utf-8");
+  assert.equal(await page.text(), "<p>page</p>");
+  const text = await fetch(`${base}/string`);
+  assert.equal(text.headers.get("content-type"), "text/plain; charset=utf-8");
+  assert.equal(await text.text(), "<p>text</p>");
+  const missing = await fetch(`${base}/missing`);
+  assert.equal(missing.status, 404);
+  assert.equal(missing.headers.get("content-type"), "text/html; charset=utf-8");
 });
 
 test("a value with a response of its own is sent whole as a response object's body", async () => {
@@ -76,19 +90,20 @@ test("a step held as data is sent as JSON, even with a response sibling", async 
 test("a page with deferred parts is streamed, each part after the page; any other reply is not", async () => {
   const other = createResolver([...coreNodes(), new ServerNode(), new DeferNode()]);
   try {
-    const deferred = { $defer: { $concat: ["late"] }, loader: { $concat: ["wait"] } };
+    // The part and the loader render as content does: a string as text, HTML as markup.
+    const deferred = { $defer: { $var: "late" }, loader: { $tag: "i", content: "wait" } };
     const port = await other({
       $listen: 0,
       do: [
-        { $concat: ["<p>", deferred, "</p>"], $as: "page" },
+        { $tag: "p", content: [deferred], $as: "page" },
         { $if: at("/json"), then: { $return: { response: { page: { $var: "page" } } } } },
         { $var: "page" },
       ],
-    }, {});
+    }, { late: "<b>" });
     const page = await (await fetch(`http://127.0.0.1:${port}/`)).text();
-    assert.match(page, /^<p><div id="(__jexs_defer_\d+)">wait<\/div><\/p><script>function __jexs_defer.*<script>__jexs_defer\("\1","late"\)<\/script>$/);
+    assert.match(page, /^<p><div id="(__jexs_defer_\d+)"><i>wait<\/i><\/div><\/p><script>function __jexs_defer.*<script>__jexs_defer\("\1","&lt;b&gt;"\)<\/script>$/);
     const json = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
-    assert.match(json.page, /^<p><div id="__jexs_defer_\d+">wait<\/div><\/p>$/);
+    assert.match(json.page, /^<p><div id="__jexs_defer_\d+"><i>wait<\/i><\/div><\/p>$/);
   } finally {
     other.destroy();
   }

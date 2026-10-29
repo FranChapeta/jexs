@@ -1,6 +1,6 @@
 import { Node, Context, NodeValue, CLIENT_SCRIPT, SW_SCRIPT, CSRF_TOKEN, TRANSLATE, type Translator } from "./Node.js";
 import { andThen, resolve, resolveAll, isOwnedKey, isStep } from "../Resolver.js";
-import { escapeHtml, escapeScriptJson, isObject, toBooleanValue } from "../helpers.js";
+import { Html, escapeHtml, escapeScriptJson, isObject, markupOf, toBooleanValue } from "../helpers.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
 
 // Compact attribute-schema builders for the per-tag variants below. HTML
@@ -21,7 +21,7 @@ const tag = (siblings: Record<string, A>) => ({ siblings });
 // HTML global attributes — valid on every element, so they live on the method
 // (not per-variant). `class`/`style` accept their special shapes.
 const GLOBAL: Record<string, A> = {
-  content: { description: "Children of the element: a string or mixed array of strings and expressions." },
+  content: { description: "Children of the element: text, a step, or an array mixing them. Text is escaped, so it shows as written; a step's value renders as markup only when it is HTML (`$tag`, `$html`), and any other string it returns as text." },
   translate: en(["yes", "no"], "`\"no\"` keeps this element's own text out of `$translate`: code samples, names, brands. An element inside it is translated unless it says `\"no\"` too. Rendered as the HTML attribute, which translation tools read too."),
   events:  { $ref: "#/$defs/_eventMap", description: "DOM event handlers, keyed by event name: `{ \"$tag\": \"button\", \"events\": { \"click\": { \"do\": [...] } } }`, or a step that resolves to such a map, read as data. Two names are not DOM events: `mount` runs once when the element is hydrated, and `sw-message` runs for each message the service worker posts (`$swPost`), with the message as `value`." },
   params:  { map: true, description: "Variables for the handlers of this element and of the elements inside it, read when an event fires: a row's `{ \"path\": ... }` is `{ \"$var\": \"path\" }` in them, the nearest element's `params` winning. Rendered as the `data-jexs-params` attribute, which `$setAttr` rewrites (with an object) when the row moves." },
@@ -102,8 +102,8 @@ export class ElementNode extends Node {
       // (the variants only ADD known-attribute hints, never restrict).
       variantBy: "value",
       exclusive: false,
-      markdownDescription: "Renders an HTML element. Attributes are flat keys on the object; `content` holds children.\r\n`class` accepts a string, array, or `{ className: bool }` map. `style` accepts a camel- or kebab-case object.\r\nFor `<style>`/`<script>` the `content` is emitted as literal text (no escaping/translation); a `<style>` object `content` is compiled to CSS, and a `<script>` with a JSON `type` (`application/json` or a `+json` media type such as `application/ld+json`) has its `content` resolved and serialized to safely-escaped JSON.\r\nWire DOM events via an `\"events\"` object. To render conditionally, wrap the element in `$if`/`then`.\r\nA step in `content` renders what it returns as a value: an object it returns is data and renders as nothing, so a template held in a variable renders only through `$runVar` (`{ \"$runVar\": \"card\" }`).",
-      outputDescription: "An HTML **string**. Strings in `content` render as written; read a variable into the text with a step: `[\"Hello, \", { \"$var\": \"name\" }]`.",
+      markdownDescription: "Renders an HTML element. Attributes are flat keys on the object; `content` holds children.\r\n`class` accepts a string, array, or `{ className: bool }` map. `style` accepts a camel- or kebab-case object.\r\nStrings in `content` are text: escaped, so `<`, `&` and quotes show as written. What a step returns is escaped too unless it is HTML, which `$tag` and `$html` return, so an element returned through `$map`, `$if`, `$runVar` or a variable renders as markup, while a string from a request, a row or a file shows as text.\r\nFor `<style>`/`<script>` the `content` is emitted as literal text (no escaping/translation); a `<style>` object `content` is compiled to CSS, and a `<script>` with a JSON `type` (`application/json` or a `+json` media type such as `application/ld+json`) has its `content` resolved and serialized to safely-escaped JSON. A `<style>` value cannot end the element: its `</style` is written `<\\/style`.\r\nWire DOM events via an `\"events\"` object. To render conditionally, wrap the element in `$if`/`then`.\r\nA step in `content` renders what it returns as a value: an object it returns is data and renders as nothing, so a template held in a variable renders only through `$runVar` (`{ \"$runVar\": \"card\" }`).",
+      outputDescription: "HTML: markup that `content` renders as written. Anywhere a string is taken (string ops, JSON, a response) it reads as its markup, and a response that is HTML is sent as `text/html`. Joining it with `$concat` or `$join` gives a plain string, which content escapes; put the elements in a content array instead.",
       examples: [
         "{ \"$tag\": \"button\", \"class\": \"btn\", \"events\": { \"click\": { \"do\": [...] } }, \"content\": [\"Submit\"] }",
       ],
@@ -139,10 +139,27 @@ export class ElementNode extends Node {
         output:   tag({ for: str("Associated control ids."), name: str("Field name."), form: str("Associated form id.") }),
       },
     },
+    html: {
+      type: "string",
+      output: "string",
+      markdownDescription: "Trusts a string as markup: `content` renders it as written, where it escapes any other string, and a response sends it as `text/html`. It is the one way a string becomes markup, so give it markup the app wrote (a partial file, its own output), never text a user wrote or a request sent.",
+      outputDescription: "HTML, as `$tag` returns.",
+      examples: [
+        "{ \"$html\": { \"$file\": \"partials/footer.html\" } }",
+      ],
+    },
   };
 
   tag(def: Record<string, unknown>, context: Context): NodeValue {
     return renderElement(def, context);
+  }
+
+  html(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.$html, context, value => {
+      if (value instanceof Html) return value;
+      if (typeof value !== "string") throw new Error(`$html takes a string of markup, got ${Array.isArray(value) ? "an array" : value === null ? "null" : typeof value}`);
+      return new Html(value);
+    });
   }
 }
 
@@ -177,8 +194,8 @@ function renderElement(def: Record<string, unknown>, context: Context): unknown 
       // this; nested htmls (if anyone ever has them) get the same prefix harmlessly.
       const prefix = tag === "html" ? "<!DOCTYPE html>" : "";
       const open = `${prefix}<${tag}${attrsString(attrs, values)}${events}>`;
-      if (isSelfClosing) return open;
-      const close = (content: string) => `${open}${buildInjections(tag, def, context)}${content}</${tag}>`;
+      if (isSelfClosing) return new Html(open);
+      const close = (content: string) => new Html(`${open}${buildInjections(tag, def, context)}${content}</${tag}>`);
       const translator = translateAt >= 0 && values[translateAt] === "no" ? undefined : context[TRANSLATE];
       return renderBody(tag, def, context, translator, close);
     });
@@ -194,9 +211,10 @@ function renderElement(def: Record<string, unknown>, context: Context): unknown 
  * JSON `type` serializes its content to escaped JSON (see below); every other
  * <script> (and any other raw-text tag) is emitted verbatim.
  */
-function renderBody(tag: string, def: Record<string, unknown>, context: Context, translator: Translator | undefined, close: (content: string) => string): unknown {
+function renderBody(tag: string, def: Record<string, unknown>, context: Context, translator: Translator | undefined, close: (content: string) => Html): unknown {
   if (tag === "style") {
-    return resolve(def.content, context, val => close(isObject(val) ? compileCss(val) : String(val ?? "")));
+    return resolve(def.content, context, val =>
+      close((isObject(val) ? compileCss(val) : String(val ?? "")).replace(STYLE_END, "<\\/style")));
   }
   if (tag === "script") {
     // Resolve `type` first (it may be an expression), then decide how to treat
@@ -343,15 +361,19 @@ function attrsString(entries: [string, unknown][], resolved: unknown[]): string 
       continue;
     }
 
-    // An object or array is data an attribute carries as JSON (a `data-*` one, say).
-    parts.push(`${key}="${escapeHtml(typeof value === "object" ? JSON.stringify(value) : String(value))}"`);
+    // An object or array is data an attribute carries as JSON (a `data-*` one,
+    // say); markup is text there (`srcdoc`).
+    const text = typeof value === "object" && !(value instanceof Html) ? JSON.stringify(value) : String(value);
+    parts.push(`${key}="${escapeHtml(text)}"`);
   }
 
   return parts.length > 0 ? " " + parts.join(" ") : "";
 }
 
-// `/g` const used only with String.replace (lastIndex-safe); never call .test/.exec.
+// `/g` consts used only with String.replace (lastIndex-safe); never call .test/.exec.
 const UPPER_CHAR = /([A-Z])/g;
+// What would end a <style> early; `<\/style` is the same text to CSS.
+const STYLE_END = /<\/style/gi;
 
 function camelToKebab(key: string): string {
   // Already-kebab keys ("font-size") and custom properties ("--accent") have no
@@ -383,8 +405,9 @@ const HAS_PLACEHOLDER = /\{\d+\}/;
 // `/g` const used only with String.replace (lastIndex-safe); never call .test/.exec.
 const PLACEHOLDER = /\{(\d+)\}/g;
 
-/** Render an element's children. `translator` is the `$translate` in effect,
- *  none when the element has `translate="no"`. */
+/** Render an element's children: its strings are text, escaped, and what its
+ *  steps return renders as `markupOf` does. `translator` is the `$translate` in
+ *  effect, none when the element has `translate="no"`. */
 function renderContent(content: unknown, context: Context, translator: Translator | undefined): string | Promise<string> {
   if (content === undefined || content === null) return "";
   if (Array.isArray(content)) return renderItems(content, context, translator);
@@ -394,14 +417,15 @@ function renderContent(content: unknown, context: Context, translator: Translato
 /**
  * An array of content is one sentence to a translator: its text is looked up
  * with `{0}`, `{1}`... standing for its other items in order, and the items are
- * put where the translation puts them, so it can reorder them.
+ * put where the translation puts them, so it can reorder them. The translation
+ * is text, escaped before the items' markup goes in.
  */
 function renderItems(items: unknown[], context: Context, translator: Translator | undefined): string | Promise<string> {
   const sentence = translator ? sentenceOf(items) : undefined;
   if (translator && sentence !== undefined) {
     const parts = items.filter(item => typeof item !== "string").map(item => renderItem(item, context, translator));
     return resolveAll([translator(sentence), ...parts], context, ([translated, ...rendered]) =>
-      String(translated).replace(PLACEHOLDER, (whole, i: string) => (Number(i) < rendered.length ? String(rendered[Number(i)]) : whole)),
+      escapeHtml(String(translated)).replace(PLACEHOLDER, (whole, i: string) => (Number(i) < rendered.length ? String(rendered[Number(i)]) : whole)),
     );
   }
   return resolveAll(items.map(item => renderItem(item, context, translator)), context, parts => parts.join(""));
@@ -431,27 +455,18 @@ function renderItem(item: unknown, context: Context, translator: Translator | un
   if (typeof item === "number" || typeof item === "boolean") return String(item);
 
   if (typeof item === "string") {
-    return translator && TRANSLATABLE.test(item) ? translator(item) : item;
+    return translator && TRANSLATABLE.test(item) ? andThen(translator(item), escapeHtml) : escapeHtml(item);
   }
 
   if (Array.isArray(item)) {
     return renderItems(item, context, translator);
   }
 
+  if (item instanceof Html) return item.markup;
   if (typeof item !== "object") return "";
 
-  return resolve(item, context, renderValue);
-}
-
-/**
- * Render what a content step returned. It is a value, so it is not resolved
- * again: an object (a template held in a variable, or a request's body) renders
- * as nothing rather than running the steps inside it. Run a stored template
- * explicitly with `$runVar`.
- */
-function renderValue(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
-  if (Array.isArray(value)) return value.map(renderValue).join("");
-  return "";
+  // What the step returns is a value, not resolved again: an object it returns
+  // (a template held in a variable, a request's body) renders as nothing rather
+  // than running the steps inside it. A stored template runs through `$runVar`.
+  return resolve(item, context, markupOf);
 }

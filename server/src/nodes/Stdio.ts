@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, childContext, loggerFor, resolve, runStepsDetached } from "@jexs/core";
+import { Node, Context, NodeValue, Html, childContext, loggerFor, resolve, runStepsDetached } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { createInterface } from "node:readline";
 
@@ -9,7 +9,7 @@ import { createInterface } from "node:readline";
 let stdinAttached = false;
 
 function encode(value: unknown): string {
-  return typeof value === "string" ? value : JSON.stringify(value);
+  return typeof value === "string" || value instanceof Html ? String(value) : JSON.stringify(value);
 }
 
 interface LineReader {

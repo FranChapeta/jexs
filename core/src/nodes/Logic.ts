@@ -1,6 +1,6 @@
 import { Node, Context, NodeValue, childContext } from "./Node.js";
 import { resolve, resolveAll, isStep, runSteps } from "../Resolver.js";
-import { hasAnyKey, isObject, operands } from "../helpers.js";
+import { Html, hasAnyKey, isObject, operands } from "../helpers.js";
 import type { JexsNodeSchema } from "../schema.js";
 
 export class LogicNode extends Node {
@@ -186,7 +186,7 @@ export class LogicNode extends Node {
     typeof: {
       output: "string",
       markdownDescription: "Resolves a value and returns its Jexs type name as a string.",
-      outputDescription: "One of `\"null\"`, `\"undefined\"`, `\"array\"`, `\"object\"`, `\"number\"`, `\"string\"`, `\"boolean\"`. Arrays report `\"array\"` (not `\"object\"`); `null` and `undefined` are distinct.",
+      outputDescription: "One of `\"null\"`, `\"undefined\"`, `\"array\"`, `\"object\"`, `\"number\"`, `\"string\"`, `\"boolean\"`, `\"html\"`. Arrays report `\"array\"` (not `\"object\"`); `null` and `undefined` are distinct; what `$tag` and `$html` return is `\"html\"`.",
       examples: [
         "{ \"$typeof\": { \"$var\": \"value\" } }",
       ],
@@ -205,12 +205,13 @@ export class LogicNode extends Node {
             "number",
             "string",
             "boolean",
+            "html",
           ],
           description: "The type name to match against.",
         },
       ],
       output: "boolean",
-      markdownDescription: "Tests whether a value's type matches a type name. Tuple form `[value, type]` where `type` is one of `\"null\"`, `\"undefined\"`, `\"array\"`, `\"object\"`, `\"number\"`, `\"string\"`, `\"boolean\"`. Equivalent to `{ $eq: [{ $typeof: value }, type] }`.",
+      markdownDescription: "Tests whether a value's type matches a type name. Tuple form `[value, type]` where `type` is one of `\"null\"`, `\"undefined\"`, `\"array\"`, `\"object\"`, `\"number\"`, `\"string\"`, `\"boolean\"`, `\"html\"`. Equivalent to `{ $eq: [{ $typeof: value }, type] }`.",
       outputDescription: "`true` when `typeof(value) === type`, otherwise `false`.",
       examples: [
         "{ \"$isType\": [{ \"$var\": \"roles\" }, \"array\"] }",
@@ -406,12 +407,13 @@ export class LogicNode extends Node {
 
 }
 
-// Jexs type name: arrays report "array" (not "object"), and null/undefined are
-// distinct. Everything else follows JS `typeof`.
+// Jexs type name: arrays report "array" (not "object"), markup "html", and
+// null/undefined are distinct. Everything else follows JS `typeof`.
 function typeName(value: unknown): string {
   if (value === null) return "null";
   if (value === undefined) return "undefined";
   if (Array.isArray(value)) return "array";
+  if (value instanceof Html) return "html";
   return typeof value;
 }
 

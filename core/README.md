@@ -22,7 +22,7 @@ npm install @jexs/core
 |---|---|---|
 | `VariablesNode` | `var`, `setVars`, `runVar` | Read/write context by dot-path, and run steps held in a variable |
 | `LogicNode` | `if`, `switch`, `foreach`, `and`, `or`, `not`, `eq`, `lt`, `gt`, ... | Branching, iteration, comparisons |
-| `ElementNode` | `tag` | Render an HTML element tree to a string |
+| `ElementNode` | `tag`, `html` | Render an HTML element tree, escaping its text; trust a string as markup |
 | `StringNode` | `concat`, `replace`, `split`, `trim`, `length`, `match`, `randomString`, ... | String ops |
 | `ArrayNode` | `map`, `filter`, `reduce`, `sort`, `count`, `join`, `range`, ... | Array ops |
 | `ObjectNode` | `keys`, `values`, `entries`, `pick`, `omit`, `merge`, `groupBy`, `fromEntries`, ... | Object ops |

@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, boundaryContext, loggerFor, resolve } from "@jexs/core";
+import { Node, Context, NodeValue, Html, boundaryContext, loggerFor, markupOf, resolve } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { DEFERRED } from "../context.js";
 
@@ -22,8 +22,8 @@ export class DeferNode extends Node {
   static schema: JexsNodeSchema = {
     defer: {
       output: "string",
-      markdownDescription: "Renders a placeholder immediately, then streams the resolved content to replace it via a `<script>` tag.\nUse `\"loader\"` for the placeholder expression shown while the content resolves.",
-      outputDescription: "A `<div>` wrapper **string** containing the loader, returned right away. The real content resolves in the background and is streamed in to replace it (requires the response to be sent as a streaming HTML response).",
+      markdownDescription: "Renders a placeholder immediately, then streams the resolved content to replace it via a `<script>` tag.\nUse `\"loader\"` for the placeholder expression shown while the content resolves. The loader and the content render as element content does: HTML (`$tag`, `$html`) as markup, a string as text.",
+      outputDescription: "HTML: a `<div>` wrapper containing the loader, returned right away. The real content resolves in the background and is streamed in to replace it (requires the response to be sent as a streaming HTML response).",
       examples: [
         "{ \"$defer\": { \"$file\": \"components/chart.json\" }, \"loader\": { \"$tag\": \"div\", \"class\": \"skeleton\" } }",
       ],
@@ -40,7 +40,6 @@ export class DeferNode extends Node {
     const loaderExpr = def.loader !== undefined ? def.loader : null;
 
     return resolve(loaderExpr, context, loaderResult => {
-      const loaderHtml = loaderResult != null ? String(loaderResult) : "";
       const deferredContext = boundaryContext(context);
 
       const expr = def.$defer;
@@ -48,7 +47,7 @@ export class DeferNode extends Node {
       // escaping into the page render. The page is already on its way, so a failed
       // part is logged and left empty.
       const html = Promise.resolve().then(() => resolve(expr, deferredContext)).then(
-        part => String(part ?? ""),
+        markupOf,
         err => {
           loggerFor(context).error(`[Defer] Error resolving ${id}:`, err);
           return "";
@@ -60,7 +59,7 @@ export class DeferNode extends Node {
       const deferred = context[DEFERRED];
       if (Array.isArray(deferred)) deferred.push({ id, html });
 
-      return `<div id="${id}">${loaderHtml}</div>`;
+      return new Html(`<div id="${id}">${markupOf(loaderResult)}</div>`);
     });
   }
 }

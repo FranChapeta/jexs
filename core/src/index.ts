@@ -85,7 +85,7 @@ export function coreNodes(): Node[] {
 export default coreNodes;
 
 // ── Helpers ──
-export { randomString, collectTransferables, isObject, isPrototypeKey, operands } from "./helpers.js";
+export { randomString, collectTransferables, isObject, isPrototypeKey, operands, Html, markupOf } from "./helpers.js";
 
 // ── Generic worker offload (run units over SABs; one worker, many units) ──
 // The SAB/Atomics control-block handshake is private to this module; only the

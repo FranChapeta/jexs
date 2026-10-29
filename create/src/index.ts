@@ -244,6 +244,7 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean, useElectron: bo
   lines.push(`  \`\`\`json`);
   lines.push(`  { "$tag": "p", "content": ["Hello, ", { "$var": "name" }] }`);
   lines.push(`  \`\`\``);
+  lines.push(`- **Content escapes every string, so a string is never markup.** An element returned through \`$map\`, \`$if\`, \`$runVar\` or a variable renders as markup, but \`$concat\`/\`$join\` around a \`$tag\` give a plain string, which shows its tags as text: put the elements in a content array instead. \`$html\` trusts a string as markup; give it only markup the app wrote, never request data. A page or fragment is sent as \`text/html\` only when it is an element (or \`$html\`); a string is sent as \`text/plain\`.`);
   lines.push(`- **DOM event bindings use the \`events\` object**, not inline \`onclick\`/\`oninput\` attributes. The steps inside \`do\` run through the client resolver when the event fires:`);
   lines.push(`  \`\`\`json`);
   lines.push(`  { "$tag": "button", "events": { "click": { "do": [...] } }, "content": "Run" }`);

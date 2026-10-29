@@ -9,6 +9,8 @@ import { sha256 } from "../src/nodes/Crypto.js";
 
 // What `$translate` is for: the text elements render, looked up in a table.
 const resolve = createResolver([...coreNodes(), ...serverNodes()], { context: {} });
+// `$tag` returns HTML; the tests read its markup.
+const render = async (expr: unknown, context: Record<string, unknown>) => String(await resolve(expr, context));
 const dir = await fs.mkdtemp(path.join(os.tmpdir(), "jexs-translation-"));
 
 before(async () => {
@@ -30,7 +32,7 @@ after(async () => {
 const translate = { $translate: "es", database: "words", table: "t", columns: { hash: "src", language: "lang", translation: "out" } };
 
 test("element content renders in the language $translate set", async () => {
-  const html = await resolve([
+  const html = await render([
     translate,
     { $tag: "div", content: [{ $tag: "p", content: ["Hello, ", { $var: "name" }] }, { $tag: "b", content: "Bye" }, { $tag: "i", content: "Unknown" }] },
   ], { name: "Ada" });
@@ -38,7 +40,7 @@ test("element content renders in the language $translate set", async () => {
 });
 
 test("a content array is one sentence, whose items the translation can reorder", async () => {
-  const html = await resolve([
+  const html = await render([
     translate,
     { $tag: "div", content: [
       { $tag: "p", content: [{ $var: "page" }, " of ", { $var: "pages" }] },
@@ -52,14 +54,22 @@ test("a sentence without a row renders as written, and text holding a {n} of its
   const looked: string[] = [];
   const spy = createResolver(coreNodes(), { context: {} });
   const context = { [TRANSLATE]: (text: string) => { looked.push(text); return text; }, n: 3 };
-  assert.equal(await spy({ $tag: "p", content: ["Got ", { $var: "n" }, " new"] }, context), "<p>Got 3 new</p>");
-  assert.equal(await spy({ $tag: "p", content: ["Use {0} ", { $var: "n" }] }, context), "<p>Use {0} 3</p>");
+  assert.equal(String(await spy({ $tag: "p", content: ["Got ", { $var: "n" }, " new"] }, context)), "<p>Got 3 new</p>");
+  assert.equal(String(await spy({ $tag: "p", content: ["Use {0} ", { $var: "n" }] }, context)), "<p>Use {0} 3</p>");
   spy.destroy();
   assert.deepEqual(looked, ["Got {0} new", "Use {0} "]);
 });
 
+test("a translation is text, escaped before the sentence's items go in", async () => {
+  const spy = createResolver(coreNodes(), { context: {} });
+  const context = { [TRANSLATE]: (text: string) => (text === "Hi" ? "<i>Hola</i>" : `<i>${text}</i>`) };
+  assert.equal(String(await spy({ $tag: "p", content: "Hi" }, context)), "<p>&lt;i&gt;Hola&lt;/i&gt;</p>");
+  assert.equal(String(await spy({ $tag: "p", content: ["See ", { $tag: "b", translate: "no", content: "x" }] }, context)), "<p>&lt;i&gt;See <b translate=\"no\">x</b>&lt;/i&gt;</p>");
+  spy.destroy();
+});
+
 test("a step's value, and the text of an element with translate: no, are not translated", async () => {
-  const html = await resolve([
+  const html = await render([
     translate,
     { $tag: "div", content: [
       { $tag: "div", translate: "no", content: ["Bye", { $tag: "b", content: "Bye" }] },
@@ -80,16 +90,16 @@ test("text is looked up when it has a letter in any script, a currency sign or a
 });
 
 test("$translate: null in an inner scope stops the translator set outside it", async () => {
-  const html = await resolve([
+  const html = await render([
     translate,
     { $map: [1], do: [{ $translate: null }, { $tag: "p", content: "Bye" }] },
   ], {});
-  assert.deepEqual(html, ["<p>Bye</p>"]);
+  assert.equal(html, "<p>Bye</p>");
 });
 
 test("without $translate, or after it is given null, content renders as written", async () => {
-  assert.equal(await resolve({ $tag: "p", content: "Bye" }, {}), "<p>Bye</p>");
-  assert.equal(await resolve([translate, { $translate: null }, { $tag: "p", content: "Bye" }], {}), "<p>Bye</p>");
+  assert.equal(await render({ $tag: "p", content: "Bye" }, {}), "<p>Bye</p>");
+  assert.equal(await render([translate, { $translate: null }, { $tag: "p", content: "Bye" }], {}), "<p>Bye</p>");
 });
 
 test("a table that fails to answer is an error, not an untranslated page", async () => {

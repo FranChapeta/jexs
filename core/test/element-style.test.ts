@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import { createResolver, coreNodes } from "../src/index.js";
 
 const resolve = createResolver(coreNodes());
+// `$tag` returns HTML; these read its markup.
+const render = (expr: unknown, context: Record<string, unknown>) => String(resolve(expr, context));
 
 test("style: object content compiles to a stylesheet", () => {
-  const out = resolve(
+  const out = render(
     { $tag: "style", content: { ".btn": { color: "red", fontSize: "14px" } } },
     {},
   );
@@ -13,7 +15,7 @@ test("style: object content compiles to a stylesheet", () => {
 });
 
 test("style: kebab-case property names pass through unchanged", () => {
-  const out = resolve(
+  const out = render(
     { $tag: "style", content: { ".btn": { "font-size": "14px" } } },
     {},
   );
@@ -21,7 +23,7 @@ test("style: kebab-case property names pass through unchanged", () => {
 });
 
 test("style: custom properties keep their leading dashes", () => {
-  const out = resolve(
+  const out = render(
     { $tag: "style", content: { ":root": { "--accent": "#09f" } } },
     {},
   );
@@ -29,7 +31,7 @@ test("style: custom properties keep their leading dashes", () => {
 });
 
 test("style: nested at-rules recurse", () => {
-  const out = resolve(
+  const out = render(
     {
       $tag: "style",
       content: { "@media (max-width: 600px)": { ".btn": { display: "none" } } },
@@ -43,7 +45,7 @@ test("style: nested at-rules recurse", () => {
 });
 
 test("style: a declaration value can be a step", () => {
-  const out = resolve(
+  const out = render(
     { $tag: "style", content: { ".btn": { color: { $var: "theme.fg" } } } },
     { theme: { fg: "#222" } },
   );
@@ -52,18 +54,18 @@ test("style: a declaration value can be a step", () => {
 
 test("style: string content is emitted verbatim (no HTML escaping)", () => {
   const css = "a > b { content: '&'; }";
-  const out = resolve({ $tag: "style", content: css }, {});
+  const out = render({ $tag: "style", content: css }, {});
   assert.equal(out, `<style>${css}</style>`);
 });
 
 test("script: string content is emitted verbatim (no HTML escaping)", () => {
   const js = "if (a > b && c < d) doThing();";
-  const out = resolve({ $tag: "script", content: js }, {});
+  const out = render({ $tag: "script", content: js }, {});
   assert.equal(out, `<script>${js}</script>`);
 });
 
 test("style: an expression as content is resolved before emitting", () => {
-  const out = resolve(
+  const out = render(
     { $tag: "style", content: { $var: "css" } },
     { css: ".btn { color: red; }" },
   );
@@ -71,9 +73,14 @@ test("style: an expression as content is resolved before emitting", () => {
 });
 
 test("style: expressions nested inside a CSS object are resolved", () => {
-  const out = resolve(
+  const out = render(
     { $tag: "style", content: { ".btn": { color: { $var: "fg" } } } },
     { fg: "#222" },
   );
   assert.equal(out, "<style>.btn { color: #222; }</style>");
+});
+
+test("style: a value cannot end the element", () => {
+  const out = render({ $tag: "style", content: { ".a": { color: { $var: "c" } } } }, { c: "red}</STYLE><script>x()</script>" });
+  assert.equal(out, "<style>.a { color: red}<\\/style><script>x()</script>; }</style>");
 });
