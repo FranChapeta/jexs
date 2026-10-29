@@ -1,5 +1,5 @@
 import { Knex as KnexType } from "knex";
-import { Node, Context, NodeValue, boundaryContext, isOwnedKey, resolveFields, runSteps } from "@jexs/core";
+import { Node, Context, NodeValue, boundaryContext, isObject, isOwnedKey, resolveFields, runSteps } from "@jexs/core";
 import { DatabaseNode } from "./Database.js";
 import { COMPUTE_FNS, DatabaseTableNode, type ColumnSchema, type TableJsonSchema } from "./DatabaseTable.js";
 import { requireSchemaNode, validate } from "./Schema.js";
@@ -204,8 +204,8 @@ export class DatabaseQueryNode extends Node {
       }
       if (query.limit) builder = builder.limit(query.limit);
       if (query.offset) builder = builder.offset(query.offset);
-      if (query.first) return (await builder.first()) || null;
-      return builder;
+      if (query.first) return readRows(context, query.table, (await builder.first()) || null);
+      return readRows(context, query.table, await builder);
     });
   }
 
@@ -216,7 +216,7 @@ export class DatabaseQueryNode extends Node {
       if (query.ignore) builder = builder.onConflict().ignore();
       if (query.returning) builder = builder.returning(query.returning);
       const result = await builder;
-      if (query.returning) return result;
+      if (query.returning) return readRows(context, query.table, result);
       return Array.isArray(query.data) ? result : (result as number[])[0];
     });
   }
@@ -233,7 +233,7 @@ export class DatabaseQueryNode extends Node {
         .merge(query.merge && query.merge.length ? query.merge : undefined);
       if (query.returning) builder = builder.returning(query.returning);
       const result = await builder;
-      if (query.returning) return result;
+      if (query.returning) return readRows(context, query.table, result);
       return Array.isArray(query.data) ? result : (result as number[])[0];
     });
   }
@@ -255,7 +255,7 @@ export class DatabaseQueryNode extends Node {
         data[col] = knex.raw("?? - ?", [col, Number(amt)]);
       }
       const builder = applyWhere(knex(query.table), query.where);
-      return query.returning ? builder.update(data, query.returning) : builder.update(data);
+      return query.returning ? builder.update(data, query.returning).then(rows => readRows(context, query.table, rows)) : builder.update(data);
     });
   }
 
@@ -263,7 +263,7 @@ export class DatabaseQueryNode extends Node {
     return runQuery("delete", def, context, (knex, query) => {
       if (!query.where) throw new Error("$queryDelete needs `where`; `where: {}` deletes every row");
       const builder = applyWhere(knex(query.table), query.where);
-      return query.returning ? builder.delete(query.returning) : builder.delete();
+      return query.returning ? builder.delete(query.returning).then(rows => readRows(context, query.table, rows)) : builder.delete();
     });
   }
 
@@ -467,6 +467,24 @@ function coercionType(col: ColumnSchema): string {
 }
 
 /**
+ * Rows as read, with each boolean column of the table the query names as a
+ * boolean: SQLite and MySQL hand back the 1/0 they store. A column read under
+ * another name (an alias, a joined table's) is left as the database gave it.
+ */
+function readRows(context: Context, tableName: string, rows: unknown): unknown {
+  const schema = DatabaseTableNode.get(context, tableName);
+  if (!schema) return rows;
+  const columns = Object.keys(schema.properties).filter(name => coercionType(schema.properties[name]) === "boolean");
+  if (columns.length === 0) return rows;
+  const read = (row: unknown) => {
+    if (!isObject(row)) return row;
+    for (const name of columns) if (typeof row[name] === "number") row[name] = row[name] !== 0;
+    return row;
+  };
+  return Array.isArray(rows) ? rows.map(read) : read(rows);
+}
+
+/**
  * Coerce a raw value to its stored representation. Pure type conversion only —
  * declarative constraints (max length, enum, pattern, format) are enforced by
  * the JSON Schema via Ajv after coercion.
@@ -505,12 +523,10 @@ function coerceType(value: unknown, col: ColumnSchema, colName: string, tableNam
     case "text":
       return String(value);
 
-    case "boolean": {
-      if (typeof value === "string") {
-        return value !== "" && value !== "0" && value.toLowerCase() !== "false" ? 1 : 0;
-      }
-      return value ? 1 : 0;
-    }
+    // The driver stores it as the database keeps booleans (1/0 on SQLite and MySQL).
+    case "boolean":
+      if (typeof value === "string") return value !== "" && value !== "0" && value.toLowerCase() !== "false";
+      return Boolean(value);
 
     default:
       return value;

@@ -54,6 +54,24 @@ test("a query step runs end to end against sqlite", async () => {
   await assert.rejects(resolve({ $queryCount: 5, ...conn }, {}), /\$queryCount takes a table name, got number/);
 });
 
+test("a boolean column takes and gives booleans, whatever the database stores", async () => {
+  await resolve({ $tableSync: {
+    table: "flags",
+    properties: { id: { type: "integer", primaryKey: true, autoIncrement: true }, on: { type: "boolean" }, label: { type: "string" } },
+  }, ...conn }, {});
+  await resolve({ $queryInsert: "flags", ...conn, data: [{ on: true, label: "a" }, { on: "1", label: "b" }, { on: 0, label: "c" }, { on: "false", label: "d" }] }, {});
+
+  const rows = await resolve({ $querySelect: "flags", ...conn, orderBy: { id: "asc" } }, {}) as Array<{ on: unknown }>;
+  assert.deepEqual(rows.map(r => r.on), [true, true, false, false]);
+  const first = await resolve({ $querySelect: "flags", ...conn, first: true, where: { label: "c" } }, {}) as { on: unknown };
+  assert.equal(first.on, false);
+  assert.equal(await resolve({ $queryCount: "flags", ...conn, where: { on: true } }, {}), 2);
+
+  await resolve({ $queryUpdate: "flags", ...conn, where: { label: "c" }, data: { on: "on" } }, {});
+  const updated = await resolve({ $querySelect: "flags", ...conn, first: true, where: { label: "c" } }, {}) as { on: unknown };
+  assert.equal(updated.on, true);
+});
+
 test("every condition in a where applies: each operator on a column, and or/and beside other columns", async () => {
   const names = async (where: unknown) =>
     ((await resolve({ $querySelect: "people", ...conn, where, orderBy: { name: "asc" } }, {})) as Array<{ name: string }>)

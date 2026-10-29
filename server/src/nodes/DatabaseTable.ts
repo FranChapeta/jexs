@@ -163,7 +163,7 @@ export class DatabaseTableNode extends Node {
       type: "object",
       description: "A column: JSON Schema for its values, beside the SQL settings that build it.",
       properties: {
-        type:          { anyOf: [{ enum: JSON_TYPES }, { type: "array", items: { enum: JSON_TYPES } }] },
+        type:          { anyOf: [{ enum: JSON_TYPES }, { type: "array", items: { enum: JSON_TYPES } }], description: "JSON Schema's type for the column's values. A `boolean` column takes and gives `true`/`false`, whatever the database stores for them." },
         default:       { description: "JSON Schema's default, the value a row is given. The column's SQL default is `sqlDefault`." },
         sqlType:       { enum: SQL_TYPES, description: "The SQL type; without it, mapped from the JSON Schema `type`." },
         sqlDefault:    { type: ["string", "number", "boolean", "null"], description: "The column's SQL default. `CURRENT_TIMESTAMP` is passed through as SQL." },

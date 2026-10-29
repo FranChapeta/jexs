@@ -765,7 +765,7 @@ function v1TableDocument(doc: Obj, m: Codemod): void {
   const quoted = columns[0]?.keyQuoted ?? properties.keyQuoted;
   const k = (name: string) => (quoted ? `"${name}"` : name);
   const declared: Record<string, string> = {
-    system: `${k("system")}: { ${k("type")}: "integer", ${k("default")}: 0, ${k("sqlType")}: "boolean", ${k("sqlDefault")}: 0 }`,
+    system: `${k("system")}: { ${k("type")}: "boolean", ${k("default")}: false, ${k("sqlDefault")}: false }`,
     created_at: `${k("created_at")}: { ${k("type")}: "string", ${k("sqlType")}: "timestamp", ${k("sqlDefault")}: "CURRENT_TIMESTAMP" }`,
   };
   const text = missing.map(name => declared[name]).join(", ");
