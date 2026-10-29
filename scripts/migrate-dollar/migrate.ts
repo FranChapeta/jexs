@@ -41,6 +41,8 @@ const renameKey = (p: Prop) => m.add({ start: p.keyStart, end: p.keyEnd, text: p
  * reference, which is a restructure, not a rename.
  */
 function walkRoute(ref: string, v: Val): boolean {
+  // An event handler without `do` is itself the step the event runs.
+  if (ref === "#/$defs/_eventHandler" && v.k === "obj" && !v.props.some(p => p.key === "do")) { m.walk(ANY, v); return true; }
   if (ref === "#/$defs/_routeNode" && v.k === "obj") {
     // A tree read from elsewhere (`{ "var": "$routes" }`) stands in the node's place.
     const first = v.props[0]?.key;
@@ -276,7 +278,8 @@ function walkExpr(v: Val): void {
     if (op === "query" && key === "options" && p.value.k === "obj") {
       for (const o of p.value.props) {
         if (o.key === "where" || o.key === "data" || o.key === "orderBy") walkColumns(o.value);
-        else m.walk(ANY, o.value);
+        // A join names its table, alias (`as`) and columns: there is nothing in it to migrate.
+        else if (!o.key.endsWith("Join")) m.walk(ANY, o.value);
       }
       continue;
     }
