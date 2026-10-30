@@ -542,25 +542,25 @@ function doConnect(self: DatabaseNode, def: Record<string, unknown>, context: Co
       const also = ENDPOINT_SIBLINGS.filter(k => r[k] != null);
       if (also.length > 0) {
         throw new Error(
-          `[DatabaseNode] "url" already carries the endpoint — drop ${also.map(k => `"${k}"`).join(", ")}, or drop the url and spell it out`,
+          `"url" already carries the endpoint — drop ${also.map(k => `"${k}"`).join(", ")}, or drop the url and spell it out`,
         );
       }
     }
     const declared = r.type == null ? undefined : String(r.type);
     if (declared !== undefined && !isDatabaseType(declared)) {
       throw new Error(
-        `[DatabaseNode] unknown database "type": "${declared}" (expected ${DATABASE_TYPES.join(", ")})`,
+        `unknown database "type": "${declared}" (expected ${DATABASE_TYPES.join(", ")})`,
       );
     }
     const type = declared ?? fromUrl?.type ?? (r.filename != null ? "sqlite" : undefined);
     if (!type) {
-      throw new Error("[DatabaseNode] connect needs a \"type\" (or a \"url\" whose scheme names one, or a \"filename\" for SQLite)");
+      throw new Error("$database connect needs a \"type\" (or a \"url\" whose scheme names one, or a \"filename\" for SQLite)");
     }
     // Two drivers named at once means one of them is a mistake, and the losing
     // one would only surface as a confusing protocol error at dial time.
     if (fromUrl && fromUrl.type !== type) {
       throw new Error(
-        `[DatabaseNode] type "${type}" contradicts the url scheme, which names "${fromUrl.type}"`,
+        `type "${type}" contradicts the url scheme, which names "${fromUrl.type}"`,
       );
     }
     // A url parses into a finished config, so it IS the config. The discrete
@@ -598,7 +598,7 @@ function doClose(self: DatabaseNode, def: Record<string, unknown>, context: Cont
     const name = connectionName(self, nameRaw);
     await closeConnection(self, name);
     if (self.defaultConnectionName === name) self.defaultConnectionName = null;
-    loggerFor(context).info(`[DatabaseNode] Closed connection: ${name}`);
+    loggerFor(context).info(`[database] Closed connection: ${name}`);
     return null;
   });
 }

@@ -105,12 +105,12 @@ export async function bundleClient(
   if (watch) {
     const ctx = await esbuild.context(buildOptions);
     await ctx.watch();
-    console.log(`jexs bundle: watching → ${out}`);
+    console.error(`jexs bundle: watching → ${out}`);
     return ctx;
   }
 
   rmSync(out, { recursive: true, force: true });
   await esbuild.build(buildOptions);
-  console.log(`jexs bundle: ${pkgs.length} third-party browser package(s) → ${out}`);
+  console.error(`jexs bundle: ${pkgs.length} third-party browser package(s) → ${out}`);
 }
 

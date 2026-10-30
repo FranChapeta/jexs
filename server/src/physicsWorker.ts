@@ -24,7 +24,7 @@ import { runWorkerRuntime, type WorkerLike } from "@jexs/core";
 /** Env worker constructor passed to `new PhysicsNode(...)`. */
 export function makePhysicsWorker(): WorkerLike {
   const worker = new Worker(fileURLToPath(import.meta.url));
-  worker.on("error", (e) => console.error("[Physics worker]", e));
+  worker.on("error", (e) => console.error("[physics]", e));
   return worker;
 }
 

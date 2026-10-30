@@ -264,7 +264,7 @@ export class DatabaseTableNode extends Node {
       throw new Error(`$tableCreate: table "${schema.table}" already exists; \`$tableSync\` adds what it lacks`);
     }
     await createTable(knex, schema);
-    loggerFor(context).info(`[DatabaseTable] Created table: ${schema.table}`);
+    loggerFor(context).info(`[table] Created table: ${schema.table}`);
     return schema.table;
   }
 
@@ -280,7 +280,7 @@ export class DatabaseTableNode extends Node {
         continue;
       }
       await createTable(knex, schema);
-      loggerFor(context).info(`[DatabaseTable] Created table: ${schema.table}`);
+      loggerFor(context).info(`[table] Created table: ${schema.table}`);
       created.push(schema.table);
     }
     return created;
@@ -318,7 +318,7 @@ export class DatabaseTableNode extends Node {
       if (drop) await alter(table => { table.dropColumns(...drop); });
       if (addIndexes) await alter(table => { buildIndexes(table, addIndexes); });
 
-      loggerFor(context).info(`[DatabaseTable] Altered table ${tableName}: ${Object.keys(changes).join(", ")}`);
+      loggerFor(context).info(`[table] Altered table ${tableName}: ${Object.keys(changes).join(", ")}`);
       return null;
     });
   }
@@ -327,7 +327,7 @@ export class DatabaseTableNode extends Node {
     return resolveAll([def.$tableRename, def.to, def.connection ?? null, def.system ?? null], context, async ([table, to, connection, system]) => {
       await authorize(context, { connection, system }, "rename", String(table), { changes: { to } });
       await DatabaseNode.getKnex(context, connection).schema.renameTable(String(table), String(to));
-      loggerFor(context).info(`[DatabaseTable] Renamed table ${String(table)} to ${String(to)}`);
+      loggerFor(context).info(`[table] Renamed table ${String(table)} to ${String(to)}`);
       return String(to);
     });
   }
@@ -336,7 +336,7 @@ export class DatabaseTableNode extends Node {
     return resolveAll([def.$tableDrop, def.connection ?? null, def.system ?? null], context, async ([table, connection, system]) => {
       await authorize(context, { connection, system }, "drop", String(table));
       await DatabaseNode.getKnex(context, connection).schema.dropTableIfExists(String(table));
-      loggerFor(context).info(`[DatabaseTable] Dropped table: ${String(table)}`);
+      loggerFor(context).info(`[table] Dropped table: ${String(table)}`);
       return null;
     });
   }
@@ -444,22 +444,22 @@ async function syncTable(knex: KnexType, schema: TableJsonSchema, log: Logger): 
       return [name, col];
     }));
     await knex.schema.alterTable(tableName, table => { buildColumns(table, columns, new Set(), knex); });
-    log.info(`[DatabaseTable] Table ${tableName}: added columns [${missing.join(", ")}]`);
+    log.info(`[table] Table ${tableName}: added columns [${missing.join(", ")}]`);
     const nullable = missing.filter(name => schema.required?.includes(name));
     if (nullable.length > 0) {
-      log.warn(`[DatabaseTable] Table ${tableName}: added required columns [${nullable.join(", ")}] as nullable; once every row has a value, \`alter\` can \`change\` them with \`required\``);
+      log.warn(`[table] Table ${tableName}: added required columns [${nullable.join(", ")}] as nullable; once every row has a value, \`alter\` can \`change\` them with \`required\``);
     }
   }
   const extra = existing.filter(name => !(name in schema.properties));
   if (extra.length > 0) {
-    log.warn(`[DatabaseTable] Table ${tableName}: columns [${extra.join(", ")}] are not in its document; \`alter\` can \`rename\` or \`drop\` them`);
+    log.warn(`[table] Table ${tableName}: columns [${extra.join(", ")}] are not in its document; \`alter\` can \`rename\` or \`drop\` them`);
   }
 
   const indexes = new Set(await indexNames(knex, tableName));
   const newIndexes = Object.entries(schema.indexes ?? {}).filter(([name]) => !indexes.has(name));
   if (newIndexes.length > 0) {
     await knex.schema.alterTable(tableName, table => { buildIndexes(table, Object.fromEntries(newIndexes)); });
-    log.info(`[DatabaseTable] Table ${tableName}: added indexes [${newIndexes.map(([name]) => name).join(", ")}]`);
+    log.info(`[table] Table ${tableName}: added indexes [${newIndexes.map(([name]) => name).join(", ")}]`);
   }
 }
 

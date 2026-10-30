@@ -100,7 +100,7 @@ export function encrypt(self: CryptoNode, plaintext: string): string {
 /** AES-256-GCM decrypt. Expects "iv:authTag:ciphertext" (all hex). */
 export function decrypt(self: CryptoNode, ciphertext: string): string {
   const parts = ciphertext.split(":");
-  if (parts.length !== 3) throw new Error("[Crypto] Invalid encrypted format");
+  if (parts.length !== 3) throw new Error("Invalid encrypted format");
   const [ivHex, authTagHex, encryptedHex] = parts;
   const key = getEncryptionKey(self);
   const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(ivHex, "hex"));

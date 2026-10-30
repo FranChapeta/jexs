@@ -327,7 +327,7 @@ function doConfigure(providers: Providers, def: Record<string, unknown>, context
       });
     }
 
-    loggerFor(context).info(`[OAuth] Configured provider: ${name}`);
+    loggerFor(context).info(`[oauth] Configured provider: ${name}`);
     return null;
   });
 }

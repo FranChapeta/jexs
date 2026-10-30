@@ -127,7 +127,7 @@ export class StdioNode extends Node {
         try {
           message = JSON.parse(line);
         } catch {
-          log.error(`[StdioNode] Invalid JSON: ${line}`);
+          log.error(`[stdio] Invalid JSON: ${line}`);
           continue;
         }
 

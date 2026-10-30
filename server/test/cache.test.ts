@@ -81,7 +81,7 @@ test("connecting a cache says so through the resolver's logger", async () => {
   const resolver = createResolver([...coreNodes(), new CacheNode()], { logger: { info: log, warn: log, error: log } });
   try {
     await resolver({ "$cacheConnect": "memory", connection: "app" }, {});
-    assert.deepEqual(lines, ['[CacheNode] Connected to cache "app" (memory)']);
+    assert.deepEqual(lines, ['[cache] Connected to cache "app" (memory)']);
   } finally {
     resolver.destroy();
   }

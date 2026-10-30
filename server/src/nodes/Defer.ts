@@ -49,7 +49,7 @@ export class DeferNode extends Node {
       const html = Promise.resolve().then(() => resolve(expr, deferredContext)).then(
         markupOf,
         err => {
-          loggerFor(context).error(`[Defer] Error resolving ${id}:`, err);
+          loggerFor(context).error(`[defer] Error resolving ${id}:`, err);
           return "";
         },
       );

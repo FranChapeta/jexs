@@ -547,7 +547,7 @@ export class EmailNode extends Node {
       };
       if (this.preview) {
         const previewUrl = nodemailer.getTestMessageUrl(info);
-        loggerFor(context).info(`[EmailNode] Preview: ${previewUrl}`);
+        loggerFor(context).info(`[email] Preview: ${previewUrl}`);
         result.previewUrl = previewUrl;
       }
       return result;

@@ -221,7 +221,7 @@ async function handleUpgrade(
     await runSteps(listener.steps, context);
     if (!upgrade.accepted) socket.destroy();
   } catch (error) {
-    loggerFor(listener.startupContext).error("WebSocket upgrade error:", error);
+    loggerFor(listener.startupContext).error("[server] WebSocket upgrade error:", error);
     if (!upgrade.accepted) socket.destroy();
   }
 }
@@ -315,7 +315,7 @@ async function handleRequest(
     // status left to change. Log and close, rather than raise a second error
     // about headers already sent and lose the real one.
     if (res.headersSent) {
-      loggerFor(listener.startupContext).error("Request error after the response started:", error);
+      loggerFor(listener.startupContext).error("[server] Request error after the response started:", error);
       res.end();
       return;
     }
@@ -323,7 +323,7 @@ async function handleRequest(
       sendResponse(res, { response: error.message || `HTTP ${error.status}`, responseStatus: error.status });
       return;
     }
-    loggerFor(listener.startupContext).error("Request error:", error);
+    loggerFor(listener.startupContext).error("[server] Request error:", error);
     sendResponse(res, { response: "Internal Server Error", responseStatus: 500 });
   }
 }
@@ -848,7 +848,7 @@ export class ServerNode extends Node {
           serveStaticDir(listener, servePath, browserDir);
           context[CLIENT_SCRIPT] = `${servePath}/client.js`;
         } else {
-          loggerFor(context).warn("[ServerNode] no browser bundle at ./dist/browser — run `jexs bundle` to build the client (with any browser nodes); it will not be served until then");
+          loggerFor(context).warn("[server] no browser bundle at ./dist/browser — run `jexs bundle` to build the client (with any browser nodes); it will not be served until then");
         }
       }
 
@@ -914,10 +914,12 @@ export class ServerNode extends Node {
       // (the only one attached) for one that says so.
       httpServer.removeAllListeners("error");
       httpServer.on("error", (err: Error) => {
-        loggerFor(context).error("[Server] Server error:", err.message);
+        loggerFor(context).error("[server] Server error:", err.message);
       });
 
-      loggerFor(context).info(`Jexs running at http://${host.includes(":") ? `[${host}]` : host}:${port}`);
+      // A wildcard address is no page to open, so it shows as localhost, as other dev servers print it.
+      const shown = host === "0.0.0.0" || host === "::" ? "localhost" : host.includes(":") ? `[${host}]` : host;
+      loggerFor(context).info(`Jexs running at http://${shown}:${port}`);
 
       return port;
     });

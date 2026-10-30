@@ -207,12 +207,12 @@ function doBuild(state: TailwindState, def: Record<string, unknown>, context: Co
   return resolve(def.data ?? null, context, async dataRaw => {
     if (def.data && dataRaw) register(state, extractClasses(dataRaw));
     if (state.registry.size === 0) {
-      loggerFor(context).info("[Tailwind] No classes registered, skipping");
+      loggerFor(context).info("[tailwind] No classes registered, skipping");
       return null;
     }
     await fs.mkdir(path.dirname(outputCss), { recursive: true });
     await fs.writeFile(outputCss, await stylesheet(state));
-    loggerFor(context).info(`[Tailwind] CSS written to ${outputCss}`);
+    loggerFor(context).info(`[tailwind] CSS written to ${outputCss}`);
     return null;
   });
 }

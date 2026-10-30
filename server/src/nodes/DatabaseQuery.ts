@@ -436,7 +436,7 @@ function changesToWrite(context: Context, tableName: string, data: Record<string
 function assertValid(context: Context, schema: object, row: Record<string, unknown>, tableName: string): void {
   const { valid, errors } = validate(requireSchemaNode(context), schema, row);
   if (!valid) {
-    throw new Error(`[Schema] Validation failed for "${tableName}": ${errors.join("; ")}`);
+    throw new Error(`Validation failed for "${tableName}": ${errors.join("; ")}`);
   }
 }
 

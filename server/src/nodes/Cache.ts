@@ -49,7 +49,7 @@ export class CacheNode extends Node {
     if (isProduction()) {
       throw new Error('No cache is connected. In production, connect one, e.g. { "$cacheConnect": "redis", "url": ... }, or { "$cacheConnect": "memory" } to keep it in this process on purpose');
     }
-    loggerFor(context).warn("[Cache] Not connected, using memory cache");
+    loggerFor(context).warn("[cache] Not connected, using memory cache");
     const fallback = new MemoryCache();
     node.adapters.set(key, fallback);
     node.defaultName ??= key;
@@ -278,7 +278,7 @@ export class CacheNode extends Node {
       void this.adapters.get(name)?.close().catch(() => {});
       this.adapters.set(name, createAdapter(config));
       this.defaultName ??= name;
-      loggerFor(context).info(`[CacheNode] Connected to cache "${name}" (${type})`);
+      loggerFor(context).info(`[cache] Connected to cache "${name}" (${type})`);
       return type;
     });
   }

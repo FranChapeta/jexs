@@ -103,8 +103,12 @@ function cliLogger(target: string): Logger {
     return { info: drop, warn: drop, error: drop };
   }
   const write = target === "stdout" ? console.log : console.error;
-  const log = (message: string, error?: unknown) => (error === undefined ? write(message) : write(message, error));
-  return { info: log, warn: log, error: log };
+  // Warnings and errors say so, as a compiler's do; information goes as it is.
+  const at = (level: string) => (message: string, error?: unknown) => {
+    const line = level ? `${level}: ${message}` : message;
+    return error === undefined ? write(line) : write(line, error);
+  };
+  return { info: at(""), warn: at("warning"), error: at("error") };
 }
 
 async function run(args: string[]): Promise<void> {
@@ -229,28 +233,44 @@ function resolveEntry(target: string): string {
   return path.join(path.dirname(pkgJson), manifest.app);
 }
 
-if (cmd === "run") {
-  await run(rest);
-} else if (cmd === "bundle") {
-  const { values } = flagsOf("bundle", rest, { watch: { type: "boolean" } });
-  await bundleClient(process.cwd(), { watch: values.watch });
-} else if (cmd === "schema") {
-  const { values, positionals } = flagsOf("schema", rest, { package: { type: "boolean" } });
-  const dir = positionals[0] ?? process.cwd();
-  if (values.package) {
-    // A package author's prebuild of the package's own dist/schema.json.
-    const { nodes, methods } = await buildPackageSchemaFile(path.resolve(dir));
-    console.log(`jexs schema: ${nodes} nodes, ${methods} methods → ${path.join(dir, "dist", "schema.json")}`);
+/**
+ * Stop a command that failed with its message and a failing code. The stack is
+ * printed only for the errors that point at a bug in Jexs or a package rather
+ * than at the app (a TypeError, say); for a template's error it is Jexs's own
+ * internals, which say nothing about where in the template it came from.
+ */
+function fail(command: string, error: unknown): never {
+  const bug = error instanceof TypeError || error instanceof ReferenceError;
+  process.stderr.write(`jexs ${command}: ${bug ? error.stack : error instanceof Error ? error.message : String(error)}\n`);
+  process.exit(1);
+}
+
+try {
+  if (cmd === "run") {
+    await run(rest);
+  } else if (cmd === "bundle") {
+    const { values } = flagsOf("bundle", rest, { watch: { type: "boolean" } });
+    await bundleClient(process.cwd(), { watch: values.watch });
+  } else if (cmd === "schema") {
+    const { values, positionals } = flagsOf("schema", rest, { package: { type: "boolean" } });
+    const dir = positionals[0] ?? process.cwd();
+    if (values.package) {
+      // A package author's prebuild of the package's own dist/schema.json.
+      const { nodes, methods } = await buildPackageSchemaFile(path.resolve(dir));
+      console.error(`jexs schema: ${nodes} nodes, ${methods} methods → ${path.join(dir, "dist", "schema.json")}`);
+    } else {
+      // Regenerate project-local autocomplete + MCP schema from installed packages.
+      const { packages } = await buildProjectSchema(path.resolve(dir));
+      console.error(`jexs schema: merged ${packages} package(s) → ${path.join(dir, ".jexs", "combined.schema.json")}`);
+    }
+  } else if (cmd === "--version" || cmd === "-v") {
+    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
+    console.log(pkg.version);
+  } else if (cmd === "--help" || cmd === "-h" || cmd === "help") {
+    usage(0);
   } else {
-    // Regenerate project-local autocomplete + MCP schema from installed packages.
-    const { packages } = await buildProjectSchema(path.resolve(dir));
-    console.log(`jexs schema: merged ${packages} package(s) → ${path.join(dir, ".jexs", "combined.schema.json")}`);
+    usage(1);
   }
-} else if (cmd === "--version" || cmd === "-v") {
-  const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
-  console.log(pkg.version);
-} else if (cmd === "--help" || cmd === "-h" || cmd === "help") {
-  usage(0);
-} else {
-  usage(1);
+} catch (error) {
+  fail(cmd, error);
 }
