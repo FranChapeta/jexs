@@ -138,7 +138,7 @@ async function run(args: string[]): Promise<void> {
     // child — which runs `run` without --watch — so a bound port is fully released before
     // the replacement binds.
     const { spawn } = await import("node:child_process");
-    const { watch } = await import("node:fs");
+    const { watch, readdirSync, statSync } = await import("node:fs");
     const { fileURLToPath } = await import("node:url");
     const self = fileURLToPath(import.meta.url);
     // Only jexs's own `--watch` goes: an app's arguments after `--` pass through whole.
@@ -147,20 +147,45 @@ async function run(args: string[]): Promise<void> {
 
     let child: import("node:child_process").ChildProcess | null = null;
     const start = () => {
-      child = spawn(process.execPath, [self, ...childArgs], { stdio: "inherit" });
-      child.on("exit", () => { child = null; });
+      const c = spawn(process.execPath, [self, ...childArgs], { stdio: "inherit" });
+      child = c;
+      // An app that stops on its own (a script finishing, a startup error) waits for
+      // the next change; one a restart stopped is no longer `child`.
+      c.on("exit", (code) => {
+        if (child !== c) return;
+        child = null;
+        process.stderr.write(`jexs run: ${code ? `the app exited with code ${code}` : "the app finished"}, waiting for a template to change\n`);
+      });
     };
     start();
 
     // Only a template changing needs a restart, to run the startup steps again. What
     // the app writes under the dir while it runs (a SQLite database and its journal,
     // `secret.key`, uploads) must not restart it, which would drop its memory: the
-    // sessions, the cache, the open sockets. A platform that names no file restarts.
+    // sessions, the cache, the open sockets. Nor may reading a template: Windows reports
+    // the access time a read updates, when it writes it out, which can be long after the
+    // read, so a template restarts the app only when its modification time moved. A
+    // platform that names no file restarts.
+    const mtimeOf = (file: string) => { try { return statSync(file).mtimeMs; } catch { return undefined; } };
+    const mtimes = new Map<string, number | undefined>();
+    for (const name of readdirSync(watchDir, { recursive: true, encoding: "utf8" })) {
+      if (name.endsWith(".json")) mtimes.set(path.join(watchDir, name), mtimeOf(path.join(watchDir, name)));
+    }
     let timer: NodeJS.Timeout | undefined;
+    const changed = new Set<string>();
     watch(watchDir, { recursive: true }, (_event, filename) => {
       if (filename && !filename.toString().endsWith(".json")) return;
+      if (filename) {
+        const file = path.join(watchDir, filename.toString());
+        const mtime = mtimeOf(file);
+        if (mtime === mtimes.get(file)) return;
+        mtimes.set(file, mtime);
+        changed.add(path.relative(process.cwd(), file));
+      } else changed.add("a file the platform did not name");
       clearTimeout(timer);
       timer = setTimeout(() => {
+        process.stderr.write(`jexs run: restarting, ${[...changed].join(", ")} changed\n`);
+        changed.clear();
         if (child) { const c = child; child = null; c.once("exit", start); c.kill(); }
         else start();
       }, 150);
