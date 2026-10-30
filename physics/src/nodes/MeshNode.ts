@@ -16,7 +16,8 @@
  */
 
 import { Node, Context, NodeValue, resolveAll, resolveFields } from "@jexs/core";
-import { EntityStore, getStore } from "../EntityStore.js";
+import { EntityStore } from "../EntityStore.js";
+import { EntityNode, STORE_SIBLING } from "./EntityNode.js";
 import { computeBounds } from "../Bvh.js";
 import type {
   MeshData, MeshEntry, MeshMaterial, NodeData, Scene, Bounds,
@@ -658,7 +659,7 @@ export class MeshNode extends Node {
       meshRegister: {
       type: "string",
       output: "null",
-      markdownDescription: "Registers a parsed mesh in the active EntityStore's `meshes` map. Idempotent:\nre-registering the same id is a no-op. GL extends this via `glRegisterMesh`,\nwhich additionally uploads the geometry to the GPU.",
+      markdownDescription: "Registers a parsed mesh in the entity store's `meshes` map. Idempotent:\nre-registering the same id is a no-op. GL extends this via `glRegisterMesh`,\nwhich additionally uploads the geometry to the GPU.",
       examples: [
         "{ \"$foreach\": { \"$var\": \"scene.meshes\" }, \"item\": \"m\", \"do\": {\n    \"$meshRegister\": { \"$var\": \"m.id\" },\n    \"bounds\":    { \"$var\": \"m.bounds\" },\n    \"positions\": { \"$var\": \"m.positions\" },\n    \"normals\":   { \"$var\": \"m.normals\" },\n    \"uvs\":       { \"$var\": \"m.uvs\" },\n    \"indices\":   { \"$var\": \"m.indices\" },\n    \"material\":  { \"$var\": \"m.material\" }\n} }",
       ],
@@ -681,6 +682,7 @@ export class MeshNode extends Node {
         material: {
           description: "Material URI map (optional).",
         },
+        store: STORE_SIBLING,
       },
     },
   };
@@ -711,8 +713,7 @@ export class MeshNode extends Node {
 
   meshRegister(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveFields(def, context, r => {
-      const store = getStore(context);
-      if (!store) return null;
+      const store = EntityNode.storeFor(context, r.store);
       const idRaw = r.$meshRegister;
       if (idRaw == null) return null;
       const id = String(idRaw);

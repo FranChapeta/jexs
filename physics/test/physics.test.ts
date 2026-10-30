@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createResolver, coreNodes, type Context } from "@jexs/core";
+import { createResolver, coreNodes, childContext, type Context } from "@jexs/core";
 import { EntityNode, PhysicsNode, CollisionNode, JointNode, VectorNode, EntityStore, offloadWorld, type PhysicsConfig } from "../src/index.js";
 
 const physicsResolver = () =>
@@ -41,6 +41,56 @@ test("a raycast takes array vectors and reports where it hit as one", async () =
 
 // A 2D vector puts a new entity at z 0 and flat, and leaves an existing one's
 // z and depth as they are.
+// A page runs entityInit in one handler (a mount) and moves entities from
+// others (key and click handlers), each a scope of its own under the page.
+test("a store made in one handler's scope is found from another's", async () => {
+  const r = physicsResolver();
+  try {
+    const page: Context = {};
+    await r({ "$entityInit": "#game" }, childContext(page, {}));
+    await r({ "$entityAdd": "player", translation: [5, 6, 0] }, childContext(page, {}));
+    assert.equal(await r({ "$entityGet": "player", prop: "tx" }, childContext(page, {})), 5);
+  } finally {
+    r.destroy();
+  }
+});
+
+test("with several stores an op names one with `store`, and with one it needs none", async () => {
+  const r = physicsResolver();
+  try {
+    const context: Context = {};
+    await assert.rejects(async () => r({ "$entityList": true }, context), /No entity store: entityInit or glInit makes one/);
+    await r({ "$entityInit": "a" }, context);
+    await r({ "$entityAdd": "p", translation: [1, 0, 0] }, context);
+    await r({ "$entityInit": "b" }, context);
+    await assert.rejects(async () => r({ "$entityList": true }, context), /There are 2 entity stores \(a, b\): name one with `store`/);
+    await r({ "$entityAdd": "p", translation: [2, 0, 0], store: { "$var": "which" } }, { ...context, which: "b" });
+    assert.equal(await r({ "$entityGet": "p", prop: "tx", store: "a" }, context), 1);
+    assert.equal(await r({ "$entityGet": "p", prop: "tx", store: "b" }, context), 2);
+    await assert.rejects(async () => r({ "$entityGet": "p", store: "c" }, context), /No entity store named "c"/);
+    // `store` names the store; it is not kept on the entity.
+    assert.equal((await r({ "$entityGet": "p", store: "b" }, context) as Record<string, unknown>).store, undefined);
+  } finally {
+    r.destroy();
+  }
+});
+
+// z orders flat entities for drawing; it never keeps two of them from colliding.
+test("a flat body lands on a flat static at another z", async () => {
+  const r = physicsResolver();
+  try {
+    const context: Context = {};
+    await r({ "$entityInit": "#game", width: 1600, height: 600 }, context);
+    await r({ "$entityAdd": "floor", translation: [0, 570, 0], scale: [1600, 30], physics: true, mass: 0, group: "ground" }, context);
+    await r({ "$entityAdd": "player", translation: [120, 410, 5], scale: [28, 38], physics: true, mass: 1, group: "player", mask: ["ground"] }, context);
+    await r({ "$physicsInit": true, gravity: [0, 900], bounds: "canvas", start: false }, context);
+    for (let i = 0; i < 120; i++) await r({ "$physicsStep": true }, context);
+    assert.ok(Math.abs(Number(await r({ "$entityGet": "player", prop: "ty" }, context)) - 532) < 1);
+  } finally {
+    r.destroy();
+  }
+});
+
 test("a 2D translation or scale leaves z as it is", async () => {
   const r = physicsResolver();
   try {

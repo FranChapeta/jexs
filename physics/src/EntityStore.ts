@@ -12,7 +12,6 @@
  * Draw order is tracked in a separate index array.
  */
 
-import type { Context } from "@jexs/core";
 import type { MeshEntry } from "./Mesh.js";
 
 // ─── Field offsets within the stride ─────────────────────────────────────────
@@ -211,8 +210,12 @@ export class EntityStore {
   height = 0;
   virtualWidth = 0;
   virtualHeight = 0;
+  /** The name the store is registered under: `entityInit`'s value, or the canvas selector `glInit` drew into. */
+  name = "";
   /** Called after entity mutations. Set by renderer (e.g. GlNode). */
   onChange: (() => void) | null = null;
+  /** Called after the physics loop steps the store. Set by renderer (e.g. GlNode). */
+  onStep: (() => void) | null = null;
   /** Set true by EntityNode when z changes. Renderer resets after sorting. */
   zDirty = false;
   /** Count of z-dirty entities since last sort. Used to pick insertion vs built-in sort. */
@@ -907,11 +910,3 @@ export class EntityStore {
 }
 
 const _identityWT = new Float64Array([0,0,0, 1,1,1, 0,0,0,1]);
-
-/** The store of the GL instance a context's steps run in, as `$glInit` / `$entityInit` record it. */
-export function getStore(context: Context): EntityStore | null {
-  const selector = context._glSelector as string | undefined;
-  if (!selector) return null;
-  const stores = context._entityStores as Record<string, EntityStore> | undefined;
-  return stores?.[selector] ?? null;
-}

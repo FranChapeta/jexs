@@ -18,9 +18,9 @@
  * - { "$entityGet": id }               — full entity object
  */
 
-import { Node, Context, NodeValue, resolve, resolveFields, isOwnedKey } from "@jexs/core";
+import { Node, Context, NodeValue, resolve, resolveAll, resolveFields, resolverFor, isOwnedKey } from "@jexs/core";
 import {
-  EntityStore, EntityMeta, FIELD_OFFSETS, getStore,
+  EntityStore, EntityMeta, FIELD_OFFSETS,
   ENTITY_TYPES, BLEND_MODES,
   STRIDE,
   F_TX, F_TY, F_TZ,
@@ -41,6 +41,12 @@ type P = JexsPropertySchema;
 const vec = (description: string): P => ({ type: "array", items: { type: "number" }, description });
 /** A position or direction, as the `$v-*` ops take and return one. */
 const point = (description: string): P => ({ $ref: "#/$defs/_vec", description });
+
+/** The sibling every op that acts on an entity store takes to name it. */
+export const STORE_SIBLING: P = {
+  type: "string",
+  description: "The entity store to act on, by the name `entityInit` gave it or the canvas selector `glInit` drew into. Needed when there are several; with one, that one is used.",
+};
 
 /**
  * Every writable field on an entity, shared by `entityAdd` and `entityUpdate`.
@@ -115,7 +121,7 @@ const { lineWidth, radius, coneAngle, dirX, dirY, dirZ, ...SHARED_FIELDS } = ENT
  */
 const KNOWN_KEYS = new Set([
   ...Object.keys(ENTITY_FIELDS),
-  "type", "pooled", "text",
+  "type", "pooled", "text", "store",
 ]);
 
 /** Convert a Z-axis angle (degrees) to a quaternion [qx,qy,qz,qw]. */
@@ -183,7 +189,7 @@ export class EntityNode extends Node {
     entityInit: {
       type: "string",
       output: "null",
-      markdownDescription: "Creates a new entity store and sets it as the active context store.\r\nPass `width` and `height` to define the world bounds.",
+      markdownDescription: "Creates an entity store under the name in `entityInit`, replacing one already there. Entity, physics and gl ops act on it: by that name in their `store` sibling, or on their own when it is the only store.\r\nPass `width` and `height` to define the world bounds.",
       examples: [
         "{ \"$entityInit\": \"world\", \"width\": 800, \"height\": 600 }",
       ],
@@ -205,7 +211,7 @@ export class EntityNode extends Node {
     entityAdd: {
       type: "string",
       output: "null",
-      markdownDescription: "Adds an entity to the active store, under the id in `entityAdd`.\r\nThe transform is `translation` / `scale` / `rotation` (there is no `x`/`y`/`w`/`h`); `angle`, `rx`, `ry` and `rotation-velocity` are shorthands that build the quaternion for you.\r\nSet `physics: true` to simulate it and `fixed: true` for an immovable body, and `pooled: true` to reuse a pooled slot.\r\nAny sibling not listed here is kept verbatim on the entity's `custom` metadata.",
+      markdownDescription: "Adds an entity to the store, under the id in `entityAdd`.\r\nThe transform is `translation` / `scale` / `rotation` (there is no `x`/`y`/`w`/`h`); `angle`, `rx`, `ry` and `rotation-velocity` are shorthands that build the quaternion for you.\r\nSet `physics: true` to simulate it and `fixed: true` for an immovable body, and `pooled: true` to reuse a pooled slot.\r\nAny sibling not listed here is kept verbatim on the entity's `custom` metadata.",
       examples: [
         "{ \"$entityAdd\": \"player\", \"type\": \"quad\", \"translation\": [100, 100, 0], \"scale\": [32, 32, 1], \"color\": [1,0,0,1] }",
       ],
@@ -232,6 +238,7 @@ export class EntityNode extends Node {
           type: "boolean",
           description: "Reuse a pooled slot for this entity.",
         },
+        store: STORE_SIBLING,
       },
     },
     entityRemove: {
@@ -246,6 +253,7 @@ export class EntityNode extends Node {
           type: "boolean",
           description: "Release to pool instead of removing (default `false`).",
         },
+        store: STORE_SIBLING,
       },
     },
     entityMove: {
@@ -262,6 +270,7 @@ export class EntityNode extends Node {
         rx: ENTITY_FIELDS.rx,
         ry: ENTITY_FIELDS.ry,
         "rotation-velocity": ENTITY_FIELDS["rotation-velocity"],
+        store: STORE_SIBLING,
       },
     },
     entityUpdate: {
@@ -284,19 +293,22 @@ export class EntityNode extends Node {
           type: "boolean",
           description: "Continuous collision detection, for a body fast enough to tunnel through a wall in one step.",
         },
+        store: STORE_SIBLING,
       },
     },
     entityClear: {
       output: "null",
-      markdownDescription: "Removes all entities from the active store and triggers a re-render.",
+      markdownDescription: "Removes all entities from the store and triggers a re-render.",
+      siblings: { store: STORE_SIBLING },
     },
     entityList: {
       type: "string",
       output: "array",
-      markdownDescription: "Returns all entities in the active store as an array of plain objects.\r\nPass a group name to filter, or `true` to return all groups.",
+      markdownDescription: "Returns all entities in the store as an array of plain objects.\r\nPass a group name to filter, or `true` to return all groups.",
       examples: [
         "{ \"$entityList\": \"enemies\" }",
       ],
+      siblings: { store: STORE_SIBLING },
     },
     entityNearest: {
       type: "string",
@@ -314,6 +326,7 @@ export class EntityNode extends Node {
           type: "number",
           description: "Reference Y coordinate.",
         },
+        store: STORE_SIBLING,
       },
     },
     entityGet: {
@@ -327,9 +340,45 @@ export class EntityNode extends Node {
           type: "string",
           description: "Property name to get (omit to return the full entity object).",
         },
+        store: STORE_SIBLING,
       },
     },
   };
+
+  /** This resolver's entity stores, by the name `entityInit` or `glInit` gave each. */
+  readonly stores = new Map<string, EntityStore>();
+
+  /** The resolver's EntityNode, which holds its stores. Static, since every
+   *  method on a Node registers as an op. */
+  private static of(context: Context): EntityNode {
+    const node = resolverFor(context).nodeFor("entityInit");
+    if (!(node instanceof EntityNode)) throw new Error("Entity stores need the EntityNode registered: it comes with @jexs/physics");
+    return node;
+  }
+
+  /** Registers a store under a name, replacing one already there: `glInit`'s. */
+  static addStore(context: Context, name: string, store: EntityStore): void {
+    store.name = name;
+    EntityNode.of(context).stores.set(name, store);
+  }
+
+  static removeStore(context: Context, name: string): void {
+    EntityNode.of(context).stores.delete(name);
+  }
+
+  /** The store a step names in its `store` sibling, or the only one when it names none. */
+  static storeFor(context: Context, name: unknown): EntityStore {
+    const stores = EntityNode.of(context).stores;
+    if (name !== undefined && name !== null) {
+      const store = stores.get(String(name));
+      if (!store) throw new Error(`No entity store named "${String(name)}": entityInit or glInit makes one`);
+      return store;
+    }
+    if (stores.size === 1) return stores.values().next().value!;
+    throw new Error(stores.size === 0
+      ? "No entity store: entityInit or glInit makes one"
+      : `There are ${stores.size} entity stores (${[...stores.keys()].join(", ")}): name one with \`store\``);
+  }
 
 
   // ── entityInit ──────────────────────────────────────────────────────
@@ -345,9 +394,7 @@ export class EntityNode extends Node {
       store.height = r["height"] !== undefined ? Number(r["height"]) : 600;
       store.virtualWidth  = store.width;
       store.virtualHeight = store.height;
-      if (!context._entityStores) context._entityStores = {};
-      (context._entityStores as Record<string, EntityStore>)[id] = store;
-      (context as Record<string, unknown>)._glSelector = id;
+      EntityNode.addStore(context, id, store);
       return null;
     });
   }
@@ -355,10 +402,8 @@ export class EntityNode extends Node {
   // ── entityAdd ───────────────────────────────────────────────────────
 
   entityAdd(def: Record<string, unknown>, context: Context): NodeValue {
-    const store = getStore(context);
-    if (!store) return null;
-
     return resolveFields(def, context, r => {
+      const store = EntityNode.storeFor(context, r.store);
       const keys = Object.keys(def);
 
       const id     = String(r.$entityAdd);
@@ -518,8 +563,7 @@ export class EntityNode extends Node {
 
   entityRemove(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveFields(def, context, r => {
-      const store = getStore(context);
-      if (!store) return null;
+      const store = EntityNode.storeFor(context, r.store);
       const id     = String(r.$entityRemove);
       const pooled = r["pooled"] !== undefined && this.toBoolean(r["pooled"]);
       if (pooled) store.poolRelease(id);
@@ -532,10 +576,8 @@ export class EntityNode extends Node {
   // ── entityMove ──────────────────────────────────────────────────────
 
   entityMove(def: Record<string, unknown>, context: Context): NodeValue {
-    const store = getStore(context);
-    if (!store) return null;
-
     return resolveFields(def, context, r => {
+      const store = EntityNode.storeFor(context, r.store);
       const slot = store.slot(String(r.$entityMove));
       if (slot === -1) return null;
 
@@ -562,10 +604,8 @@ export class EntityNode extends Node {
   // ── entityUpdate ────────────────────────────────────────────────────
 
   entityUpdate(def: Record<string, unknown>, context: Context): NodeValue {
-    const store = getStore(context);
-    if (!store) return null;
-
     return resolveFields(def, context, r => {
+      const store = EntityNode.storeFor(context, r.store);
       const id   = String(r.$entityUpdate);
       const slot = store.slot(id);
       if (slot === -1) return null;
@@ -574,7 +614,7 @@ export class EntityNode extends Node {
       const meta = store.meta[slot]!;
 
       for (const key of Object.keys(r)) {
-        if (isOwnedKey(key)) continue;
+        if (isOwnedKey(key) || key === "store") continue;
         const v = r[key];
           switch (key) {
             case "translation": {
@@ -720,20 +760,20 @@ export class EntityNode extends Node {
 
   // ── entityClear ─────────────────────────────────────────────────────
 
-  entityClear(_def: Record<string, unknown>, context: Context): NodeValue {
-    const store = getStore(context);
-    if (!store) return null;
-    store.clear();
-    store.onChange?.();
-    return null;
+  entityClear(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.store, context, name => {
+      const store = EntityNode.storeFor(context, name);
+      store.clear();
+      store.onChange?.();
+      return null;
+    });
   }
 
   // ── entityList ──────────────────────────────────────────────────────
 
   entityList(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$entityList, context, val => {
-      const store = getStore(context);
-      if (!store) return [];
+    return resolveAll([def.$entityList, def.store], context, ([val, name]) => {
+      const store = EntityNode.storeFor(context, name);
       const groupFilter = val === true ? null : String(val);
       const d = store.data;
       const results: Record<string, unknown>[] = [];
@@ -752,8 +792,7 @@ export class EntityNode extends Node {
 
   entityNearest(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveFields(def, context, r => {
-      const store = getStore(context);
-      if (!store) return null;
+      const store = EntityNode.storeFor(context, r.store);
       const group = String(r.$entityNearest);
       const px    = Number(r["x"]);
       const py    = Number(r["y"]);
@@ -779,9 +818,8 @@ export class EntityNode extends Node {
   // ── entityGet ───────────────────────────────────────────────────────
 
   entityGet(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolve(def.$entityGet, context, opId => {
-      const store = getStore(context);
-      if (!store) return null;
+    return resolveAll([def.$entityGet, def.store], context, ([opId, name]) => {
+      const store = EntityNode.storeFor(context, name);
       const id   = String(opId);
       const slot = store.slot(id);
       if (slot === -1) return null;

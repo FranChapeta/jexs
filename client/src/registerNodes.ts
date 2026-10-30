@@ -46,6 +46,27 @@ function missingPackage(pkg: string, needed: string): (err: unknown) => never {
  * rather than in whichever one happens to be around at load time.
  */
 
+/** Registers the physics nodes in a resolver, once: the physics ops load them,
+ *  and so does `glInit`, whose canvas keeps its entities in an EntityNode store.
+ *  The check runs after the import, so two loads under way at once register
+ *  one EntityNode, and with it one set of stores. */
+function loadPhysics(r: Resolver): Promise<void> {
+  return import("@jexs/physics").catch(
+    missingPackage("@jexs/physics", "entity, vector, physics, collision, joint and mesh ops"),
+  ).then(({ EntityNode, VectorNode, PhysicsNode, CollisionNode, JointNode, MeshNode }) => {
+    if (r.nodeFor("entityInit")) return;
+    r.registerNode(new EntityNode());
+    r.registerNode(new VectorNode());
+    // Off-thread physics when shared:true: the node gets the env worker
+    // constructor. The worker bundle (./physicsWorker) is only FETCHED when the
+    // first shared world registers — the URL here is resolved, not loaded.
+    r.registerNode(new PhysicsNode(makeModuleWorker(new URL("./physicsWorker.js", import.meta.url))));
+    r.registerNode(new CollisionNode());
+    r.registerNode(new JointNode());
+    r.registerNode(new MeshNode());
+  });
+}
+
 /** Worker-safe groups: physics + entity/vector math. Safe to register in a
  *  worker (no DOM/GPU/storage). */
 export function registerComputeLazy(resolver: Resolver): void {
@@ -59,19 +80,7 @@ export function registerComputeLazy(resolver: Resolver): void {
      "collisionOn", "collisionOff",
      "jointAdd", "jointRemove",
      "parseGLB", "parseGLTF", "meshRegister"],
-    (r) => import("@jexs/physics").catch(
-      missingPackage("@jexs/physics", "entity, vector, physics, collision, joint and mesh ops"),
-    ).then(({ EntityNode, VectorNode, PhysicsNode, CollisionNode, JointNode, MeshNode }) => {
-      r.registerNode(new EntityNode());
-      r.registerNode(new VectorNode());
-      // Off-thread physics when shared:true: the node gets the env worker
-      // constructor. The worker bundle (./physicsWorker) is only FETCHED when the
-      // first shared world registers — the URL here is resolved, not loaded.
-      r.registerNode(new PhysicsNode(makeModuleWorker(new URL("./physicsWorker.js", import.meta.url))));
-      r.registerNode(new CollisionNode());
-      r.registerNode(new JointNode());
-      r.registerNode(new MeshNode());
-    }),
+    loadPhysics,
   );
 }
 
@@ -104,9 +113,8 @@ export function registerDomLazy(resolver: Resolver): void {
      "glText", "glFont", "glShader", "glBlur", "glTransition", "glTween", "glSsao",
      "glRegisterMesh", "glAtlas", "glFrame", "glTilemap", "glTilemapSet",
      "glTrail", "glTrailRemove", "glRaycast", "glParticle"],
-    (r) => import("@jexs/gl")
-      .catch(missingPackage("@jexs/gl", "gl ops"))
-      .then(({ GlNode }) => {
+    (r) => Promise.all([import("@jexs/gl").catch(missingPackage("@jexs/gl", "gl ops")), loadPhysics(r)])
+      .then(([{ GlNode }]) => {
         r.registerNode(new GlNode());
       }),
   );

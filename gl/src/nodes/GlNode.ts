@@ -55,7 +55,7 @@ import {
   _frustum,
 } from "../gl/math.js";
 import { initEquirectSky, drawEquirectSky } from "../gl/skybox.js";
-import { raycastStore, toVec, type MeshEntry, type Bounds } from "@jexs/physics";
+import { raycastStore, toVec, EntityNode, STORE_SIBLING, type MeshEntry, type Bounds } from "@jexs/physics";
 import type { GpuMesh } from "../gl/types.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "@jexs/core";
 
@@ -203,7 +203,8 @@ export class GlNode extends Node {
     },
     glDestroy: {
       output: "null",
-      markdownDescription: "Destroys the active WebGL instance and releases GPU resources, textures, and the entity store.",
+      markdownDescription: "Destroys a WebGL instance and releases its GPU resources, textures, and entity store.",
+      siblings: { store: STORE_SIBLING },
     },
     glHit: {
       type: "boolean",
@@ -213,6 +214,7 @@ export class GlNode extends Node {
         "{ \"$glHit\": true, \"x\": { \"$var\": \"event.clientX\" }, \"y\": { \"$var\": \"event.clientY\" } }",
       ],
       siblings: {
+        store: STORE_SIBLING,
         x: {
           type: "number",
           description: "Screen X coordinate.",
@@ -231,6 +233,7 @@ export class GlNode extends Node {
         "{ \"$glCamera\": true, \"follow\": \"player\", \"zoom\": 1.5 }",
       ],
       siblings: {
+        store: STORE_SIBLING,
         x: {
           type: "number",
           description: "Camera X position.",
@@ -300,6 +303,7 @@ export class GlNode extends Node {
         "{ \"$glTexture\": \"ship\", \"src\": \"/assets/ship.png\" }",
       ],
       siblings: {
+        store: STORE_SIBLING,
         src: {
           type: "string",
           description: "URL of the image to load.",
@@ -322,6 +326,7 @@ export class GlNode extends Node {
         "{ \"$foreach\": { \"$var\": \"scene.meshes\" }, \"item\": \"m\", \"do\": {\n    \"$glRegisterMesh\": { \"$var\": \"m.id\" },\n    \"bounds\":    { \"$var\": \"m.bounds\" },\n    \"positions\": { \"$var\": \"m.positions\" },\n    \"normals\":   { \"$var\": \"m.normals\" },\n    \"uvs\":       { \"$var\": \"m.uvs\" },\n    \"indices\":   { \"$var\": \"m.indices\" },\n    \"material\":  { \"$var\": \"m.material\" }\n} }",
       ],
       siblings: {
+        store: STORE_SIBLING,
         bounds: {
           description: "AABB bounds object { min, max }.",
         },
@@ -350,6 +355,7 @@ export class GlNode extends Node {
         "{ \"$glAtlas\": \"tiles\", \"src\": \"/assets/tiles.png\", \"cols\": 8, \"rows\": 4 }",
       ],
       siblings: {
+        store: STORE_SIBLING,
         src: {
           type: "string",
           description: "URL of the spritesheet image.",
@@ -372,6 +378,7 @@ export class GlNode extends Node {
         "{ \"$glAnimate\": \"player\", \"atlas\": \"sprites\", \"frames\": [0, 1, 2, 3], \"fps\": 12, \"loop\": true }",
       ],
       siblings: {
+        store: STORE_SIBLING,
         atlas: {
           type: "string",
           description: "Atlas name (registered via `glAtlas`).",
@@ -405,6 +412,7 @@ export class GlNode extends Node {
         "{ \"$glFrame\": \"player\", \"atlas\": \"sprites\", \"frame\": 5 }",
       ],
       siblings: {
+        store: STORE_SIBLING,
         atlas: {
           type: "string",
           description: "Atlas name (registered via `glAtlas`).",
@@ -423,6 +431,7 @@ export class GlNode extends Node {
         "{ \"$glTilemap\": \"level1\", \"atlas\": \"tiles\", \"data\": [[1,0,2],[3,1,0]], \"tileWidth\": 32, \"tileHeight\": 32 }",
       ],
       siblings: {
+        store: STORE_SIBLING,
         atlas: {
           type: "string",
           description: "Atlas name (registered via `glAtlas`).",
@@ -455,6 +464,7 @@ export class GlNode extends Node {
         "{ \"$glTilemapSet\": \"level1\", \"x\": 3, \"y\": 2, \"tile\": 5 }",
       ],
       siblings: {
+        store: STORE_SIBLING,
         x: {
           type: "number",
           required: true,
@@ -480,6 +490,7 @@ export class GlNode extends Node {
         "{ \"$glTrail\": \"player\", \"length\": 20, \"width\": 3, \"color\": [1, 0.5, 0, 0.8] }",
       ],
       siblings: {
+        store: STORE_SIBLING,
         length: {
           type: "number",
           description: "Maximum number of trail points (default `20`).",
@@ -494,6 +505,7 @@ export class GlNode extends Node {
     glTrailRemove: {
       output: "null",
       markdownDescription: "Removes the motion trail from an entity.",
+      siblings: { store: STORE_SIBLING },
     },
     glRaycast: {
       type: "boolean",
@@ -504,6 +516,7 @@ export class GlNode extends Node {
         "{ \"$glRaycast\": true, \"from\": [0, 0, 0], \"dir\": [1, 0, 0], \"mask\": [\"enemies\"] }",
       ],
       siblings: {
+        store: STORE_SIBLING,
         from: {
           $ref: "#/$defs/_vec",
           description: "Origin vector `[x, y, z?]`.",
@@ -529,6 +542,7 @@ export class GlNode extends Node {
         "{ \"$glText\": \"score-label\", \"text\": { \"$var\": \"score\" }, \"font\": \"24px Arial\", \"fill\": \"#fff\", \"x\": 10, \"y\": 10 }",
       ],
       siblings: {
+        store: STORE_SIBLING,
         text: {
           type: "string",
           description: "Text content to render.",
@@ -563,6 +577,7 @@ export class GlNode extends Node {
         "{ \"$glFont\": \"hud\", \"atlas\": \"hud-atlas\", \"metrics\": { \"$file\": \"/fonts/hud.json\" } }",
       ],
       siblings: {
+        store: STORE_SIBLING,
         atlas: {
           type: "string",
           description: "Name of a `glTexture` holding the MSDF atlas PNG.",
@@ -580,6 +595,7 @@ export class GlNode extends Node {
         "{ \"$glShader\": \"glow\", \"vert\": \"...\", \"frag\": \"...\" }",
       ],
       siblings: {
+        store: STORE_SIBLING,
         vert: {
           type: "string",
           description: "GLSL vertex shader source.",
@@ -597,6 +613,7 @@ export class GlNode extends Node {
       examples: [
         "{ \"$glBlur\": 4 }",
       ],
+      siblings: { store: STORE_SIBLING },
     },
     glTransition: {
       type: "boolean",
@@ -606,6 +623,7 @@ export class GlNode extends Node {
         "{ \"$glTransition\": true, \"duration\": 0.8 }",
       ],
       siblings: {
+        store: STORE_SIBLING,
         duration: {
           type: "number",
           description: "Transition duration in seconds (default `0.5`).",
@@ -622,6 +640,7 @@ export class GlNode extends Node {
         "{ \"$glTween\": \"door\", \"y\": 0, \"$then\": [{ \"$entityRemove\": \"door\" }] }",
       ],
       siblings: {
+        store: STORE_SIBLING,
         duration: {
           type: "number",
           description: "Animation duration in seconds (default `0.3`).",
@@ -649,6 +668,7 @@ export class GlNode extends Node {
       ],
       type: "boolean",
       siblings: {
+        store: STORE_SIBLING,
         radius:    { type: "number", description: "Sampling radius in world units (default 0.5)." },
         bias:      { type: "number", description: "Depth bias against self-occlusion (default 0.025)." },
         intensity: { type: "number", description: "Darkening strength (default 1.5)." },
@@ -661,6 +681,7 @@ export class GlNode extends Node {
         "{ \"$glParticle\": true, \"x\": 100, \"y\": 200, \"count\": 30, \"speed\": 5, \"life\": 1, \"color\": [1,0.5,0,1] }",
       ],
       siblings: {
+        store: STORE_SIBLING,
         color: rgb("Particle color at birth, `[r, g, b, a]` (default `[1, 1, 1, 1]`)."),
         colorEnd: rgb("Particle color at death, faded to it over its life (default the birth color with alpha 0)."),
       },
@@ -931,21 +952,18 @@ export class GlNode extends Node {
         inst.metricsEl = el;
       }
 
-      (context as Record<string, unknown>)._glSelector = selector;
+      // The store is named by the canvas selector.
+      EntityNode.addStore(context, selector, store);
 
-      if (!context._entityStores) context._entityStores = {};
-      (context._entityStores as Record<string, EntityStore>)[selector] = store;
-
-      // Entity mutations (via EntityNode) trigger rendering
+      // Entity mutations (via EntityNode) and physics steps trigger rendering
       store.onChange = () => {
         inst.dirty = true;
         inst.lightsDirty = true;
         GlNode.scheduleRender(inst);
       };
-
-(context as Record<string, unknown>)._onPhysicsStep = (sel: string) => {
-        const i = this.instances.get(sel);
-        if (i) { i.dirty = true; GlNode.scheduleRender(i); }
+      store.onStep = () => {
+        inst.dirty = true;
+        GlNode.scheduleRender(inst);
       };
 
       GlNode.scheduleRender(inst);
@@ -955,28 +973,21 @@ export class GlNode extends Node {
 
   // ── glDestroy ──────────────────────────────────────────────────────────
 
-  glDestroy(_def: Record<string, unknown>, context: Context): NodeValue {
-    const selector = context._glSelector as string;
-    if (!selector) return null;
-    const inst = this.instances.get(selector);
-    if (inst) {
+  glDestroy(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.store, context, name => {
+      const inst = GlNode.instFor(context, name);
       GlNode.destroyInstance(inst);
-      this.instances.delete(selector);
-    }
-    if (context._entityStores) {
-      delete (context._entityStores as Record<string, EntityStore>)[selector];
-    }
-    delete (context as Record<string, unknown>)._glSelector;
-    return null;
+      this.instances.delete(inst.store.name);
+      EntityNode.removeStore(context, inst.store.name);
+      return null;
+    });
   }
 
   // ── glHit ──────────────────────────────────────────────────────────────
 
   glHit(def: Record<string, unknown>, context: Context): NodeValue {
-    const inst = GlNode.getInst(context);
-    if (!inst) return null;
-
     return resolveFields(def, context, r => {
+      const inst = GlNode.instFor(context, r.store);
       let px = Number(r["x"]);
       let py = Number(r["y"]);
       if (inst.store.virtualWidth) {
@@ -1056,10 +1067,8 @@ export class GlNode extends Node {
   // ── glCamera ───────────────────────────────────────────────────────────
 
   glCamera(def: Record<string, unknown>, context: Context): NodeValue {
-    const inst = GlNode.getInst(context);
-    if (!inst) return null;
-
     return resolveFields(def, context, r => {
+      const inst = GlNode.instFor(context, r.store);
       const cam = inst.camera;
       if (r["x"] !== undefined) cam.x = Number(r["x"]);
       if (r["y"] !== undefined) cam.y = Number(r["y"]);
@@ -1132,9 +1141,8 @@ export class GlNode extends Node {
   // ── glTexture ──────────────────────────────────────────────────────────
 
   glTexture(def: Record<string, unknown>, context: Context): NodeValue {
-    const inst = GlNode.getInst(context);
-    if (!inst) return null;
-    return resolveAll([def.$glTexture, def["src"], def["linear"] ?? null, def["hdr"] ?? null], context, ([nameV, srcV, linearV, hdrV]) => {
+    return resolveAll([def.$glTexture, def["src"], def["linear"] ?? null, def["hdr"] ?? null, def.store], context, ([nameV, srcV, linearV, hdrV, storeV]) => {
+      const inst = GlNode.instFor(context, storeV);
       const name = String(nameV);
       const src = String(srcV);
       const linear = linearV === true;
@@ -1194,9 +1202,8 @@ export class GlNode extends Node {
   // ── glFont (register an MSDF font: atlas texture + parsed metrics) ───────
 
   glFont(def: Record<string, unknown>, context: Context): NodeValue {
-    const inst = GlNode.getInst(context);
-    if (!inst) return null;
     return resolveFields(def, context, r => {
+      const inst = GlNode.instFor(context, r.store);
       const name = String(r.$glFont);
       const atlasName = String(r["atlas"]);     // a registered glTexture name
       const metricsRaw = r["metrics"];          // parsed BMFont JSON (from a file/fetch node) or a JSON string
@@ -1223,9 +1230,8 @@ export class GlNode extends Node {
   // ── glRegisterMesh ───────────────────────────────────────────────────
 
   glRegisterMesh(def: Record<string, unknown>, context: Context): NodeValue {
-    const inst = GlNode.getInst(context);
-    if (!inst) return null;
     return resolveFields(def, context, r => {
+      const inst = GlNode.instFor(context, r.store);
       const idRaw = r.$glRegisterMesh;
       if (idRaw == null) return null;
       const id = String(idRaw);
@@ -1326,9 +1332,8 @@ export class GlNode extends Node {
   // Pre-compute UV rects for a spritesheet: { "$glAtlas": "name", "src": "sheet.png", "cols": 8, "rows": 4 }
 
   glAtlas(def: Record<string, unknown>, context: Context): NodeValue {
-    const inst = GlNode.getInst(context);
-    if (!inst) return null;
     return resolveFields(def, context, r => {
+      const inst = GlNode.instFor(context, r.store);
       const name = String(r.$glAtlas);
       const src = String(r["src"]);
       const cols = Number(r["cols"]) || 1;
@@ -1363,9 +1368,8 @@ export class GlNode extends Node {
   // ── glAnimate ──────────────────────────────────────────────────────────
 
   glAnimate(def: Record<string, unknown>, context: Context): NodeValue {
-    const inst = GlNode.getInst(context);
-    if (!inst) return null;
     return resolveFields(def, context, r => {
+      const inst = GlNode.instFor(context, r.store);
       const id = String(r.$glAnimate);
       const slot = inst.store.slot(id);
       if (slot === -1) return null;
@@ -1401,9 +1405,8 @@ export class GlNode extends Node {
   // { "$glFrame": "entityId", "atlas": "name", "frame": 5 }
 
   glFrame(def: Record<string, unknown>, context: Context): NodeValue {
-    const inst = GlNode.getInst(context);
-    if (!inst) return null;
     return resolveFields(def, context, r => {
+      const inst = GlNode.instFor(context, r.store);
       const id = String(r.$glFrame);
       const slot = inst.store.slot(id);
       if (slot === -1) return null;
@@ -1430,9 +1433,8 @@ export class GlNode extends Node {
   // { "$glTilemap": "level1", "atlas": "tiles", "data": [[1,0,2],[3,1,0]], "tileWidth": 32, "tileHeight": 32 }
 
   glTilemap(def: Record<string, unknown>, context: Context): NodeValue {
-    const inst = GlNode.getInst(context);
-    if (!inst) return null;
     return resolveFields(def, context, r => {
+      const inst = GlNode.instFor(context, r.store);
       const name = String(r.$glTilemap);
       const atlasName = String(r["atlas"]);
       const atlas = inst.atlases.get(atlasName);
@@ -1457,9 +1459,8 @@ export class GlNode extends Node {
 
   // { "$glTilemapSet": "level1", "x": 3, "y": 2, "tile": 5 }
   glTilemapSet(def: Record<string, unknown>, context: Context): NodeValue {
-    const inst = GlNode.getInst(context);
-    if (!inst) return null;
     return resolveFields(def, context, r => {
+      const inst = GlNode.instFor(context, r.store);
       const name = String(r.$glTilemapSet);
       const tm = inst.tilemaps.get(name);
       if (!tm) return null;
@@ -1534,9 +1535,8 @@ export class GlNode extends Node {
   // { "$glTrail": "player", "length": 20, "width": 2, "color": [1,0,0,1] }
 
   glTrail(def: Record<string, unknown>, context: Context): NodeValue {
-    const inst = GlNode.getInst(context);
-    if (!inst) return null;
     return resolveFields(def, context, r => {
+      const inst = GlNode.instFor(context, r.store);
       const entityId = String(r.$glTrail);
       const length = r["length"] !== undefined ? Number(r["length"]) : 20;
       const width = r["width"] !== undefined ? Number(r["width"]) : 2;
@@ -1549,18 +1549,18 @@ export class GlNode extends Node {
 
   // { "$glTrailRemove": "player" }
   glTrailRemove(def: Record<string, unknown>, context: Context): NodeValue {
-    const inst = GlNode.getInst(context);
-    if (!inst) return null;
-    return resolve(def.$glTrailRemove, context, v => { inst.trails.delete(String(v)); return null; });
+    return resolveAll([def.$glTrailRemove, def.store], context, ([v, name]) => {
+      GlNode.instFor(context, name).trails.delete(String(v));
+      return null;
+    });
   }
 
   // ── glRaycast — cast a ray and return sorted hits ─────────────────────
   // { "$glRaycast": true, "from": [0, 0, 0], "dir": [1, 0, 0], "mask": ["enemy"] }
 
   glRaycast(def: Record<string, unknown>, context: Context): NodeValue {
-    const inst = GlNode.getInst(context);
-    if (!inst) return null;
     return resolveFields(def, context, r => {
+      const inst = GlNode.instFor(context, r.store);
       if (r["from"] == null || r["dir"] == null) return [];
       const from = toVec(r["from"]), dir = toVec(r["dir"]);
       const maskArr = r["mask"] !== undefined ? r["mask"] as string[] : null;
@@ -1572,9 +1572,8 @@ export class GlNode extends Node {
   // ── glText ─────────────────────────────────────────────────────────────
 
   glText(def: Record<string, unknown>, context: Context): NodeValue {
-    const inst = GlNode.getInst(context);
-    if (!inst) return null;
     return resolveFields(def, context, r => {
+      const inst = GlNode.instFor(context, r.store);
       const id = String(r.$glText);
       const text = String(r["text"]);
       const font = r["font"] ? String(r["font"]) : "16px sans-serif";
@@ -1626,9 +1625,8 @@ export class GlNode extends Node {
   // ── glShader ───────────────────────────────────────────────────────────
 
   glShader(def: Record<string, unknown>, context: Context): NodeValue {
-    const inst = GlNode.getInst(context);
-    if (!inst) return null;
     return resolveFields(def, context, r => {
+      const inst = GlNode.instFor(context, r.store);
       const name = String(r.$glShader);
       const vert = r["vert"] ? String(r["vert"]) : VERT_SRC;
       const frag = r["frag"] ? String(r["frag"]) : FRAG_SRC;
@@ -1660,9 +1658,8 @@ export class GlNode extends Node {
   // ── glBlur ─────────────────────────────────────────────────────────────
 
   glBlur(def: Record<string, unknown>, context: Context): NodeValue {
-    const inst = GlNode.getInst(context);
-    if (!inst) return null;
-    return resolve(def.$glBlur, context, v => {
+    return resolveAll([def.$glBlur, def.store], context, ([v, name]) => {
+      const inst = GlNode.instFor(context, name);
       const radius = Number(v);
       inst.blur = radius > 0 ? { radius } : null;
       inst.dirty = true;
@@ -1674,9 +1671,8 @@ export class GlNode extends Node {
   // ── glTransition ──────────────────────────────────────────────────────
 
   glTransition(def: Record<string, unknown>, context: Context): NodeValue {
-    const inst = GlNode.getInst(context);
-    if (!inst) return null;
     return resolveFields(def, context, r => {
+      const inst = GlNode.instFor(context, r.store);
       const duration = r["duration"] !== undefined ? Number(r["duration"]) : 0.5;
       inst.transition = { type: "fade", duration, elapsed: 0 };
       inst.dirty = true;
@@ -1688,9 +1684,8 @@ export class GlNode extends Node {
   // ── glTween ────────────────────────────────────────────────────────────
 
   glTween(def: Record<string, unknown>, context: Context): NodeValue {
-    const inst = GlNode.getInst(context);
-    if (!inst) return null;
     return resolveFields(def, context, r => {
+      const inst = GlNode.instFor(context, r.store);
       const id = String(r.$glTween);
       const slot = inst.store.slot(id);
       if (slot === -1) return null;
@@ -1734,9 +1729,8 @@ export class GlNode extends Node {
   // Usage: { "$glSsao": true, "radius": 0.5, "bias": 0.025, "intensity": 1.5 }
   //        { "$glSsao": false } to disable
   glSsao(def: Record<string, unknown>, context: Context): NodeValue {
-    const inst = GlNode.getInst(context);
-    if (!inst) return null;
     return resolveFields(def, context, r => {
+      const inst = GlNode.instFor(context, r.store);
       const enabled = r.$glSsao;
       if (!enabled || enabled === "false") { inst.ssao = null; return null; }
       inst.ssao = {
@@ -1760,10 +1754,9 @@ export class GlNode extends Node {
   // Emit burst: { "$glParticle": "emit", "id": "fire", "x": 0, "y": 0, "z": 0, "count": 100 }
   // Destroy: { "$glParticle": "destroy", "id": "fire" }
   glParticle(def: Record<string, unknown>, context: Context): NodeValue {
-    const inst = GlNode.getInst(context);
-    if (!inst) return null;
-    if (!inst.gpuParticleProg) initGpuParticleProgram(inst, GlNode.createProgram);
     return resolveFields(def, context, r => {
+      const inst = GlNode.instFor(context, r.store);
+      if (!inst.gpuParticleProg) initGpuParticleProgram(inst, GlNode.createProgram);
       const gl = inst.gl;
       const actionStr = String(r.$glParticle);
 
@@ -1848,11 +1841,14 @@ export class GlNode extends Node {
 
   // ── Internal helpers ────────────────────────────────────────────────────
 
-  /** The instance a context's steps draw into, from the resolver's own GlNode. */
-  private static getInst(context: Context): GlInstance | null {
-    const selector = context._glSelector as string | undefined;
+  /** The instance drawing the store a step names in `store` (or the only store),
+   *  from the resolver's own GlNode. */
+  private static instFor(context: Context, name: unknown): GlInstance {
+    const store = EntityNode.storeFor(context, name);
     const node = resolverFor(context).nodeFor("glInit");
-    return selector && node instanceof GlNode ? node.instances.get(selector) ?? null : null;
+    const inst = node instanceof GlNode ? node.instances.get(store.name) : undefined;
+    if (!inst) throw new Error(`The entity store "${store.name}" has no gl canvas: glInit draws one`);
+    return inst;
   }
 
   private static resolveCanvas(selector: string): HTMLCanvasElement | null {

@@ -19,7 +19,7 @@ export {
 } from "./EntityStore.js";
 
 // ── Entity Node ──
-export { EntityNode } from "./nodes/EntityNode.js";
+export { EntityNode, STORE_SIBLING } from "./nodes/EntityNode.js";
 
 // ── Mesh Import (GLB / GLTF) ──
 export { MeshNode, setMeshoptLoader, type MeshoptDecoder } from "./nodes/MeshNode.js";

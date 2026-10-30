@@ -21,6 +21,7 @@ import {
 } from "../EntityStore.js";
 import { raycastStore } from "../Raycast.js";
 import { toVec } from "./Vector.js";
+import { EntityNode, STORE_SIBLING } from "./EntityNode.js";
 import { offloadWorld, readContacts, type WorldOffload } from "../sharedPhysics.js";
 import type { WorkerLike } from "@jexs/core";
 import { detectCollision, resolveCollision, wakeBody, isRotated, usesMeshCollision, maskAllows } from "../collision.js";
@@ -109,7 +110,6 @@ interface PhysicsWorld {
   accumulator: number;
   context: Context;
   paused: boolean;
-  onStep: (() => void) | null;
   /** Fixed tick interval in ms (1000/hz) when `hz` was set on physicsInit; null
    *  = use the default scheduler (RAF on client, ~16ms timer on server). Physics
    *  still steps at FIXED_DT internally — this is only how often the loop fires. */
@@ -492,7 +492,7 @@ export function physicsStep(store: EntityStore, config: PhysicsConfig, dt: numbe
       const sa = _dynamicSlots[i], ba = sa * STRIDE;
       const ma = store.meta[sa]!;
       const az = d[ba + F_TZ], ad = d[ba + F_SZ] || 0.01;
-      const aTop = az + ad;
+      const aTop = az + ad, aFlat = d[ba + F_SZ] === 0;
       const neighbors = _grid!.query(d[ba + F_TX], d[ba + F_TY], d[ba + F_SX], d[ba + F_SY], sa);
       for (let j = 0; j < neighbors.length; j++) {
         const sb = neighbors[j];
@@ -501,7 +501,7 @@ export function physicsStep(store: EntityStore, config: PhysicsConfig, dt: numbe
         if (!maskAllows(store, sa, sb)) { _maskSkips++; continue; }
         const bb = sb * STRIDE;
         const meshB = store.shapeType[sb] === SHAPE_MESH;
-        if (!meshB && !isRotated(d, bb)) {
+        if (!meshB && !isRotated(d, bb) && !(aFlat && d[bb + F_SZ] === 0)) {
           const bz = d[bb + F_TZ], bd = d[bb + F_SZ] || 0.01;
           if (az > bz + bd || bz > aTop) { _zSkips++; continue; }
         }
@@ -516,7 +516,7 @@ export function physicsStep(store: EntityStore, config: PhysicsConfig, dt: numbe
       const ba = sa * STRIDE;
       const ma = store.meta[sa]!;
       const az = d[ba + F_TZ], ad = d[ba + F_SZ] || 0.01;
-      const aTop = az + ad;
+      const aTop = az + ad, aFlat = d[ba + F_SZ] === 0;
 
       for (let j = 0; j < _staticSlots.length; j++) {
         const sb = _staticSlots[j];
@@ -525,9 +525,10 @@ export function physicsStep(store: EntityStore, config: PhysicsConfig, dt: numbe
 
         // Quick Z-overlap pre-check before full collision test
         // Skip broadphase for rotated statics — their Z extent differs from raw d
+        // Two flat entities collide in 2D whatever their z, as zOverlap has it
         const bb = sb * STRIDE;
         const meshB = store.shapeType[sb] === SHAPE_MESH;
-        if (!meshB && !isRotated(d, bb)) {
+        if (!meshB && !isRotated(d, bb) && !(aFlat && d[bb + F_SZ] === 0)) {
           const bz = d[bb + F_TZ], bd = d[bb + F_SZ] || 0.01;
           if (az > bz + bd || bz > aTop) { _zSkips++; continue; }
         }
@@ -643,21 +644,20 @@ export class PhysicsNode extends Node {
    */
   private readonly makeWorker: (() => WorkerLike) | null;
 
-  /** This resolver's worlds, by GL selector. An instance field, so another
-   *  resolver drawing into the same selector never replaces them; `dispose`
-   *  stops their loops. */
-  private readonly worlds = new Map<string, PhysicsWorld>();
+  /** This resolver's worlds, by the store each simulates. An instance field, so
+   *  another resolver's world never replaces them; `dispose` stops their loops. */
+  private readonly worlds = new Map<EntityStore, PhysicsWorld>();
 
   constructor(makeWorker: (() => WorkerLike) | null = null) {
     super();
     this.makeWorker = makeWorker;
   }
 
-  /** The world a context's steps run in, from the resolver's own PhysicsNode.
-   *  Static, since every method on a Node registers as an op. */
-  static world(context: Context): PhysicsWorld | undefined {
+  /** The world simulating the store a step names in `store`, from the resolver's
+   *  own PhysicsNode. Static, since every method on a Node registers as an op. */
+  static world(context: Context, store: unknown): PhysicsWorld | undefined {
     const node = resolverFor(context).nodeFor("physicsInit");
-    return node instanceof PhysicsNode ? node.worlds.get(PhysicsNode.sel(context)) : undefined;
+    return node instanceof PhysicsNode ? node.worlds.get(EntityNode.storeFor(context, store)) : undefined;
   }
 
   dispose(): void {
@@ -682,7 +682,7 @@ export class PhysicsNode extends Node {
       physicsInit: {
       type: "boolean",
       output: "null",
-      markdownDescription: "Initializes the physics simulation loop for the active entity store.\nMust be called after `entityInit`. Restarts any existing loop.",
+      markdownDescription: "Initializes the physics simulation loop for an entity store.\nMust be called after `entityInit` or `glInit`. Restarts any existing loop.",
       examples: [
         "{ \"$physicsInit\": true, \"gravity\": [0, 980], \"damping\": 0.01 }",
       ],
@@ -764,7 +764,7 @@ export class PhysicsNode extends Node {
       type: "boolean",
       output: { type: "array", items: { $ref: "#/$defs/_rayHit" } },
       markdownDescription: "Casts a ray through the world and returns every entity it hits, nearest first. Works on both client and server.",
-      outputDescription: "An array of hits ordered by distance, empty when nothing is hit or no world exists.",
+      outputDescription: "An array of hits ordered by distance, empty when nothing is hit.",
       examples: [
         "{ \"$physicsRaycast\": true, \"from\": [0, 0], \"dir\": [1, 0], \"mask\": [\"enemy\"] }",
       ],
@@ -787,30 +787,22 @@ export class PhysicsNode extends Node {
     },
   };
 
+  static commonSiblings: Record<string, JexsPropertySchema> = { store: STORE_SIBLING };
 
-  static sel(context: Context): string {
-    return (context._glSelector as string) || "";
-  }
 
   physicsInit(def: Record<string, unknown>, context: Context): NodeValue {
-    const selector = PhysicsNode.sel(context);
-    if (!selector) { console.error("[Physics] No _glSelector on context"); return null; }
-
-    const prev = this.worlds.get(selector);
-    if (prev) stopWorld(prev, WORKER_IDLE_MS);
-
-    const stores = context._entityStores as Record<string, EntityStore> | undefined;
-    const store = stores?.[selector];
-    if (!store) { console.error("[Physics] No entity store for", selector); return null; }
-
     // Off-thread when the node has an env worker factory AND the store is shared;
     // else null and the world steps on this thread (unchanged behavior).
     const makeWorker = this.makeWorker;
 
     return resolveAll(
-      [def.gravity ?? null, def.damping ?? null, def.bounds ?? null, def.start ?? null, def.hz ?? null],
+      [def.gravity ?? null, def.damping ?? null, def.bounds ?? null, def.start ?? null, def.hz ?? null, def.store],
       context,
-      ([gravityRaw, dampingRaw, boundsRaw, startRaw, hzRaw]) => {
+      ([gravityRaw, dampingRaw, boundsRaw, startRaw, hzRaw, storeName]) => {
+        const store = EntityNode.storeFor(context, storeName);
+        const prev = this.worlds.get(store);
+        if (prev) stopWorld(prev, WORKER_IDLE_MS);
+
         const config: PhysicsConfig = {
           gravity: gravityRaw ? gravityRaw as [number, number] : [0, 980],
           damping: dampingRaw != null ? Number(dampingRaw) : 0.01,
@@ -827,17 +819,14 @@ export class PhysicsNode extends Node {
           accumulator: 0,
           context,
           paused: false,
-          onStep: (context._onPhysicsStep as ((selector: string) => void) | undefined)
-            ? () => (context._onPhysicsStep as (s: string) => void)(selector)
-            : null,
           // Fixed tick rate (ms) when `hz` is given; null = default scheduler.
           tickMs: hzRaw != null && Number(hzRaw) > 0 ? 1000 / Number(hzRaw) : null,
           // Off-thread stepping when the node has an env worker factory and the
           // store is shared; registers this world as a job. Else main-thread.
-          offload: makeWorker && store.shared ? offloadWorld(makeWorker, selector, store, config) : null,
+          offload: makeWorker && store.shared ? offloadWorld(makeWorker, store.name, store, config) : null,
         };
 
-        this.worlds.set(selector, world);
+        this.worlds.set(store, world);
         // `start: false` creates the world without the auto-loop, so the author
         // drives it with `physicsStep` (e.g. a server authoritative tick) — no
         // double-stepping. Defaults to true (auto-loop) for backward compat.
@@ -847,33 +836,35 @@ export class PhysicsNode extends Node {
     );
   }
 
-  physicsPause(_def: Record<string, unknown>, context: Context): NodeValue {
-    const w = PhysicsNode.world(context);
-    if (w) w.paused = true;
-    return null;
+  physicsPause(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.store, context, name => {
+      const w = PhysicsNode.world(context, name);
+      if (w) w.paused = true;
+      return null;
+    });
   }
 
-  physicsResume(_def: Record<string, unknown>, context: Context): NodeValue {
-    const w = PhysicsNode.world(context);
-    if (w) { w.paused = false; w.lastTime = 0; }
-    return null;
+  physicsResume(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.store, context, name => {
+      const w = PhysicsNode.world(context, name);
+      if (w) { w.paused = false; w.lastTime = 0; }
+      return null;
+    });
   }
 
-  physicsDestroy(_def: Record<string, unknown>, context: Context): NodeValue {
-    const selector = PhysicsNode.sel(context);
-    const w = this.worlds.get(selector);
-    if (w) stopWorld(w, WORKER_IDLE_MS);
-    this.worlds.delete(selector);
-    return null;
+  physicsDestroy(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolve(def.store, context, name => {
+      const store = EntityNode.storeFor(context, name);
+      const w = this.worlds.get(store);
+      if (w) stopWorld(w, WORKER_IDLE_MS);
+      this.worlds.delete(store);
+      return null;
+    });
   }
 
   physicsApply(def: Record<string, unknown>, context: Context): NodeValue {
-    const selector = PhysicsNode.sel(context);
-    const stores = context._entityStores as Record<string, EntityStore> | undefined;
-    const store = stores?.[selector];
-    if (!store) return null;
-
-    return resolveAll([def.$physicsApply, def.impulse ?? null], context, ([idRaw, impRaw]) => {
+    return resolveAll([def.$physicsApply, def.impulse ?? null, def.store], context, ([idRaw, impRaw, name]) => {
+      const store = EntityNode.storeFor(context, name);
       const slot = store.slot(String(idRaw));
       if (slot === -1) return null;
       if (impRaw) {
@@ -885,11 +876,9 @@ export class PhysicsNode extends Node {
   }
 
   physicsStep(def: Record<string, unknown>, context: Context): NodeValue {
-    const selector = PhysicsNode.sel(context);
-    const world = this.worlds.get(selector);
-    if (!world) return null;
-
-    return resolve(def.dt ?? null, context, dtRaw => {
+    return resolveAll([def.dt ?? null, def.store], context, ([dtRaw, name]) => {
+      const world = this.worlds.get(EntityNode.storeFor(context, name));
+      if (!world) return null;
       const dt = dtRaw != null ? Number(dtRaw) : 1 / 60;
       const contacts = physicsStep(world.store, world.config, dt, world.constraints);
       // Read now: `contacts` is a shared scratch array that another world's step
@@ -899,7 +888,7 @@ export class PhysicsNode extends Node {
       const fired = fireCollisionHandlers(world, contacts);
       const finish = (): number => {
         world.store.flushRemovals();
-        if (world.onStep) world.onStep();
+        world.store.onStep?.();
         return count;
       };
       return fired instanceof Promise ? fired.then(finish) : finish();
@@ -910,12 +899,8 @@ export class PhysicsNode extends Node {
   // { "$physicsRaycast": true, "from": [0, 0, 0], "dir": [1, 0, 0], "mask": ["enemy"] }
 
   physicsRaycast(def: Record<string, unknown>, context: Context): NodeValue {
-    const selector = PhysicsNode.sel(context);
-    const stores = context._entityStores as Record<string, EntityStore> | undefined;
-    const store = stores?.[selector];
-    if (!store) return [];
-
-    return resolveAll([def["from"], def["dir"], def["mask"] ?? null], context, ([fromRaw, dirRaw, maskRaw]) => {
+    return resolveAll([def["from"], def["dir"], def["mask"] ?? null, def.store], context, ([fromRaw, dirRaw, maskRaw, name]) => {
+      const store = EntityNode.storeFor(context, name);
       if (fromRaw == null || dirRaw == null) return [];
       const from = toVec(fromRaw), dir = toVec(dirRaw);
       const maskSet = maskRaw ? new Set(maskRaw as string[]) : null;
@@ -974,12 +959,13 @@ export class CollisionNode extends Node {
     },
   };
 
+  static commonSiblings: Record<string, JexsPropertySchema> = { store: STORE_SIBLING };
+
 
   collisionOn(def: Record<string, unknown>, context: Context): NodeValue {
-    const w = PhysicsNode.world(context);
-    if (!w) return null;
-
-    return resolveAll([def.groups, def.id ?? null], context, ([groupsRaw, idRaw]) => {
+    return resolveAll([def.groups, def.id ?? null, def.store], context, ([groupsRaw, idRaw, name]) => {
+      const w = PhysicsNode.world(context, name);
+      if (!w) return null;
       const groups: [string, string] = Array.isArray(groupsRaw)
         ? [String(groupsRaw[0]), String(groupsRaw[1])]
         : ["", ""];
@@ -992,9 +978,9 @@ export class CollisionNode extends Node {
   }
 
   collisionOff(def: Record<string, unknown>, context: Context): NodeValue {
-    const w = PhysicsNode.world(context);
-    if (!w) return null;
-    return resolve(def.$collisionOff, context, idRaw => {
+    return resolveAll([def.$collisionOff, def.store], context, ([idRaw, name]) => {
+      const w = PhysicsNode.world(context, name);
+      if (!w) return null;
       const id = String(idRaw);
       w.handlers = w.handlers.filter(h => h.id !== id);
       return null;
@@ -1087,11 +1073,10 @@ export class JointNode extends Node {
     },
   };
 
+  static commonSiblings: Record<string, JexsPropertySchema> = { store: STORE_SIBLING };
+
 
   jointAdd(def: Record<string, unknown>, context: Context): NodeValue {
-    const w = PhysicsNode.world(context);
-    if (!w) return null;
-
     return resolveAll(
       [
         def.$jointAdd,
@@ -1105,9 +1090,12 @@ export class JointNode extends Node {
         def.damping ?? null,
         def.minAngle ?? null,
         def.maxAngle ?? null,
+        def.store,
       ],
       context,
-      ([idRaw, typeRaw, aRaw, bRaw, restRaw, anchorARaw, anchorBRaw, stiffRaw, dampRaw, minAngleRaw, maxAngleRaw]) => {
+      ([idRaw, typeRaw, aRaw, bRaw, restRaw, anchorARaw, anchorBRaw, stiffRaw, dampRaw, minAngleRaw, maxAngleRaw, name]) => {
+        const w = PhysicsNode.world(context, name);
+        if (!w) return null;
         const id = String(idRaw);
         const type = (typeRaw != null ? String(typeRaw) : "distance") as ConstraintType;
         const entityA = String(aRaw);
@@ -1154,9 +1142,9 @@ export class JointNode extends Node {
   }
 
   jointRemove(def: Record<string, unknown>, context: Context): NodeValue {
-    const w = PhysicsNode.world(context);
-    if (!w) return null;
-    return resolve(def.$jointRemove, context, idRaw => {
+    return resolveAll([def.$jointRemove, def.store], context, ([idRaw, name]) => {
+      const w = PhysicsNode.world(context, name);
+      if (!w) return null;
       const id = String(idRaw);
       w.constraints = w.constraints.filter(c => c.id !== id);
       return null;
@@ -1291,7 +1279,7 @@ function startLoop(world: PhysicsWorld): void {
     world.store.interpolationAlpha = world.accumulator / FIXED_DT;
 
     const t1 = performance.now();
-    if (world.onStep) world.onStep();
+    world.store.onStep?.();
     const t2 = performance.now();
 
     _perfAccum.total += t1 - t0;
