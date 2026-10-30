@@ -13,12 +13,17 @@
  * them, while it still describes the templates being migrated.
  *
  * Usage, from the project root:
- *   npx tsx <jexs>/scripts/migrate-v2/migrate.ts [--dry] [--literals] [--schema=<path>] <file|dir>...
+ *   npx tsx <jexs>/scripts/migrate-v2/migrate.ts [--dry] [--literals] [--schema=<path>] [--bubble-handler-writes] <file|dir>...
  *   .json files  migrated as templates (a whole file is one step or a step list)
  *   .ts/.mjs     expression literals, and JSON inside `examples` strings and
  *                backtick code spans in strings
  *   .md          ```json blocks and inline code spans
  *   --schema     the combined schema to walk by (default .jexs/combined.schema.json)
+ *   --bubble-handler-writes
+ *                give `$bubble` to each write an event handler, an `$interval` run
+ *                or a collision handler makes outside a loop, where they are left
+ *                for review by default: v1 ran those steps in their caller's scope,
+ *                so this keeps every such write where v1 kept it
  */
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -31,6 +36,7 @@ if (!existsSync(schemaPath)) {
   console.error(`No combined schema at ${schemaPath}. Run \`jexs schema\` in the project with its current (pre-v2) packages installed, or pass --schema=<path>.`);
   process.exit(1);
 }
+const BUBBLE_HANDLER_WRITES = args.includes("--bubble-handler-writes");
 const C = JSON.parse(readFileSync(schemaPath, "utf8")) as CombinedSchema;
 const HANDLERS = new Set(Object.keys(C.byKey));
 const GLOBALS = new Set(["as", "then", "catch", "return", "bubble"]);
@@ -143,6 +149,9 @@ function replaceString(v: Extract<Val, { k: "str" }>, text: string, m: Codemod):
  * Point the reads, inside `v`, of the variables named in `roots` through `to`:
  * `$var` paths and `$name...` interpolated in strings, given the whole path.
  */
+/** The names a socket's handlers are given: v1's `message`, and v2's connection `id` beside it. */
+const SOCKET_BINDS: Record<string, string[]> = { "$socket-accept": ["message"], $socketAccept: ["id", "message"] };
+
 function retargetReads(v: Val, roots: string[], to: (path: string) => string, m: Codemod): void {
   if (roots.length === 0) return;
   const names = roots.map(r => r.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
@@ -151,8 +160,11 @@ function retargetReads(v: Val, roots: string[], to: (path: string) => string, m:
   const walk = (x: Val): void => {
     if (x.k === "arr") x.items.forEach(walk);
     else if (x.k === "obj") {
+      // A socket's handlers bind names of their own, which hide a route param of the same name.
+      const bound = SOCKET_BINDS[x.props.find(p => p.key in SOCKET_BINDS)?.key ?? ""];
       for (const p of x.props) {
-        if (p.key === "$var" && p.value.k === "str") {
+        if (bound && /^on[-A-Z]/.test(p.key)) retargetReads(p.value, roots.filter(r => !bound.includes(r)), to, m);
+        else if (p.key === "$var" && p.value.k === "str") {
           if (rooted.test(p.value.value)) replaceString(p.value, to(p.value.value), m);
         } else walk(p.value);
       }
@@ -192,20 +204,38 @@ function toInterval(step: Step, m: Codemod): void {
   }
 }
 
+/**
+ * A collision handler runs in the scope `$physicsInit` ran in, which in a `mount`
+ * handler is that handler's own, where v1's `load` ran in the page's.
+ */
+function collisionRuns({ obj }: Step, m: Codemod): void {
+  const steps = obj.props.find(p => p.key === "do")?.value;
+  if (steps) scopedWrites(steps, "A collision handler writes the scope `$physicsInit` ran in, which in a `mount` handler is that handler's own: if this write is page state, add `\"$bubble\": true`", m);
+}
+
 /** A content item written `{ "raw": x }`, an object whose one key is `raw`. */
 const rawItem = (v: Val) => (v.k === "obj" && v.props.length === 1 && v.props[0].key === "raw" ? v.props[0].value : undefined);
+
+/** The ops whose `do` runs once per item, in a scope per item, as v1's did. */
+const LOOPS = new Set(["$map", "$foreach", "$filter", "$find", "$reduce", "$mapValues"]);
 
 /**
  * Steps that now run in a scope of their own lose a write meant to outlast them
  * unless it has `$bubble`. Which writes are meant so cannot be told from the
- * template, so each is left for review with `note`.
+ * template, so each is left for review with `note`; with `--bubble-handler-writes`
+ * each gets `$bubble`, as v1 ran these steps in their caller's scope and so kept
+ * every write. A write inside a loop's `do` stayed in that iteration in v1 too.
  */
 function scopedWrites(steps: Val, note: string, m: Codemod): void {
   if (steps.k === "arr") steps.items.forEach(item => scopedWrites(item, note, m));
   if (steps.k !== "obj") return;
   const write = steps.props.find(p => p.key === "$as" || p.key === "$setVars");
-  if (write && !steps.props.some(p => p.key === "$bubble")) m.review(write.keyStart, note);
-  for (const p of steps.props) scopedWrites(p.value, note, m);
+  if (write && !steps.props.some(p => p.key === "$bubble")) {
+    if (BUBBLE_HANDLER_WRITES) m.add({ start: write.value.end, end: write.value.end, text: `, ${keyLike(write, "$bubble")}: true` });
+    else m.review(write.keyStart, note);
+  }
+  const loop = steps.props.some(p => LOOPS.has(p.key));
+  for (const p of steps.props) if (!(loop && p.key === "do")) scopedWrites(p.value, note, m);
 }
 
 /**
@@ -1036,15 +1066,17 @@ const RULES: Record<string, Rule> = {
     const v = prop?.value;
     if (!prop) return;
     // Which op replaces it depends on the haystack's type, known only for a literal.
-    const haystackKind = v?.k === "arr" ? v.items[1]?.k : undefined;
-    if (v?.k !== "arr" || v.items.length !== 2 || !v.items.every(isPlain) || (haystackKind !== "arr" && haystackKind !== "str")) {
+    // The haystack moves in front of the needle, which stays where it is, so an
+    // edit another rule makes inside the needle (a retargeted read) still applies.
+    const isLiteral = (item: Val): boolean => item.k === "str" || item.k === "lit" || (item.k === "arr" && item.items.every(isLiteral));
+    const [needle, haystack] = v?.k === "arr" && v.items.length === 2 ? v.items : [];
+    if (!needle || !haystack || !isPlain(needle) || (haystack.k !== "arr" && haystack.k !== "str") || !isLiteral(haystack)) {
       m.review(prop.keyStart, "`$in` is gone: `[needle, haystack]` is `$includes` with `[haystack, needle]` for an array, `$contains` with `[haystack, needle]` for a string, or `$includes` with `[{ \"$keys\": haystack }, needle]` for an object's keys");
       return;
     }
-    const [needle, haystack] = v.items;
-    renameOp(step, haystackKind === "arr" ? "includes" : "contains", m);
-    m.add({ start: needle.start, end: needle.end, text: m.text(haystack.start, haystack.end) });
-    m.add({ start: haystack.start, end: haystack.end, text: m.text(needle.start, needle.end) });
+    renameOp(step, haystack.k === "arr" ? "includes" : "contains", m);
+    m.add({ start: needle.start, end: needle.start, text: `${m.text(haystack.start, haystack.end)}, ` });
+    m.add({ start: needle.end, end: haystack.end, text: "" });
   },
   // `$count` counts arrays only; a string's length is `$length`, an object's keys `$count` of `$keys`.
   count: ({ obj }, m) => {
@@ -1089,6 +1121,8 @@ const RULES: Record<string, Rule> = {
   },
   // Client handlers read what they are handed by its role, as the server's do.
   "ws-connect": (step, m) => handlerReads(step, { wsMessage: "message", wsCode: "code", wsReason: "reason", wsClean: "clean" }, m),
+  "collision-on": collisionRuns,
+  collisionOn: collisionRuns,
   "ws-close": connectionNameValue,
   "ws-status": connectionNameValue,
   // `throw: false` is gone: the step's `$catch` yields what it used to, the
