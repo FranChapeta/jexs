@@ -10,7 +10,7 @@
 // Tokens after a `--` sentinel are parsed into `args` (a key/value object), letting a JSON
 // entry act as its own CLI — e.g. `jexs run @jexs/create -- my-app --env both --physics`.
 // An HTTP app is just an entry whose `listen` step(s) bind ports — one `http.Server` per `listen`.
-// `--prod` sets NODE_ENV=production (and process.env.prod); `--watch` restarts the app when files under the app dir change;
+// `--prod` sets NODE_ENV=production (and process.env.prod); `--watch` restarts the app when a template (.json) under the app dir changes;
 // `--log` sends the nodes' own messages to stderr (the default), stdout, or nowhere.
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -152,8 +152,13 @@ async function run(args: string[]): Promise<void> {
     };
     start();
 
+    // Only a template changing needs a restart, to run the startup steps again. What
+    // the app writes under the dir while it runs (a SQLite database and its journal,
+    // `secret.key`, uploads) must not restart it, which would drop its memory: the
+    // sessions, the cache, the open sockets. A platform that names no file restarts.
     let timer: NodeJS.Timeout | undefined;
-    watch(watchDir, { recursive: true }, () => {
+    watch(watchDir, { recursive: true }, (_event, filename) => {
+      if (filename && !filename.toString().endsWith(".json")) return;
       clearTimeout(timer);
       timer = setTimeout(() => {
         if (child) { const c = child; child = null; c.once("exit", start); c.kill(); }

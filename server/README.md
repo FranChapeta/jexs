@@ -106,7 +106,7 @@ Run with the `jexs` CLI — it resolves the entry as steps, and each `listen` st
 jexs run app/index.json app
 ```
 
-`jexs run --watch` restarts the app when a file under its root (or, without one, its entry's directory) changes; the app's own arguments after `--` reach every restart. `jexs bundle` builds the browser bundle a `client` listener serves, `@jexs/client` with the project's browser node packages, into `dist/browser` (`--watch` rebuilds it on changes). `jexs schema` writes the project's `.jexs/` schemas for editor autocomplete and the MCP server, and `jexs schema --package` prebuilds a node package's own `dist/schema.json`. `jexs --help` lists every command.
+`jexs run --watch` restarts the app when a template (a `.json` file) under its root (or, without one, its entry's directory) changes; what the app writes there while it runs, such as a SQLite database or `secret.key`, does not restart it, so its sessions and cache survive. The app's own arguments after `--` reach every restart. `jexs bundle` builds the browser bundle a `client` listener serves, `@jexs/client` with the project's browser node packages, into `dist/browser` (`--watch` rebuilds it on changes). `jexs schema` writes the project's `.jexs/` schemas for editor autocomplete and the MCP server, and `jexs schema --package` prebuilds a node package's own `dist/schema.json`. `jexs --help` lists every command.
 
 Or programmatically — build a resolver and resolve the entry; an HTTP app is just an entry with `listen` step(s):
 

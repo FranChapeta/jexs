@@ -289,7 +289,7 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean, useElectron: bo
   } else if (useServer) {
     lines.push(`## Scripts`);
     lines.push(``);
-    lines.push(`- \`npm run dev\`: \`jexs run src/index.json src --watch\` (restarts on changes under \`src/\`)${useTailwind ? ` + \`tailwindcss --watch\` in parallel via \`concurrently\`` : ``}.`);
+    lines.push(`- \`npm run dev\`: \`jexs run src/index.json src --watch\` (restarts when a template under \`src/\` changes)${useTailwind ? ` + \`tailwindcss --watch\` in parallel via \`concurrently\`` : ``}.`);
     if (useTailwind) {
       lines.push(`- \`npm run build\`: compiles Tailwind (minified). There is no JS build, the app is JSON run by \`jexs run\`.`);
     }
