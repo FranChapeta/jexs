@@ -11,6 +11,7 @@ import { COOKIES, DEFERRED, UPGRADE, type Deferred } from "../context.js";
 import { safeRelative } from "./File.js";
 import { SAFE_METHODS } from "./Session.js";
 import { serviceWorkerScript } from "../sw.js";
+import { isProduction } from "../env.js";
 
 /**
  * ServerNode - Starts HTTP listeners from JSON.
@@ -619,12 +620,14 @@ function sendResponse(res: http.ServerResponse, value: unknown, deferred: Deferr
 // - sw.js: must always be re-checked (service worker spec); short max-age.
 // - Content-hashed bundles (esbuild emits them under /chunks/ with a hash in
 //   the filename) are immutable — long max-age + immutable saves revalidation.
-// - Everything else: 1h. Long enough to help repeat-visit performance, short
-//   enough that an unhashed CSS or image update propagates within an hour.
+// - Everything else: 1h in production. Long enough to help repeat-visit
+//   performance, short enough that an unhashed CSS or image update propagates
+//   within an hour. Outside production it is re-checked on every load (a 304
+//   while unchanged), so a rebuilt client.js or stylesheet shows on reload.
 function cacheControlFor(requestPath: string, isServiceWorker: boolean): string {
   if (isServiceWorker) return "public, max-age=0, must-revalidate";
   if (requestPath.includes("/chunks/")) return "public, max-age=31536000, immutable";
-  return "public, max-age=3600";
+  return isProduction() ? "public, max-age=3600" : "no-cache";
 }
 
 function resolveClientBrowserDir(): string | null {

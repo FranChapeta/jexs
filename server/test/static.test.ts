@@ -231,7 +231,20 @@ test("a hashed chunk is immutable, an ordinary asset is not", async () => {
   assert.equal(chunk.headers.get("cache-control"), "public, max-age=31536000, immutable");
 
   const ordinary = await get();
-  assert.equal(ordinary.headers.get("cache-control"), "public, max-age=3600");
+  assert.equal(ordinary.headers.get("cache-control"), "no-cache");
+});
+
+// isProduction() is read per request, so flipping NODE_ENV here is enough.
+test("an ordinary asset is cached for an hour in production", async () => {
+  const before = process.env.NODE_ENV;
+  process.env.NODE_ENV = "production";
+  try {
+    const res = await get();
+    assert.equal(res.headers.get("cache-control"), "public, max-age=3600");
+  } finally {
+    if (before === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = before;
+  }
 });
 
 test("a rewritten file invalidates the tag the client holds", async () => {
