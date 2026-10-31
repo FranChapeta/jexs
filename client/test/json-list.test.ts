@@ -46,7 +46,7 @@ function page(): Record<string, unknown> {
   };
 }
 
-const render = { $setProp: ["#list", "innerHTML", { $join: { $map: { $var: "items" }, do: { $runVar: "row" } }, separator: "" }] };
+const render = { $setProp: ["#list", "innerHTML", { $map: { $var: "items" }, do: { $runVar: "row" } }] };
 /** The row element at `i`. */
 const rowAt = (i: number) => ({ $index: [{ $querySelectorAll: ":scope > li", in: "#list" }, i] });
 

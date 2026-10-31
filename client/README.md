@@ -24,6 +24,8 @@ npm install @jexs/client @jexs/core
 | `AudioNode` | `audioLoad`, `audioPlay`, `audioStop`, `audioVolume`, `audioMaster`, ... | Web Audio playback |
 | `StorageNode` | `storageGet`, `storageSet`, `storageDelete`, `storageHas`, `storage` | `localStorage` / `sessionStorage`, named as `cacheGet` and the rest name the server's cache |
 
+The ops that write markup (`setProp` with `innerHTML` or `outerHTML`, and `insertHtml`) take a value as element content does: HTML from `$tag` or `$html` is markup and gets its `events` wired up, and a string is text, so a stored or fetched value cannot add elements or handlers to the page. A fragment fetched from your own server is a string too; trust it with `{ "$html": { "$fetch": "/fragment" } }`.
+
 **Lazy-loaded nodes** (only fetched when first used):
 
 | Node | Keys | Purpose |

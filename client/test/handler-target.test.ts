@@ -62,7 +62,7 @@ test("one handler serves every matching row, rows added later included, with the
 
   $("li:nth-child(2) span").click();
   $("ul").click();
-  await resolve({ $insertHtml: ["ul", "<li><span>new</span></li>"], index: 0 }, ctx);
+  await resolve({ $insertHtml: ["ul", { $tag: "li", content: [{ $tag: "span", content: ["new"] }] }], index: 0 }, ctx);
   $("li:nth-child(1) span").click();
   $("li:nth-child(4)").click();
   await settle();

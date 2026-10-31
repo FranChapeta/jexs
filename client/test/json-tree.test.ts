@@ -111,9 +111,9 @@ function page(): Record<string, unknown> {
   };
 }
 
-const render = { $setProp: ["#tree", "innerHTML", { $join: { $map: { $var: "doc" }, do: {
+const render = { $setProp: ["#tree", "innerHTML", { $map: { $var: "doc" }, do: {
   $runVar: "node", params: { path: { $concat: [{ $var: "index" }] } },
-} }, separator: "" }] };
+} }] };
 /** Apply `message` the way a socket handler would: it arrives as data, through `$var`. */
 const receive = { $runVar: "apply", params: { change: { $var: "message" } } };
 

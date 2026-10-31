@@ -389,6 +389,40 @@ function markupString({ op, obj }: Step, m: Codemod): void {
   }
 }
 
+/** Ops whose result is a string built or fetched, which may hold data. */
+const STRING_BUILDERS = new Set(["$concat", "$join", "$replace", "$substring", "$trim", "$fetch", "$getAttr"]);
+
+/**
+ * The value at `index` in a markup op's tuple (`$setProp` `innerHTML`/`outerHTML`,
+ * `$insertHtml`), which writes a string as text now, as content does. Markup the
+ * template wrote, or the page's own read back with `$getProp`, is the app's, so it
+ * is trusted with `$html`; a string built or fetched may hold data, so it is left
+ * for review.
+ */
+function markupOperand({ op, obj }: Step, index: number, m: Codemod): void {
+  const prop = obj.props.find(p => p.key === "$" + op);
+  const v = prop?.value.k === "arr" ? prop.value.items[index] : undefined;
+  if (!prop || !v) return;
+  const trust = () => wrapValue(v, `{ ${keyLike(prop, "$html")}: `, " }", m);
+  if (v.k === "str") {
+    if (MARKUP_TAG.test(v.value) || v.value.search(CHAR_REF) !== -1) trust();
+    return;
+  }
+  if (v.k !== "obj") return;
+  const read = v.props.find(p => p.key === "$getProp")?.value;
+  if (read?.k === "arr" && read.items[1]?.k === "str" && /^(inner|outer)HTML$/.test(read.items[1].value)) trust();
+  else if (v.props.some(p => STRING_BUILDERS.has(p.key))) {
+    m.review(v.start, `\`innerHTML\`, \`outerHTML\` and \`$insertHtml\` write a string as text now, as content does: build this with \`$tag\` (an array of elements renders item by item, so a \`$join\` of them is not needed), or wrap it in \`$html\` if it is markup the app wrote, such as a fragment its own server rendered, never data`);
+  }
+}
+
+/** `$setProp` writing `innerHTML` or `outerHTML`. */
+function setMarkupProp(step: Step, m: Codemod): void {
+  const value = step.obj.props.find(p => p.key === "$" + step.op)?.value;
+  const name = value?.k === "arr" ? value.items[1] : undefined;
+  if (name?.k === "str" && /^(inner|outer)HTML$/.test(name.value)) markupOperand(step, 2, m);
+}
+
 /**
  * `v`'s text as content items, its literal runs and a `$var` step for each
  * `$identifier`, or undefined when it has none. Text where a `$` follows a
@@ -842,7 +876,8 @@ function domSetter(step: Step, prop: string, m: Codemod): void {
     return;
   }
   renameOp(step, "setProp", m);
-  m.add({ start: p.value.items[1].start, end: p.value.items[1].start, text: `"${prop}", ` });
+  // After the element, so a rule wrapping the value can edit where the value starts.
+  m.add({ start: p.value.items[0].end, end: p.value.items[0].end, text: `, "${prop}"` });
 }
 
 /** v1's `showAll`/`hideAll`: each match of the selector, by `$foreach`. */
@@ -1158,7 +1193,9 @@ const RULES: Record<string, Rule> = {
   disable: (step, m) => domProp(step, "setProp", "disabled", "true", m),
   getValue: (step, m) => domProp(step, "getProp", "value", null, m),
   setValue: (step, m) => domSetter(step, "value", m),
-  setHtml: (step, m) => domSetter(step, "innerHTML", m),
+  setHtml: (step, m) => { markupOperand(step, 1, m); domSetter(step, "innerHTML", m); },
+  setProp: setMarkupProp,
+  insertHtml: (step, m) => markupOperand(step, 1, m),
   setText: (step, m) => domSetter(step, "textContent", m),
   removeEl: (step, m) => renameOp(step, "removeElement", m),
   showAll: (step, m) => eachMatch(step, "show", m),
@@ -1186,6 +1223,7 @@ const RULES: Record<string, Rule> = {
   append: (step, m) => {
     const p = step.obj.props.find(q => q.key === "$append");
     if (!p || p.shorthand) return;
+    markupOperand(step, 1, m);
     renameOp(step, "insertHtml", m);
     m.review(p.keyStart, "`$append` is `$insertHtml`, which does not scroll: to keep a log at its bottom, follow it with `{ \"$setProp\": [el, \"scrollTop\", { \"$getProp\": [el, \"scrollHeight\"] }] }`");
   },

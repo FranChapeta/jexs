@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue } from "@jexs/core";
-import { isPrototypeKey, operands, resolve, resolveAll } from "@jexs/core";
+import { isPrototypeKey, markupOf, operands, resolve, resolveAll } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { hydrate } from "../events.js";
 import { getElement, isHtmlOrSvg, parseHtml, place, POSITIONS, type Placement } from "../dom.js";
@@ -28,12 +28,13 @@ function clipboard(op: string): Clipboard {
 }
 
 /**
- * Parse `html`, let `put` place the nodes, then wire up events on the elements
- * among them, which it returns: markup written by any op works like rendered
- * markup does.
+ * Parse `html` as content renders it (`Html` as markup, a string as text), let
+ * `put` place the nodes, then wire up events on the elements among them, which it
+ * returns: markup written by any op works like rendered markup does, and data
+ * stays text, so a stored string cannot add elements or handlers to the page.
  */
 function insertMarkup(html: unknown, context: Context, put: (nodes: ChildNode[]) => void): Element[] {
-  const nodes = parseHtml(String(html ?? ""));
+  const nodes = parseHtml(markupOf(html));
   put(nodes);
   const added = nodes.filter((n): n is Element => n instanceof Element);
   for (const el of added) hydrate(el, context);
@@ -264,14 +265,14 @@ export class DomNode extends Node {
       prefixItems: [
         { $ref: "#/$defs/_elementRef", description:"The element: a CSS selector or an HTMLElement." },
         { $ref: "#/$defs/_writableProp", description: "The DOM property to write, or a dot-path to a nested one (e.g. \"style.color\")." },
-        { description: "The value to assign." },
+        { description: "The value to assign. For `innerHTML` and `outerHTML`, HTML from `$tag` or `$html` (or an array of it) is markup, and a string is text." },
       ],
       output: { $ref: "#/$defs/_element" },
       outputDescription: "The element operated on (an HTMLElement), for chaining. For `outerHTML`, the element now in its place (the first one the markup made), or `null` when the markup made none.",
-      markdownDescription: "Writes a live DOM property on an element (the JS property, not the HTML attribute), e.g. `value`, `textContent`, `disabled`, `checked`, `scrollTop`. Supports dot-paths for nested props (e.g. `style.color`), traversed like `setVars`. Pass `[selectorOrElement, propName, value]`.\nMarkup written to `innerHTML` or `outerHTML` gets its `events` wired up, as rendered markup does. `outerHTML` replaces the element, so the step returns the replacement rather than the element that is gone.",
+      markdownDescription: "Writes a live DOM property on an element (the JS property, not the HTML attribute), e.g. `value`, `textContent`, `disabled`, `checked`, `scrollTop`. Supports dot-paths for nested props (e.g. `style.color`), traversed like `setVars`. Pass `[selectorOrElement, propName, value]`.\n`innerHTML` and `outerHTML` take a value as element content does: HTML that `$tag` or `$html` made is markup, and gets its `events` wired up as rendered markup does, while a string is text, escaped, so data cannot add elements or handlers. Wrap a string in `$html` to insert it as markup, only when you trust it: `{ \"$html\": { \"$fetch\": \"/fragment\" } }` for a fragment your own server rendered, or `{ \"$html\": { \"$getProp\": [row, \"outerHTML\"] } }` to copy a row. `outerHTML` replaces the element, so the step returns the replacement rather than the element that is gone.",
       examples: [
         "{ \"$setProp\": [\"#status\", \"textContent\", \"Saved\"] }",
-        "{ \"$setProp\": [\"#list\", \"innerHTML\", { \"$var\": \"result\" }] }",
+        "{ \"$setProp\": [\"#list\", \"innerHTML\", { \"$map\": { \"$var\": \"items\" }, \"do\": { \"$runVar\": \"row\" } }] }",
         "{ \"$setProp\": [{ \"$var\": \"row\" }, \"outerHTML\", { \"$runVar\": \"rowTemplate\" }] }",
         "{ \"$setProp\": [\"#box\", \"style.color\", \"red\"] }",
       ],
@@ -429,16 +430,16 @@ export class DomNode extends Node {
       tuple: 2,
       prefixItems: [
         { $ref: "#/$defs/_elementRef", description: "The target: the container for `index`, `prepend` and `append`, the neighbor for `before` and `after`." },
-        { type: "string", description: "The HTML string to insert." },
+        { description: "What to insert: HTML from `$tag` or `$html` (or an array of it) as markup, a string as text." },
       ],
       exclusive: true,
       variants: PLACEMENT_VARIANTS,
       output: { $ref: "#/$defs/_element" },
       outputDescription: "The first element the markup made, or `null` when it made none.",
-      markdownDescription: "Inserts HTML at a child `index` of the target or at a `position` relative to it (appends by default), and wires up its `events`. Pass `[selectorOrElement, html]`.\nWith `index`, the same number as an `$insert` on the data puts the markup where the item went.",
+      markdownDescription: "Inserts HTML at a child `index` of the target or at a `position` relative to it (appends by default), and wires up its `events`. Pass `[selectorOrElement, html]`.\nIt takes a value as element content does: HTML that `$tag` or `$html` made is markup, while a string is text, escaped, so data cannot add elements or handlers. Wrap a string in `$html` to insert it as markup, only when you trust it, such as a fragment your own server rendered: `{ \"$html\": { \"$fetch\": \"/fragment\" } }`.\nWith `index`, the same number as an `$insert` on the data puts the markup where the item went.",
       examples: [
         "{ \"$insertHtml\": [\"#todo\", { \"$runVar\": \"row\" }], \"index\": 2 }",
-        "{ \"$insertHtml\": [{ \"$var\": \"target\" }, \"<hr>\"], \"position\": \"after\" }",
+        "{ \"$insertHtml\": [{ \"$var\": \"target\" }, { \"$tag\": \"hr\" }], \"position\": \"after\" }",
       ],
     },
     moveElement: {
@@ -592,8 +593,14 @@ export class DomNode extends Node {
       const el = getElement(ref, "setProp");
       const prop = String(name);
       if (prop === "outerHTML") return insertMarkup(value, context, nodes => el.replaceWith(...nodes))[0] ?? null;
+      if (prop === "innerHTML") {
+        el.innerHTML = markupOf(value);
+        hydrate(el, context);
+        return el;
+      }
+      // Reached through a path, it would take a string as markup and skip the events.
+      if (/\.(innerHTML|outerHTML)$/.test(prop)) throw new Error(`$setProp: write "${prop.slice(prop.lastIndexOf(".") + 1)}" on the element it belongs to, not through "${prop}"`);
       setPropPath(el, prop, value);
-      if (prop === "innerHTML") hydrate(el, context);
       return el;
     });
   }

@@ -73,16 +73,35 @@ test("values, text, html and disabled through the props", async () => {
 
   await run({ $setProp: ["#box", "textContent", "<b>plain</b>"] });
   assert.equal($("#box").textContent, "<b>plain</b>");
-  await run({ $setProp: ["#box", "innerHTML", "<b>bold</b>"] });
+  await run({ $setProp: ["#box", "innerHTML", { $html: "<b>bold</b>" }] });
   assert.equal($("#box").innerHTML, "<b>bold</b>");
-  await run({ $insertHtml: ["#box", "<i>more</i>"] });
+  await run({ $insertHtml: ["#box", { $tag: "i", content: ["more"] }] });
   assert.equal($("#box").innerHTML, "<b>bold</b><i>more</i>");
 });
 
-/** Markup holding a button that counts its clicks into `context.clicks`. */
-const counter = (id: string) =>
+/** Markup, as a string, holding a button that counts its clicks into `context.clicks`. */
+const counterMarkup = (id: string) =>
   `<button id="${id}" data-jexs-events='${JSON.stringify([{ type: "click", do: [{ $setVars: { clicks: { $add: [{ $var: "clicks" }, 1] } }, $bubble: true }] }])}'>+</button>`;
+/** The same button, trusted as markup. */
+const counter = (id: string) => ({ $html: counterMarkup(id) });
 const settle = () => new Promise(r => setTimeout(r, 10));
+
+// A string is data, as it is in element content: a stored or fetched value that
+// holds markup shows as its text, and neither its elements nor its handler exist.
+test("the ops that write markup write a string as text", async () => {
+  const context: Record<string, unknown> = { clicks: 0 };
+  await run({ $setProp: ["#box", "innerHTML", counterMarkup("a")] }, context);
+  assert.equal($("#box").textContent, counterMarkup("a"));
+  await run({ $insertHtml: ["#box", counterMarkup("b")] }, context);
+  await run({ $setProp: ["#note", "outerHTML", counterMarkup("c")] }, context);
+  assert.equal(document.querySelectorAll("#a, #b, #c").length, 0, "no element was made from a string");
+  assert.equal(await run({ $insertHtml: ["#box", "text"] }), null, "a string makes no element to return");
+
+  await run({ $setProp: ["#box", "innerHTML", [{ $tag: "b", content: ["<i>"] }, " & ", 1]] });
+  assert.equal($("#box").innerHTML, "<b>&lt;i&gt;</b> &amp; 1", "an array renders item by item, as content does");
+
+  await assert.rejects(async () => run({ $setProp: ["#box", "firstElementChild.innerHTML", "x"] }), /write "innerHTML" on the element it belongs to/);
+});
 
 test("every op that writes markup wires up its events", async () => {
   const context: Record<string, unknown> = { clicks: 0 };
@@ -96,12 +115,13 @@ test("every op that writes markup wires up its events", async () => {
 });
 
 // A copy made from bound markup is a new element, so it binds its own handler;
-// nothing in the markup says it is bound already.
+// nothing in the markup says it is bound already. The page's own markup, read
+// back as a string, is trusted with `$html`.
 test("a row duplicated through its outerHTML binds its handler too", async () => {
   const context: Record<string, unknown> = { clicks: 0 };
   await run({ $setProp: ["#box", "innerHTML", counter("row")] }, context);
   const markup = await run({ $getProp: ["#row", "outerHTML"] }) as string;
-  await run({ $insertHtml: ["#box", markup.replace('id="row"', 'id="copy"')], index: 1 }, context);
+  await run({ $insertHtml: ["#box", { $html: markup.replace('id="row"', 'id="copy"') }], index: 1 }, context);
   $("#row").click();
   $("#copy").click();
   await settle();
@@ -118,7 +138,7 @@ function dragStart(data: DataTransfer): Event {
 test("a dragstart handler gives a plain element's drag some data, and leaves data already there alone", async () => {
   const context: Record<string, unknown> = { started: 0 };
   const handler = JSON.stringify([{ type: "dragstart", do: [{ $setVars: { started: { $add: [{ $var: "started" }, 1] } }, $bubble: true }] }]);
-  await run({ $setProp: ["#box", "innerHTML", `<div id="row" draggable="true" data-jexs-events='${handler}'>row</div>`] }, context);
+  await run({ $setProp: ["#box", "innerHTML", { $html: `<div id="row" draggable="true" data-jexs-events='${handler}'>row</div>` }] }, context);
 
   const plain = new window.DataTransfer() as unknown as DataTransfer;
   $("#row").dispatchEvent(dragStart(plain));
@@ -134,7 +154,7 @@ test("a dragstart handler gives a plain element's drag some data, and leaves dat
 
 test("outerHTML replaces the element and returns the one now in its place", async () => {
   const old = $(".item");
-  const replaced = await run({ $setProp: [old, "outerHTML", "<em class=\"item\">new</em>"] });
+  const replaced = await run({ $setProp: [old, "outerHTML", { $tag: "em", class: "item", content: ["new"] }] });
   assert.equal(replaced, document.querySelector("em"));
   assert.equal(old.isConnected, false);
   assert.equal($("#box").innerHTML, "<em class=\"item\">new</em><span class=\"item\">b</span>");
@@ -143,21 +163,22 @@ test("outerHTML replaces the element and returns the one now in its place", asyn
 });
 
 const order = () => Array.from($("#box").children).map(c => c.textContent).join("");
+const li = (text: string) => ({ $tag: "li", content: [text] });
 
 test("insertHtml puts markup at a child index or a position, and returns the first new element", async () => {
   document.body.innerHTML = '<ul id="box"><li>a</li><li>b</li></ul>';
-  const made = await run({ $insertHtml: ["#box", "<li>x</li>"], index: 1 });
+  const made = await run({ $insertHtml: ["#box", li("x")], index: 1 });
   assert.equal((made as HTMLElement).textContent, "x");
   assert.equal(order(), "axb");
-  await run({ $insertHtml: ["#box", "<li>0</li>"], index: 0 });
-  await run({ $insertHtml: ["#box", "<li>z</li>"], index: 4 });
-  await run({ $insertHtml: ["#box", "<li>!</li>"], index: 99 });
+  await run({ $insertHtml: ["#box", li("0")], index: 0 });
+  await run({ $insertHtml: ["#box", li("z")], index: 4 });
+  await run({ $insertHtml: ["#box", li("!")], index: 99 });
   assert.equal(order(), "0axbz!", "the length or past it appends");
-  await run({ $insertHtml: ["#box", "<li>p</li>"], position: "prepend" });
-  await run({ $insertHtml: ["#box", "<li>e</li>"] });
+  await run({ $insertHtml: ["#box", li("p")], position: "prepend" });
+  await run({ $insertHtml: ["#box", li("e")] });
   assert.equal(order(), "p0axbz!e", "append is the default");
-  await run({ $insertHtml: [$("#box").children[1], "<li>&lt;</li>"], position: "before" });
-  await run({ $insertHtml: [$("#box").children[1], "<li>&gt;</li>"], position: "after" });
+  await run({ $insertHtml: [$("#box").children[1], li("<")], position: "before" });
+  await run({ $insertHtml: [$("#box").children[1], li(">")], position: "after" });
   assert.equal(order(), "p<>0axbz!e");
 });
 
