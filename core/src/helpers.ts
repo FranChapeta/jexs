@@ -125,6 +125,32 @@ export function markupOf(value: unknown): string {
   return "";
 }
 
+/** Attributes, and DOM properties by the same name, whose value is a URL a browser follows or loads. */
+const URL_ATTRIBUTES = new Set(["href", "src", "action", "formaction", "xlink:href", "poster", "cite", "data", "background"]);
+/** What a browser skips while reading a URL's scheme: leading spaces and control characters, and a tab or newline anywhere. */
+const URL_LEADING = /^[\u0000- ]+/;
+const URL_TAB_OR_NEWLINE = /[\t\n\r]/g;
+const SCRIPT_URL = /^(?:javascript|vbscript):/i;
+/** What a script URL is written as instead. */
+export const BLOCKED_URL = "about:blank#blocked";
+
+/**
+ * `value` as the attribute (or DOM property) `name` may take it from data. A
+ * `srcdoc` is a document, so it takes a value as content does: `Html` as markup,
+ * a string as text. One that takes a URL refuses a `javascript:` or `vbscript:`
+ * URL, its scheme read as a browser reads it, so a stored link cannot run script:
+ * it is `BLOCKED_URL` instead, and `warn` hears which attribute held it. A value
+ * neither applies to is returned as it is.
+ */
+export function safeAttr(name: string, value: unknown, warn: (message: string) => void): unknown {
+  const lower = name.toLowerCase();
+  if (lower === "srcdoc") return markupOf(value);
+  if (!URL_ATTRIBUTES.has(lower) || (typeof value !== "string" && !(value instanceof Html))) return value;
+  if (!SCRIPT_URL.test(String(value).replace(URL_LEADING, "").replace(URL_TAB_OR_NEWLINE, ""))) return value;
+  warn(`"${name}" held a script URL, written as ${BLOCKED_URL}`);
+  return BLOCKED_URL;
+}
+
 // Escape a JSON string for safe embedding inside a <script> element. The HTML
 // tokenizer ends a <script> at a literal "</script>" regardless of the script's
 // `type`, so any "<" in a serialized value could break out (or inject markup).

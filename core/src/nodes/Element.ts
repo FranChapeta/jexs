@@ -1,6 +1,6 @@
 import { Node, Context, NodeValue, CLIENT_SCRIPT, SW_SCRIPT, CSRF_TOKEN, TRANSLATE, type Translator } from "./Node.js";
-import { andThen, resolve, resolveAll, isOwnedKey, isStep } from "../Resolver.js";
-import { Html, escapeHtml, escapeScriptJson, isObject, markupOf, toBooleanValue } from "../helpers.js";
+import { andThen, loggerFor, resolve, resolveAll, isOwnedKey, isStep } from "../Resolver.js";
+import { Html, escapeHtml, escapeScriptJson, isObject, markupOf, safeAttr, toBooleanValue } from "../helpers.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
 
 // Compact attribute-schema builders for the per-tag variants below. HTML
@@ -102,7 +102,7 @@ export class ElementNode extends Node {
       // (the variants only ADD known-attribute hints, never restrict).
       variantBy: "value",
       exclusive: false,
-      markdownDescription: "Renders an HTML element. Attributes are flat keys on the object; `content` holds children.\r\n`class` accepts a string, array, or `{ className: bool }` map. `style` accepts a camel- or kebab-case object.\r\nStrings in `content` are text: escaped, so `<`, `&` and quotes show as written. What a step returns is escaped too unless it is HTML, which `$tag` and `$html` return, so an element returned through `$map`, `$if`, `$runVar` or a variable renders as markup, while a string from a request, a row or a file shows as text.\r\nFor `<style>`/`<script>` the `content` is emitted as literal text (no escaping/translation); a `<style>` object `content` is compiled to CSS, and a `<script>` with a JSON `type` (`application/json` or a `+json` media type such as `application/ld+json`) has its `content` resolved and serialized to safely-escaped JSON. A `<style>` value cannot end the element: its `</style` is written `<\\/style`.\r\nWire DOM events via an `\"events\"` object. To render conditionally, wrap the element in `$if`/`then`.\r\nA step in `content` renders what it returns as a value: an object it returns is data and renders as nothing, so a template held in a variable renders only through `$runVar` (`{ \"$runVar\": \"card\" }`).",
+      markdownDescription: "Renders an HTML element. Attributes are flat keys on the object; `content` holds children.\r\n`class` accepts a string, array, or `{ className: bool }` map. `style` accepts a camel- or kebab-case object.\r\nStrings in `content` are text: escaped, so `<`, `&` and quotes show as written. What a step returns is escaped too unless it is HTML, which `$tag` and `$html` return, so an element returned through `$map`, `$if`, `$runVar` or a variable renders as markup, while a string from a request, a row or a file shows as text.\r\nAttributes hold data safely too: an attribute that takes a URL (`href`, `src`, `action`, `formaction`, `poster`, ...) writes a `javascript:` or `vbscript:` URL as `about:blank#blocked` and logs a warning, so a stored link cannot run script, and `srcdoc` takes its value as `content` does (HTML as markup, a string as text).\r\nFor `<style>`/`<script>` the `content` is emitted as literal text (no escaping/translation); a `<style>` object `content` is compiled to CSS, and a `<script>` with a JSON `type` (`application/json` or a `+json` media type such as `application/ld+json`) has its `content` resolved and serialized to safely-escaped JSON. A `<style>` value cannot end the element: its `</style` is written `<\\/style`.\r\nWire DOM events via an `\"events\"` object. To render conditionally, wrap the element in `$if`/`then`.\r\nA step in `content` renders what it returns as a value: an object it returns is data and renders as nothing, so a template held in a variable renders only through `$runVar` (`{ \"$runVar\": \"card\" }`).",
       outputDescription: "HTML: markup that `content` renders as written. Anywhere a string is taken (string ops, JSON, a response) it reads as its markup, and a response that is HTML is sent as `text/html`. Joining it with `$concat` or `$join` gives a plain string, which content escapes; put the elements in a content array instead.",
       examples: [
         "{ \"$tag\": \"button\", \"class\": \"btn\", \"events\": { \"click\": { \"do\": [...] } }, \"content\": [\"Submit\"] }",
@@ -193,7 +193,7 @@ function renderElement(def: Record<string, unknown>, context: Context): unknown 
       // quirks mode (and Lighthouse flags it). Only the root html tag triggers
       // this; nested htmls (if anyone ever has them) get the same prefix harmlessly.
       const prefix = tag === "html" ? "<!DOCTYPE html>" : "";
-      const open = `${prefix}<${tag}${attrsString(attrs, values)}${events}>`;
+      const open = `${prefix}<${tag}${attrsString(attrs, values, context)}${events}>`;
       if (isSelfClosing) return new Html(open);
       const close = (content: string) => new Html(`${open}${buildInjections(tag, def, context)}${content}</${tag}>`);
       const translator = translateAt >= 0 && values[translateAt] === "no" ? undefined : context[TRANSLATE];
@@ -326,14 +326,15 @@ function buildInjections(tag: string, def: Record<string, unknown>, context: Con
 }
 
 /** The attributes `entries` name, given their values (the first `entries.length` of `resolved`). */
-function attrsString(entries: [string, unknown][], resolved: unknown[]): string {
+function attrsString(entries: [string, unknown][], resolved: unknown[], context: Context): string {
   const parts: string[] = [];
   for (let i = 0; i < entries.length; i++) {
     const [key] = entries[i];
-    const value = resolved[i];
+    const given = resolved[i];
 
-    if (value === false || value === null || value === undefined) continue;
-    if (value === true) { parts.push(key); continue; }
+    if (given === false || given === null || given === undefined) continue;
+    if (given === true) { parts.push(key); continue; }
+    const value = safeAttr(key, given, message => loggerFor(context).warn(`$tag: ${message}`));
 
     if (key === "params") {
       if (!isObject(value)) throw new Error(`$tag: params must be an object of variables, got ${Array.isArray(value) ? "an array" : typeof value}`);
@@ -361,8 +362,7 @@ function attrsString(entries: [string, unknown][], resolved: unknown[]): string 
       continue;
     }
 
-    // An object or array is data an attribute carries as JSON (a `data-*` one,
-    // say); markup is text there (`srcdoc`).
+    // An object or array is data an attribute carries as JSON (a `data-*` one, say).
     const text = typeof value === "object" && !(value instanceof Html) ? JSON.stringify(value) : String(value);
     parts.push(`${key}="${escapeHtml(text)}"`);
   }

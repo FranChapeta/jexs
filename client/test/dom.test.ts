@@ -1,6 +1,6 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { createResolver, coreNodes } from "@jexs/core";
+import { createResolver, coreNodes, BLOCKED_URL } from "@jexs/core";
 import { installDom } from "./dom.js";
 import { DomNode } from "../src/nodes/Dom.js";
 
@@ -77,6 +77,24 @@ test("values, text, html and disabled through the props", async () => {
   assert.equal($("#box").innerHTML, "<b>bold</b>");
   await run({ $insertHtml: ["#box", { $tag: "i", content: ["more"] }] });
   assert.equal($("#box").innerHTML, "<b>bold</b><i>more</i>");
+});
+
+test("a URL attribute or property refuses a script URL from data, and srcdoc takes a string as text", async () => {
+  const warnings: string[] = [];
+  const quiet = createResolver([...coreNodes(), new DomNode()], { logger: { info: () => {}, warn: m => warnings.push(m), error: () => {} } });
+  document.body.innerHTML = '<a id="link">site</a><iframe id="frame"></iframe>';
+  await quiet({ $setAttr: ["#link", "href", { $var: "url" }] }, { url: " java\tscript:alert(1)" });
+  assert.equal($("#link").getAttribute("href"), BLOCKED_URL);
+  await quiet({ $setProp: ["#link", "href", { $var: "url" }] }, { url: "javascript:alert(1)" });
+  assert.equal($("#link").getAttribute("href"), BLOCKED_URL);
+  assert.deepEqual(warnings, [`$setAttr: "href" held a script URL, written as ${BLOCKED_URL}`, `$setProp: "href" held a script URL, written as ${BLOCKED_URL}`]);
+  await quiet({ $setAttr: ["#link", "href", "https://example.com/"] }, {});
+  assert.equal($("#link").getAttribute("href"), "https://example.com/");
+
+  await quiet({ $setAttr: ["#frame", "srcdoc", "<b>x</b>"] }, {});
+  assert.equal($("#frame").getAttribute("srcdoc"), "&lt;b&gt;x&lt;/b&gt;");
+  await quiet({ $setProp: ["#frame", "srcdoc", { $tag: "b", content: ["x"] }] }, {});
+  assert.equal($("#frame").getAttribute("srcdoc"), "<b>x</b>");
 });
 
 /** Markup, as a string, holding a button that counts its clicks into `context.clicks`. */

@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue } from "@jexs/core";
-import { isPrototypeKey, markupOf, operands, resolve, resolveAll } from "@jexs/core";
+import { isPrototypeKey, loggerFor, markupOf, operands, resolve, resolveAll, safeAttr } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { hydrate } from "../events.js";
 import { getElement, isHtmlOrSvg, parseHtml, place, POSITIONS, type Placement } from "../dom.js";
@@ -236,7 +236,7 @@ export class DomNode extends Node {
       ],
       output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
-      markdownDescription: "Sets an attribute on an element. Pass `[selectorOrElement, attrName, value]`. An object is written as JSON, so `[row, \"data-jexs-params\", { \"path\": ... }]` gives a moved row's handlers its new variables.",
+      markdownDescription: "Sets an attribute on an element. Pass `[selectorOrElement, attrName, value]`. An object is written as JSON, so `[row, \"data-jexs-params\", { \"path\": ... }]` gives a moved row's handlers its new variables.\nAn attribute that takes a URL (`href`, `src`, `action`, `formaction`, `poster`, ...) refuses a `javascript:` or `vbscript:` URL: it is written as `about:blank#blocked`, with a warning, so a stored link cannot run script. `srcdoc` takes its value as element content does: HTML from `$tag` or `$html` as markup, a string as text.",
     },
     getAttr: {
       tuple: 2,
@@ -269,7 +269,7 @@ export class DomNode extends Node {
       ],
       output: { $ref: "#/$defs/_element" },
       outputDescription: "The element operated on (an HTMLElement), for chaining. For `outerHTML`, the element now in its place (the first one the markup made), or `null` when the markup made none.",
-      markdownDescription: "Writes a live DOM property on an element (the JS property, not the HTML attribute), e.g. `value`, `textContent`, `disabled`, `checked`, `scrollTop`. Supports dot-paths for nested props (e.g. `style.color`), traversed like `setVars`. Pass `[selectorOrElement, propName, value]`.\n`innerHTML` and `outerHTML` take a value as element content does: HTML that `$tag` or `$html` made is markup, and gets its `events` wired up as rendered markup does, while a string is text, escaped, so data cannot add elements or handlers. Wrap a string in `$html` to insert it as markup, only when you trust it: `{ \"$html\": { \"$fetch\": \"/fragment\" } }` for a fragment your own server rendered, or `{ \"$html\": { \"$getProp\": [row, \"outerHTML\"] } }` to copy a row. `outerHTML` replaces the element, so the step returns the replacement rather than the element that is gone.",
+      markdownDescription: "Writes a live DOM property on an element (the JS property, not the HTML attribute), e.g. `value`, `textContent`, `disabled`, `checked`, `scrollTop`. Supports dot-paths for nested props (e.g. `style.color`), traversed like `setVars`. Pass `[selectorOrElement, propName, value]`.\n`innerHTML` and `outerHTML` take a value as element content does: HTML that `$tag` or `$html` made is markup, and gets its `events` wired up as rendered markup does, while a string is text, escaped, so data cannot add elements or handlers. Wrap a string in `$html` to insert it as markup, only when you trust it: `{ \"$html\": { \"$fetch\": \"/fragment\" } }` for a fragment your own server rendered, or `{ \"$html\": { \"$getProp\": [row, \"outerHTML\"] } }` to copy a row. `outerHTML` replaces the element, so the step returns the replacement rather than the element that is gone.\nA property that takes a URL (`href`, `src`, `action`, `formAction`, ...) refuses a `javascript:` or `vbscript:` URL, written as `about:blank#blocked` with a warning, and `srcdoc` takes its value as `innerHTML` does.",
       examples: [
         "{ \"$setProp\": [\"#status\", \"textContent\", \"Saved\"] }",
         "{ \"$setProp\": [\"#list\", \"innerHTML\", { \"$map\": { \"$var\": \"items\" }, \"do\": { \"$runVar\": \"row\" } }] }",
@@ -566,8 +566,9 @@ export class DomNode extends Node {
   }
   setAttr(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$setAttr, context, args => {
-      const [ref, name, value] = operands("setAttr", args, 3);
+      const [ref, name, given] = operands("setAttr", args, 3);
       const el = getElement(ref, "setAttr");
+      const value = safeAttr(String(name), given, message => loggerFor(context).warn(`$setAttr: ${message}`));
       el.setAttribute(String(name), typeof value === "object" && value !== null ? JSON.stringify(value) : String(value));
       return el;
     });
@@ -600,7 +601,7 @@ export class DomNode extends Node {
       }
       // Reached through a path, it would take a string as markup and skip the events.
       if (/\.(innerHTML|outerHTML)$/.test(prop)) throw new Error(`$setProp: write "${prop.slice(prop.lastIndexOf(".") + 1)}" on the element it belongs to, not through "${prop}"`);
-      setPropPath(el, prop, value);
+      setPropPath(el, prop, safeAttr(prop, value, message => loggerFor(context).warn(`$setProp: ${message}`)));
       return el;
     });
   }
