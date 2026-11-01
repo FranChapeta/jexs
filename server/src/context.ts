@@ -29,6 +29,8 @@ declare module "@jexs/core" {
       params?: Record<string, unknown>;
       headers?: Record<string, string | string[] | undefined>;
       cookies?: Record<string, string>;
+      /** The client's address. */
+      ip?: string;
     };
     /** The request's session data, once a `$session` step has loaded it. */
     session?: Record<string, unknown>;

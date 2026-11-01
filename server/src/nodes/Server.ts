@@ -163,6 +163,14 @@ function forwardedHeader(req: http.IncomingMessage, name: string, listener: List
 }
 
 /**
+ * The client's address: what a trusted proxy says it forwarded for, else the
+ * socket's peer. Without `trustProxy`, a client could name any address.
+ */
+function clientIp(req: http.IncomingMessage, listener: Listener): string {
+  return forwardedHeader(req, "x-forwarded-for", listener) ?? req.socket.remoteAddress ?? "";
+}
+
+/**
  * The URL the app is reached at: `BASE_URL`, else what a trusted proxy says it
  * forwarded, else the request's own Host over plain http (the listener serves
  * no TLS itself). Without a request (startup), `BASE_URL` or localhost.
@@ -212,6 +220,7 @@ async function handleUpgrade(
         query: Object.fromEntries(url.searchParams),
         headers: req.headers,
         cookies: parseCookies(req),
+        ip: clientIp(req, listener),
       },
       [COOKIES]: [],
       [UPGRADE]: upgrade,
@@ -292,6 +301,7 @@ async function handleRequest(
         query: query as Record<string, unknown>,
         headers,
         cookies,
+        ip: clientIp(req, listener),
       },
       [COOKIES]: setCookies,
       [DEFERRED]: deferred,
@@ -673,7 +683,7 @@ export class ServerNode extends Node {
       type: "number",
       output: "number",
       outputDescription: "The port it listens on: the one given, or the free port the OS picked for `0`.",
-      markdownDescription: "Starts an HTTP listener on the given port (default 3000; `0` picks any free port). Pass per-request steps in `\"do\"`.\nSet `\"client\": true` (or a path string) to auto-serve the `@jexs/client` browser bundle\nand inject the script tag into rendered `<head>` elements.\nSet `\"sw\"` (with `\"client\"`) to run a service worker: what it precaches, how it answers requests (`routes`), and the steps it resolves per event (`events`).\n\n**Multiple ports.** Bind more ports by adding more `{ \"$listen\": ..., \"do\": [...] }` steps. Each is an independent listener with its own `do` pipeline, `client`, `sw`, `maxBodySize` and `maxMessageSize`.\n\n**Cross-site requests.** A POST, PUT, PATCH or DELETE, or a WebSocket upgrade, that a browser sends from another site's page is refused with 403 before any step runs, since it would carry the user's cookies. Requests from outside a browser (webhooks, scripts) are not affected. Allow other origins with `trustedOrigins`.\n\n**Per-request `do` execution.** The steps run in order in a fresh scope of their own, as any step list does: `$as` and `$setVars` write into it for later steps, and a step resolving to `{ \"$return\": X }` ends the list early with `X`.\n\n**Shared data.** Each request reads the variables of the scope `$listen` ran in, and cannot rebind them: its writes, `$bubble` included, stay in the request. The objects and arrays those variables hold are shared by every request, though, so write data no request should change with `\"readonly\": true` on its `$setVars`, which makes it read-only.\n\n**The request.** The steps read it as `request`: `method`, `path`, `query`, `headers`, `cookies`, `body` (JSON or form fields, parsed by its content type, else the text) and `rawBody` (the body as the text it came as, for checking a webhook's signature with `$hmac`), beside `baseUrl`, the URL the app is reached at. A WebSocket upgrade runs the same steps, with `method` `\"WS\"`, for `$socketAccept` to take it.\n\n**The response.** What the steps yield, `$return`'s value or the last step's, is the response. HTML (what `$tag` and `$html` return) is sent as `text/html`, a string as `text/plain`, nothing at all as a 404, and any other value as JSON. For full control yield a response object, one with a `response`:\n- `response`: the body (string, or any JSON value for `responseType: \"json\"`). For `responseType: \"redirect\"` it is the `Location` URL.\n- `responseStatus`: HTTP status code (default `200`, or `302` for a redirect).\n- `responseType`: `\"html\"` | `\"json\"` | `\"text\"` | `\"redirect\"` | a literal MIME string (e.g. `\"image/png\"`). When omitted it is inferred: string → `html`, otherwise `json`.\n- `responseHeaders`: extra response headers.\n\nIts other keys are not sent. To send a value that has a `response` of its own (a row with a `response` column, say) as data, yield it as a response object's `response`.",
+      markdownDescription: "Starts an HTTP listener on the given port (default 3000; `0` picks any free port). Pass per-request steps in `\"do\"`.\nSet `\"client\": true` (or a path string) to auto-serve the `@jexs/client` browser bundle\nand inject the script tag into rendered `<head>` elements.\nSet `\"sw\"` (with `\"client\"`) to run a service worker: what it precaches, how it answers requests (`routes`), and the steps it resolves per event (`events`).\n\n**Multiple ports.** Bind more ports by adding more `{ \"$listen\": ..., \"do\": [...] }` steps. Each is an independent listener with its own `do` pipeline, `client`, `sw`, `maxBodySize` and `maxMessageSize`.\n\n**Cross-site requests.** A POST, PUT, PATCH or DELETE, or a WebSocket upgrade, that a browser sends from another site's page is refused with 403 before any step runs, since it would carry the user's cookies. Requests from outside a browser (webhooks, scripts) are not affected. Allow other origins with `trustedOrigins`.\n\n**Per-request `do` execution.** The steps run in order in a fresh scope of their own, as any step list does: `$as` and `$setVars` write into it for later steps, and a step resolving to `{ \"$return\": X }` ends the list early with `X`.\n\n**Shared data.** Each request reads the variables of the scope `$listen` ran in, and cannot rebind them: its writes, `$bubble` included, stay in the request. The objects and arrays those variables hold are shared by every request, though, so write data no request should change with `\"readonly\": true` on its `$setVars`, which makes it read-only.\n\n**The request.** The steps read it as `request`: `method`, `path`, `query`, `headers`, `cookies`, `ip` (the client's address, from `X-Forwarded-For` with `trustProxy`), `body` (JSON or form fields, parsed by its content type, else the text) and `rawBody` (the body as the text it came as, for checking a webhook's signature with `$hmac`), beside `baseUrl`, the URL the app is reached at. A WebSocket upgrade runs the same steps, with `method` `\"WS\"`, for `$socketAccept` to take it.\n\n**The response.** What the steps yield, `$return`'s value or the last step's, is the response. HTML (what `$tag` and `$html` return) is sent as `text/html`, a string as `text/plain`, nothing at all as a 404, and any other value as JSON. For full control yield a response object, one with a `response`:\n- `response`: the body (string, or any JSON value for `responseType: \"json\"`). For `responseType: \"redirect\"` it is the `Location` URL.\n- `responseStatus`: HTTP status code (default `200`, or `302` for a redirect).\n- `responseType`: `\"html\"` | `\"json\"` | `\"text\"` | `\"redirect\"` | a literal MIME string (e.g. `\"image/png\"`). When omitted it is inferred: string → `html`, otherwise `json`.\n- `responseHeaders`: extra response headers.\n\nIts other keys are not sent. To send a value that has a `response` of its own (a row with a `response` column, say) as data, yield it as a response object's `response`.",
       examples: [
         "{ \"$listen\": 3000, \"client\": true, \"do\": [{ \"$session\": \"load\" }, { \"$routes\": { \"$var\": \"routes\" } }] }",
         "{ \"response\": { \"id\": 7 }, \"responseStatus\": 201 }",
@@ -699,7 +709,7 @@ export class ServerNode extends Node {
         trustProxy: {
           type: "boolean",
           default: false,
-          description: "A proxy in front (nginx, a load balancer, a PaaS router) terminates TLS and says what it forwarded in `X-Forwarded-Host` and `X-Forwarded-Proto`, so believe those for `baseUrl`, the cross-site check and Secure cookies. Leave it off when clients reach the listener directly: any of them can send these headers.",
+          description: "A proxy in front (nginx, a load balancer, a PaaS router) terminates TLS and says what it forwarded in `X-Forwarded-Host` and `X-Forwarded-Proto`, so believe those for `baseUrl`, the cross-site check and Secure cookies, and its `X-Forwarded-For` for `request.ip`. Leave it off when clients reach the listener directly: any of them can send these headers.",
         },
         system: {
           type: "boolean",

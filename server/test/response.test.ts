@@ -27,6 +27,7 @@ before(async () => {
       { $if: at("/later"), then: { response: "early", responseStatus: 500 } },
       { $if: at("/string"), then: { $return: { $concat: ["<p>", "text</p>"] } } },
       { $if: at("/missing"), then: { $return: null } },
+      { $if: at("/ip"), then: { $return: { $var: "request.ip" } } },
       { $tag: "p", content: "page" },
     ],
   }, { report: { response: "250 OK", accepted: ["a@b.c"] }, stored: { $email: "a@b.c", response: "x" } });
@@ -114,4 +115,8 @@ test("the steps' last value is the response, so an earlier response object is no
   assert.equal(res.status, 200);
   assert.equal(res.headers.get("content-type"), "text/html; charset=utf-8");
   assert.equal(await res.text(), "<p>page</p>");
+});
+
+test("request.ip is the client's address", async () => {
+  assert.match(await (await fetch(`${base}/ip`)).text(), /127\.0\.0\.1/);
 });
