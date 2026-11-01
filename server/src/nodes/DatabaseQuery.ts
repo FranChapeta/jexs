@@ -490,6 +490,9 @@ function readRows(context: Context, tableName: string, rows: unknown): unknown {
  * the JSON Schema via Ajv after coercion.
  */
 function coerceType(value: unknown, col: ColumnSchema, colName: string, tableName: string): unknown {
+  // SQL NULL, never the text "null" or a 0: the schema says whether the column
+  // takes it (`"type": ["string", "null"]`).
+  if (value === null) return null;
   switch (coercionType(col)) {
     case "integer":
     case "biginteger":

@@ -72,6 +72,26 @@ test("a boolean column takes and gives booleans, whatever the database stores", 
   assert.equal(updated.on, true);
 });
 
+test("null is written as NULL where the column takes it, and refused where it does not", async () => {
+  await resolve({ $tableSync: {
+    table: "nullables",
+    properties: {
+      id: { type: "integer", primaryKey: true, autoIncrement: true },
+      text: { type: ["string", "null"] },
+      count: { type: ["integer", "null"] },
+      title: { type: "string" },
+    },
+  }, ...conn }, {});
+  await resolve({ $queryInsert: "nullables", ...conn, data: { text: "a", count: 2, title: "t" } }, {});
+  await resolve({ $queryUpdate: "nullables", ...conn, where: { title: "t" }, data: { text: null, count: null } }, {});
+  const row = await resolve({ $querySelect: "nullables", ...conn, first: true }, {}) as { text: unknown; count: unknown };
+  assert.equal(row.text, null);
+  assert.equal(row.count, null);
+  assert.equal(await resolve({ $queryCount: "nullables", ...conn, where: { text: null } }, {}), 1);
+
+  await assert.rejects(resolve({ $queryUpdate: "nullables", ...conn, where: { title: "t" }, data: { title: null } }, {}), /Validation failed for "nullables"/);
+});
+
 test("every condition in a where applies: each operator on a column, and or/and beside other columns", async () => {
   const names = async (where: unknown) =>
     ((await resolve({ $querySelect: "people", ...conn, where, orderBy: { name: "asc" } }, {})) as Array<{ name: string }>)
