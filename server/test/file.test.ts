@@ -135,3 +135,10 @@ test("params merge into the loaded file's context, from a map or a step", async 
     "hi step",
   );
 });
+
+test("a $file loaded under a $runVar's allow keeps to it", async () => {
+  await fs.writeFile(abs("page.json"), JSON.stringify({ $tag: "p", content: [{ $upper: "hi" }] }));
+  const ctx = { page: { $file: "/page.json" } };
+  assert.equal(String(await Promise.resolve(resolve({ $runVar: "page", allow: ["file", "tag", "upper"] }, ctx))), "<p>HI</p>");
+  await assert.rejects(Promise.resolve(resolve({ $runVar: "page", allow: ["file", "tag"] }, ctx)), /"\$upper" is not allowed here/);
+});
