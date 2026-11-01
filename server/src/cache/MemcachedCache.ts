@@ -73,6 +73,24 @@ export class MemcachedCache implements CacheAdapter {
     });
   }
 
+  async increment(key: string, by: number, ttl?: number): Promise<number> {
+    // Memcached counts in whole numbers that never go below 0, with a command
+    // each way, and starts a missing key at `initial` (not `initial + amount`):
+    // at `by` going up, and at 0 going down.
+    if (!Number.isInteger(by)) throw new Error("Memcached counts in whole numbers");
+    const down = by < 0;
+    const initial = down ? 0 : by;
+    const options = { initial, expires: ttl && ttl > 0 ? Math.ceil(ttl) : 0 };
+    return new Promise((resolve, reject) => {
+      const done = (err: Error | null, _success: boolean, value?: number) => {
+        if (err) reject(err);
+        else resolve(value ?? initial);
+      };
+      if (down) this.client.decrement(this.key(key), -by, options, done);
+      else this.client.increment(this.key(key), by, options, done);
+    });
+  }
+
   async has(key: string): Promise<boolean> {
     const value = await this.get(key);
     return value !== undefined;

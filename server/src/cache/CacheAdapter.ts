@@ -20,6 +20,15 @@ export interface CacheAdapter {
   set<T = unknown>(key: string, value: T, ttl?: number): Promise<void>;
 
   /**
+   * Add to the number under a key in one step, so concurrent callers never
+   * lose a count; a negative `by` subtracts. A missing key starts at 0 and
+   * takes `ttl` (seconds); a key that exists keeps its expiry. Memcached
+   * counts in whole numbers and never goes below 0.
+   * @returns The number after adding
+   */
+  increment(key: string, by: number, ttl?: number): Promise<number>;
+
+  /**
    * Check if a key exists in cache
    */
   has(key: string): Promise<boolean>;

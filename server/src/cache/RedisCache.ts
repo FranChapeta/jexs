@@ -92,6 +92,15 @@ export class RedisCache implements CacheAdapter {
     }
   }
 
+  async increment(key: string, by: number, ttl?: number): Promise<number> {
+    // One script, so the expiry is set by the call that made the key and no other.
+    const result = await this.client.eval(
+      "local existed = redis.call('EXISTS', KEYS[1]) local v = redis.call('INCRBYFLOAT', KEYS[1], ARGV[1]) if existed == 0 and tonumber(ARGV[2]) > 0 then redis.call('EXPIRE', KEYS[1], ARGV[2]) end return v",
+      1, this.key(key), String(by), String(ttl && ttl > 0 ? Math.ceil(ttl) : 0),
+    );
+    return Number(result);
+  }
+
   async has(key: string): Promise<boolean> {
     const exists = await this.client.exists(this.key(key));
     return exists === 1;

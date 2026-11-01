@@ -163,6 +163,32 @@ export class CacheNode extends Node {
         ttl:   { type: "number", description: "Time-to-live in seconds." },
       },
     },
+    cacheIncrement: {
+      type: "string",
+      output: "number",
+      markdownDescription: "Adds to the number stored under the key, in one step on the cache itself, so requests counting at once never lose a count: what a rate limit counts with. A missing key starts at 0 and expires after `ttl` seconds; adding to a key that exists keeps its expiry, so the count resets a fixed time after it began.",
+      outputDescription: "The number after adding.",
+      examples: [
+        "{ \"$cacheIncrement\": { \"$concat\": [\"login:\", { \"$var\": \"request.ip\" }] }, \"ttl\": 900, \"$as\": \"attempts\" }",
+      ],
+      siblings: {
+        by:  { type: "number", description: "What to add (default 1). Memcached takes only whole numbers." },
+        ttl: { type: "number", description: "Seconds the count lives, from the step that made it." },
+      },
+    },
+    cacheDecrement: {
+      type: "string",
+      output: "number",
+      markdownDescription: "Takes from the number stored under the key, in one step on the cache itself, as `cacheIncrement` adds: what gives back a slot a count took, such as a connection that closed. A missing key starts at 0 and expires after `ttl` seconds; taking from a key that exists keeps its expiry. On Memcached the count stops at 0; elsewhere it can go below.",
+      outputDescription: "The number after taking.",
+      examples: [
+        "{ \"$cacheDecrement\": { \"$concat\": [\"online:\", { \"$var\": \"room\" }] } }",
+      ],
+      siblings: {
+        by:  { type: "number", description: "What to take (default 1). Memcached takes only whole numbers." },
+        ttl: { type: "number", description: "Seconds the count lives, from the step that made it." },
+      },
+    },
     cacheDelete: {
       type: "string",
       output: "boolean",
@@ -317,6 +343,14 @@ export class CacheNode extends Node {
     });
   }
 
+  cacheIncrement(def: Record<string, unknown>, context: Context): NodeValue {
+    return countBy("$cacheIncrement", def.$cacheIncrement, def, 1, context);
+  }
+
+  cacheDecrement(def: Record<string, unknown>, context: Context): NodeValue {
+    return countBy("$cacheDecrement", def.$cacheDecrement, def, -1, context);
+  }
+
   cacheDelete(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll([def.$cacheDelete, def.connection ?? null], context, async ([keyRaw, connection]) =>
       CacheNode.cacheFor(context, optionalName(connection)).delete(String(keyRaw)));
@@ -326,6 +360,16 @@ export class CacheNode extends Node {
     return resolveAll([def.$cacheHas, def.connection ?? null], context, async ([keyRaw, connection]) =>
       CacheNode.cacheFor(context, optionalName(connection)).has(String(keyRaw)));
   }
+}
+
+/** `$cacheIncrement` and `$cacheDecrement`: change the count under the key by `by` in the given direction. */
+function countBy(op: string, keyStep: unknown, def: Record<string, unknown>, sign: 1 | -1, context: Context): NodeValue {
+  return resolveAll([keyStep, def.by ?? 1, def.ttl ?? null, def.connection ?? null], context, async ([keyRaw, byRaw, ttlRaw, connection]) => {
+    const by = Number(byRaw);
+    if (!Number.isFinite(by)) throw new Error(`${op}: \`by\` must be a number`);
+    const ttl = ttlRaw != null ? Number(ttlRaw) : undefined;
+    return CacheNode.cacheFor(context, optionalName(connection)).increment(String(keyRaw), sign * by, ttl);
+  });
 }
 
 /** A resolved cache-name sibling: absent (or resolving to nothing) means the default. */

@@ -23,6 +23,18 @@ declare module "memjs" {
       options: SetOptions,
       callback: Callback<boolean>,
     ): void;
+    increment(
+      key: string,
+      amount: number,
+      options: { initial?: number; expires?: number },
+      callback: (err: Error | null, success: boolean, value?: number) => void,
+    ): void;
+    decrement(
+      key: string,
+      amount: number,
+      options: { initial?: number; expires?: number },
+      callback: (err: Error | null, success: boolean, value?: number) => void,
+    ): void;
     delete(key: string, callback: Callback<boolean>): void;
     flush(callback: Callback<boolean>): void;
     close(): void;

@@ -180,3 +180,39 @@ test("translations are looked up in the named cache", async () => {
     resolver.destroy();
   }
 });
+
+test("cacheIncrement counts from 0, by 1 or by `by`, and keeps the expiry the first count set", async () => {
+  const { resolver } = resolverWithCache();
+  try {
+    assert.equal(await resolver({ $cacheIncrement: "hits", ttl: 1 }, {}), 1);
+    assert.equal(await resolver({ $cacheIncrement: "hits", by: 2, ttl: 100 }, {}), 3);
+    assert.equal(await resolver({ $cacheGet: "hits" }, {}), 3);
+    await new Promise(r => setTimeout(r, 1100));
+    assert.equal(await resolver({ $cacheGet: "hits" }, {}), undefined, "the later ttl did not extend the first");
+    assert.equal(await resolver({ $cacheIncrement: "hits" }, {}), 1);
+  } finally {
+    resolver.destroy();
+  }
+});
+
+test("increments made at once all count", async () => {
+  const { resolver } = resolverWithCache();
+  try {
+    await Promise.all(Array.from({ length: 50 }, () => resolver({ $cacheIncrement: "n" }, {})));
+    assert.equal(await resolver({ $cacheGet: "n" }, {}), 50);
+  } finally {
+    resolver.destroy();
+  }
+});
+
+test("cacheDecrement takes from a count, by 1 or by `by`, starting a missing key at 0", async () => {
+  const { resolver } = resolverWithCache();
+  try {
+    assert.equal(await resolver({ $cacheIncrement: "slots", by: 3 }, {}), 3);
+    assert.equal(await resolver({ $cacheDecrement: "slots" }, {}), 2);
+    assert.equal(await resolver({ $cacheDecrement: "slots", by: 2 }, {}), 0);
+    assert.equal(await resolver({ $cacheDecrement: "fresh" }, {}), -1);
+  } finally {
+    resolver.destroy();
+  }
+});

@@ -65,6 +65,20 @@ export class MemoryCache implements CacheAdapter {
     this.cache.set(this.key(key), entry);
   }
 
+  async increment(key: string, by: number, ttl?: number): Promise<number> {
+    // Read and write with no await between them, so no other caller interleaves.
+    const k = this.key(key);
+    const entry = this.cache.get(k);
+    const live = entry && (entry.expiresAt === null || Date.now() <= entry.expiresAt) ? entry : undefined;
+    const value = (Number(live?.value) || 0) + by;
+    if (live) {
+      live.value = value;
+      return value;
+    }
+    await this.set(key, value, ttl);
+    return value;
+  }
+
   async has(key: string): Promise<boolean> {
     const value = await this.get(key);
     return value !== undefined;
