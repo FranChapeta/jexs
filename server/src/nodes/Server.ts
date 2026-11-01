@@ -701,6 +701,11 @@ export class ServerNode extends Node {
           type: "number",
           description: "Maximum request body size in bytes (default 1048576, 1 MB). A larger body is refused with 413.",
         },
+        requestTimeout: {
+          type: "number",
+          default: 300000,
+          description: "How long a client has to send a whole request, headers and body, in milliseconds (default 300000, five minutes). A slower one is answered 408 and its connection closed. Raise it for large uploads over slow connections; `0` sets no limit on the body, which leaves nothing to end a client that stops sending partway; the headers still have 60 seconds.",
+        },
         host: {
           type: "string",
           default: "0.0.0.0",
@@ -806,8 +811,8 @@ export class ServerNode extends Node {
     const steps = def.do;
     if (!Array.isArray(steps)) throw new Error('$listen needs "do": an array of the steps each request runs');
 
-    const options = [def.maxBodySize, def.maxMessageSize, def.trustedOrigins, def.host, def.trustProxy, def.system, def.client].map(o => o ?? null);
-    return resolveAll([def.$listen, ...options], context, async ([portRaw, maxBodyRaw, maxMessageRaw, originsRaw, hostRaw, trustProxy, system, client]) => {
+    const options = [def.maxBodySize, def.maxMessageSize, def.trustedOrigins, def.host, def.trustProxy, def.system, def.client, def.requestTimeout].map(o => o ?? null);
+    return resolveAll([def.$listen, ...options], context, async ([portRaw, maxBodyRaw, maxMessageRaw, originsRaw, hostRaw, trustProxy, system, client, timeoutRaw]) => {
       // `0` asks the OS for any free port; the step returns the one it got.
       const requested = portRaw == null || portRaw === "" ? 3000 : Number(portRaw);
       if (!Number.isInteger(requested) || requested < 0 || requested > 65535) {
@@ -822,6 +827,10 @@ export class ServerNode extends Node {
       }
       if (client !== null && typeof client !== "boolean" && !(typeof client === "string" && client.startsWith("/"))) {
         throw new Error(`$listen: client ${JSON.stringify(client)} is neither true nor a path starting with "/"`);
+      }
+      const requestTimeout = timeoutRaw === null ? 300_000 : Number(timeoutRaw);
+      if (!Number.isInteger(requestTimeout) || requestTimeout < 0) {
+        throw new Error(`$listen: requestTimeout ${JSON.stringify(timeoutRaw)} is not a whole number of milliseconds`);
       }
 
       const listener: Listener = {
@@ -890,7 +899,12 @@ export class ServerNode extends Node {
         }
       }
 
-      const httpServer = http.createServer((req, res) => handleRequest(req, res, listener));
+      // Node looks for requests past their time every 30 seconds; a shorter limit is looked for as often as it is long.
+      const httpServer = http.createServer(
+        // Without a limit Node drops its 60-second limit on the headers too, which stays.
+        { requestTimeout, headersTimeout: Math.min(60_000, requestTimeout || 60_000), connectionsCheckingInterval: Math.min(30_000, requestTimeout || 30_000) },
+        (req, res) => handleRequest(req, res, listener),
+      );
       listener.httpServer = httpServer;
 
       httpServer.on("upgrade", (req, socket, head) => {

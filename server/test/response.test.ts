@@ -1,5 +1,6 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
+import net from "node:net";
 import { createResolver, coreNodes } from "@jexs/core";
 import type { Resolver } from "@jexs/core";
 import { ServerNode } from "../src/nodes/Server.js";
@@ -119,4 +120,26 @@ test("the steps' last value is the response, so an earlier response object is no
 
 test("request.ip is the client's address", async () => {
   assert.match(await (await fetch(`${base}/ip`)).text(), /127\.0\.0\.1/);
+});
+
+test("a client that takes longer than requestTimeout to send its request is answered 408", async () => {
+  const own = createResolver([...coreNodes(), new ServerNode()]);
+  const port = await own({ $listen: 0, requestTimeout: 200, do: [{ $concat: ["ok"] }] }, {});
+  const reply = await new Promise<string>(done => {
+    const socket = net.connect(port as number, "127.0.0.1", () => {
+      // Headers promising a body that never comes.
+      socket.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Type: text/plain\r\nContent-Length: 100\r\n\r\npart");
+    });
+    let data = "";
+    socket.on("data", chunk => (data += chunk));
+    socket.on("close", () => done(data));
+  });
+  assert.match(reply, /^HTTP\/1\.1 408/);
+  own.destroy();
+});
+
+test("requestTimeout is a whole number of milliseconds", async () => {
+  const own = createResolver([...coreNodes(), new ServerNode()]);
+  await assert.rejects(Promise.resolve(own({ $listen: 0, requestTimeout: -1, do: [] }, {})), /requestTimeout/);
+  own.destroy();
 });
