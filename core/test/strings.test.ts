@@ -86,6 +86,15 @@ test("fromBase64: reads either alphabet, padded or not", () => {
   assert.equal(resolve({ $fromBase64: "" }, {}), "");
 });
 
+test("base64: bytes encode as they are, and decode as bytes or in another text encoding", () => {
+  const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0xff]);
+  assert.equal(resolve({ $toBase64: { $var: "bytes" } }, { bytes }), "iVBORwD/");
+  assert.deepEqual(resolve({ $fromBase64: "iVBORwD/", encoding: "bytes" }, {}), bytes);
+  assert.equal(resolve({ $fromBase64: "aABpAA==", encoding: "utf-16le" }, {}), "hi");
+  assert.equal(resolve({ $fromBase64: "6Q==", encoding: "windows-1252" }, {}), "é");
+  assert.throws(() => resolve({ $fromBase64: "aGk=", encoding: "nope" }, {}), /encoding "nope"/);
+});
+
 test("base64: round trips text far past the spread limit", () => {
   // `String.fromCharCode(...bytes)` overflows the stack somewhere above 100KB,
   // which is why the encoder chunks; 300KB proves the chunking works.

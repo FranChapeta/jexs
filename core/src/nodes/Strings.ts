@@ -114,7 +114,7 @@ export class StringNode extends Node {
     },
     toBase64: {
       output: "string",
-      markdownDescription: "Encodes a string as base64. The text is read as UTF-8, so any character encodes, not just the Latin-1 range the platform's own `btoa` is limited to.\n\nPass `urlSafe: true` for the alphabet URLs and JWTs use (`-` and `_` in place of `+` and `/`, padding dropped).",
+      markdownDescription: "Encodes a string as base64, or bytes (a `Uint8Array` or `Buffer`, such as a binary file `$file` loaded) as they are. The text is read as UTF-8, so any character encodes, not just the Latin-1 range the platform's own `btoa` is limited to.\n\nPass `urlSafe: true` for the alphabet URLs and JWTs use (`-` and `_` in place of `+` and `/`, padding dropped).",
       examples: [
         "{ \"$toBase64\": { \"$concat\": [{ \"$var\": \"user\" }, \":\", { \"$var\": \"key\" }] } }",
       ],
@@ -131,11 +131,19 @@ export class StringNode extends Node {
       // expression here is a mistake worth catching in the editor.
       type: "string",
       output: "string",
-      markdownDescription: "Decodes base64 back to a string, reading the bytes as UTF-8. Accepts either alphabet and tolerates missing padding, so a value that arrived URL-safe needs no flag.",
-      outputDescription: "The decoded text. Throws if the input is not valid base64.",
+      markdownDescription: "Decodes base64 back to a string, reading the bytes as UTF-8, or as the `encoding` given; `encoding: \"bytes\"` gives the bytes themselves, for a file. Accepts either alphabet and tolerates missing padding, so a value that arrived URL-safe needs no flag.",
+      outputDescription: "The decoded text, or with `encoding: \"bytes\"` a `Uint8Array`. Throws if the input is not valid base64.",
       examples: [
         "{ \"$fromBase64\": { \"$var\": \"token\" } }",
+        "{ \"$file\": \"/uploads/a.png\", \"write\": { \"$fromBase64\": { \"$var\": \"request.body.image\" }, \"encoding\": \"bytes\" } }",
       ],
+      siblings: {
+        encoding: {
+          type: "string",
+          default: "utf-8",
+          markdownDescription: "How to read the decoded bytes: a text encoding by its standard label (`\"utf-8\"`, `\"utf-16le\"`, `\"windows-1252\"`, `\"shift_jis\"`, ...), or `\"bytes\"` for the bytes as they are.",
+        },
+      },
     },
     parseJSON: {
       // Typed for the same reason as `fromBase64`: this reads text that already
@@ -444,9 +452,9 @@ export class StringNode extends Node {
 
   toBase64(def: Record<string, unknown>, c: Context) {
     return resolveAll([def.$toBase64, def.urlSafe], c, ([value, urlSafe]) => {
-      // Through TextEncoder, not straight into `btoa`, which is Latin-1 only:
-      // `btoa("héllo")` throws on its own.
-      const bytes = new TextEncoder().encode(this.toString(value));
+      // Text through TextEncoder, not straight into `btoa`, which is Latin-1
+      // only: `btoa("héllo")` throws on its own.
+      const bytes = value instanceof Uint8Array ? value : new TextEncoder().encode(this.toString(value));
       let binary = "";
       for (let i = 0; i < bytes.length; i += BASE64_CHUNK) {
         binary += String.fromCharCode(...bytes.subarray(i, i + BASE64_CHUNK));
@@ -459,14 +467,24 @@ export class StringNode extends Node {
   }
 
   fromBase64(def: Record<string, unknown>, c: Context) {
-    return resolve(def.$fromBase64, c, v => {
+    return resolveAll([def.$fromBase64, def.encoding ?? null], c, ([v, encoding]) => {
+      const label = encoding === null ? "utf-8" : this.toString(encoding);
+      // Checked first, so a wrong label is named as one rather than after the decoding.
+      let decoder: TextDecoder | null = null;
+      if (label !== "bytes") {
+        try {
+          decoder = new TextDecoder(label);
+        } catch {
+          throw new Error(`$fromBase64: encoding ${JSON.stringify(label)} is neither a text encoding nor "bytes"`);
+        }
+      }
       // Either alphabet, padded or not: a URL-safe value usually arrives stripped,
       // and `atob` wants the standard characters and a length that is a multiple of 4.
       const standard = this.toString(v).trim().replace(/-/g, "+").replace(/_/g, "/");
       const binary = atob(standard + "=".repeat((4 - (standard.length % 4)) % 4));
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      return new TextDecoder().decode(bytes);
+      return decoder ? decoder.decode(bytes) : bytes;
     });
   }
 
