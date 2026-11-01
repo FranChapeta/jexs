@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, childContext } from "./Node.js";
+import { Node, Context, NodeValue, childContext, boundaryContext, ALLOWED_OPS } from "./Node.js";
 import { resolve, resolveAll, isStep, runSteps } from "../Resolver.js";
 import { freezeData, getNestedValue } from "../helpers.js";
 import type { JexsNodeSchema } from "../schema.js";
@@ -45,18 +45,29 @@ export class VariablesNode extends Node {
           map: true,
           description: "Variables added for the steps, in a copy of the context: a map of values, or a step resolving to one.",
         },
+        allow: {
+          type: "array",
+          items: { type: "string" },
+          description: "The only ops the steps may run, by name without the `$` (`[\"tag\", \"if\", \"var\"]`); any other throws, in a step they hold, in a `$file` they load, or in a `$runVar` they run, which can narrow the list but never widen it. The steps run in a scope of their own, so a `$bubble` stops before the caller's variables. For steps an app holds but did not write, such as a page an editor saved.",
+        },
       },
     },
   };
 
   runVar(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def.$runVar, def.params ?? null], context, ([path, params]) => {
+    return resolveAll([def.$runVar, def.params ?? null, def.allow], context, ([path, params, allow]) => {
       if (typeof path !== "string" || path === "") {
         throw new Error("$runVar takes the dot-path of a variable holding steps");
       }
       const steps = resolveVariable(path, context);
       if (steps === undefined) throw new Error(`$runVar: no variable at "${path}"`);
-      return runSteps(steps, this.isObject(params) ? childContext(context, params) : context);
+      const vars = this.isObject(params) ? params : undefined;
+      if (allow === undefined || allow === null) return runSteps(steps, vars ? childContext(context, vars) : context);
+      if (!Array.isArray(allow) || allow.some(op => typeof op !== "string")) throw new Error("$runVar: `allow` takes a list of op names");
+      // A list inside another keeps only what both allow.
+      const outer = context[ALLOWED_OPS] as ReadonlySet<string> | undefined;
+      const allowed = new Set((allow as string[]).map(op => op.replace(/^\$/, "")).filter(op => !outer || outer.has(op)));
+      return runSteps(steps, boundaryContext(context, { ...vars, [ALLOWED_OPS]: allowed }));
     });
   }
 

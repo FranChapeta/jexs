@@ -1,4 +1,4 @@
-import { Context, Node, childContext } from "./nodes/Node.js";
+import { Context, Node, childContext, ALLOWED_OPS } from "./nodes/Node.js";
 import { isHttpError } from "./errors.js";
 import { isObject } from "./helpers.js";
 
@@ -464,6 +464,8 @@ function withCatch(fn: () => unknown, step: unknown, context: Context): unknown 
 
 /** Hand a step to the node registered for its op, loading a lazy module first. */
 function callNode(self: ResolverImpl, step: Record<string, unknown>, op: string, context: Context): unknown {
+  const allowed = context[ALLOWED_OPS] as ReadonlySet<string> | undefined;
+  if (allowed && !allowed.has(op)) throw new Error(`"$${op}" is not allowed here: these steps run under a \`$runVar\` whose \`allow\` leaves it out.`);
   const node = self.keyMap.get(op);
   if (node) return node.resolve(step, context, op);
   const loader = self.lazyMap.get(op);

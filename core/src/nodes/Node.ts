@@ -43,6 +43,9 @@ export const CSRF_TOKEN = Symbol("jexs.csrfToken");
  *  for a request by a node such as the server's `$translate`. */
 export const TRANSLATE = Symbol("jexs.translate");
 export type Translator = (text: string) => string | Promise<string>;
+/** The ops steps may run in this scope and every scope under it, set by
+ *  `$runVar`'s `allow`: a `ReadonlySet` of op names. Absent means any op. */
+export const ALLOWED_OPS = Symbol("jexs.allowedOps");
 
 /**
  * Derive a child scope from `parent`. It reads every variable of `parent` as it
