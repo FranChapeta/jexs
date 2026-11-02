@@ -54,14 +54,15 @@ export const ALLOWED_OPS = Symbol("jexs.allowedOps");
  * write without `$bubble`) is its own and shadows the parent's. A `$bubble` from
  * it passes up to `parent`. An extra named after a prototype key throws: params
  * parsed from JSON can hold an own `__proto__`, and binding it would re-parent
- * the scope.
+ * the scope. So does one a scope above holds read-only, such as a request's
+ * `request` and `session`.
  */
 export function childContext(parent: Context, extra?: Record<PropertyKey, unknown>): Context {
   const scope = Object.create(parent) as Context;
   if (extra) {
     for (const key of Reflect.ownKeys(extra)) {
       if (typeof key === "string" && isPrototypeKey(key)) throw new Error(`Cannot bind "${key}" in a scope: it names the prototype, not a variable`);
-      scope[key] = extra[key];
+      if (!Reflect.set(scope, key, extra[key])) throw new Error(`Cannot bind "${String(key)}" in a scope: it is read-only here`);
     }
   }
   return scope;
@@ -252,25 +253,24 @@ function writeContextValue(context: Context, varName: string, value: unknown): v
   const parts = splitPath(varName);
   const reserved = parts.find(isPrototypeKey);
   if (reserved !== undefined) throw new Error(`Cannot write "${varName}": "${reserved}" names the prototype, not a variable or its data`);
-  if (parts.length === 1) {
-    context[parts[0]] = value;
-    return;
-  }
-  // A frozen object along the path is read-only data (`$setVars` with
-  // `readonly`): said plainly, before the strict-mode TypeError would be.
-  const writable = (target: object, depth: number) => {
+  // Set `parts[depth]` on `target`, the object at the parts before it. A frozen
+  // object along the path is read-only data (`$setVars` with `readonly`), and a
+  // name or field held read-only (a request's `request`, `session` and
+  // `request.method`) can't be set anew, in its scope or any under it: both
+  // said plainly, before the strict-mode TypeError would be.
+  const assign = (target: object, depth: number, fresh: unknown) => {
     if (Object.isFrozen(target)) throw new Error(`Cannot write "${varName}": "${parts.slice(0, depth).join(".")}" is read-only data. Copy it into a variable to change it.`);
+    if (!Reflect.set(target, parts[depth], fresh)) throw new Error(`Cannot write "${varName}": "${parts.slice(0, depth + 1).join(".")}" is read-only`);
   };
   let target: Record<string, unknown> = context;
   for (let i = 0; i < parts.length - 1; i++) {
     if (target[parts[i]] && typeof target[parts[i]] === "object") {
       target = target[parts[i]] as Record<string, unknown>;
     } else {
-      writable(target, i);
-      target[parts[i]] = {};
-      target = target[parts[i]] as Record<string, unknown>;
+      const fresh = {};
+      assign(target, i, fresh);
+      target = fresh;
     }
   }
-  writable(target, parts.length - 1);
-  target[parts[parts.length - 1]] = value;
+  assign(target, parts.length - 1, value);
 }

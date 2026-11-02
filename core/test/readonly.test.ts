@@ -59,3 +59,26 @@ test("steps stored readonly still run", () => {
   resolve({ $setVars: { greet: [{ $concat: ["Hello, ", { $var: "name" }], $as: "line" }, { $var: "line" }] }, data: true, readonly: true }, ctx);
   assert.equal(resolve({ $runVar: "greet", params: { name: "Ada" } }, ctx), "Hello, Ada");
 });
+
+// What a server does to a request's scope: a name no step may bind anew, one
+// read through a getter, and a field of an object held read-only.
+test("a name a scope holds read-only can't be bound anew, in it or any scope under it", () => {
+  const root: Record<string, unknown> = {};
+  const request = { method: "POST", body: { a: 1 } };
+  Object.defineProperty(request, "method", { writable: false });
+  Object.defineProperty(root, "request", { value: request, writable: false, enumerable: true });
+  Object.defineProperty(root, "session", { get: () => ({ user: "ada" }), enumerable: true });
+
+  for (const name of ["request", "session"]) {
+    assert.throws(() => resolve({ $setVars: { [name]: {} } }, root), new RegExp(`Cannot write "${name}": "${name}" is read-only`));
+    assert.throws(() => resolve({ $foreach: [1], do: [{ $concat: ["x"], $as: name }] }, root), new RegExp(`"${name}" is read-only`));
+    assert.throws(() => resolve({ $map: [1], item: name, do: { $var: name } }, root), new RegExp(`Cannot bind "${name}" in a scope: it is read-only here`));
+    assert.throws(() => resolve({ $setVars: { [name]: {} }, $bubble: true }, root), /is read-only/);
+  }
+  assert.throws(() => resolve({ $setVars: { "request.method": "GET" } }, root), /Cannot write "request\.method": "request\.method" is read-only/);
+  assert.equal(request.method, "POST");
+
+  // The rest of the object is the steps' to change and add to.
+  resolve({ $setVars: { "request.body.a": 2, "request.locale": "en" } }, root);
+  assert.deepEqual(request, { method: "POST", body: { a: 2 }, locale: "en" });
+});

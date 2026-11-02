@@ -54,6 +54,24 @@ test("a session started in one resolver is not loaded by another", async () => {
   }
 });
 
+// A CLI has no request: its flow's first `$session` op gives the scope the flow
+// started in a session, which every later op in the flow uses.
+test("with no request, a session started in a step's own scope lasts for the flow", async () => {
+  const { resolver } = resolverWithCache();
+  try {
+    const cli: Record<string, unknown> = {};
+    await resolver({ $foreach: [1], do: [{ $session: { user: "ada" } }] }, cli);
+    assert.equal(await resolver({ $var: "session.user" }, cli), "ada");
+    await resolver({ $session: { role: "admin" } }, cli);
+    assert.deepEqual({ ...cli.session as object }, { user: "ada", role: "admin" }, "the same session, not a new one");
+    assert.throws(() => resolver({ $setVars: { session: {} } }, cli), /"session" is read-only/);
+    await resolver({ $session: "destroy" }, cli);
+    assert.equal(cli.session, undefined);
+  } finally {
+    resolver.destroy();
+  }
+});
+
 test("a __proto__ key in values set on a session stays a key, and never the session's prototype", async () => {
   const { resolver } = resolverWithCache();
   try {

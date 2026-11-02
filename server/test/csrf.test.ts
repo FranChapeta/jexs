@@ -19,6 +19,8 @@ const request = (method: string, cookies: Record<string, string>, extra: Record<
 /** The Set-Cookie lines a request queued, and the session token it was handed. */
 const cookiesOf = (ctx: Context) => ctx[COOKIES] as string[];
 const tokenOf = (ctx: Context) => String(ctx[CSRF_TOKEN] ?? "");
+/** The session id the last `sid` cookie a request queued carries. */
+const sidOf = (ctx: Context) => cookiesOf(ctx).map(c => c.match(/^sid=([^;]+)/)?.[1]).filter(Boolean).pop() ?? "";
 
 /** A resolver holding one started session, with its id and token. */
 async function started(): Promise<{ resolver: Resolver; context: Context; sid: string; token: string }> {
@@ -86,7 +88,7 @@ test("a login moves the session to a new id and token, keeping its data, in one 
   try {
     const login = request("POST", { sid }, { body: { _csrf: token } });
     await resolver({ $session: { user_id: 7 }, regenerate: true }, login);
-    const newSid = (login.request?.cookies ?? {}).sid;
+    const newSid = sidOf(login);
     assert.notEqual(newSid, sid);
     const data = await stored(context, newSid);
     assert.equal(data?.user_id, 7);
@@ -106,7 +108,7 @@ test("ops after a rotation in the same POST are not checked again", async () => 
   try {
     const login = request("POST", { sid }, { body: { _csrf: token } });
     await resolver([{ $session: {}, regenerate: true }, { $session: { user_id: 7 } }], login);
-    const newSid = (login.request?.cookies ?? {}).sid;
+    const newSid = sidOf(login);
     assert.equal((await stored(context, newSid))?.user_id, 7);
   } finally {
     resolver.destroy();
@@ -168,7 +170,8 @@ test("a POST with a session cookie the cache doesn't know is not checked", async
     const stale = request("POST", { sid: "gone" });
     await resolver([{ $session: "load" }, { $session: {}, regenerate: true }], stale);
     assert.ok(tokenOf(stale));
-    assert.notEqual(stale.request?.cookies?.sid, "gone");
+    assert.ok(sidOf(stale));
+    assert.notEqual(sidOf(stale), "gone");
   } finally {
     resolver.destroy();
   }
@@ -270,7 +273,7 @@ test("the CSRF token is handed to page scripts in a readable cookie", async () =
     assert.match(cookiesOf(first).find(c => c.startsWith("sid=")) ?? "", /HttpOnly/, "the session id stays out of reach");
 
     // A browser already holding the current token isn't sent it again.
-    const sid = first.request?.cookies?.sid ?? "";
+    const sid = sidOf(first);
     const again = request("GET", { sid, csrf: token });
     await resolver({ $session: "load" }, again);
     assert.equal(csrfCookie(again), undefined);
@@ -281,7 +284,7 @@ test("the CSRF token is handed to page scripts in a readable cookie", async () =
     assert.ok(csrfCookie(login)?.startsWith(`csrf=${tokenOf(login)};`));
     assert.notEqual(tokenOf(login), token);
 
-    const logout = request("POST", { sid: login.request?.cookies?.sid ?? "" }, { body: { _csrf: tokenOf(login) } });
+    const logout = request("POST", { sid: sidOf(login) }, { body: { _csrf: tokenOf(login) } });
     await resolver({ $session: "destroy" }, logout);
     assert.match(csrfCookie(logout) ?? "", /^csrf=;.*Max-Age=0/);
   } finally {

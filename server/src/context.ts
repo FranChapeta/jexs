@@ -1,4 +1,5 @@
 import type { Validator } from "./nodes/Database.js";
+import type { SessionState } from "./nodes/Session.js";
 
 // What the server keeps on a request's context for its nodes. Symbol keys, so a
 // template can't read them with `$var` and request data or `$as` can't forge
@@ -8,6 +9,8 @@ import type { Validator } from "./nodes/Database.js";
 export const COOKIES = Symbol("jexs.cookies");
 /** The innermost `$database: "validator"` around a step, whose `scope` holds the one around it. */
 export const DATABASE_VALIDATORS = Symbol("jexs.databaseValidators");
+/** The session a scope's `$session` ops keep, which its `session` reads. */
+export const SESSION = Symbol("jexs.session");
 /** The parts of the page `$defer` resolves in the background, streamed after it. */
 export const DEFERRED = Symbol("jexs.deferred");
 /** A part of the page `$defer` resolves in the background, and the id of its
@@ -39,5 +42,6 @@ declare module "@jexs/core" {
     /** The request's session data, once a `$session` step has loaded it. */
     session?: Record<string, unknown>;
     [DATABASE_VALIDATORS]?: Validator;
+    [SESSION]?: SessionState;
   }
 }
