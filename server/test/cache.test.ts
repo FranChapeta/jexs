@@ -54,6 +54,26 @@ test("a session started in one resolver is not loaded by another", async () => {
   }
 });
 
+test("a __proto__ key in values set on a session stays a key, and never the session's prototype", async () => {
+  const { resolver } = resolverWithCache();
+  try {
+    const setCookies: string[] = [];
+    await resolver({ $session: { user: "ada" } }, { request: { cookies: {} }, [COOKIES]: setCookies });
+    const sid = setCookies.join(";").match(/sid=([^;]+)/)?.[1];
+    const body = JSON.parse('{"__proto__": {"isAdmin": true}, "theme": "dark"}');
+    await resolver({ $session: { $var: "body" } }, { request: { cookies: { sid } }, body });
+
+    const later: Record<string, unknown> = { request: { cookies: { sid } } };
+    await resolver({ $session: "load" }, later);
+    const session = later.session as Record<string, unknown>;
+    assert.equal(session.theme, "dark");
+    assert.equal(session.isAdmin, undefined);
+    assert.equal(await resolver({ $var: "session.isAdmin" }, later), undefined);
+  } finally {
+    resolver.destroy();
+  }
+});
+
 // Named caches work like named database connections: the first one opened is
 // the default, and `connection` picks another; other nodes' ops pick one with
 // `cache`.

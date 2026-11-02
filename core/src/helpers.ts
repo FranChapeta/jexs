@@ -59,6 +59,16 @@ export function isPrototypeKey(key: string): boolean {
 }
 
 /**
+ * Sets `key` as an own property even when it is `__proto__`, which plain
+ * assignment would treat as the prototype. Data can hold that key (JSON parses
+ * it as an own key), so an op building an object from data sets keys with this.
+ */
+export function setOwn(target: Record<string, unknown>, key: string, value: unknown): void {
+  if (key === "__proto__") Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
+  else target[key] = value;
+}
+
+/**
  * Deep get a value from an object using dot notation
  * e.g., getNestedValue(obj, 'user.profile.name')
  */

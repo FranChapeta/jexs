@@ -380,7 +380,8 @@ function rowToWrite(context: Context, schema: TableJsonSchema, row: Record<strin
   const props = schema.properties;
   const result: Record<string, unknown> = {};
   for (const key of Object.keys(row)) {
-    if (key in props) result[key] = row[key];
+    // Own columns only, so constructor and __proto__ in the data are never columns.
+    if (Object.hasOwn(props, key)) result[key] = row[key];
   }
 
   for (const [colName, col] of Object.entries(props)) {
@@ -416,7 +417,7 @@ function changesToWrite(context: Context, tableName: string, data: Record<string
 
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(data)) {
-    if (!(key in props)) continue;
+    if (!Object.hasOwn(props, key)) continue;
     const col = props[key];
     if (col.autoIncrement || col.computed) continue;
     if (coercionType(col) === "timestamp") continue;

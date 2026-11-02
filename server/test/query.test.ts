@@ -92,6 +92,17 @@ test("null is written as NULL where the column takes it, and refused where it do
   await assert.rejects(resolve({ $queryUpdate: "nullables", ...conn, where: { title: "t" }, data: { title: null } }, {}), /Validation failed for "nullables"/);
 });
 
+test("a write keeps only the table's own columns: constructor and __proto__ in the data are not columns", async () => {
+  await resolve({ $tableSync: {
+    table: "plain",
+    properties: { id: { type: "integer", primaryKey: true, autoIncrement: true }, name: { type: "string" } },
+  }, ...conn }, {});
+  const row = JSON.parse('{"name": "a", "constructor": "x", "__proto__": {"name": "b", "admin": 1}}');
+  await resolve({ $queryInsert: "plain", ...conn, data: { $var: "row" } }, { row });
+  await resolve({ $queryUpdate: "plain", ...conn, where: { name: "a" }, data: { $var: "row" } }, { row });
+  assert.deepEqual(await resolve({ $querySelect: "plain", ...conn, columns: ["name"] }, {}), [{ name: "a" }]);
+});
+
 test("every condition in a where applies: each operator on a column, and or/and beside other columns", async () => {
   const names = async (where: unknown) =>
     ((await resolve({ $querySelect: "people", ...conn, where, orderBy: { name: "asc" } }, {})) as Array<{ name: string }>)

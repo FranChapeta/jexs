@@ -1,5 +1,5 @@
 import { randomUUID, randomBytes } from "crypto";
-import { CSRF_TOKEN, Node, Context, NodeValue, resolveAll, createHttpError, isObject } from "@jexs/core";
+import { CSRF_TOKEN, Node, Context, NodeValue, resolveAll, createHttpError, isObject, setOwn } from "@jexs/core";
 import { COOKIES } from "../context.js";
 import { isProduction } from "../env.js";
 import { CacheNode, optionalName } from "./Cache.js";
@@ -248,7 +248,7 @@ async function setSessionValues(
   const stored = await readSession(context, cache);
   if (!stored) return (await initSession(context, cache, { ...values })).data;
 
-  Object.assign(stored.data, values);
+  for (const key of Object.keys(values)) setOwn(stored.data, key, values[key]);
   await cache.set(PREFIX + stored.id, stored, TTL);
   return useSession(context, cache, stored);
 }

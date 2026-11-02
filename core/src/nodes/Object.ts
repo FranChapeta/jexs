@@ -1,6 +1,6 @@
 import { Node, Context, childContext } from "./Node.js";
 import { andThen, resolve, resolveAll, runSteps } from "../Resolver.js";
-import { getNestedValue, isObject } from "../helpers.js";
+import { getNestedValue, isObject, setOwn } from "../helpers.js";
 import type { JexsNodeSchema } from "../schema.js";
 
 export class ObjectNode extends Node {
@@ -143,7 +143,7 @@ export class ObjectNode extends Node {
       const result: Record<string, unknown> = {};
       for (const k of this.toArray(a[1])) {
         const key = this.toString(k);
-        if (key in obj) result[key] = obj[key];
+        if (Object.hasOwn(obj, key)) setOwn(result, key, obj[key]);
       }
       return result;
     });
@@ -155,7 +155,7 @@ export class ObjectNode extends Node {
       const obj = this.isObject(a[0]) ? a[0] : {};
       const drop = new Set(this.toArray(a[1]).map(k => this.toString(k)));
       const result: Record<string, unknown> = {};
-      for (const key of Object.keys(obj)) if (!drop.has(key)) result[key] = obj[key];
+      for (const key of Object.keys(obj)) if (!drop.has(key)) setOwn(result, key, obj[key]);
       return result;
     });
   }
@@ -180,7 +180,7 @@ export class ObjectNode extends Node {
           const key = keys[idx];
           const item = record[key];
           const itemCtx = childContext(context, { [itemName]: item, [keyName]: key });
-          return andThen(runSteps(template, itemCtx), v => { result[key] = v; return next(); });
+          return andThen(runSteps(template, itemCtx), v => { setOwn(result, key, v); return next(); });
         }
         return next();
       });
@@ -191,8 +191,8 @@ export class ObjectNode extends Node {
     return resolve(def.$fromEntries, c, value => {
       const result: Record<string, unknown> = {};
       for (const e of this.toArray(value)) {
-        if (this.isObject(e) && "key" in e) result[this.toString(e.key)] = e.value;
-        else if (Array.isArray(e) && e.length === 2) result[this.toString(e[0])] = e[1];
+        if (this.isObject(e) && "key" in e) setOwn(result, this.toString(e.key), e.value);
+        else if (Array.isArray(e) && e.length === 2) setOwn(result, this.toString(e[0]), e[1]);
         else throw new Error(`$fromEntries takes { key, value } or [key, value] entries, got ${JSON.stringify(e)}`);
       }
       return result;
@@ -207,7 +207,7 @@ export class ObjectNode extends Node {
       const result: Record<string, unknown[]> = {};
       for (const item of arr) {
         const groupKey = this.isObject(item) ? this.toString(getNestedValue(item, key)) : "";
-        if (!result[groupKey]) result[groupKey] = [];
+        if (!Object.hasOwn(result, groupKey)) setOwn(result, groupKey, []);
         result[groupKey].push(item);
       }
       return result;
@@ -219,7 +219,7 @@ export class ObjectNode extends Node {
       const result: Record<string, unknown> = {};
       for (const obj of this.toArray(args)) {
         if (!this.isObject(obj)) throw new Error("merge takes objects: to concatenate arrays, use `flatten` with `depth: 1`");
-        Object.assign(result, obj);
+        for (const key of Object.keys(obj)) setOwn(result, key, obj[key]);
       }
       return result;
     });
@@ -241,13 +241,13 @@ export class ObjectNode extends Node {
 function mergeInto(target: Record<string, unknown>, source: Record<string, unknown>): void {
   for (const key of Object.keys(source)) {
     const sv = source[key];
-    const tv = target[key];
+    const tv = Object.hasOwn(target, key) ? target[key] : undefined;
     if (isObject(tv) && isObject(sv)) {
       const merged = { ...tv };
       mergeInto(merged, sv);
-      target[key] = merged;
+      setOwn(target, key, merged);
     } else {
-      target[key] = sv;
+      setOwn(target, key, sv);
     }
   }
 }
