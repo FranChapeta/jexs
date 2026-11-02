@@ -1,12 +1,9 @@
 import { Knex as KnexType } from "knex";
-import { Node, Context, NodeValue, boundaryContext, isObject, isOwnedKey, resolveFields, runSteps } from "@jexs/core";
-import { DatabaseNode } from "./Database.js";
+import { Node, Context, NodeValue, freezeData, isObject, isOwnedKey, resolveFields } from "@jexs/core";
+import { DatabaseNode, runValidators, validatorsFor, type Validator } from "./Database.js";
 import { COMPUTE_FNS, DatabaseTableNode, type ColumnSchema, type TableJsonSchema } from "./DatabaseTable.js";
 import { requireSchemaNode, validate } from "./Schema.js";
 import type { JexsMethodSchema, JexsNodeSchema, JexsOutput, JexsPropertySchema } from "@jexs/core";
-
-/** Set on the context a validator runs in, so its own queries skip validation. A symbol, so no template can read or set it. */
-const VALIDATING = Symbol("validating");
 
 /**
  * Valid SQL value types that Knex accepts
@@ -154,7 +151,6 @@ function op(output: JexsOutput, markdown: string, example: string, clauses: stri
 export class DatabaseQueryNode extends Node {
   static commonSiblings: Record<string, JexsPropertySchema> = {
     connection: { type: "string", description: "Named database connection (default if omitted)." },
-    system: { type: "boolean", description: "For the app's own queries, which have no request to authorize: skip the connection's validators, and allow the database's own catalog (`information_schema`, `pg_catalog`, `sqlite_master`, ...), which other queries are refused." },
   };
 
   static schemaDefs: Record<string, Record<string, unknown>> = {
@@ -293,9 +289,8 @@ function isCatalog(name: string): boolean {
 
 /**
  * Run a query op: resolve the step into its query (the op's value as `table`,
- * beside its clauses, without the `connection` and `system` settings), refuse
- * the catalog and have the connection's validators check it unless the step is
- * `system`, then `run` it.
+ * beside its clauses, without the `connection` setting), and under a validator
+ * refuse the catalog and have the validators check it, then `run` it.
  */
 async function runQuery(
   type: QueryDefinition["type"], def: Record<string, unknown>, context: Context,
@@ -309,52 +304,41 @@ async function runQuery(
   if (typeof table !== "string") throw new Error(`${op} takes a table name, got ${typeof table}`);
   const fields: Record<string, unknown> = { type };
   for (const [k, v] of Object.entries(r)) {
-    if (!isOwnedKey(k) && k !== "connection" && k !== "system") fields[k] = v;
+    if (!isOwnedKey(k) && k !== "connection") fields[k] = v;
   }
   fields.table = table;
   const query = fields as unknown as QueryDefinition;
   // Omitted `connection` falls back to whichever opened first; getKnex owns
   // that chain, so this does not repeat it.
   const knex = DatabaseNode.getKnex(context, r.connection);
-  if (!r.system) {
+  const validators = validatorsFor(context, r.connection);
+  if (validators.length > 0) {
     const joined = [query.innerJoin, query.leftJoin, query.rightJoin].flatMap(joins => joins ?? []).map(join => join.table);
     for (const name of [table, ...joined]) {
       if (typeof name !== "string") throw new Error(`${op}: a join's \`table\` must be a table name`);
-      if (isCatalog(name)) throw new Error(`${op}: "${name}" is the database's own catalog, which only a step with \`system: true\` may query`);
+      if (isCatalog(name)) throw new Error(`${op}: "${name}" is the database's own catalog, which no step under a validator may query`);
     }
-    await runValidators(query, r.connection, context);
+    await authorize(query, validators, context);
   }
   return run(knex, query);
 }
 
 /**
- * Run the validators before a query executes: the connection's `rows`, then
- * the table's own `validator`, so a table can add checks but never lift the
- * connection's. They see the table document as `schema`, the operation as
- * `operation` and the query itself as `query`, which they may narrow (e.g. add
- * an owner to `where`) since this is the object that runs. A validator refuses
- * by throwing (`{ "$error": 403 }`).
+ * Run the validators before a query executes: each one's `rows`, then the
+ * table's own `validator`, so a table can add checks but never lift the
+ * connection's. They see the table document as `schema`, read-only as it is
+ * registered, the operation as `operation` and the query itself as `query`,
+ * which they may narrow (e.g. add an owner to `where`) since this is the object
+ * that runs. A validator refuses by throwing (`{ "$error": 403 }`).
  */
-async function runValidators(query: QueryDefinition, connection: unknown, context: Context): Promise<void> {
-  if (Reflect.get(context, VALIDATING) === true) return;
+async function authorize(query: QueryDefinition, validators: readonly Validator[], context: Context): Promise<void> {
+  const registered = DatabaseTableNode.get(context, query.table);
+  if (registered?.validator == null && !validators.some(validator => validator.rows != null)) return;
   const operation = query.type === "count" ? "select" : query.type;
-  const global = DatabaseNode.validators(context, connection).rows;
   // A stand-in for a table with no registered document, so the connection's
   // validator still sees the table's name.
-  const schema: TableJsonSchema = DatabaseTableNode.get(context, query.table) ?? { table: query.table, properties: {} };
-  const own = schema.validator;
-  if (global == null && own == null) return;
-  // A boundary, not a child scope: a validator reads the caller's variables,
-  // refuses or narrows the query, and never writes the caller's variables.
-  // `query` is the object that runs, so a dot-path write narrows it; `schema` is
-  // a copy, so the registered document stays as registered. Nested scopes read
-  // `VALIDATING`, so a query run inside skips validation.
-  const validatorContext = boundaryContext(context, {
-    [VALIDATING]: true, schema: structuredClone(schema), query, operation,
-  });
-  for (const steps of [global, own]) {
-    if (steps != null) await runSteps(steps, validatorContext);
-  }
+  const schema = registered ?? freezeData<TableJsonSchema>({ table: query.table, properties: {} });
+  await runValidators(validators, "rows", context, { schema, query, operation }, schema.validator);
 }
 
 // ── The rows a write sends, prepared by the table's document ─────────────────

@@ -1,6 +1,6 @@
 import { Knex as KnexType } from "knex";
-import { Node, Context, NodeValue, boundaryContext, isObject, loggerFor, resolveAll, resolveFields, runSteps, type Logger } from "@jexs/core";
-import { DatabaseNode } from "./Database.js";
+import { Node, Context, NodeValue, freezeData, isObject, loggerFor, resolve, resolveAll, resolveFields, type Logger } from "@jexs/core";
+import { DatabaseNode, runValidators, validatorsFor } from "./Database.js";
 import { sha256 } from "./Crypto.js";
 import { SchemaNode, isTableDocument, requireSchemaNode, schemaArg, tableId } from "./Schema.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "@jexs/core";
@@ -90,8 +90,8 @@ export interface TableJsonSchema {
     charset?: string;
     collate?: string;
   };
-  /** Steps run before each query on this table, after the connection's `rows`
-   *  (see DatabaseQuery's `runValidators`). */
+  /** Steps run before each query on this table under a validator, after its
+   *  `rows` (see DatabaseQuery's `runValidators`). */
   validator?: unknown;
   [key: string]: unknown;
 }
@@ -143,7 +143,7 @@ export class DatabaseTableNode extends Node {
           description: "MySQL table options; other databases ignore them.",
           properties: { engine: { type: "string" }, charset: { type: "string" }, collate: { type: "string" } },
         },
-        validator: { $ref: "#/$defs/steps", description: "Steps run before each query on this table, after the connection's `rows` validator, with `operation`, `schema` and `query`." },
+        validator: { $ref: "#/$defs/steps", description: "Steps run before each query on this table under a `$database` validator, after its `rows`, with `operation`, `schema` and `query`. They run in the scope of the outermost validator on the connection." },
       },
     },
     _tableColumns: { type: "object", additionalProperties: { $ref: "#/$defs/_tableColumn" } },
@@ -194,7 +194,6 @@ export class DatabaseTableNode extends Node {
 
   static commonSiblings: Record<string, JexsPropertySchema> = {
     connection: { type: "string", description: "Named database connection (default if omitted)." },
-    system: { type: "boolean", description: "Skip the connection's `structure` validator: for the app's own changes, such as building its tables at startup." },
   };
 
   static schema: JexsNodeSchema = {
@@ -257,8 +256,8 @@ export class DatabaseTableNode extends Node {
   };
 
   async tableCreate(def: Record<string, unknown>, context: Context): Promise<string> {
-    const [connection, system] = await resolveAll([def.connection ?? null, def.system ?? null], context, values => values);
-    const [schema] = await documentsOf(def.$tableCreate, { connection, system }, context, "create");
+    const connection = await resolve(def.connection ?? null, context, name => name);
+    const [schema] = await documentsOf(def.$tableCreate, connection, context, "create");
     const knex = DatabaseNode.getKnex(context, connection);
     if (await knex.schema.hasTable(schema.table)) {
       throw new Error(`$tableCreate: table "${schema.table}" already exists; \`$tableSync\` adds what it lacks`);
@@ -270,8 +269,8 @@ export class DatabaseTableNode extends Node {
 
   // A failure throws, so a startup that cannot build its tables stops there.
   async tableSync(def: Record<string, unknown>, context: Context): Promise<string[]> {
-    const [connection, system] = await resolveAll([def.connection ?? null, def.system ?? null], context, values => values);
-    const schemas = await documentsOf(def.$tableSync, { connection, system }, context, "sync");
+    const connection = await resolve(def.connection ?? null, context, name => name);
+    const schemas = await documentsOf(def.$tableSync, connection, context, "sync");
     const knex = DatabaseNode.getKnex(context, connection);
     const created: string[] = [];
     for (const schema of schemas) {
@@ -301,7 +300,7 @@ export class DatabaseTableNode extends Node {
       for (const key of ["drop", "dropIndexes", "required"] as const) {
         if (r[key] != null && !Array.isArray(r[key])) throw new Error(`$tableAlter: \`${key}\` must be an array of names`);
       }
-      await authorize(context, r, "alter", tableName, { changes });
+      await authorize(context, r.connection, "alter", tableName, { changes });
 
       const required = new Set((r.required as string[] | undefined) ?? []);
       const { add, rename, change, drop, addIndexes, dropIndexes } = changes as {
@@ -324,8 +323,8 @@ export class DatabaseTableNode extends Node {
   }
 
   tableRename(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def.$tableRename, def.to, def.connection ?? null, def.system ?? null], context, async ([table, to, connection, system]) => {
-      await authorize(context, { connection, system }, "rename", String(table), { changes: { to } });
+    return resolveAll([def.$tableRename, def.to, def.connection ?? null], context, async ([table, to, connection]) => {
+      await authorize(context, connection, "rename", String(table), { changes: { to } });
       await DatabaseNode.getKnex(context, connection).schema.renameTable(String(table), String(to));
       loggerFor(context).info(`[table] Renamed table ${String(table)} to ${String(to)}`);
       return String(to);
@@ -333,8 +332,8 @@ export class DatabaseTableNode extends Node {
   }
 
   tableDrop(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def.$tableDrop, def.connection ?? null, def.system ?? null], context, async ([table, connection, system]) => {
-      await authorize(context, { connection, system }, "drop", String(table));
+    return resolveAll([def.$tableDrop, def.connection ?? null], context, async ([table, connection]) => {
+      await authorize(context, connection, "drop", String(table));
       await DatabaseNode.getKnex(context, connection).schema.dropTableIfExists(String(table));
       loggerFor(context).info(`[table] Dropped table: ${String(table)}`);
       return null;
@@ -349,46 +348,35 @@ export class DatabaseTableNode extends Node {
   }
 }
 
-/** A table step's resolved `connection` and `system`. */
-interface Settings {
-  connection?: unknown;
-  system?: unknown;
-}
-
 /**
- * Run the connection's `structure` validator, if it is set and the step is not
- * `system`, before a change to `table`. It sees the table's document as `schema`
- * (a copy, so the registered one stays as registered) unless `extra` gives the
- * one being applied, and refuses by throwing.
+ * Run the `structure` steps of the validators around the step, if any, before
+ * a change to `table` on `connection`. They see the table's document as
+ * `schema`, read-only: the registered one, or a frozen copy of the one `extra`
+ * gives to apply, which is the caller's own. They refuse by throwing.
  */
 async function authorize(
-  context: Context, step: Settings, operation: string, table: string,
+  context: Context, connection: unknown, operation: string, table: string,
   extra: { schema?: TableJsonSchema; changes?: Record<string, unknown> } = {},
 ): Promise<void> {
-  if (step.system === true) return;
-  const steps = DatabaseNode.validators(context, step.connection).structure;
-  if (steps == null) return;
-  const schema = extra.schema ?? DatabaseTableNode.get(context, table);
-  // A boundary, not a child scope: a validator reads the caller's variables,
-  // refuses, and never writes the caller's variables.
-  await runSteps(steps, boundaryContext(context, {
-    operation, table, schema: schema && structuredClone(schema), changes: extra.changes,
-  }));
+  const validators = validatorsFor(context, connection);
+  if (!validators.some(validator => validator.structure != null)) return;
+  const schema = extra.schema ? freezeData(structuredClone(extra.schema)) : DatabaseTableNode.get(context, table);
+  await runValidators(validators, "structure", context, { operation, table, schema, changes: extra.changes });
 }
 
 /**
  * The table documents a `$tableCreate` or `$tableSync` names in its value, each
- * authorized by the connection's `structure` validator: a document, which is
- * registered once authorized; a registered table's name; or, for `sync` only,
- * `"*"` for every registered table.
+ * authorized by the `structure` validators around the step: a document, which
+ * is registered once authorized; a registered table's name; or, for `sync`
+ * only, `"*"` for every registered table.
  */
-async function documentsOf(value: unknown, step: Settings, context: Context, operation: "create" | "sync"): Promise<TableJsonSchema[]> {
+async function documentsOf(value: unknown, connection: unknown, context: Context, operation: "create" | "sync"): Promise<TableJsonSchema[]> {
   const op = operation === "create" ? "$tableCreate" : "$tableSync";
   const schema = await schemaArg(value, context);
   const schemas = requireSchemaNode(context);
   if (isObject(schema)) {
     if (!isTableDocument(schema)) throw new Error("A table document needs a `table` name and `properties`.");
-    await authorize(context, step, operation, schema.table, { schema: schema as TableJsonSchema });
+    await authorize(context, connection, operation, schema.table, { schema: schema as TableJsonSchema });
     SchemaNode.register(schemas, schema);
     return [DatabaseTableNode.get(context, schema.table)!];
   }
@@ -402,7 +390,7 @@ async function documentsOf(value: unknown, step: Settings, context: Context, ope
   } else {
     throw new Error(`${op} takes a table document or a registered table's name${operation === "sync" ? ", or \"*\" for every registered one" : ""}`);
   }
-  for (const doc of documents) await authorize(context, step, operation, doc.table);
+  for (const doc of documents) await authorize(context, connection, operation, doc.table);
   return documents;
 }
 

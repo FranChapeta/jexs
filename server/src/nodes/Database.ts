@@ -1,13 +1,14 @@
 import Knex, { Knex as KnexType } from "knex";
 import fs from "node:fs";
 import path from "node:path";
-import { Node, Context, NodeValue, childContext, loggerFor, resolve, resolveAll, resolveFields, resolverFor, runSteps } from "@jexs/core";
+import { Node, Context, NodeValue, boundaryContext, childContext, loggerFor, resolve, resolveAll, resolveFields, resolverFor, runSteps } from "@jexs/core";
 import type { JexsNodeSchema, JexsPropertySchema } from "@jexs/core";
 import {
   mergeTls, parseDbUrl, parseTls, TLS_STRINGS,
   DATABASE_TYPES, HOSTED_DATABASE_TYPES, isDatabaseType,
   type DatabaseConfig, type DatabaseType,
 } from "../connection.js";
+import { DATABASE_VALIDATORS } from "../context.js";
 
 /**
  * What an open connection remembers about itself — deliberately NOT the
@@ -36,23 +37,27 @@ const DEFAULT_HOST = "localhost";
 const DEFAULT_PORT = { mysql: 3306, pg: 5432 } as const;
 const DEFAULT_USER = { mysql: "root", pg: "postgres" } as const;
 
-/** The steps `$database: "validator"` set on a connection: `rows` authorize each
- *  query op, `structure` each change to a table's structure. */
-export interface Validators {
-  rows?: unknown;
-  structure?: unknown;
+/** A `$database: "validator"` step around the steps it checks: its connection,
+ *  its `rows` and `structure` steps as written, and the scope it ran in, where
+ *  they run and where the validator around it is found. */
+export interface Validator {
+  connection: string;
+  rows: unknown;
+  structure: unknown;
+  scope: Context;
 }
 
 // Internal connection wrapper
 interface DatabaseConnection {
   knex: KnexType;
   info: ConnectionInfo;
-  validators: Validators;
 }
 
 /** The transactions open around a step, by connection name. A symbol, so no
  *  template can read or set it; `childContext` carries it into nested steps. */
 const TRANSACTIONS = Symbol("transactions");
+
+const NO_VALIDATORS: readonly Validator[] = [];
 
 /** Reduce a config to where it points, as dialled (defaults filled in), dropping the secrets. */
 function describe(config: DatabaseConfig): ConnectionInfo {
@@ -134,7 +139,7 @@ export class DatabaseNode extends Node {
       variants: {
         connect: {
           output: { $ref: "#/$defs/_dbConnection" },
-          markdownDescription: "Opens (and registers) a connection, from a `url` connection string or from discrete `host`/`port`/`user` properties. Connecting under a name already open closes that connection and replaces it; its validators stay.",
+          markdownDescription: "Opens (and registers) a connection, from a `url` connection string or from discrete `host`/`port`/`user` properties. Connecting under a name already open closes that connection and replaces it.",
           outputDescription: "Where the connection points, under the names `connect` takes, defaults filled in. Carries no credentials.",
           examples: [
             "{ \"$database\": \"connect\", \"connection\": \"main\", \"url\": { \"$var\": \"env.DATABASE_URL\" } }",
@@ -223,14 +228,15 @@ export class DatabaseNode extends Node {
           },
         },
         validator: {
-          output: "null",
-          markdownDescription: "Sets the connection's validators: steps that authorize what reaches it, refusing with `{ \"$error\": 403 }`. `rows` run before every query op on every table (`$querySelect`, `$queryInsert`, ...); they see `operation`, the table's document as `schema`, and `query` (`table`, `where`, `data`, ...), which they may narrow. A table document's own `validator` runs after them, never instead. `structure` runs before every `$tableCreate`, `$tableSync` (once per table), `$tableAlter`, `$tableRename` and `$tableDrop`; it sees `operation`, `table`, the table's document as `schema` (the one being applied for `create` and `sync`, else the registered one, if any) and, for `alter` and `rename`, what they change as `changes`. Steps with `system: true` skip both. A validator left out stays as it was, and an empty list clears it; both last until the connection closes.",
+          outputDescription: "The last step's value.",
+          markdownDescription: "Runs `do` with validators on the connection: steps that authorize what `do` sends it, at any depth, refusing with `{ \"$error\": 403 }`. Steps outside every validator, such as building tables and seeding at startup, are not checked. `rows` run before every query op on every table (`$querySelect`, `$queryInsert`, ...); they see `operation`, the table's document as `schema` (read-only), and `query` (`table`, `where`, `data`, ...), which they may narrow. A table document's own `validator` runs after them, never instead, and only under a validator. `structure` runs before every `$tableCreate`, `$tableSync` (once per table), `$tableAlter`, `$tableRename` and `$tableDrop`; it sees `operation`, `table`, the table's document as `schema`, read-only (the one being applied for `create` and `sync`, else the registered one, if any) and, for `alter` and `rename`, what they change as `changes`.\n\nValidators run in the scope this step runs in, not in the scope of the step they check, and `do` runs in a scope of its own whose `$bubble` stops there, so what `do` sets never reaches them. A validator inside another adds its checks after the outer one's and never lifts them, and the queries its own steps make are checked by the outer one. Under a validator, the database's own catalog (`information_schema`, `pg_catalog`, `sqlite_master`, ...) is refused.",
           examples: [
-            "{ \"$database\": \"validator\", \"rows\": [{ \"$if\": { \"$not\": { \"$var\": \"session.user\" } }, \"then\": { \"$error\": 401 } }] }",
+            "{ \"$database\": \"validator\", \"rows\": [{ \"$if\": { \"$not\": { \"$var\": \"session.user\" } }, \"then\": { \"$error\": 401 } }], \"do\": [{ \"$routes\": { \"$var\": \"routes\" } }] }",
           ],
           siblings: {
             rows: { steps: true, description: "Steps run before each query op on the connection." },
             structure: { steps: true, description: "Steps run before each change to a table's structure on the connection." },
+            do: { steps: true, required: true, description: "Steps whose queries and table changes on the connection the validators check." },
           },
         },
       },
@@ -296,11 +302,39 @@ export class DatabaseNode extends Node {
     return knexIn(databaseFor(context), context, name);
   }
 
-  /** The validators set on the connection a step names in `name`, for the
-   *  query and table nodes to run. */
-  static validators(context: Context, name?: unknown): Validators {
-    return requireConnection(databaseFor(context), name).validators;
+}
+
+/** The validators around a step on the connection it names in `name`,
+ *  outermost first, found from the innermost outwards; none outside every
+ *  validator. */
+export function validatorsFor(context: Context, name?: unknown): readonly Validator[] {
+  let validator = context[DATABASE_VALIDATORS];
+  if (validator === undefined) return NO_VALIDATORS;
+  const connection = connectionName(databaseFor(context), name);
+  const found: Validator[] = [];
+  for (; validator !== undefined; validator = validator.scope[DATABASE_VALIDATORS]) {
+    if (validator.connection === connection) found.unshift(validator);
   }
+  return found;
+}
+
+/**
+ * Run each validator's `kind` steps, outermost first, then `own` (a table
+ * document's `validator`) in the outermost one's scope. Each runs behind a
+ * boundary in the scope its validator ran in, seeing `vars`, so nothing the
+ * checked step's scope holds reaches it and its writes stay its own. It joins
+ * the transactions open around the checked step, whose connection a query of
+ * its own would otherwise wait on.
+ */
+export async function runValidators(
+  validators: readonly Validator[], kind: "rows" | "structure", context: Context,
+  vars: Record<string, unknown>, own?: unknown,
+): Promise<void> {
+  const extra = { ...vars, [TRANSACTIONS]: transactionsIn(context) };
+  for (const validator of validators) {
+    if (validator[kind] != null) await runSteps(validator[kind], boundaryContext(validator.scope, extra));
+  }
+  if (own != null && validators.length > 0) await runSteps(own, boundaryContext(validators[0].scope, extra));
 }
 
 /** The names of a database's tables, sorted. */
@@ -327,15 +361,14 @@ function transactionsIn(context: Context): Map<string, KnexType.Transaction> {
 }
 
 /**
- * Open `name`, replacing any connection already under it but keeping its
- * validators. The new one opens first, so a config that fails leaves the old
- * connection as it was.
+ * Open `name`, replacing any connection already under it. The new one opens
+ * first, so a config that fails leaves the old connection as it was.
  */
 function openConnection(self: DatabaseNode, name: string, config: DatabaseConfig): void {
   const knex = createConnection(config);
   const old = self.connections.get(name);
   // `config` goes no further than this call: knex has what it needs to dial.
-  self.connections.set(name, { knex, info: describe(config), validators: old?.validators ?? {} });
+  self.connections.set(name, { knex, info: describe(config) });
   if (old) void Promise.resolve(old.knex.destroy()).catch(() => { /* best-effort */ });
 }
 
@@ -635,17 +668,15 @@ function doTransaction(self: DatabaseNode, def: Record<string, unknown>, context
   });
 }
 
-/** Set the connection's validators, kept as written to run later; one the step
- *  leaves out stays as it was. */
+/** Run `do` under the step's validator, kept as written to run in this scope,
+ *  after those of any validator around it, which this scope holds. */
 function doValidator(self: DatabaseNode, def: Record<string, unknown>, context: Context): unknown {
-  if (def.rows === undefined && def.structure === undefined) {
-    throw new Error("$database validator needs `rows` or `structure` steps");
-  }
+  if (def.do === undefined) throw new Error("$database validator needs `do` steps");
   return resolve(def.connection ?? null, context, nameRaw => {
-    const { validators } = requireConnection(self, nameRaw);
-    if (def.rows !== undefined) validators.rows = def.rows;
-    if (def.structure !== undefined) validators.structure = def.structure;
-    return null;
+    const connection = connectionName(self, nameRaw);
+    requireConnection(self, connection);
+    const validator: Validator = { connection, rows: def.rows, structure: def.structure, scope: context };
+    return runSteps(def.do, boundaryContext(context, { [DATABASE_VALIDATORS]: validator }));
   });
 }
 

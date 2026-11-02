@@ -3,7 +3,7 @@ import path from "path";
 import AjvModule from "ajv/dist/2020.js";
 import addFormatsModule from "ajv-formats";
 import type { ValidateFunction, ErrorObject } from "ajv";
-import { Node, Context, NodeValue, isObject, isStep, resolve, resolveAll, resolverFor } from "@jexs/core";
+import { Node, Context, NodeValue, freezeData, isObject, isStep, resolve, resolveAll, resolverFor } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
 // ajv/dist/2020 and ajv-formats are CommonJS; under NodeNext the class/plugin
@@ -139,8 +139,9 @@ export class SchemaNode extends Node {
   /** Inline schemas compiled in `ajv`, by their JSON text, least recently used first. */
   readonly compiled = new Map<string, ValidateFunction>();
 
-  /** Registered documents by id, as written. Ajv keeps its own compiled copies,
-   *  but cannot list them. */
+  /** Registered documents by id, as written and frozen, so the nodes that read
+   *  them (a validator's `schema` among them) can hand them out without a copy.
+   *  Ajv keeps its own compiled copies, but cannot list them. */
   readonly documents = new Map<string, Record<string, unknown>>();
 
   private root: string;
@@ -204,7 +205,7 @@ export class SchemaNode extends Node {
       node.ajv.removeSchema(id);
       throw error;
     }
-    node.documents.set(id, own);
+    node.documents.set(id, freezeData(own));
     return id;
   }
 

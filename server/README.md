@@ -23,7 +23,7 @@ npm install @jexs/server @jexs/core
 | `ServerNode` | `listen` | Start an HTTP listener per `listen` step (port `0` takes any free one; the step returns the port); can auto-serve the `@jexs/client` bundle |
 | `RouterNode` | `routes` | Path-based routing with `*` / `**` segment capture |
 | `FileNode` | `file`, `fileExists`, `fileStat`, `fileDelete`, `directory`, `directoryCreate`, `disk` | Load JSON files as sub-templates, read/write/copy/move/delete files, list and create directories, report disk usage |
-| `DatabaseNode` | `database` | Named connections (SQLite, MySQL, PostgreSQL), picked with `connection`: `connect`, `close`, `raw`, `info`, the `tables` it has, steps run in a `transaction`, and the `validator` every query and table change on it passes |
+| `DatabaseNode` | `database` | Named connections (SQLite, MySQL, PostgreSQL), picked with `connection`: `connect`, `close`, `raw`, `info`, the `tables` it has, steps run in a `transaction`, and steps run under a `validator` that every query and table change they make on it passes |
 | `DatabaseTableNode` | `tableCreate`, `tableSync`, `tableAlter`, `tableRename`, `tableDrop` | Tables, from table documents: create them, make the database match (`tableSync`), alter columns and indexes |
 | `DatabaseQueryNode` | `querySelect`, `queryInsert`, `queryUpsert`, `queryUpdate`, `queryDelete`, `queryCount` | Rows, each op valued by its table |
 | `SchemaNode` | `schema` | JSON Schema: `register` schemas (a table document as `table/<name>`) that route bodies, rows and other schemas can `$ref`, `unregister`, `list`, `validate` |

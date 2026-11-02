@@ -131,90 +131,126 @@ test("update needs a where, and an empty one reaches every row", async () => {
   assert.equal(await resolve({ $queryUpdate: "people", ...conn, where: {}, increment: { id: 0 } }, {}), 2);
 });
 
-test("validators authorize every row query: the connection's first, then the table's own", async () => {
+test("validators authorize every row query in their `do`: their own first, then the table's", async () => {
   // `seen` is shared by reference with each validator's context, so their writes show here.
   const context = { seen: { global: "", table: "" } };
   const table = [{ $setVars: { "seen.table": { $concat: [{ $var: "operation" }, ":", { $var: "query.table" }] } } }];
-  await resolve({ $database: "validator", ...conn, rows: [
+  const rows = [
     { $setVars: { "seen.global": { $concat: [{ $var: "operation" }, ":", { $var: "schema.table" }] } } },
     { $if: { $eq: [{ $var: "operation" }, "delete"] }, then: { $error: 403, message: "no deletes" } },
     // Narrow every select on notes to one author, the way a row-level policy would.
     { $if: { $and: [{ $eq: [{ $var: "operation" }, "select"] }, { $eq: [{ $var: "query.table" }, "notes"] }] },
       then: { $setVars: { "query.where": { author: "ada" } } } },
-  ] }, context);
-  try {
-    // Structure is the app's own setup, so no validator runs for it.
-    await resolve({ $tableCreate: {
-      table: "notes", validator: table,
-      properties: { id: { type: "integer", primaryKey: true, autoIncrement: true }, author: { type: "string" } },
-    }, ...conn }, context);
-    assert.deepEqual(context.seen, { global: "", table: "" });
-    assert.deepEqual(DatabaseTableNode.get(registry, "notes")?.validator, table);
+  ];
+  const validated =(step: unknown) => resolve({ $database: "validator", ...conn, rows, do: [step] }, context);
 
-    await resolve({ $queryInsert: "notes", ...conn, data: [{ author: "ada" }, { author: "bob" }] }, context);
-    assert.deepEqual(context.seen, { global: "insert:notes", table: "insert:notes" });
+  // Structure is the app's own setup, so no validator runs for it.
+  await resolve({ $tableCreate: {
+    table: "notes", validator: table,
+    properties: { id: { type: "integer", primaryKey: true, autoIncrement: true }, author: { type: "string" } },
+  }, ...conn }, context);
+  assert.deepEqual(DatabaseTableNode.get(registry, "notes")?.validator, table);
 
-    const rows = await resolve({ $querySelect: "notes", ...conn }, context);
-    assert.deepEqual((rows as Array<{ author: string }>).map(r => r.author), ["ada"]);
+  await validated({ $queryInsert: "notes", ...conn, data: [{ author: "ada" }, { author: "bob" }] });
+  assert.deepEqual(context.seen, { global: "insert:notes", table: "insert:notes" });
 
-    await assert.rejects(resolve({ $queryDelete: "notes", ...conn, where: { author: "bob" } }, context), /no deletes/);
-    assert.equal(await resolve({ $queryCount: "notes", ...conn, system: true }, context), 2);
-  } finally {
-    await resolve({ $database: "validator", ...conn, rows: [] }, {});
-  }
+  const found = await validated({ $querySelect: "notes", ...conn });
+  assert.deepEqual((found as Array<{ author: string }>).map(r => r.author), ["ada"]);
+  assert.equal(await validated({ $queryCount: "notes", ...conn }), 1);
+  await assert.rejects(validated({ $queryDelete: "notes", ...conn, where: { author: "bob" } }), /no deletes/);
+
+  // Outside every validator, nothing checks a query, the table's own validator included.
+  context.seen = { global: "", table: "" };
+  assert.equal(await resolve({ $queryCount: "notes", ...conn }, context), 2);
+  assert.deepEqual(context.seen, { global: "", table: "" });
 });
 
-// A validator runs in a copy of the caller's context: `query` is the object
-// that runs, a query inside skips validation instead of recursing, and none of
-// its writes reach the caller, not even with `$bubble`.
-test("a validator changes the data a query writes and queries inside, but writes nothing of the caller's", async () => {
+// A validator runs in the scope its step ran in: `query` is the object that
+// runs, a query of its own goes unchecked, nothing its `do` sets reaches it,
+// and none of its writes reach either scope, not even with `$bubble`.
+test("a validator reads the scope it ran in, never the checked step's, and writes neither", async () => {
   await resolve({ $tableCreate: { table: "drafts", properties: {
     id: { type: "integer", primaryKey: true, autoIncrement: true }, author: { type: "string" }, stamp: { type: "string" },
   } }, ...conn }, {});
+  const context: Record<string, unknown> = { role: "editor" };
   await resolve({ $database: "validator", ...conn, rows: [
-    { $if: { $eq: [{ $var: "operation" }, "insert"] }, then: { $setVars: { "query.data.stamp": "checked" } } },
+    { $if: { $eq: [{ $var: "operation" }, "insert"] }, then: { $setVars: { "query.data.stamp": { $var: "role" } } } },
     { $queryCount: "drafts", ...conn, $as: "existing" },
     { $concat: [{ $var: "operation" }, ":", { $var: "existing" }], $as: "lastCheck", $bubble: true },
-  ] }, {});
-  const context: Record<string, unknown> = {};
-  try {
-    // Inside a loop, so there is a scope between the query and the caller that a bubble would reach.
-    await resolve({ $foreach: [1], do: [{ $queryInsert: "drafts", ...conn, data: { author: "ada" } }] }, context);
-    assert.equal(context.lastCheck, undefined, "a validator writes nothing of the caller's");
-    assert.equal(context.existing, undefined);
-    const row = await resolve({ $querySelect: "drafts", ...conn, first: true, system: true }, {});
-    assert.deepEqual(row, { id: 1, author: "ada", stamp: "checked" });
-  } finally {
-    await resolve({ $database: "validator", ...conn, rows: [] }, {});
-  }
+  ], do: [
+    { $setVars: { role: "admin" }, $bubble: true },
+    // Inside a loop, so there is a scope between the query and the validator's that a bubble would reach.
+    { $foreach: [1], do: [{ $concat: ["owner"], $as: "role" }, { $queryInsert: "drafts", ...conn, data: { author: "ada" } }] },
+  ] }, context);
+  assert.equal(context.role, "editor", "a `$bubble` in `do` stops before the validator's scope");
+  assert.equal(context.lastCheck, undefined, "a validator writes nothing of its scope");
+  assert.equal(context.existing, undefined);
+  const row = await resolve({ $querySelect: "drafts", ...conn, first: true }, {});
+  assert.deepEqual(row, { id: 1, author: "ada", stamp: "editor" });
 });
 
-test("a query reaches the database's own catalog only with system: true", async () => {
-  const refused = /is the database's own catalog, which only a step with `system: true` may query/;
-  await assert.rejects(resolve({ $querySelect: "sqlite_master", ...conn }, {}), refused);
-  await assert.rejects(resolve({ $queryCount: "main.sqlite_master", ...conn }, {}), refused);
-  await assert.rejects(resolve({ $querySelect: "information_schema.tables as t", ...conn }, {}), refused);
-  await assert.rejects(resolve({ $querySelect: "people", ...conn,
-    innerJoin: [{ table: "sqlite_master", on: { "people.name": "sqlite_master.name" } }] }, {}), refused);
-  await assert.rejects(resolve({ $querySelect: "people", ...conn, leftJoin: [{ table: 5, on: {} }] }, {}), /a join's `table` must be a table name/);
-  const tables = await resolve({ $querySelect: "sqlite_master", ...conn, system: true, where: { type: "table", name: "people" } }, {}) as unknown[];
+test("a validator inside another adds its checks, and the outer one checks its queries", async () => {
+  const context = { seen: [] as string[] };
+  const outer = [
+    { $push: [{ $var: "seen" }, { $concat: ["outer:", { $var: "query.table" }] }] },
+    { $if: { $eq: [{ $var: "query.table" }, "secrets"] }, then: { $error: 403, message: "secret" } },
+  ];
+  const inner = [
+    { $push: [{ $var: "seen" }, { $concat: ["inner:", { $var: "query.table" }] }] },
+    { $if: { $eq: [{ $var: "operation" }, "delete"] }, then: { $error: 403, message: "no deletes" } },
+    { $if: { $eq: [{ $var: "operation" }, "insert"] }, then: { $querySelect: "secrets", ...conn } },
+  ];
+  const nested = (step: unknown) => resolve({ $database: "validator", ...conn, rows: outer, do: [
+    { $database: "validator", ...conn, rows: inner, do: [step] },
+  ] }, context);
+
+  assert.equal(await nested({ $queryCount: "people", ...conn }), 2);
+  assert.deepEqual(context.seen, ["outer:people", "inner:people"]);
+  await assert.rejects(nested({ $queryDelete: "people", ...conn, where: { id: 0 } }), /no deletes/);
+  await assert.rejects(nested({ $querySelect: "secrets", ...conn }), /secret/);
+  await assert.rejects(nested({ $queryInsert: "people", ...conn, data: { name: "x" } }), /secret/);
+});
+
+// SQLite has one pooled connection, which the transaction holds, so a query of
+// the validator's own outside it would wait forever.
+test("a validator's queries join the transaction around the step it checks", async () => {
+  const counted = await resolve({ $database: "validator", ...conn, rows: [
+    { $queryCount: "people", ...conn, $as: "count", $bubble: true },
+    { $if: { $gt: [{ $var: "count" }, 2] }, then: { $error: 403, message: "full" } },
+  ], do: [
+    { $database: "transaction", ...conn, do: [
+      { $queryInsert: "people", ...conn, data: { name: "eve" } },
+      { $queryInsert: "people", ...conn, data: { name: "mal" } },
+    ] },
+  ] }, {}).catch((error: Error) => error.message);
+  assert.equal(counted, "full");
+  assert.equal(await resolve({ $queryCount: "people", ...conn }, {}), 2, "the refused transaction rolled back");
+});
+
+test("a query reaches the database's own catalog only outside every validator", async () => {
+  const refused = /is the database's own catalog, which no step under a validator may query/;
+  const validated =(step: unknown) => resolve({ $database: "validator", ...conn, do: [step] }, {});
+  await assert.rejects(validated({ $querySelect: "sqlite_master", ...conn }), refused);
+  await assert.rejects(validated({ $queryCount: "main.sqlite_master", ...conn }), refused);
+  await assert.rejects(validated({ $querySelect: "information_schema.tables as t", ...conn }), refused);
+  await assert.rejects(validated({ $querySelect: "people", ...conn,
+    innerJoin: [{ table: "sqlite_master", on: { "people.name": "sqlite_master.name" } }] }), refused);
+  await assert.rejects(validated({ $querySelect: "people", ...conn, leftJoin: [{ table: 5, on: {} }] }), /a join's `table` must be a table name/);
+  const tables = await resolve({ $querySelect: "sqlite_master", ...conn, where: { type: "table", name: "people" } }, {}) as unknown[];
   assert.equal(tables.length, 1);
 });
 
-test("validators belong to their connection, and one is cleared with an empty list", async () => {
+test("a validator checks only its own connection's steps, and needs `do`", async () => {
   const other = { connection: "query-other" };
   await resolve({ $database: "connect", ...other, type: "sqlite", filename: path.join(dir, "other.db") }, {});
   try {
     await resolve({ $tableCreate: { table: "pads", properties: { name: { type: "string" } } }, ...other }, {});
-    await assert.rejects(async () => resolve({ $database: "validator", ...other }, {}), /needs `rows` or `structure` steps/);
-    await resolve({ $database: "validator", ...other, rows: [{ $error: 403, message: "read-only" }] }, {});
-    await assert.rejects(resolve({ $queryCount: "pads", ...other }, {}), /read-only/);
-    assert.equal(await resolve({ $queryCount: "people", ...conn }, {}), 2, "the other connection is unaffected");
-    // Setting `structure` leaves `rows` as it was.
-    await resolve({ $database: "validator", ...other, structure: [] }, {});
-    await assert.rejects(resolve({ $queryCount: "pads", ...other }, {}), /read-only/);
-    await resolve({ $database: "validator", ...other, rows: [] }, {});
-    assert.equal(await resolve({ $queryCount: "pads", ...other }, {}), 0);
+    await assert.rejects(async () => resolve({ $database: "validator", ...other, rows: [] }, {}), /needs `do` steps/);
+    await assert.rejects(async () => resolve({ $database: "validator", connection: "nowhere", do: [] }, {}), /"nowhere" is not connected/);
+    const readOnly = (step: unknown) => resolve({ $database: "validator", ...other, rows: [{ $error: 403, message: "read-only" }], do: [step] }, {});
+    await assert.rejects(readOnly({ $queryCount: "pads", ...other }), /read-only/);
+    assert.equal(await readOnly({ $queryCount: "people", ...conn }), 2, "the other connection is unaffected");
+    assert.equal(await resolve({ $queryCount: "pads", ...other }, {}), 0, "nothing outside `do` is checked");
   } finally {
     await resolve({ $database: "close", ...other }, {});
   }
@@ -340,36 +376,34 @@ test("a transaction commits its steps together, or rolls them all back", async (
   assert.equal(Object.keys(await resolve({ $querySelect: "ledger", ...conn, first: true }, {}) as object).includes("note"), false);
 });
 
-test("the connection's structure validator authorizes each change to a table's structure", async () => {
+test("a validator's structure steps authorize each change to a table's structure", async () => {
   // `seen` is appended to in place, so the validator's records show here.
   const context = { seen: [] as unknown[], allow: false };
-  await resolve({ $database: "validator", ...conn, structure: [
+  const structure = [
     { $push: [{ $var: "seen" }, { $concat: [{ $var: "operation" }, " ", { $var: "table" }, " ", { $var: "schema.table" }, " ", { $stringify: { $var: "changes" } }] }] },
     { $concat: ["structure"], $as: "leaked", $bubble: true },
     { $if: { $not: { $var: "allow" } }, then: { $error: 403, message: "structure is admin-only" } },
-  ] }, context);
-  try {
-    const schema = { table: "audited", properties: { name: { type: "string" } } };
-    await assert.rejects(resolve({ $tableCreate: schema, ...conn }, context), /admin-only/);
-    assert.equal(DatabaseTableNode.get(registry, "audited"), undefined, "a refused document is not registered");
-    assert.equal(await resolve({ $includes: [{ $database: "tables", ...conn }, "audited"] }, context), false);
+  ];
+  const validated =(step: unknown) => resolve({ $database: "validator", ...conn, structure, do: [step] }, context);
 
-    assert.equal(await resolve({ $tableCreate: schema, ...conn, system: true }, context), "audited");
-    context.allow = true;
-    await resolve({ $tableAlter: "audited", ...conn, add: { age: { type: "integer" } } }, context);
-    await resolve({ $tableRename: "audited", ...conn, to: "audited2" }, context);
-    await resolve({ $tableDrop: "audited2", ...conn }, context);
-    await resolve({ $database: "tables", ...conn }, context);
-    assert.deepEqual(context.seen, [
-      "create audited audited ",
-      "alter audited audited {\"add\":{\"age\":{\"type\":\"integer\"}}}",
-      "rename audited audited {\"to\":\"audited2\"}",
-      "drop audited2  ",
-    ]);
-    assert.equal(Reflect.get(context, "leaked"), undefined, "a validator writes nothing of the caller's");
-  } finally {
-    await resolve({ $database: "validator", ...conn, structure: [] }, {});
-  }
+  const schema = { table: "audited", properties: { name: { type: "string" } } };
+  await assert.rejects(validated({ $tableCreate: schema, ...conn }), /admin-only/);
+  assert.equal(DatabaseTableNode.get(registry, "audited"), undefined, "a refused document is not registered");
+  assert.equal(await resolve({ $includes: [{ $database: "tables", ...conn }, "audited"] }, context), false);
+
+  assert.equal(await resolve({ $tableCreate: schema, ...conn }, context), "audited");
+  context.allow = true;
+  await validated({ $tableAlter: "audited", ...conn, add: { age: { type: "integer" } } });
+  await validated({ $tableRename: "audited", ...conn, to: "audited2" });
+  await validated({ $tableDrop: "audited2", ...conn });
+  await validated({ $database: "tables", ...conn });
+  assert.deepEqual(context.seen, [
+    "create audited audited ",
+    "alter audited audited {\"add\":{\"age\":{\"type\":\"integer\"}}}",
+    "rename audited audited {\"to\":\"audited2\"}",
+    "drop audited2  ",
+  ]);
+  assert.equal(Reflect.get(context, "leaked"), undefined, "a validator writes nothing of its scope");
 });
 
 test("sync adds the columns and indexes a table lacks, and warns about what only alter may change", async () => {
@@ -520,14 +554,25 @@ test("register takes a document from a step, and unregister forgets it", async (
   assert.equal(DatabaseTableNode.get(registry, "from_step"), undefined);
 });
 
-test("a validator that changes `schema` does not change the registered table", async () => {
+test("a validator reads `schema` but cannot change it, or the registered table", async () => {
   await resolve({ $tableCreate: {
     table: "guarded",
     properties: { id: { type: "integer", primaryKey: true, autoIncrement: true }, name: { type: "string" } },
     validator: [{ $setVars: { "schema.properties.injected": { type: "string" } } }],
   }, ...conn }, {});
-  await resolve({ $querySelect: "guarded", ...conn }, {});
+  await assert.rejects(resolve({ $database: "validator", ...conn, do: [{ $querySelect: "guarded", ...conn }] }, {}), /"schema.properties" is read-only data/);
   assert.equal(DatabaseTableNode.get(registry, "guarded")?.properties?.injected, undefined);
+  // Nor can a step that reads the registry change it: `list` hands out copies.
+  const listed = await resolve({ $schema: "list" }, {}) as Array<{ table?: string; properties: Record<string, unknown> }>;
+  listed.find(doc => doc.table === "guarded")!.properties.injected = {};
+  assert.equal(DatabaseTableNode.get(registry, "guarded")?.properties?.injected, undefined);
+});
+
+test("a validator on a table no document describes still sees its name as `schema.table`, read-only", async () => {
+  await resolve({ $database: "raw", ...conn, sql: "create table bare (id integer)" }, {});
+  const onlyBare = (rows: unknown[]) => resolve({ $database: "validator", ...conn, rows, do: [{ $queryCount: "bare", ...conn }] }, {});
+  assert.equal(await onlyBare([{ $if: { $not: { $eq: [{ $var: "schema.table" }, "bare"] } }, then: { $error: 403 } }]), 0);
+  await assert.rejects(onlyBare([{ $setVars: { "schema.table": "other" } }]), /"schema" is read-only data/);
 });
 
 test("validate checks a value against a registered schema by id, or one written out", async () => {
@@ -555,9 +600,9 @@ test("a route body can $ref a table's document", async () => {
   await assert.rejects(async () => resolve({ $routes: routes }, request({})), (err: { status?: number }) => err.status === 400);
 });
 
-// Schemas and connections, with their validators, belong to the resolver that
-// made them, so they never judge another resolver's queries.
-test("two resolvers keep separate schemas and validators", async () => {
+// Schemas and connections belong to the resolver that made them, so they never
+// judge another resolver's queries.
+test("two resolvers keep separate schemas and connections", async () => {
   const a = {};
   const b = {};
   const ra = createResolver([...coreNodes(), ...serverNodes()], { context: a });
@@ -568,13 +613,10 @@ test("two resolvers keep separate schemas and validators", async () => {
     await ra({ $database: "connect", ...shared }, {});
     await rb({ $database: "connect", ...shared }, {});
     await ra({ $tableSync: "isolated", connection: "isolated" }, {});
-    await ra({ $database: "validator", connection: "isolated", rows: [{ $error: 403, message: "a's policy" }] }, {});
 
     assert.ok(DatabaseTableNode.get(a, "isolated"));
     assert.equal(DatabaseTableNode.get(b, "isolated"), undefined);
     assert.deepEqual(await rb({ $schema: "list" }, {}), []);
-    await assert.rejects(ra({ $queryCount: "isolated", connection: "isolated" }, {}), /a's policy/);
-    assert.equal(await rb({ $queryCount: "isolated", connection: "isolated" }, {}), 0);
   } finally {
     await ra({ $database: "close", connection: "isolated" }, {});
     await rb({ $database: "close", connection: "isolated" }, {});
