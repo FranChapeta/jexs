@@ -9,6 +9,7 @@ import { SessionNode } from "./nodes/Session.js";
 import { DatabaseNode } from "./nodes/Database.js";
 import { DatabaseQueryNode } from "./nodes/DatabaseQuery.js";
 import { DatabaseTableNode } from "./nodes/DatabaseTable.js";
+import { DatabaseViewNode } from "./nodes/DatabaseView.js";
 import { CacheNode } from "./nodes/Cache.js";
 import { TailwindNode } from "./nodes/Tailwind.js";
 import { OAuthNode } from "./nodes/OAuth.js";
@@ -49,6 +50,7 @@ export function serverNodes({ root = "src" }: ServerNodesOptions = {}): Node[] {
     new DatabaseNode(),
     new DatabaseQueryNode(),
     new DatabaseTableNode(),
+    new DatabaseViewNode(),
     new CacheNode(),
     new TailwindNode(),
     new OAuthNode(),
@@ -75,6 +77,7 @@ export { makePhysicsWorker } from "./physicsWorker.js";
 export { DatabaseNode } from "./nodes/Database.js";
 export { DatabaseQueryNode } from "./nodes/DatabaseQuery.js";
 export { DatabaseTableNode } from "./nodes/DatabaseTable.js";
+export { DatabaseViewNode } from "./nodes/DatabaseView.js";
 export { SchemaNode } from "./nodes/Schema.js";
 export { TranslationNode } from "./nodes/Translation.js";
 export { WebSocketNode } from "./nodes/WebSocket.js";

@@ -28,6 +28,16 @@ export function isTableDocument(value: unknown): value is { table: string; prope
   return isObject(value) && typeof value.table === "string" && isObject(value.properties);
 }
 
+/** The id a view document is registered under, which the view and query ops look it up by. */
+export function viewId(view: string): string {
+  return `view/${view}`;
+}
+
+/** A view document: a `view` name and the table it reads `from`. */
+export function isViewDocument(value: unknown): value is { view: string; from: string } {
+  return isObject(value) && typeof value.view === "string" && typeof value.from === "string";
+}
+
 /**
  * A `schema` value, resolved once: a schema written out is kept as written, so
  * its `$` keywords stay JSON Schema's and a table document's `validator` stays
@@ -88,7 +98,7 @@ export class SchemaNode extends Node {
     schema: {
       type: "string",
       enum: ["register", "unregister", "list", "validate"],
-      markdownDescription: "JSON Schema (draft 2020-12): registered schemas, which route bodies, table rows and other schemas can `$ref` by id, and checking a value against one. A table document registers as `table/<name>`; `$tableCreate` and `$tableSync` register theirs themselves.",
+      markdownDescription: "JSON Schema (draft 2020-12): registered schemas, which route bodies, table rows and other schemas can `$ref` by id, and checking a value against one. A table document registers as `table/<name>` and a view document as `view/<name>`; `$tableCreate`, `$tableSync`, `$viewCreate` and `$viewSync` register theirs themselves.",
       examples: [
         "{ \"$schema\": \"register\", \"path\": \"db/schemas\" }",
         "{ \"$schema\": \"validate\", \"schema\": \"table/users\", \"data\": { \"$var\": \"request.body\" } }",
@@ -97,9 +107,9 @@ export class SchemaNode extends Node {
         register: {
           output: { type: "array", items: { type: "string" } },
           outputDescription: "The ids it registered.",
-          markdownDescription: "Registers a `schema`, or every document in a `path` directory, under its `$id` (a table document under `table/<name>`), replacing what was there.",
+          markdownDescription: "Registers a `schema`, or every document in a `path` directory, under its `$id` (a table document under `table/<name>`, a view document under `view/<name>`), replacing what was there.",
           siblings: {
-            schema: { $ref: "#/$defs/_schemaDocument", literal: true, description: "A schema with an `$id`, or a table document, written out or from a step (`$file` with `data: true`)." },
+            schema: { $ref: "#/$defs/_schemaDocument", literal: true, description: "A schema with an `$id`, or a table or view document, written out or from a step (`$file` with `data: true`)." },
             path: { type: "string", description: "Directory of schema documents to register." },
           },
         },
@@ -107,7 +117,7 @@ export class SchemaNode extends Node {
           output: "boolean",
           outputDescription: "Whether something was registered under the id.",
           markdownDescription: "Forgets a registered schema. A table's document going leaves the table as it is; query writes to it are just no longer checked.",
-          siblings: { id: { type: "string", required: true, description: "The schema's id, `table/<name>` for a table." } },
+          siblings: { id: { type: "string", required: true, description: "The schema's id, `table/<name>` for a table, `view/<name>` for a view." } },
         },
         list: {
           output: { type: "array", items: { type: "object" } },
@@ -187,15 +197,22 @@ export class SchemaNode extends Node {
     const own = structuredClone(doc);
     const declared = own.$id;
     let id: string;
-    if (isTableDocument(own)) {
+    if (isTableDocument(own) && isViewDocument(own)) {
+      throw new Error(`A document is a table or a view, not both: drop \`table\` or \`view\` from "${own.table}"`);
+    } else if (isTableDocument(own)) {
       if (declared !== undefined) {
         throw new Error(`Table "${own.table}" is registered as "${tableId(own.table)}"; leave \`$id\` out of a table document`);
       }
       id = tableId(own.table);
+    } else if (isViewDocument(own)) {
+      if (declared !== undefined) {
+        throw new Error(`View "${own.view}" is registered as "${viewId(own.view)}"; leave \`$id\` out of a view document`);
+      }
+      id = viewId(own.view);
     } else if (typeof declared === "string" && declared !== "") {
       id = declared;
     } else {
-      throw new Error("A schema needs an `$id` to be registered (a table document is registered by its `table`)");
+      throw new Error("A schema needs an `$id` to be registered (a table document is registered by its `table`, a view document by its `view`)");
     }
     SchemaNode.unregister(node, id);
     node.ajv.addSchema({ ...own, $id: id });

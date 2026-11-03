@@ -119,10 +119,89 @@ test("every condition in a where applies: each operator on a column, and or/and 
   await assert.rejects(names({ email: { isNull: "false" } }), /email.isNull: expected true or false, got string/);
 });
 
-test("groupConcat joins a column per group, with a separator of its own", async () => {
-  const row = await resolve({ $querySelect: "people", ...conn, columns: ["id"], groupConcat: { names: ["name", "|"], emails: "email" }, first: true }, {}) as { names: string; emails: string };
+test("join puts a group's values in one string, with a separator of its own", async () => {
+  const row = await resolve({ $querySelect: "people", ...conn, first: true, columns: {
+    names: { join: ["name", "|"] }, emails: { join: ["email"] }, shout: { join: [{ upper: ["name"] }, "+"] },
+  } }, {}) as { names: string; emails: string; shout: string };
   assert.deepEqual(row.names.split("|").sort(), ["Ada", "Grace"]);
   assert.deepEqual(row.emails.split(",").sort(), ["ada@x", "grace@x"]);
+  assert.deepEqual(row.shout.split("+").sort(), ["ADA", "GRACE"]);
+  await assert.rejects(resolve({ $querySelect: "people", ...conn, columns: { x: { join: ["name", 5] } } }, {}), /columns.x.join\[1\]: expected the separator, a string/);
+});
+
+test("columns select expressions over columns and aggregates of them, by alias", async () => {
+  await resolve({ $tableSync: {
+    table: "lines",
+    properties: {
+      id: { type: "integer", primaryKey: true, autoIncrement: true },
+      cart: { type: "string" }, price: { type: "number" }, qty: { type: "integer" }, discount: { type: ["number", "null"] },
+    },
+  }, ...conn }, {});
+  await resolve({ $tableSync: {
+    table: "carts", properties: { name: { type: "string", primaryKey: true }, owner: { type: "string" } },
+  }, ...conn }, {});
+  await resolve({ $queryInsert: "carts", ...conn, data: [{ name: "a", owner: "Ada" }, { name: "b", owner: "Grace" }] }, {});
+  await resolve({ $queryInsert: "lines", ...conn, data: [
+    { cart: "a", price: 2.5, qty: 2, discount: 1 },
+    { cart: "a", price: 4, qty: 1, discount: null },
+    { cart: "b", price: 3, qty: 3, discount: null },
+  ] }, {});
+
+  // A row's own values, in the order written, and operands from steps: a number
+  // is a value, a string names a column.
+  const lines = await resolve({ $querySelect: "lines", ...conn, orderBy: { id: "asc" }, columns: {
+    gross: { multiply: ["price", "qty"] },
+    id: "id",
+    net: { subtract: [{ multiply: ["price", "qty"] }, { coalesce: ["discount", 0] }] },
+    taxed: { round: [{ multiply: [{ $var: "column" }, { $var: "rate" }] }, 1] },
+  } }, { column: "price", rate: 1.21 }) as object[];
+  assert.deepEqual(lines, [
+    { gross: 5, id: 1, net: 4, taxed: 3 },
+    { gross: 4, id: 2, net: 4, taxed: 4.8 },
+    { gross: 9, id: 3, net: 9, taxed: 3.6 },
+  ]);
+  assert.deepEqual(Object.keys(lines[0]), ["gross", "id", "net", "taxed"]);
+
+  // Aggregates per group across a join, of columns and of expressions.
+  const carts = await resolve({ $querySelect: "lines", ...conn,
+    innerJoin: [{ table: "carts", on: { "lines.cart": "carts.name" } }],
+    groupBy: "carts.owner", orderBy: { owner: "asc" },
+    columns: {
+      owner: "carts.owner",
+      revenue: { sum: [{ multiply: ["price", "qty"] }] }, items: { sum: ["qty"] },
+      price: { avg: ["price"] }, cheapest: { min: ["price"] }, dearest: { max: ["price"] },
+      lines: { count: ["*"] }, discounted: { count: ["discount"] }, qtys: { sumDistinct: ["qty"] },
+      kinds: { countDistinct: ["qty"] }, typical: { avgDistinct: ["qty"] },
+      spread: { subtract: [{ max: ["price"] }, { min: ["price"] }] },
+    },
+  }, {});
+  assert.deepEqual(carts, [
+    { owner: "Ada", revenue: 9, items: 3, price: 3.25, cheapest: 2.5, dearest: 4, lines: 2, discounted: 1, qtys: 3, kinds: 2, typical: 1.5, spread: 1.5 },
+    { owner: "Grace", revenue: 9, items: 3, price: 3, cheapest: 3, dearest: 3, lines: 1, discounted: 0, qtys: 3, kinds: 1, typical: 3, spread: 0 },
+  ]);
+
+  // Functions of one value.
+  const first = await resolve({ $querySelect: "lines", ...conn, where: { id: 1 }, first: true, columns: {
+    down: { floor: ["price"] }, up: { ceil: ["price"] }, loud: { upper: ["cart"] }, quiet: { lower: [{ upper: ["cart"] }] },
+  } }, {});
+  assert.deepEqual(first, { down: 2, up: 3, loud: "A", quiet: "a" });
+  assert.deepEqual(await resolve({ $querySelect: "lines", ...conn, columns: { n: { count: ["*"] } }, first: true }, {}), { n: 3 });
+
+  const select = (columns: unknown) => resolve({ $querySelect: "lines", ...conn, columns }, {});
+  await assert.rejects(select({ x: { power: ["price", 2] } }), /columns.x: expected a column name, a number, null, or one operator: add, subtract/);
+  await assert.rejects(select({ id: "id", x: { add: ["price"] } }), /columns.x.add: expected 2 or more operands in an array/);
+  await assert.rejects(select({ x: { abs: "price" } }), /columns.x.abs: expected 1 operands in an array/);
+  await assert.rejects(select({ x: { sum: ["price", "qty"] } }), /columns.x.sum: expected 1 operands in an array/);
+  await assert.rejects(select({ x: { round: ["price", 1.5] } }), /columns.x.round\[1\]: expected a whole number of digits/);
+  await assert.rejects(select({ x: { sum: [{ add: ["price", true] }] } }), /columns.x.sum\[0\].add\[1\]: expected a column name/);
+  await assert.rejects(select({ x: { constructor: [1, 2] } }), /columns.x: expected a column name/);
+  await assert.rejects(select(["id", { x: "price" }]), /columns\[1\]: expected a column name; an expression goes in an object of columns by name/);
+  await assert.rejects(select("price"), /columns: expected an array of column names, or an object of expressions by name/);
+  // A column name stays a name: it is quoted, never written into the SQL.
+  await assert.rejects(select({ x: "price); drop table lines; --" }), /no such column/);
+  assert.equal(await resolve({ $queryCount: "lines", ...conn }, {}), 3);
+  assert.equal(await resolve({ $queryCount: "lines", ...conn, distinct: true, columns: ["cart"] }, {}), 2);
+  await assert.rejects(resolve({ $queryCount: "lines", ...conn, distinct: true, columns: { x: "price" } }, {}), /`distinct` counts a column by name, the first of a `columns` array/);
 });
 
 test("update needs a where, and an empty one reaches every row", async () => {

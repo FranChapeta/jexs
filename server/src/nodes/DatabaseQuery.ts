@@ -2,7 +2,8 @@ import { Knex as KnexType } from "knex";
 import { Node, Context, NodeValue, freezeData, isObject, isOwnedKey, resolveFields } from "@jexs/core";
 import { DatabaseNode, runValidators, validatorsFor, type Validator } from "./Database.js";
 import { COMPUTE_FNS, DatabaseTableNode, type ColumnSchema, type TableJsonSchema } from "./DatabaseTable.js";
-import { requireSchemaNode, validate } from "./Schema.js";
+import type { ViewJsonSchema } from "./DatabaseView.js";
+import { isViewDocument, requireSchemaNode, validate, viewId } from "./Schema.js";
 import type { JexsMethodSchema, JexsNodeSchema, JexsOutput, JexsPropertySchema } from "@jexs/core";
 
 /**
@@ -52,7 +53,8 @@ const SqlValidator = {
 export interface QueryDefinition {
   type: "select" | "insert" | "upsert" | "update" | "delete" | "count";
   table: string;
-  columns?: string[];
+  /** What a select gives: columns by name, or expressions by the name each gives. */
+  columns?: string[] | Record<string, ColumnExpression>;
   data?: Record<string, unknown> | Record<string, unknown>[];
   where?: WhereClause;
   orderBy?: Record<string, "asc" | "desc" | "ASC" | "DESC">;
@@ -64,8 +66,6 @@ export interface QueryDefinition {
   rightJoin?: JoinDefinition[];
   first?: boolean;
   distinct?: boolean;
-  // Aggregate
-  groupConcat?: Record<string, string | [string, string]>;
   conflict?: string[];
   // Write-op extras
   /** Atomic `col = col + n` on update. */
@@ -85,6 +85,9 @@ export interface JoinDefinition {
   as?: string;
   on: Record<string, string>;
 }
+
+/** A value computed from a row: a column, a number, null, or one operator over expressions. */
+export type ColumnExpression = string | number | null | { [operator: string]: ColumnExpression[] };
 
 export type WhereClause = Record<string, WhereValue> | WhereGroup;
 
@@ -108,6 +111,23 @@ export type WhereValue =
   | { between?: [unknown, unknown] }
   | { isNull?: boolean };
 
+/** The operators an expression may use, named as core's math ops, and the
+ *  fewest and most operands each takes. */
+const OPERATOR_ARITY: Record<string, [number, number]> = {
+  add: [2, Infinity], subtract: [2, Infinity], multiply: [2, Infinity], divide: [2, Infinity],
+  abs: [1, 1], floor: [1, 1], ceil: [1, 1], round: [1, 2], upper: [1, 1], lower: [1, 1], coalesce: [2, Infinity],
+  sum: [1, 1], avg: [1, 1], min: [1, 1], max: [1, 1], count: [1, 1],
+  sumDistinct: [1, 1], avgDistinct: [1, 1], countDistinct: [1, 1], join: [1, 2],
+};
+const ARITHMETIC: Record<string, string> = { add: "+", subtract: "-", multiply: "*", divide: "/" };
+/** The operators that are a SQL function of their one operand. */
+const SCALAR: Record<string, string> = { abs: "ABS", floor: "FLOOR", ceil: "CEIL", upper: "UPPER", lower: "LOWER" };
+/** The aggregate operators, and the SQL call each opens. */
+const AGGREGATE: Record<string, string> = {
+  sum: "SUM(", avg: "AVG(", min: "MIN(", max: "MAX(", count: "COUNT(",
+  sumDistinct: "SUM(DISTINCT ", avgDistinct: "AVG(DISTINCT ", countDistinct: "COUNT(DISTINCT ",
+};
+
 /** The clauses a query op takes as siblings, by name. Declared before the class
  *  so the static schema initializer can read them (a `const` is not hoisted). */
 const CLAUSE: Record<string, JexsPropertySchema> = {
@@ -116,14 +136,13 @@ const CLAUSE: Record<string, JexsPropertySchema> = {
   orderBy:      { description: "ORDER BY: `{ column: 'asc' | 'desc' }`." },
   groupBy:      { description: "GROUP BY column name or array of names." },
   first:        { type: "boolean", description: "Return a single row instead of an array." },
-  columns:      { type: "array", description: "Columns to select (also the column for count distinct)." },
+  columns:      { $ref: "#/$defs/_selectColumns", description: "What to select: an array of columns by name (`[\"id\", \"users.name as author\"]`), or an object of expressions by the name each gives (`{ \"author\": \"users.name\", \"net\": { \"subtract\": [\"amount\", \"refunded\"] } }`). An expression is a column name, a number, `null`, or one operator over expressions: `add`, `subtract`, `multiply`, `divide`, `abs`, `floor`, `ceil`, `round` (`[value, digits]`), `upper`, `lower`, `coalesce`, and per group `sum`, `avg`, `min`, `max`, `count` (`[\"*\"]` counts rows; counts are always numbers), `sumDistinct`, `avgDistinct`, `countDistinct` and `join` (the group's values in one string, `[value, separator]`, the separator a string, `,` by default). A string from a step names a column and a number is a value, so a step can pick the columns. Dividing integer columns gives an integer on SQLite and PostgreSQL. On count with `distinct`, the array's first column is the one COUNT(DISTINCT) counts." },
   limit:        { type: "number", description: "LIMIT N." },
   offset:       { type: "number", description: "OFFSET N." },
   distinct:     { type: "boolean", description: "SELECT DISTINCT (with `columns`, COUNT(DISTINCT col) on count)." },
   innerJoin:    { type: "array", description: "INNER JOIN clauses." },
   leftJoin:     { type: "array", description: "LEFT JOIN clauses." },
   rightJoin:    { type: "array", description: "RIGHT JOIN clauses." },
-  groupConcat:  { map: true, description: "Columns joined into one string per group, by alias: `{ \"tags\": \"tag\" }` joins with `,`, `{ \"tags\": [\"tag\", \" | \"] }` with a separator of its own. `GROUP_CONCAT` on SQLite and MySQL, `STRING_AGG` on PostgreSQL." },
   conflict:     { type: "array", description: "Conflict target columns (upsert)." },
   merge:        { type: "array", description: "Columns to update on conflict (upsert); omit to merge all." },
   ignore:       { type: "boolean", description: "INSERT OR IGNORE on conflict (insert)." },
@@ -156,12 +175,37 @@ export class DatabaseQueryNode extends Node {
   static schemaDefs: Record<string, Record<string, unknown>> = {
     // `data` resolves whole, so an expression is one more object here.
     _queryRows: { anyOf: [{ type: "object" }, { type: "array", items: { type: "object" } }] },
+    // A select's columns: an array of names, or an object of expressions by
+    // name. An object with a `$` key is a step producing either, in a query op
+    // that resolves its clauses.
+    _selectColumns: {
+      if: { type: "object", propertyNames: { not: { pattern: "^\\$" } } },
+      then: { additionalProperties: { $ref: "#/$defs/_columnExpression" } },
+      else: { anyOf: [{ type: "array", items: { anyOf: [{ type: "string" }, { $ref: "#/$defs/exprFlat" }] } }, { $ref: "#/$defs/exprFlat" }] },
+    },
+    // An object with no `$` key is one operator; one with a `$` key is a step
+    // producing an expression.
+    _columnExpression: {
+      anyOf: [
+        { type: ["string", "number", "null"] },
+        {
+          if: { type: "object", propertyNames: { not: { pattern: "^\\$" } } },
+          then: {
+            minProperties: 1,
+            maxProperties: 1,
+            properties: Object.fromEntries(Object.keys(OPERATOR_ARITY).map(op => [op, { type: "array", items: { $ref: "#/$defs/_columnExpression" } }])),
+            additionalProperties: false,
+          },
+          else: { $ref: "#/$defs/exprFlat" },
+        },
+      ],
+    },
   };
 
   static schema: JexsNodeSchema = {
     querySelect: op("any", "Reads rows from the table the value names. Returns an array, or with `first` the single row (`null` when none matches).",
       "{ \"$querySelect\": \"users\", \"where\": { \"id\": { \"$var\": \"id\" } }, \"first\": true }",
-      ["where", "orderBy", "groupBy", "first", "columns", "limit", "offset", "distinct", "innerJoin", "leftJoin", "rightJoin", "groupConcat"]),
+      ["where", "orderBy", "groupBy", "first", "columns", "limit", "offset", "distinct", "innerJoin", "leftJoin", "rightJoin"]),
     queryInsert: op("any", "Inserts `data` (a row or an array of rows) into the table the value names, checked against the table's registered document if it has one (see `$tableCreate`). Returns the new primary key (or keys), or the rows with `returning`.",
       "{ \"$queryInsert\": \"users\", \"data\": { \"name\": { \"$var\": \"name\" } } }",
       ["data", "ignore", "returning"]),
@@ -181,25 +225,7 @@ export class DatabaseQueryNode extends Node {
 
   querySelect(def: Record<string, unknown>, context: Context): NodeValue {
     return runQuery("select", def, context, async (knex, query) => {
-      let builder = knex(query.table);
-      if (query.distinct) builder = builder.distinct();
-      builder = builder.select(query.columns && query.columns.length > 0 ? query.columns : "*");
-      const dialect = knex.client.dialect;
-      const concat = dialect === "mysql" ? "GROUP_CONCAT(?? SEPARATOR ?) as ??"
-        : dialect === "sqlite3" ? "GROUP_CONCAT(??, ?) as ??"
-        : "STRING_AGG(CAST(?? AS TEXT), ?) as ??";
-      for (const [alias, colDef] of Object.entries(query.groupConcat ?? {})) {
-        const [col, sep] = Array.isArray(colDef) ? colDef : [colDef, ","];
-        builder = builder.select(knex.raw(concat, [col, sep, alias]));
-      }
-      builder = applyJoins(builder, query);
-      if (query.where) builder = applyWhere(builder, query.where);
-      if (query.groupBy) builder = builder.groupBy(Array.isArray(query.groupBy) ? query.groupBy : [query.groupBy]);
-      for (const [column, direction] of Object.entries(query.orderBy ?? {})) {
-        builder = builder.orderBy(column, direction.toLowerCase() as "asc" | "desc");
-      }
-      if (query.limit) builder = builder.limit(query.limit);
-      if (query.offset) builder = builder.offset(query.offset);
+      const builder = selectBuilder(knex, query);
       if (query.first) return readRows(context, query.table, (await builder.first()) || null);
       return readRows(context, query.table, await builder);
     });
@@ -267,9 +293,11 @@ export class DatabaseQueryNode extends Node {
     return runQuery("count", def, context, async (knex, query) => {
       let builder = applyJoins(knex(query.table), query);
       // `distinct` with `columns` is COUNT(DISTINCT col); otherwise COUNT(*).
-      builder = query.distinct && query.columns && query.columns.length > 0
-        ? builder.countDistinct(`${query.columns[0]} as count`)
-        : builder.count("* as count");
+      if (query.distinct && query.columns !== undefined && !Array.isArray(query.columns)) {
+        throw new Error("$queryCount: `distinct` counts a column by name, the first of a `columns` array");
+      }
+      const counted = query.distinct && Array.isArray(query.columns) ? query.columns[0] : undefined;
+      builder = counted !== undefined ? builder.countDistinct(`${counted} as count`) : builder.count("* as count");
       if (query.where) builder = applyWhere(builder, query.where);
       const result = await builder.first();
       return Number((result as { count: number } | undefined)?.count || 0);
@@ -277,12 +305,92 @@ export class DatabaseQueryNode extends Node {
   }
 }
 
+/** The SELECT a select query reads with, for `$querySelect` and the views a view document defines. */
+export function selectBuilder(knex: KnexType, query: QueryDefinition): KnexType.QueryBuilder {
+  let builder = knex(query.table);
+  if (query.distinct) builder = builder.distinct();
+  const dialect = knex.client.dialect;
+  const { columns } = query;
+  if (Array.isArray(columns)) {
+    for (const [i, column] of columns.entries()) {
+      if (typeof column !== "string") throw new Error(`columns[${i}]: expected a column name; an expression goes in an object of columns by name`);
+    }
+    if (columns.length > 0) builder = builder.select(columns);
+  } else if (isObject(columns)) {
+    for (const [name, expression] of Object.entries(columns)) {
+      const { sql, bindings } = compileExpression(dialect, expression, `columns.${name}`);
+      builder = builder.select(knex.raw(`${sql} as ??`, [...bindings, name]));
+    }
+  } else if (columns !== undefined) {
+    throw new Error("columns: expected an array of column names, or an object of expressions by name");
+  }
+  if (Object.keys(columns ?? {}).length === 0) builder = builder.select("*");
+  builder = applyJoins(builder, query);
+  if (query.where) builder = applyWhere(builder, query.where);
+  if (query.groupBy) builder = builder.groupBy(Array.isArray(query.groupBy) ? query.groupBy : [query.groupBy]);
+  for (const [column, direction] of Object.entries(query.orderBy ?? {})) {
+    builder = builder.orderBy(column, direction.toLowerCase() as "asc" | "desc");
+  }
+  if (query.limit) builder = builder.limit(query.limit);
+  if (query.offset) builder = builder.offset(query.offset);
+  return builder;
+}
+
+/**
+ * Compile an expression to SQL and its bindings: a column name to an identifier
+ * (`??`), a number to a value (`?`), and an operator to the SQL over its
+ * operands, so nothing an expression holds reaches the SQL as written. The
+ * exceptions are the `*` of `count: ["*"]`, and `join`'s separator, a value.
+ */
+function compileExpression(dialect: string, expression: unknown, at: string): { sql: string; bindings: KnexType.RawBinding[] } {
+  if (typeof expression === "string") return { sql: "??", bindings: [expression] };
+  if (typeof expression === "number" && Number.isFinite(expression)) return { sql: "?", bindings: [expression] };
+  if (expression === null) return { sql: "NULL", bindings: [] };
+  const entries = isObject(expression) ? Object.entries(expression) : [];
+  if (entries.length !== 1 || !Object.hasOwn(OPERATOR_ARITY, entries[0][0])) {
+    throw new Error(`${at}: expected a column name, a number, null, or one operator: ${Object.keys(OPERATOR_ARITY).join(", ")}`);
+  }
+  const [op, operands] = entries[0];
+  const [fewest, most] = OPERATOR_ARITY[op];
+  if (!Array.isArray(operands) || operands.length < fewest || operands.length > most) {
+    throw new Error(`${at}.${op}: expected ${fewest === most ? fewest : `${fewest}${most === Infinity ? " or more" : ` to ${most}`}`} operands in an array`);
+  }
+  if (op === "join") {
+    const separator = operands[1] ?? ",";
+    if (typeof separator !== "string") throw new Error(`${at}.join[1]: expected the separator, a string`);
+    const value = compileExpression(dialect, operands[0], `${at}.join[0]`);
+    const sql = dialect === "mysql" ? `GROUP_CONCAT(${value.sql} SEPARATOR ?)`
+      : dialect === "sqlite3" ? `GROUP_CONCAT(${value.sql}, ?)`
+      : `STRING_AGG(CAST(${value.sql} AS TEXT), ?)`;
+    return { sql, bindings: [...value.bindings, separator] };
+  }
+  const parts = op === "count" && operands[0] === "*"
+    ? [{ sql: "*", bindings: [] }]
+    : operands.map((operand, i) => compileExpression(dialect, operand, `${at}.${op}[${i}]`));
+  const sql = parts.map(part => part.sql);
+  const bindings = parts.flatMap(part => part.bindings);
+  if (Object.hasOwn(ARITHMETIC, op)) return { sql: `(${sql.join(` ${ARITHMETIC[op]} `)})`, bindings };
+  if (Object.hasOwn(AGGREGATE, op)) {
+    const call = `${AGGREGATE[op]}${sql[0]})`;
+    // PostgreSQL counts in bigint, which its driver hands back as a string.
+    const counts = op === "count" || op === "countDistinct";
+    return { sql: counts && dialect === "postgresql" ? `CAST(${call} AS integer)` : call, bindings };
+  }
+  if (Object.hasOwn(SCALAR, op)) return { sql: `${SCALAR[op]}(${sql[0]})`, bindings };
+  if (op === "coalesce") return { sql: `COALESCE(${sql.join(", ")})`, bindings };
+  if (operands.length === 2 && !Number.isInteger(operands[1])) throw new Error(`${at}.round[1]: expected a whole number of digits`);
+  // PostgreSQL rounds to digits only a numeric, which its driver hands back as a string.
+  return dialect === "postgresql"
+    ? { sql: `CAST(ROUND(CAST(${sql[0]} AS numeric)${sql[1] ? `, ${sql[1]}` : ""}) AS double precision)`, bindings }
+    : { sql: `ROUND(${sql.join(", ")})`, bindings };
+}
+
 /** Schemas, and table name prefixes, that hold a database's own catalog. */
 const CATALOG_SCHEMAS = new Set(["information_schema", "pg_catalog", "pg_toast", "mysql", "performance_schema", "sys"]);
 const CATALOG_TABLE = /^(sqlite_|pg_|pragma_)/;
 
 /** Whether a table name, as knex reads it (`schema.table`, perhaps `as alias`), is part of the catalog. */
-function isCatalog(name: string): boolean {
+export function isCatalog(name: string): boolean {
   const parts = name.split(/\s+as\s+/i)[0].trim().toLowerCase().split(".");
   return parts.slice(0, -1).some(p => CATALOG_SCHEMAS.has(p)) || CATALOG_TABLE.test(parts[parts.length - 1]);
 }
@@ -308,6 +416,9 @@ async function runQuery(
   }
   fields.table = table;
   const query = fields as unknown as QueryDefinition;
+  if (type !== "select" && type !== "count" && viewDocument(context, table)) {
+    throw new Error(`${op}: "${table}" is a view, which is read-only`);
+  }
   // Omitted `connection` falls back to whichever opened first; getKnex owns
   // that chain, so this does not repeat it.
   const knex = DatabaseNode.getKnex(context, r.connection);
@@ -332,13 +443,19 @@ async function runQuery(
  * that runs. A validator refuses by throwing (`{ "$error": 403 }`).
  */
 async function authorize(query: QueryDefinition, validators: readonly Validator[], context: Context): Promise<void> {
-  const registered = DatabaseTableNode.get(context, query.table);
-  if (registered?.validator == null && !validators.some(validator => validator.rows != null)) return;
+  const table = DatabaseTableNode.get(context, query.table);
+  if (table?.validator == null && !validators.some(validator => validator.rows != null)) return;
   const operation = query.type === "count" ? "select" : query.type;
-  // A stand-in for a table with no registered document, so the connection's
-  // validator still sees the table's name.
-  const schema = registered ?? freezeData<TableJsonSchema>({ table: query.table, properties: {} });
-  await runValidators(validators, "rows", context, { schema, query, operation }, schema.validator);
+  // A view's document, or a stand-in for a table with no registered document,
+  // so the connection's validator still sees what the query reads.
+  const schema = table ?? viewDocument(context, query.table) ?? freezeData<TableJsonSchema>({ table: query.table, properties: {} });
+  await runValidators(validators, "rows", context, { schema, query, operation }, table?.validator);
+}
+
+/** The view document registered for `name`, as written. */
+function viewDocument(context: Context, name: string): ViewJsonSchema | undefined {
+  const doc = requireSchemaNode(context).documents.get(viewId(name));
+  return isViewDocument(doc) ? doc as ViewJsonSchema : undefined;
 }
 
 // ── The rows a write sends, prepared by the table's document ─────────────────
@@ -452,14 +569,14 @@ function coercionType(col: ColumnSchema): string {
 }
 
 /**
- * Rows as read, with each boolean column of the table the query names as a
- * boolean: SQLite and MySQL hand back the 1/0 they store. A column read under
- * another name (an alias, a joined table's) is left as the database gave it.
+ * Rows as read, with each boolean column of the table or view the query names
+ * as a boolean: SQLite and MySQL hand back the 1/0 they store. A column read
+ * under another name (an alias, a joined table's) is left as the database gave it.
  */
 function readRows(context: Context, tableName: string, rows: unknown): unknown {
-  const schema = DatabaseTableNode.get(context, tableName);
-  if (!schema) return rows;
-  const columns = Object.keys(schema.properties).filter(name => coercionType(schema.properties[name]) === "boolean");
+  const properties = (DatabaseTableNode.get(context, tableName) ?? viewDocument(context, tableName))?.properties;
+  if (!properties) return rows;
+  const columns = Object.keys(properties).filter(name => coercionType(properties[name]) === "boolean");
   if (columns.length === 0) return rows;
   const read = (row: unknown) => {
     if (!isObject(row)) return row;

@@ -129,6 +129,7 @@ export class DatabaseNode extends Node {
         "raw",
         "info",
         "tables",
+        "views",
         "transaction",
         "validator",
       ],
@@ -215,7 +216,12 @@ export class DatabaseNode extends Node {
         tables: {
           output: { type: "array", items: { type: "string" } },
           outputDescription: "The names of the database's tables, sorted.",
-          markdownDescription: "Lists the tables in the database, whether or not a document is registered for them. Whether one exists is `{ \"$includes\": [{ \"$database\": \"tables\" }, \"users\"] }`.",
+          markdownDescription: "Lists the tables in the database, whether or not a document is registered for them. Whether one exists is `{ \"$includes\": [{ \"$database\": \"tables\" }, \"users\"] }`. Views are listed by `views`.",
+        },
+        views: {
+          output: { type: "array", items: { type: "string" } },
+          outputDescription: "The names of the database's views, materialized ones included, sorted.",
+          markdownDescription: "Lists the views in the database, whether or not a document is registered for them.",
         },
         transaction: {
           outputDescription: "The last step's value.",
@@ -282,6 +288,8 @@ export class DatabaseNode extends Node {
           return doInfo(this, def, context);
         case "tables":
           return resolve(def.connection ?? null, context, name => listTables(knexIn(this, context, name)));
+        case "views":
+          return resolve(def.connection ?? null, context, name => listViews(knexIn(this, context, name)));
         case "transaction":
           return doTransaction(this, def, context);
         case "validator":
@@ -345,6 +353,22 @@ export async function listTables(knex: KnexType): Promise<string[]> {
     : await knex("information_schema.tables").select({ name: "table_name" })
       .where("table_type", "BASE TABLE")
       .andWhere("table_schema", knex.raw(dialect === "mysql" ? "database()" : "current_schema()"));
+  return rows.map(row => row.name).sort();
+}
+
+/** The names of a database's views, PostgreSQL's materialized ones included, sorted. */
+export async function listViews(knex: KnexType): Promise<string[]> {
+  const dialect = knex.client.dialect;
+  if (dialect === "sqlite3") {
+    const rows: Array<{ name: string }> = await knex("sqlite_master").select("name").where("type", "view");
+    return rows.map(row => row.name).sort();
+  }
+  const schema = knex.raw(dialect === "mysql" ? "database()" : "current_schema()");
+  const rows: Array<{ name: string }> = await knex("information_schema.views").select({ name: "table_name" })
+    .where("table_schema", schema);
+  if (dialect !== "mysql") {
+    rows.push(...await knex("pg_matviews").select({ name: "matviewname" }).where("schemaname", schema));
+  }
   return rows.map(row => row.name).sort();
 }
 
