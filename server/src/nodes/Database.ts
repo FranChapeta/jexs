@@ -1,7 +1,7 @@
 import Knex, { Knex as KnexType } from "knex";
 import fs from "node:fs";
 import path from "node:path";
-import { Node, Context, NodeValue, boundaryContext, childContext, loggerFor, resolve, resolveAll, resolveFields, resolverFor, runSteps } from "@jexs/core";
+import { Node, Context, NodeValue, boundaryContext, childContext, freezeData, loggerFor, resolve, resolveAll, resolveFields, resolverFor, runSteps } from "@jexs/core";
 import type { JexsNodeSchema, JexsPropertySchema } from "@jexs/core";
 import {
   mergeTls, parseDbUrl, parseTls, TLS_STRINGS,
@@ -9,6 +9,7 @@ import {
   type DatabaseConfig, type DatabaseType,
 } from "../connection.js";
 import { DATABASE_VALIDATORS } from "../context.js";
+import { isTableDocument, isViewDocument, requireSchemaNode, tableId, viewId } from "./Schema.js";
 
 /**
  * What an open connection remembers about itself — deliberately NOT the
@@ -343,6 +344,49 @@ export async function runValidators(
     if (validator[kind] != null) await runSteps(validator[kind], boundaryContext(validator.scope, extra));
   }
   if (own != null && validators.length > 0) await runSteps(own, boundaryContext(validators[0].scope, extra));
+}
+
+/**
+ * Under the validators around a step on `connection`, if any, check a query
+ * before it runs: refuse the tables it `reads` that are the database's own
+ * catalog, then run each validator's `rows`, then the table's own `validator`,
+ * so a table can add checks but never lift the connection's. They see the
+ * table's or view's document as `schema`, read-only as it is registered (a
+ * stand-in naming the table when none is), the operation as `operation` and the
+ * query itself as `query`, which they may narrow (e.g. add an owner to `where`)
+ * since this is the object that runs. A validator refuses by throwing
+ * (`{ "$error": 403 }`).
+ */
+export async function authorizeRows(
+  context: Context, connection: unknown, op: string,
+  query: { type: string; table: string }, reads: readonly unknown[] = [query.table],
+): Promise<void> {
+  const validators = validatorsFor(context, connection);
+  if (validators.length === 0) return;
+  for (const name of reads) {
+    if (typeof name !== "string") throw new Error(`${op}: a join's \`table\` must be a table name`);
+    if (isCatalog(name)) throw new Error(`${op}: "${name}" is the database's own catalog, which no step under a validator may query`);
+  }
+  const documents = requireSchemaNode(context).documents;
+  const table = documents.get(tableId(query.table));
+  const own = isTableDocument(table) ? table.validator : undefined;
+  if (own == null && !validators.some(validator => validator.rows != null)) return;
+  const view = documents.get(viewId(query.table));
+  const schema = isTableDocument(table) ? table
+    : isViewDocument(view) ? view
+    : freezeData({ table: query.table, properties: {} });
+  const operation = query.type === "count" ? "select" : query.type;
+  await runValidators(validators, "rows", context, { schema, query, operation }, own);
+}
+
+/** Schemas, and table name prefixes, that hold a database's own catalog. */
+const CATALOG_SCHEMAS = new Set(["information_schema", "pg_catalog", "pg_toast", "mysql", "performance_schema", "sys"]);
+const CATALOG_TABLE = /^(sqlite_|pg_|pragma_)/;
+
+/** Whether a table name, as knex reads it (`schema.table`, perhaps `as alias`), is part of the catalog. */
+export function isCatalog(name: string): boolean {
+  const parts = name.split(/\s+as\s+/i)[0].trim().toLowerCase().split(".");
+  return parts.slice(0, -1).some(p => CATALOG_SCHEMAS.has(p)) || CATALOG_TABLE.test(parts[parts.length - 1]);
 }
 
 /** The names of a database's tables, sorted. */

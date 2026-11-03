@@ -1,6 +1,6 @@
 import { Knex as KnexType } from "knex";
 import { Node, Context, NodeValue, freezeData, isObject, loggerFor, resolve, resolveAll, resolveFields, type Logger } from "@jexs/core";
-import { DatabaseNode, runValidators, validatorsFor } from "./Database.js";
+import { DatabaseNode, authorizeRows, runValidators, validatorsFor } from "./Database.js";
 import { sha256 } from "./Crypto.js";
 import { SchemaNode, isTableDocument, requireSchemaNode, schemaArg, tableId } from "./Schema.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "@jexs/core";
@@ -183,6 +183,19 @@ export class DatabaseTableNode extends Node {
         },
       },
     },
+    _tableColumnsInfo: { type: "object", additionalProperties: { $ref: "#/$defs/_tableColumnInfo" } },
+    _tableColumnInfo: {
+      type: "object",
+      description: "A column as the database reports it.",
+      properties: {
+        type:       { type: "string", description: "The SQL type, lowercase and without its length, as the database names it: SQLite's declared type (`varchar`, `integer`, `datetime`), MySQL's `data_type`, PostgreSQL's short `udt_name` (`varchar`, `int4`, `timestamptz`). Missing for a view's computed column that has none (SQLite)." },
+        maxLength:  { type: "number", description: "The longest value it holds, for a type that has one." },
+        nullable:   { type: "boolean", description: "Whether it takes NULL." },
+        default:    { type: "string", description: "Its SQL default, as the database reports it (a string default in its quotes), when it has one." },
+        primaryKey: { type: "boolean", description: "Whether it is part of the primary key." },
+      },
+      required: ["nullable", "primaryKey"],
+    },
     /** `$tableCreate`'s and `$tableSync`'s value: a table document, or a table's
      *  name (`"*"` for every registered one), or a step producing either. */
     _tableSchemaSlot: {
@@ -246,6 +259,13 @@ export class DatabaseTableNode extends Node {
       siblings: {
         to: { type: "string", required: true, description: "The table's new name." },
       },
+    },
+    tableColumns: {
+      type: "string",
+      output: { $ref: "#/$defs/_tableColumnsInfo" },
+      outputDescription: "The columns by name, in the table's order: each one's `type`, `maxLength`, `nullable`, `default` and `primaryKey`, as the database reports them.",
+      markdownDescription: "Lists the columns of the table or view the value names, from the database, whether or not a document is registered for it, in one query. A table that does not exist is an error, and so is a PostgreSQL materialized view, which `information_schema` leaves out. Under a `$database` validator it is checked as a `$querySelect` of the table: the database's own catalog is refused, and the `rows` steps and the table's own `validator` run with `operation: \"select\"`.",
+      examples: ["{ \"$tableColumns\": \"users\" }"],
     },
     tableDrop: {
       type: "string",
@@ -328,6 +348,25 @@ export class DatabaseTableNode extends Node {
       await DatabaseNode.getKnex(context, connection).schema.renameTable(String(table), String(to));
       loggerFor(context).info(`[table] Renamed table ${String(table)} to ${String(to)}`);
       return String(to);
+    });
+  }
+
+  tableColumns(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def.$tableColumns, def.connection ?? null], context, async ([table, connection]) => {
+      if (typeof table !== "string") throw new Error(`$tableColumns takes a table name, got ${typeof table}`);
+      await authorizeRows(context, connection, "$tableColumns", { type: "select", table });
+      const columns = await columnsOf(DatabaseNode.getKnex(context, connection), table);
+      if (columns.length === 0) throw new Error(`$tableColumns: no table or view "${table}"`);
+      return Object.fromEntries(columns.map(column => {
+        // A view's computed column may have no type of its own (SQLite).
+        const described: Record<string, unknown> = column.type ? { type: column.type } : {};
+        if (column.maxLength != null) described.maxLength = Number(column.maxLength);
+        described.nullable = column.nullable;
+        // No default reads as missing, never as a NULL default.
+        if (column.default != null) described.default = String(column.default);
+        described.primaryKey = column.primaryKey;
+        return [column.name, described];
+      }));
     });
   }
 
@@ -464,6 +503,61 @@ async function indexNames(knex: KnexType, tableName: string): Promise<string[]> 
     : await knex("pg_indexes").select({ name: "indexname" })
       .where("schemaname", knex.raw("current_schema()")).andWhere("tablename", tableName);
   return rows.map(row => row.name);
+}
+
+/** A column as the database reports it, before `$tableColumns` drops what it leaves out. */
+interface ColumnRow {
+  name: string;
+  type: string;
+  maxLength: unknown;
+  nullable: boolean;
+  default: unknown;
+  primaryKey: boolean;
+}
+
+/**
+ * A table's or view's columns in its own order, primary key included, in one
+ * query: SQLite's `PRAGMA table_info`, or `information_schema` on MySQL and
+ * PostgreSQL. The name is bound, never written into the SQL.
+ */
+async function columnsOf(knex: KnexType, tableName: string): Promise<ColumnRow[]> {
+  const dialect = knex.client.dialect;
+  if (dialect === "sqlite3") {
+    const rows: Array<{ name: string; type: string; notnull: number; dflt_value: unknown; pk: number }> =
+      await knex.raw("PRAGMA table_info(??)", [tableName]);
+    return rows.map(row => ({
+      name: row.name,
+      // `varchar(255)` is the type and its length; `decimal(8, 2)` has no one length.
+      type: row.type.split("(")[0].trim().toLowerCase(),
+      maxLength: /\((\d+)\)/.exec(row.type)?.[1],
+      nullable: row.notnull === 0,
+      default: row.dflt_value,
+      primaryKey: row.pk > 0,
+    }));
+  }
+  // PostgreSQL's short type names (`varchar`, `int4`, `timestamptz`) read as MySQL's do.
+  const sql = `select c.column_name as name, c.${dialect === "mysql" ? "data_type" : "udt_name"} as type,
+      c.character_maximum_length as max_length, c.is_nullable as nullable, c.column_default as column_default,
+      exists (select 1 from information_schema.table_constraints tc
+        join information_schema.key_column_usage k
+          on k.constraint_name = tc.constraint_name and k.table_schema = tc.table_schema and k.table_name = tc.table_name
+        where tc.constraint_type = 'PRIMARY KEY'
+          and k.table_schema = c.table_schema and k.table_name = c.table_name and k.column_name = c.column_name) as primary_key
+    from information_schema.columns c
+    where c.table_schema = ${dialect === "mysql" ? "database()" : "current_schema()"} and c.table_name = ?
+    order by c.ordinal_position`;
+  const result = await knex.raw(sql, [tableName]);
+  // MySQL hands back a [rows, fields] pair, PostgreSQL a result object holding them.
+  const rows: Array<Record<string, unknown>> = dialect === "mysql" ? result[0] : result.rows;
+  return rows.map(row => ({
+    name: String(row.name),
+    type: String(row.type ?? ""),
+    maxLength: row.max_length,
+    nullable: row.nullable === "YES",
+    default: row.column_default,
+    // PostgreSQL gives a boolean, MySQL a 1 or 0.
+    primaryKey: Boolean(Number(row.primary_key)),
+  }));
 }
 
 /**

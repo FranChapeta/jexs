@@ -24,7 +24,7 @@ export function tableId(table: string): string {
 }
 
 /** A table document: a `table` name and its column `properties`. */
-export function isTableDocument(value: unknown): value is { table: string; properties: Record<string, unknown> } {
+export function isTableDocument(value: unknown): value is Record<string, unknown> & { table: string; properties: Record<string, unknown> } {
   return isObject(value) && typeof value.table === "string" && isObject(value.properties);
 }
 
@@ -34,7 +34,7 @@ export function viewId(view: string): string {
 }
 
 /** A view document: a `view` name and the table it reads `from`. */
-export function isViewDocument(value: unknown): value is { view: string; from: string } {
+export function isViewDocument(value: unknown): value is Record<string, unknown> & { view: string; from: string } {
   return isObject(value) && typeof value.view === "string" && typeof value.from === "string";
 }
 

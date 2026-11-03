@@ -1,6 +1,6 @@
 import { Knex as KnexType } from "knex";
-import { Node, Context, NodeValue, freezeData, isObject, isOwnedKey, resolveFields } from "@jexs/core";
-import { DatabaseNode, runValidators, validatorsFor, type Validator } from "./Database.js";
+import { Node, Context, NodeValue, isObject, isOwnedKey, resolveFields } from "@jexs/core";
+import { DatabaseNode, authorizeRows } from "./Database.js";
 import { COMPUTE_FNS, DatabaseTableNode, type ColumnSchema, type TableJsonSchema } from "./DatabaseTable.js";
 import type { ViewJsonSchema } from "./DatabaseView.js";
 import { isViewDocument, requireSchemaNode, validate, viewId } from "./Schema.js";
@@ -385,16 +385,6 @@ function compileExpression(dialect: string, expression: unknown, at: string): { 
     : { sql: `ROUND(${sql.join(", ")})`, bindings };
 }
 
-/** Schemas, and table name prefixes, that hold a database's own catalog. */
-const CATALOG_SCHEMAS = new Set(["information_schema", "pg_catalog", "pg_toast", "mysql", "performance_schema", "sys"]);
-const CATALOG_TABLE = /^(sqlite_|pg_|pragma_)/;
-
-/** Whether a table name, as knex reads it (`schema.table`, perhaps `as alias`), is part of the catalog. */
-export function isCatalog(name: string): boolean {
-  const parts = name.split(/\s+as\s+/i)[0].trim().toLowerCase().split(".");
-  return parts.slice(0, -1).some(p => CATALOG_SCHEMAS.has(p)) || CATALOG_TABLE.test(parts[parts.length - 1]);
-}
-
 /**
  * Run a query op: resolve the step into its query (the op's value as `table`,
  * beside its clauses, without the `connection` setting), and under a validator
@@ -422,34 +412,9 @@ async function runQuery(
   // Omitted `connection` falls back to whichever opened first; getKnex owns
   // that chain, so this does not repeat it.
   const knex = DatabaseNode.getKnex(context, r.connection);
-  const validators = validatorsFor(context, r.connection);
-  if (validators.length > 0) {
-    const joined = [query.innerJoin, query.leftJoin, query.rightJoin].flatMap(joins => joins ?? []).map(join => join.table);
-    for (const name of [table, ...joined]) {
-      if (typeof name !== "string") throw new Error(`${op}: a join's \`table\` must be a table name`);
-      if (isCatalog(name)) throw new Error(`${op}: "${name}" is the database's own catalog, which no step under a validator may query`);
-    }
-    await authorize(query, validators, context);
-  }
+  const joined = [query.innerJoin, query.leftJoin, query.rightJoin].flatMap(joins => joins ?? []).map(join => join.table);
+  await authorizeRows(context, r.connection, op, query, [table, ...joined]);
   return run(knex, query);
-}
-
-/**
- * Run the validators before a query executes: each one's `rows`, then the
- * table's own `validator`, so a table can add checks but never lift the
- * connection's. They see the table document as `schema`, read-only as it is
- * registered, the operation as `operation` and the query itself as `query`,
- * which they may narrow (e.g. add an owner to `where`) since this is the object
- * that runs. A validator refuses by throwing (`{ "$error": 403 }`).
- */
-async function authorize(query: QueryDefinition, validators: readonly Validator[], context: Context): Promise<void> {
-  const table = DatabaseTableNode.get(context, query.table);
-  if (table?.validator == null && !validators.some(validator => validator.rows != null)) return;
-  const operation = query.type === "count" ? "select" : query.type;
-  // A view's document, or a stand-in for a table with no registered document,
-  // so the connection's validator still sees what the query reads.
-  const schema = table ?? viewDocument(context, query.table) ?? freezeData<TableJsonSchema>({ table: query.table, properties: {} });
-  await runValidators(validators, "rows", context, { schema, query, operation }, table?.validator);
 }
 
 /** The view document registered for `name`, as written. */

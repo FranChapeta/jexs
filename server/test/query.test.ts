@@ -485,6 +485,60 @@ test("a validator's structure steps authorize each change to a table's structure
   assert.equal(Reflect.get(context, "leaked"), undefined, "a validator writes nothing of its scope");
 });
 
+test("tableColumns lists a table's or view's columns, in order, as the database reports them", async () => {
+  await resolve({ $tableCreate: { table: "listed", required: ["email"], properties: {
+    id: { type: "integer", primaryKey: true, autoIncrement: true },
+    email: { type: "string", maxLength: 120 },
+    note: { type: "string", sqlType: "text" },
+    made: { type: "string", sqlType: "timestamp", sqlDefault: "CURRENT_TIMESTAMP" },
+    label: { type: "string", sqlDefault: "untitled" },
+  } }, ...conn }, {});
+  const columns = await resolve({ $tableColumns: "listed", ...conn }, {}) as Record<string, unknown>;
+  assert.deepEqual(columns, {
+    id: { type: "integer", nullable: false, primaryKey: true },
+    email: { type: "varchar", maxLength: 120, nullable: false, primaryKey: false },
+    note: { type: "text", nullable: true, primaryKey: false },
+    made: { type: "datetime", nullable: true, default: "CURRENT_TIMESTAMP", primaryKey: false },
+    label: { type: "varchar", maxLength: 255, nullable: true, default: "'untitled'", primaryKey: false },
+  });
+  assert.deepEqual(Object.keys(columns), ["id", "email", "note", "made", "label"]);
+
+  // A composite key, a table no document describes, and a view.
+  await resolve({ $tableCreate: { table: "pairs", primaryKey: ["a", "b"], properties: { a: { type: "integer" }, b: { type: "string" } } }, ...conn }, {});
+  await resolve({ $database: "raw", ...conn, sql: "create table loose (x integer, y text default 'z')" }, {});
+  await resolve({ $viewCreate: { view: "listed_emails", from: "listed", columns: { email: "email", loud: { upper: ["email"] } } }, ...conn }, {});
+  const keys = async (table: string) => Object.entries(await resolve({ $tableColumns: table, ...conn }, {}) as Record<string, { primaryKey: boolean }>)
+    .filter(([, column]) => column.primaryKey).map(([name]) => name);
+  assert.deepEqual(await keys("pairs"), ["a", "b"]);
+  assert.deepEqual(await resolve({ $tableColumns: "loose", ...conn }, {}), {
+    x: { type: "integer", nullable: true, primaryKey: false },
+    y: { type: "text", nullable: true, default: "'z'", primaryKey: false },
+  });
+  assert.deepEqual(await resolve({ $tableColumns: "listed_emails", ...conn }, {}), {
+    email: { type: "varchar", maxLength: 120, nullable: true, primaryKey: false },
+    loud: { nullable: true, primaryKey: false },
+  });
+  // The table's name may come from a step, and is bound, whatever it holds.
+  assert.deepEqual(Object.keys(await resolve({ $tableColumns: { $var: "t" }, ...conn }, { t: "pairs" }) as object), ["a", "b"]);
+  await resolve({ $database: "raw", ...conn, sql: "create table \"odd`name\" (n decimal(8, 2) not null)" }, {});
+  assert.deepEqual(await resolve({ $tableColumns: "odd`name", ...conn }, {}), { n: { type: "decimal", nullable: false, primaryKey: false } });
+  await assert.rejects(resolve({ $tableColumns: "nowhere", ...conn }, {}), /\$tableColumns: no table or view "nowhere"/);
+  await assert.rejects(resolve({ $tableColumns: 5, ...conn }, {}), /\$tableColumns takes a table name, got number/);
+});
+
+test("under a validator, tableColumns is checked as a select of the table", async () => {
+  const seen: unknown[] = [];
+  const rows = [
+    { $push: [{ $var: "seen" }, { $concat: [{ $var: "operation" }, " ", { $var: "query.table" }, " ", { $var: "schema.table" }] }] },
+    { $if: { $eq: [{ $var: "query.table" }, "pairs"] }, then: { $error: 403, message: "pairs are hidden" } },
+  ];
+  const validated = (step: unknown) => resolve({ $database: "validator", ...conn, rows, do: [step] }, { seen });
+  assert.deepEqual(Object.keys(await validated({ $tableColumns: "listed", ...conn }) as object), ["id", "email", "note", "made", "label"]);
+  await assert.rejects(validated({ $tableColumns: "pairs", ...conn }), /pairs are hidden/);
+  await assert.rejects(validated({ $tableColumns: "sqlite_master", ...conn }), /"sqlite_master" is the database's own catalog/);
+  assert.deepEqual(seen, ["select listed listed", "select pairs pairs"]);
+});
+
 test("sync adds the columns and indexes a table lacks, and warns about what only alter may change", async () => {
   const warnings: string[] = [];
   const logger = { info: () => {}, warn: (message: string) => { warnings.push(message); }, error: () => {} };
