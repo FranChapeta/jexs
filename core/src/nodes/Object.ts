@@ -1,5 +1,5 @@
 import { Node, Context, childContext } from "./Node.js";
-import { andThen, resolve, resolveAll, runSteps } from "../Resolver.js";
+import { andThen, inOrder, resolve, resolveAll, runSteps } from "../Resolver.js";
 import { getNestedValue, isObject, setOwn } from "../helpers.js";
 import type { JexsNodeSchema } from "../schema.js";
 
@@ -173,16 +173,9 @@ export class ObjectNode extends Node {
         const record = obj; // const preserves the narrowed type into the closure below
         const keys = Object.keys(record);
         const result: Record<string, unknown> = {};
-        let i = 0;
-        function next(): unknown {
-          if (i >= keys.length) return result;
-          const idx = i++;
-          const key = keys[idx];
-          const item = record[key];
-          const itemCtx = childContext(context, { [itemName]: item, [keyName]: key });
-          return andThen(runSteps(template, itemCtx), v => { setOwn(result, key, v); return next(); });
-        }
-        return next();
+        return andThen(inOrder(keys.length,
+          i => runSteps(template, childContext(context, { [itemName]: record[keys[i]], [keyName]: keys[i] })),
+          (v, i) => { setOwn(result, keys[i], v); }), () => result);
       });
     });
   }

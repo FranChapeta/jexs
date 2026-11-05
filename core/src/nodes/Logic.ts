@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue } from "./Node.js";
-import { andThen, resolve, resolveAll, isStep, runSteps } from "../Resolver.js";
+import { andThen, inOrder, resolve, resolveAll, isStep, runSteps } from "../Resolver.js";
 import { Html, hasAnyKey, isObject, operands } from "../helpers.js";
 import type { JexsNodeSchema } from "../schema.js";
 
@@ -287,47 +287,31 @@ export class LogicNode extends Node {
 
   and(def: Record<string, unknown>, context: Context): NodeValue {
     const conditions = this.toArray(def.$and);
-    let i = 0;
-    const self = this;
-    function next(): unknown {
-      if (i >= conditions.length) return true;
-      const cond = conditions[i++];
-      return resolve(cond, context, v => {
-        if (!self.toBoolean(v)) return false;
-        return next();
-      });
-    }
-    return next();
+    let result = true;
+    return andThen(inOrder(conditions.length, i => resolve(conditions[i], context), v => {
+      if (this.toBoolean(v)) return false;
+      result = false;
+      return true;
+    }), () => result);
   }
 
   or(def: Record<string, unknown>, context: Context): NodeValue {
     const conditions = this.toArray(def.$or);
-    let i = 0;
-    const self = this;
-    function next(): unknown {
-      if (i >= conditions.length) return false;
-      const cond = conditions[i++];
-      return resolve(cond, context, v => {
-        if (self.toBoolean(v)) return true;
-        return next();
-      });
-    }
-    return next();
+    let result = false;
+    return andThen(inOrder(conditions.length, i => resolve(conditions[i], context), v => {
+      if (!this.toBoolean(v)) return false;
+      result = true;
+      return true;
+    }), () => result);
   }
 
   coalesce(def: Record<string, unknown>, context: Context): NodeValue {
     const values = this.toArray(def.$coalesce);
-    let i = 0;
     let last: unknown = undefined;
-    function next(): unknown {
-      if (i >= values.length) return last;
-      return resolve(values[i++], context, v => {
-        last = v;
-        if (!isEmptyValue(v)) return v;
-        return next();
-      });
-    }
-    return next();
+    return andThen(inOrder(values.length, i => resolve(values[i], context), v => {
+      last = v;
+      return !isEmptyValue(v);
+    }), () => last);
   }
 
   not(def: Record<string, unknown>, context: Context): NodeValue {

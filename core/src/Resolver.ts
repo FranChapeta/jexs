@@ -304,6 +304,29 @@ export function andThen<V, T>(v: V | Promise<V>, f: (v: V) => T): T | Promise<T>
 }
 
 /**
+ * Run `run(i)` for each `i` below `count`, one after another, handing each
+ * result to `take`; `take` returning `true` stops there. Sync-first and flat:
+ * runs that finish synchronously go round one loop, so a long one never grows
+ * the stack, and the first that waits hands the rest to an async loop, which
+ * awaits only the runs that wait.
+ */
+export function inOrder(count: number, run: (i: number) => unknown, take: (v: unknown, i: number) => boolean | void): void | Promise<void> {
+  for (let i = 0; i < count; i++) {
+    const v = run(i);
+    if (v instanceof Promise) {
+      return v.then(async first => {
+        if (take(first, i)) return;
+        for (let j = i + 1; j < count; j++) {
+          const r = run(j);
+          if (take(r instanceof Promise ? await r : r, j)) return;
+        }
+      });
+    }
+    if (take(v, i)) return;
+  }
+}
+
+/**
  * Resolve every field of a step def in parallel, sync-first, and pass `then` a
  * new record of the results. For a node that wants all of its step's inputs at
  * once (the def itself, or an option bag it built from the def's fields).

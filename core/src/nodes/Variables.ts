@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue, childContext, boundaryContext, ALLOWED_OPS } from "./Node.js";
-import { resolve, resolveAll, isStep, runSteps } from "../Resolver.js";
+import { andThen, inOrder, resolve, resolveAll, isStep, runSteps } from "../Resolver.js";
 import { freezeData, getNestedValue } from "../helpers.js";
 import type { JexsNodeSchema } from "../schema.js";
 
@@ -100,14 +100,8 @@ export class VariablesNode extends Node {
       // A literal map is written in order, so a later value can read an earlier one.
       const data = this.toBoolean(dataRaw);
       const keys = Object.keys(vars);
-      let i = 0;
-      const next = (): unknown => {
-        if (i >= keys.length) return null;
-        const key = keys[i++];
-        if (data) { write(key, vars[key]); return next(); }
-        return resolve(vars[key], context, v => { write(key, v); return next(); });
-      };
-      return next();
+      return andThen(inOrder(keys.length, i => data ? vars[keys[i]] : resolve(vars[keys[i]], context),
+        (v, i) => { write(keys[i], v); }), () => null);
     });
   }
 }

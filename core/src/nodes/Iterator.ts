@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue, childContext } from "./Node.js";
-import { andThen, resolve, resolveAll, runSteps } from "../Resolver.js";
+import { andThen, inOrder, resolve, resolveAll, runSteps } from "../Resolver.js";
 import { SKIP, STOP, isStream, mapStream, readEach } from "../streams.js";
 import type { JexsNodeSchema } from "../schema.js";
 
@@ -174,16 +174,7 @@ export class IteratorNode extends Node {
       }
 
       let last: unknown = null;
-      let i = 0;
-      function next(): unknown {
-        if (i >= arr.length) return last;
-        const idx = i++;
-        const r = runSteps(template, buildContext(arr[idx], idx));
-        if (r instanceof Promise) return r.then(v => { last = v; return next(); });
-        last = r;
-        return next();
-      }
-      return next();
+      return andThen(inOrder(arr.length, i => runSteps(template, buildContext(arr[i], i)), v => { last = v; }), () => last);
     });
   }
 
@@ -202,15 +193,9 @@ export class IteratorNode extends Node {
         }
         const items = this.toArray(arr);
         const results: unknown[] = [];
-        let i = 0;
-        function next(): unknown {
-          if (i >= items.length) return results;
-          const idx = i++;
-          const item = items[idx];
-          const itemCtx = childContext(context, { [itemName]: item, [indexName]: idx });
-          return andThen(runSteps(template, itemCtx), v => { results.push(v); return next(); });
-        }
-        return next();
+        return andThen(inOrder(items.length,
+          i => runSteps(template, childContext(context, { [itemName]: items[i], [indexName]: i })),
+          v => { results.push(v); }), () => results);
       });
     });
   }
@@ -229,19 +214,9 @@ export class IteratorNode extends Node {
         }
         const items = this.toArray(arr);
         const results: unknown[] = [];
-        let i = 0;
-        const self = this;
-        function next(): unknown {
-          if (i >= items.length) return results;
-          const idx = i++;
-          const item = items[idx];
-          const itemCtx = childContext(context, { [itemName]: item, [indexName]: idx });
-          return andThen(runSteps(condition, itemCtx), v => {
-            if (self.toBoolean(v)) results.push(item);
-            return next();
-          });
-        }
-        return next();
+        return andThen(inOrder(items.length,
+          i => runSteps(condition, childContext(context, { [itemName]: items[i], [indexName]: i })),
+          (v, i) => { if (this.toBoolean(v)) results.push(items[i]); }), () => results);
       });
     });
   }
@@ -263,19 +238,14 @@ export class IteratorNode extends Node {
             })).then(() => found);
         }
         const items = this.toArray(arr);
-        let i = 0;
-        const self = this;
-        function next(): unknown {
-          if (i >= items.length) return undefined;
-          const idx = i++;
-          const item = items[idx];
-          const itemCtx = childContext(context, { [itemName]: item, [indexName]: idx });
-          return andThen(runSteps(condition, itemCtx), v => {
-            if (self.toBoolean(v)) return item;
-            return next();
-          });
-        }
-        return next();
+        let found: unknown;
+        return andThen(inOrder(items.length,
+          i => runSteps(condition, childContext(context, { [itemName]: items[i], [indexName]: i })),
+          (v, i) => {
+            if (!this.toBoolean(v)) return false;
+            found = items[i];
+            return true;
+          }), () => found);
       });
     });
   }
@@ -300,15 +270,9 @@ export class IteratorNode extends Node {
         const items = this.toArray(arr);
         return resolve(def.initial, context, initial => {
           let accumulator: unknown = initial;
-          let i = 0;
-          function next(): unknown {
-            if (i >= items.length) return accumulator;
-            const idx = i++;
-            const item = items[idx];
-            const itemCtx = childContext(context, { [itemName]: item, [indexName]: idx, [accumulatorName]: accumulator });
-            return andThen(runSteps(reducer, itemCtx), v => { accumulator = v; return next(); });
-          }
-          return next();
+          return andThen(inOrder(items.length,
+            i => runSteps(reducer, childContext(context, { [itemName]: items[i], [indexName]: i, [accumulatorName]: accumulator })),
+            v => { accumulator = v; }), () => accumulator);
         });
       });
     });
