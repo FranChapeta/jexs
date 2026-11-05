@@ -1,5 +1,5 @@
 import { Node, Context, NodeValue } from "./Node.js";
-import { resolve, resolveAll, isStep, runSteps } from "../Resolver.js";
+import { andThen, resolve, resolveAll, isStep, runSteps } from "../Resolver.js";
 import { Html, hasAnyKey, isObject, operands } from "../helpers.js";
 import type { JexsNodeSchema } from "../schema.js";
 
@@ -35,6 +35,24 @@ export class LogicNode extends Node {
         },
         default: {
           description: "Value to resolve when no case matches.",
+        },
+      },
+    },
+    while: {
+      markdownDescription: "Runs `do` for as long as the condition is truthy, resolving the condition anew before each round. `do` runs in the caller's scope, as `$if`'s branches do, so a variable it sets with `$as` is what the condition reads next round, and what the steps after the loop read. A `$return` in `do` ends that round, not the loop: the loop stops when the condition turns falsy, or throws once it has run `max` rounds.",
+      outputDescription: "The last round's `do` result, or `undefined` when the condition is falsy from the start. For an array `do`, that is the last step of the last round.",
+      examples: [
+        "{ \"$while\": { \"$lt\": [{ \"$var\": \"count\" }, 3] }, \"do\": { \"$add\": [{ \"$var\": \"count\" }, 1], \"$as\": \"count\" } }",
+        "{ \"$while\": { \"$neq\": [{ \"$var\": \"reply.stop_reason\" }, \"end_turn\"] }, \"max\": 20, \"do\": { \"$runVar\": \"round\" } }",
+      ],
+      siblings: {
+        do: {
+          required: true,
+          description: "Steps or expression run each round.",
+        },
+        max: {
+          type: "number",
+          description: "The most rounds the loop may run: a condition still truthy after them throws, so a loop that never ends (a model that keeps calling tools) fails instead of running on. Default: no limit.",
         },
       },
     },
@@ -229,6 +247,41 @@ export class LogicNode extends Node {
         return fallback();
       }
       return Object.hasOwn(cases, key) ? runSteps(cases[key], context) : fallback();
+    });
+  }
+
+  while(def: Record<string, unknown>, context: Context): NodeValue {
+    const template = def.do;
+    if (template === undefined) throw new Error("while needs a `do` template");
+    return resolve(def.max, context, maxRaw => {
+      const max = maxRaw === undefined || maxRaw === null ? Infinity : maxRaw;
+      if (typeof max !== "number" || !(max >= 0) || (max !== Infinity && !Number.isInteger(max))) {
+        throw new Error("$while: `max` takes a whole number of rounds");
+      }
+      let last: unknown;
+      let rounds = 0;
+      const round = (): unknown => {
+        if (rounds++ >= max) throw new Error(`$while ran its ${max} rounds and its condition still holds`);
+        return andThen(runSteps(template, context), v => { last = v; });
+      };
+      // Rounds that finish synchronously run in this loop, each at the same stack
+      // depth. The first to wait hands the rest to an async loop, which awaits
+      // each in turn instead of chaining a promise per round.
+      const rest = async (pending: Promise<unknown>, isCondition: boolean): Promise<unknown> => {
+        if (isCondition) {
+          if (!this.toBoolean(await pending)) return last;
+          await round();
+        } else await pending;
+        while (this.toBoolean(await resolve(def.$while, context))) await round();
+        return last;
+      };
+      for (;;) {
+        const condition = resolve(def.$while, context);
+        if (condition instanceof Promise) return rest(condition, true);
+        if (!this.toBoolean(condition)) return last;
+        const done = round();
+        if (done instanceof Promise) return rest(done, false);
+      }
     });
   }
 
