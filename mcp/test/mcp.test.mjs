@@ -164,14 +164,14 @@ describe("protocol", () => {
 describe("describe_op", () => {
   test("names the owning class and package", async () => {
     const { text } = await callTool("describe_op", { op: "map" });
-    assert.match(text, /ArrayNode\.map/);
+    assert.match(text, /IteratorNode\.map/);
     assert.match(text, /@jexs\/core/);
   });
 
   test("includes siblings inherited from the node's commonSiblings", async () => {
-    // `clone` reaches `map` through a `$ref` into `$defs`, not through its own
+    // `clone` reaches `sort` through a `$ref` into `$defs`, not through its own
     // `properties`, so it is the regression guard for resolving shared siblings.
-    const { text } = await callTool("describe_op", { op: "map" });
+    const { text } = await callTool("describe_op", { op: "sort" });
     assert.match(text, /clone/);
   });
 

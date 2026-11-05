@@ -160,3 +160,105 @@ test("do as steps: async steps run in order within an item", async () => {
   const out = await resolve({ $map: [1, 2], do: [{ $sleep: 1 }, { $multiply: [{ $var: "item" }, 3] }] }, {});
   assert.deepEqual(out, [3, 6]);
 });
+
+/** A stream of `values`, each read only when asked for, counting the reads and noting a cancel. */
+function source(values: unknown[]): { stream: ReadableStream<unknown>; reads: () => number; cancelled: () => boolean } {
+  let reads = 0;
+  let cancelled = false;
+  const stream = new ReadableStream<unknown>({
+    pull(controller) {
+      if (reads >= values.length) return controller.close();
+      controller.enqueue(values[reads++]);
+    },
+    cancel() { cancelled = true; },
+  }, { highWaterMark: 0 });
+  return { stream, reads: () => reads, cancelled: () => cancelled };
+}
+
+/** Every value a stream yields, read to its end. */
+async function readAll(stream: unknown): Promise<unknown[]> {
+  assert.ok(stream instanceof ReadableStream, "expected a ReadableStream");
+  const reader = stream.getReader();
+  const out: unknown[] = [];
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return out;
+    out.push(value);
+  }
+}
+
+test("foreach over a stream: each value's steps finish before the next is read, and the last result is the value", async () => {
+  const ctx = { src: source([1, 2]).stream, out: [] as unknown[] };
+  const last = await resolve({
+    $foreach: { $var: "src" },
+    do: [
+      { $push: [{ $var: "out" }, { $concat: ["start ", { $var: "item" }, "@", { $var: "index" }] }] },
+      { $sleep: 5 },
+      { $push: [{ $var: "out" }, { $concat: ["end ", { $var: "item" }] }] },
+      { $var: "item" },
+    ],
+  }, ctx);
+  assert.deepEqual(ctx.out, ["start 1@0", "end 1", "start 2@1", "end 2"]);
+  assert.equal(last, 2);
+  assert.equal(await resolve({ $foreach: { $var: "empty" }, do: { $var: "item" } }, { empty: source([]).stream }), null);
+});
+
+test("foreach over a stream: parallel does not apply", async () => {
+  await assert.rejects(async () => resolve({ $foreach: { $var: "src" }, parallel: true, do: { $var: "item" } }, { src: source([1]).stream }), /parallel/);
+});
+
+test("map and filter over a stream are lazy: a stream back, the source read as it is read", async () => {
+  const mapped = source([1, 2, 3]);
+  const doubled = await resolve({ $map: { $var: "src" }, do: { $multiply: [{ $var: "item" }, 2] } }, { src: mapped.stream });
+  assert.equal(mapped.reads(), 0);
+  assert.deepEqual(await readAll(doubled), [2, 4, 6]);
+
+  const filtered = source([1, 2, 3, 4]);
+  const kept = await resolve({ $filter: { $var: "src" }, do: { $gt: [{ $var: "n" }, 2] }, item: "n" }, { src: filtered.stream });
+  assert.equal(filtered.reads(), 0);
+  assert.deepEqual(await readAll(kept), [3, 4]);
+});
+
+test("find over a stream reads until the first match and cancels the rest", async () => {
+  const src = source([1, 2, 3, 4]);
+  assert.equal(await resolve({ $find: { $var: "src" }, do: { $gt: [{ $var: "item" }, 1] } }, { src: src.stream }), 2);
+  assert.equal(src.reads(), 2);
+  assert.equal(src.cancelled(), true);
+  assert.equal(await resolve({ $find: { $var: "src" }, do: false }, { src: source([1]).stream }), undefined);
+});
+
+test("reduce over a stream reads it to its end, and collects one with initial [] and push", async () => {
+  const sum = await resolve({ $reduce: { $var: "src" }, do: { $add: [{ $var: "accumulator" }, { $var: "item" }] }, initial: 0 }, { src: source([1, 2, 3]).stream });
+  assert.equal(sum, 6);
+  const list = await resolve({ $reduce: { $var: "src" }, do: { $push: [{ $var: "accumulator" }, { $var: "item" }] }, initial: [] }, { src: source(["a", "b"]).stream });
+  assert.deepEqual(list, ["a", "b"]);
+});
+
+test("an error in do cancels the stream it reads", async () => {
+  const read = source([1, 2, 3]);
+  const fail = { $if: { $eq: [{ $var: "item" }, 2] }, then: { $error: 500, message: "stop" } };
+  await assert.rejects(async () => resolve({ $foreach: { $var: "src" }, do: fail }, { src: read.stream }), /stop/);
+  assert.equal(read.cancelled(), true);
+
+  const mapped = source([1, 2, 3]);
+  const out = await resolve({ $map: { $var: "src" }, do: fail }, { src: mapped.stream });
+  await assert.rejects(readAll(out), /stop/);
+  assert.equal(mapped.cancelled(), true);
+});
+
+test("a stream is read once, and the other array ops refuse one", async () => {
+  const ctx = { src: source([1]).stream };
+  await resolve({ $map: { $var: "src" }, do: { $var: "item" } }, ctx);
+  await assert.rejects(async () => resolve({ $foreach: { $var: "src" }, do: { $var: "item" } }, ctx), /already being read/);
+  const other = { src: source([1]).stream };
+  await assert.rejects(async () => resolve({ $first: { $var: "src" } }, other), /A stream is read with/);
+});
+
+test("a stream from $stream feeds the iteration ops", async () => {
+  const sum = await resolve([
+    { $stream: [1, 2], $as: "out" },
+    { $streamWrite: [{ $var: "out" }, 3], $then: { $streamClose: { $var: "out" } } },
+    { $reduce: { $var: "out" }, do: { $add: [{ $var: "accumulator" }, { $var: "item" }] }, initial: 0 },
+  ], {});
+  assert.equal(sum, 6);
+});

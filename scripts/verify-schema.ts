@@ -947,6 +947,20 @@ const cases: Case[] = [
     expr: { $streamClose: { $var: "out" }, error: "failed" } },
   { label: "stream close of a data object", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { $streamClose: {} } },
+  { label: "push onto a stream, which only streamWrite writes", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $push: [{ $stream: [] }, 1] } },
+  { label: "map over a stream from $stream", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $map: { $stream: [1, 2] }, do: { $var: "item" } } },
+  { label: "foreach over an array of steps", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $foreach: [{ $var: "a" }, 2], do: { $var: "item" } } },
+  { label: "reduce over a var", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $reduce: { $var: "events" }, do: { $var: "item" }, initial: [] } },
+  { label: "map over an op returning a number", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $map: { $length: "abc" }, do: { $var: "item" } } },
+  { label: "filter over a string", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $filter: "abc", do: true } },
+  { label: "find over a literal array still checks its steps", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $find: [{ $eq: [1] }], do: true } },
 ];
 
 // Register the full schema so $ref into $defs (for nested expressions) resolves.

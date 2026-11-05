@@ -11,6 +11,7 @@ import {
   splitPath, isObject, isPrototypeKey,
   toStringValue, toNumberValue, toBooleanValue, toArrayValue,
 } from "../helpers.js";
+import { isStream } from "../streams.js";
 
 export interface Context {
   [key: string]: unknown;
@@ -195,8 +196,10 @@ export abstract class Node {
     return toBooleanValue(value);
   }
 
-  /** Helper: Convert value to array. */
+  /** Helper: Convert value to array. A stream throws: wrapped as `[stream]`, an
+   *  array op would treat the stream as its one item. */
   protected toArray(value: unknown): unknown[] {
+    if (isStream(value)) throw new Error("A stream is read with $foreach, $map, $filter, $find or $reduce, not as an array");
     return toArrayValue(value);
   }
 

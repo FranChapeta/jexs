@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue, childContext } from "./Node.js";
+import { Node, Context, NodeValue } from "./Node.js";
 import { resolve, resolveAll, isStep, runSteps } from "../Resolver.js";
 import { Html, hasAnyKey, isObject, operands } from "../helpers.js";
 import type { JexsNodeSchema } from "../schema.js";
@@ -35,31 +35,6 @@ export class LogicNode extends Node {
         },
         default: {
           description: "Value to resolve when no case matches.",
-        },
-      },
-    },
-    foreach: {
-      markdownDescription: "Iterates over an array, resolving `do` for each item, for side-effects or accumulation. Each iteration exposes the current element as `item` and its position as `index` (rename via the `item`/`index` siblings). Pass `parallel: true` to resolve all iterations concurrently.",
-      outputDescription: "The **last** iteration's resolved value, not an array (an empty/absent input yields `null`). For an array `do`, that is the last step of the last iteration. Reach for `map` when you need a result per item, e.g. rendering N elements from a collection.",
-      examples: [
-        "{ \"$foreach\": { \"$var\": \"users\" }, \"item\": \"user\", \"do\": { \"$setVars\": { \"seen\": { \"$add\": [{ \"$var\": \"seen\" }, 1] } } } }",
-      ],
-      siblings: {
-        do: {
-          required: true,
-          description: "Steps or expression to resolve for each item.",
-        },
-        item: {
-          type: "string",
-          description: "Variable name for the current item (default `\"item\"`).",
-        },
-        index: {
-          type: "string",
-          description: "Variable name for the current index (default `\"index\"`).",
-        },
-        parallel: {
-          type: "boolean",
-          description: "Resolve all iterations concurrently instead of sequentially.",
         },
       },
     },
@@ -254,41 +229,6 @@ export class LogicNode extends Node {
         return fallback();
       }
       return Object.hasOwn(cases, key) ? runSteps(cases[key], context) : fallback();
-    });
-  }
-
-  foreach(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def.$foreach, def.parallel, def.item, def.index], context, ([items, parallel, itemRaw, indexRaw]) => {
-      const arr = this.toArray(items);
-      const itemName = typeof itemRaw === "string" ? itemRaw : "item";
-      const indexName = typeof indexRaw === "string" ? indexRaw : "index";
-      const template = def.do;
-      if (template === undefined) throw new Error("foreach needs a `do` template");
-
-      // foreach iterates for effect/accumulation and yields the LAST iteration's
-      // value (empty input → null). Use `map` when you need an array of every
-      // result (e.g. rendering N elements from a collection).
-      if (arr.length === 0) return null;
-
-      const buildContext = (item: unknown, i: number): Context =>
-        childContext(context, { [itemName]: item, [indexName]: i });
-
-      if (this.toBoolean(parallel)) {
-        return Promise.all(arr.map((item, i) => runSteps(template, buildContext(item, i))))
-          .then(results => results.length ? results[results.length - 1] : null);
-      }
-
-      let last: unknown = null;
-      let i = 0;
-      function next(): unknown {
-        if (i >= arr.length) return last;
-        const idx = i++;
-        const r = runSteps(template, buildContext(arr[idx], idx));
-        if (r instanceof Promise) return r.then(v => { last = v; return next(); });
-        last = r;
-        return next();
-      }
-      return next();
     });
   }
 

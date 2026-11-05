@@ -74,3 +74,69 @@ export function closeStream(op: string, stream: unknown, error?: string): void {
   else writer.controller.error(new Error(error));
   release(writer);
 }
+
+/** What a `readEach` callback returns to stop reading, cancelling the rest. */
+export const STOP = Symbol("stop");
+/** What a `mapStream` callback returns to leave a value out. */
+export const SKIP = Symbol("skip");
+
+function readerOf(stream: ReadableStream<unknown>): ReadableStreamDefaultReader<unknown> {
+  if (stream.locked) throw new Error("This stream is already being read: a stream is read once");
+  return stream.getReader();
+}
+
+/**
+ * Read a stream to its end, waiting for `fn` on each value before reading the
+ * next. A `fn` that throws, or returns `STOP`, cancels the rest of the stream,
+ * which for a `$fetch` stream aborts its request.
+ */
+export async function readEach(
+  stream: ReadableStream<unknown>,
+  fn: (value: unknown, index: number) => unknown,
+): Promise<void> {
+  const reader = readerOf(stream);
+  let finished = false;
+  try {
+    for (let index = 0; ; index++) {
+      const { done, value } = await reader.read();
+      if (done) {
+        finished = true;
+        return;
+      }
+      if (await fn(value, index) === STOP) return;
+    }
+  } finally {
+    // Not awaited: the error that ended the reading is the one to report.
+    if (!finished) reader.cancel().catch(() => undefined);
+  }
+}
+
+/**
+ * A stream of what `fn` makes of each value of `source`, read from `source` only
+ * as it is read itself. `SKIP` leaves a value out. A `fn` that throws fails the
+ * stream and cancels `source`, and cancelling the stream cancels `source`.
+ */
+export function mapStream(
+  source: ReadableStream<unknown>,
+  fn: (value: unknown, index: number) => unknown,
+): ReadableStream<unknown> {
+  const reader = readerOf(source);
+  let index = 0;
+  return new ReadableStream<unknown>({
+    async pull(controller) {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) return controller.close();
+        let out: unknown;
+        try {
+          out = await fn(value, index++);
+        } catch (err) {
+          reader.cancel(err).catch(() => undefined);
+          throw err;
+        }
+        if (out !== SKIP) return controller.enqueue(out);
+      }
+    },
+    cancel: reason => reader.cancel(reason),
+  }, { highWaterMark: 0 });
+}

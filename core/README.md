@@ -21,10 +21,12 @@ npm install @jexs/core
 | Node | Keys | Purpose |
 |---|---|---|
 | `VariablesNode` | `var`, `setVars`, `runVar` | Read/write context by dot-path, and run steps held in a variable |
-| `LogicNode` | `if`, `switch`, `foreach`, `and`, `or`, `not`, `eq`, `lt`, `gt`, ... | Branching, iteration, comparisons |
+| `LogicNode` | `if`, `switch`, `and`, `or`, `not`, `eq`, `lt`, `gt`, ... | Branching, comparisons |
 | `ElementNode` | `tag`, `html` | Render an HTML element tree, escaping its text; trust a string as markup |
 | `StringNode` | `concat`, `replace`, `split`, `trim`, `length`, `match`, `randomString`, ... | String ops |
-| `ArrayNode` | `map`, `filter`, `reduce`, `sort`, `count`, `join`, `range`, ... | Array ops |
+| `ArrayNode` | `push`, `sort`, `slice`, `count`, `join`, `range`, ... | Array ops |
+| `IteratorNode` | `foreach`, `map`, `filter`, `find`, `reduce` | Go through an array, or a stream as its values arrive |
+| `StreamNode` | `stream`, `streamWrite`, `streamClose` | Streams of values, written while they are read |
 | `ObjectNode` | `keys`, `values`, `entries`, `pick`, `omit`, `merge`, `groupBy`, `fromEntries`, ... | Object ops |
 | `MathNode` | `add`, `avg`, `min`, `max`, `clamp`, `randomNumber`, `parseInt`, ... | Numeric ops |
 | `ColorNode` | `toRgb`, `toHex`, `lighten`, `darken`, `mix`, `contrast`, ... | Color ops |

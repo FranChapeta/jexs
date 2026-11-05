@@ -45,6 +45,7 @@ import { ElementNode } from "./nodes/Element.js";
 import { LogicNode } from "./nodes/Logic.js";
 import { StringNode } from "./nodes/Strings.js";
 import { ArrayNode } from "./nodes/Arrays.js";
+import { IteratorNode } from "./nodes/Iterator.js";
 import { ObjectNode } from "./nodes/Object.js";
 import { MathNode } from "./nodes/Math.js";
 import { ColorNode } from "./nodes/Color.js";
@@ -71,6 +72,7 @@ export function coreNodes(): Node[] {
     new LogicNode(),
     new StringNode(),
     new ArrayNode(),
+    new IteratorNode(),
     new ObjectNode(),
     new MathNode(),
     new ColorNode(),

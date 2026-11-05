@@ -1,5 +1,5 @@
-import { Node, Context, childContext } from "./Node.js";
-import { andThen, resolve, resolveAll, runSteps } from "../Resolver.js";
+import { Node, Context } from "./Node.js";
+import { resolve, resolveAll } from "../Resolver.js";
 import { getNestedValue } from "../helpers.js";
 import { nextRandom } from "./Math.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
@@ -206,100 +206,6 @@ export class ArrayNode extends Node {
         "{ \"$move\": [{ \"$var\": \"items\" }, 2, 0] }",
       ],
     },
-    filter: {
-      output: "array",
-      markdownDescription: "Returns the items of an array for which the `do` condition is truthy.\nEach iteration exposes the current element as `item` and its position as `index` (rename via the `item`/`index` siblings).",
-      examples: [
-        "{ \"$filter\": { \"$var\": \"nums\" }, \"do\": { \"$gt\": [{ \"$var\": \"item\" }, 2] } }",
-        "{ \"$filter\": { \"$var\": \"users\" }, \"do\": { \"$eq\": [{ \"$var\": \"u.role\" }, \"admin\"] }, \"item\": \"u\" }",
-      ],
-      siblings: {
-        item: {
-          type: "string",
-          description: "Variable name for the current item (default `\"item\"`).",
-        },
-        index: {
-          type: "string",
-          description: "Variable name for the current index (default `\"index\"`).",
-        },
-        do: {
-          required: true,
-          description: "Steps or expression run for each item; the item is kept when the result is truthy.",
-        },
-      },
-    },
-    find: {
-      markdownDescription: "Returns the first item of an array for which the `do` condition is truthy.\nEach iteration exposes the current element as `item` and its position as `index` (rename via the `item`/`index` siblings).",
-      outputDescription: "The first matching item (any type), or `undefined` if none match.",
-      examples: [
-        "{ \"$find\": { \"$var\": \"users\" }, \"do\": { \"$eq\": [{ \"$var\": \"item.role\" }, \"admin\"] } }",
-        "{ \"$find\": { \"$var\": \"users\" }, \"do\": { \"$eq\": [{ \"$var\": \"u.role\" }, \"admin\"] }, \"item\": \"u\" }",
-      ],
-      siblings: {
-        item: {
-          type: "string",
-          description: "Variable name for the current item (default `\"item\"`).",
-        },
-        index: {
-          type: "string",
-          description: "Variable name for the current index (default `\"index\"`).",
-        },
-        do: {
-          required: true,
-          description: "Steps or expression run for each item; the first item whose result is truthy is returned.",
-        },
-      },
-    },
-    map: {
-      output: "array",
-      markdownDescription: "Transforms each item by running `do` for it.\nEach iteration exposes the current element as `item` and its position as `index` (rename via the `item`/`index` siblings).\n`do` runs as steps: an array is a step sequence whose last value (or a `$return`'s) is the item's result.",
-      examples: [
-        "{ \"$map\": { \"$var\": \"nums\" }, \"item\": \"num\", \"do\": { \"$multiply\": [{ \"$var\": \"num\" }, 2] } }",
-      ],
-      siblings: {
-        item: {
-          type: "string",
-          description: "Variable name for the current item (default `\"item\"`).",
-        },
-        index: {
-          type: "string",
-          description: "Variable name for the current index (default `\"index\"`).",
-        },
-        do: {
-          required: true,
-          description: "Steps or expression run for each item; its result is the item's place in the new array.",
-        },
-      },
-    },
-    reduce: {
-      markdownDescription: "Reduces an array to a single value: the `do` reducer runs for each item, and what it returns is the next `accumulator`, starting from `initial`.\nEach iteration exposes the current element as `item`, its position as `index` and the running `accumulator` (rename via the `item`/`index`/`accumulator` siblings).",
-      outputDescription: "The final accumulator value, typed by the reducer or initial value (the initial value is returned as-is for an empty array).",
-      examples: [
-        "{ \"$reduce\": { \"$var\": \"nums\" }, \"do\": { \"$add\": [{ \"$var\": \"accumulator\" }, { \"$var\": \"item\" }] }, \"initial\": 0 }",
-        "{ \"$reduce\": { \"$var\": \"nums\" }, \"do\": { \"$add\": [{ \"$var\": \"total\" }, { \"$var\": \"n\" }] }, \"initial\": 0, \"item\": \"n\", \"accumulator\": \"total\" }",
-      ],
-      siblings: {
-        item: {
-          type: "string",
-          description: "Variable name for the current item (default `\"item\"`).",
-        },
-        index: {
-          type: "string",
-          description: "Variable name for the current index (default `\"index\"`).",
-        },
-        accumulator: {
-          type: "string",
-          description: "Variable name for the running value (default `\"accumulator\"`).",
-        },
-        do: {
-          required: true,
-          description: "Steps or expression run for each item; its result becomes the next `accumulator`.",
-        },
-        initial: {
-          description: "The accumulator's starting value (default: none, so the first `accumulator` is undefined).",
-        },
-      },
-    },
     includes: {
       tuple: 2,
       prefixItems: [
@@ -411,7 +317,7 @@ export class ArrayNode extends Node {
   static commonSiblings: Record<string, JexsPropertySchema> = {
     clone: {
       type: "boolean",
-      description: "Operate on a shallow copy and return it, leaving the source array unchanged (default `false`). Applies to the mutating/reordering verbs (`sort`, `reverse`, `unique`, `flatten`, `shuffle`, `push`, `unshift`, `pop`, `shift`, `remove`, `insert`, `move`); the pure verbs (`map`, `filter`, `slice`, …) always return a new array regardless.",
+      description: "Operate on a shallow copy and return it, leaving the source array unchanged (default `false`). Applies to the mutating/reordering verbs (`sort`, `reverse`, `unique`, `flatten`, `shuffle`, `push`, `unshift`, `pop`, `shift`, `remove`, `insert`, `move`); the pure verbs (`slice`, `pluck`, `sortBy`, …) always return a new array regardless.",
     },
   };
 
@@ -572,106 +478,6 @@ export class ArrayNode extends Node {
       const [item] = arr.splice(from, 1);
       arr.splice(to, 0, item);
       return arr;
-    });
-  }
-
-  filter(def: Record<string, unknown>, context: Context) {
-    const condition = def.do;
-    if (condition === undefined) throw new Error("filter needs a `do` condition");
-    return resolveAll([def.item, def.index], context, ([itemRaw, indexRaw]) => {
-      const itemName = typeof itemRaw === "string" ? itemRaw : "item";
-      const indexName = typeof indexRaw === "string" ? indexRaw : "index";
-      return resolve(def.$filter, context, arr => {
-        const items = this.toArray(arr);
-        const results: unknown[] = [];
-        let i = 0;
-        const self = this;
-        function next(): unknown {
-          if (i >= items.length) return results;
-          const idx = i++;
-          const item = items[idx];
-          const itemCtx = childContext(context, { [itemName]: item, [indexName]: idx });
-          return andThen(runSteps(condition, itemCtx), v => {
-            if (self.toBoolean(v)) results.push(item);
-            return next();
-          });
-        }
-        return next();
-      });
-    });
-  }
-
-  find(def: Record<string, unknown>, context: Context) {
-    const condition = def.do;
-    if (condition === undefined) throw new Error("find needs a `do` condition");
-    return resolveAll([def.item, def.index], context, ([itemRaw, indexRaw]) => {
-      const itemName = typeof itemRaw === "string" ? itemRaw : "item";
-      const indexName = typeof indexRaw === "string" ? indexRaw : "index";
-      return resolve(def.$find, context, arr => {
-        const items = this.toArray(arr);
-        let i = 0;
-        const self = this;
-        function next(): unknown {
-          if (i >= items.length) return undefined;
-          const idx = i++;
-          const item = items[idx];
-          const itemCtx = childContext(context, { [itemName]: item, [indexName]: idx });
-          return andThen(runSteps(condition, itemCtx), v => {
-            if (self.toBoolean(v)) return item;
-            return next();
-          });
-        }
-        return next();
-      });
-    });
-  }
-
-  map(def: Record<string, unknown>, context: Context) {
-    const template = def.do;
-    if (template === undefined) throw new Error("map needs a `do` template");
-    // As in `filter`/`find`/`reduce`, the item and index variable names are
-    // resolved first, so either may be handed in as an expression.
-    return resolveAll([def.item, def.index], context, ([itemRaw, indexRaw]) => {
-      const itemName = typeof itemRaw === "string" ? itemRaw : "item";
-      const indexName = typeof indexRaw === "string" ? indexRaw : "index";
-      return resolve(def.$map, context, arr => {
-        const items = this.toArray(arr);
-        const results: unknown[] = [];
-        let i = 0;
-        function next(): unknown {
-          if (i >= items.length) return results;
-          const idx = i++;
-          const item = items[idx];
-          const itemCtx = childContext(context, { [itemName]: item, [indexName]: idx });
-          return andThen(runSteps(template, itemCtx), v => { results.push(v); return next(); });
-        }
-        return next();
-      });
-    });
-  }
-
-  reduce(def: Record<string, unknown>, context: Context) {
-    const reducer = def.do;
-    if (reducer === undefined) throw new Error("reduce needs a `do` reducer");
-    return resolveAll([def.item, def.index, def.accumulator], context, ([itemRaw, indexRaw, accumulatorRaw]) => {
-      const itemName = typeof itemRaw === "string" ? itemRaw : "item";
-      const indexName = typeof indexRaw === "string" ? indexRaw : "index";
-      const accumulatorName = typeof accumulatorRaw === "string" ? accumulatorRaw : "accumulator";
-      return resolve(def.$reduce, context, arr => {
-        const items = this.toArray(arr);
-        return resolve(def.initial, context, initial => {
-          let accumulator: unknown = initial;
-          let i = 0;
-          function next(): unknown {
-            if (i >= items.length) return accumulator;
-            const idx = i++;
-            const item = items[idx];
-            const itemCtx = childContext(context, { [itemName]: item, [indexName]: idx, [accumulatorName]: accumulator });
-            return andThen(runSteps(reducer, itemCtx), v => { accumulator = v; return next(); });
-          }
-          return next();
-        });
-      });
     });
   }
 
