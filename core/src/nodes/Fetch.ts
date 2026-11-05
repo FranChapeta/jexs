@@ -1,5 +1,5 @@
-import { Node, Context, NodeValue } from "./Node.js";
-import { resolveFields } from "../Resolver.js";
+import { Node, Context, NodeValue, childContext } from "./Node.js";
+import { resolveFields, runSteps } from "../Resolver.js";
 import { createHttpError } from "../errors.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
 
@@ -10,9 +10,12 @@ const TEXT_EXT = new Set([
 const JSON_EXT = new Set(["json", "gltf"]);
 
 type DecodeKind = "json" | "text" | "binary" | "blob";
+type StreamKind = "sse" | "ndjson" | "lines" | "text" | "binary";
 
 const METHODS: readonly string[] = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
 const DECODE_KINDS: readonly DecodeKind[] = ["json", "text", "binary", "blob"];
+const STREAM_KINDS: readonly StreamKind[] = ["sse", "ndjson", "lines", "text", "binary"];
+const NDJSON_TYPES = ["application/x-ndjson", "application/ndjson", "application/jsonl", "application/x-jsonl"];
 const CREDENTIALS: readonly RequestCredentials[] = ["omit", "same-origin", "include"];
 const MODES: readonly RequestMode[] = ["cors", "no-cors", "same-origin", "navigate"];
 const REDIRECTS: readonly RequestRedirect[] = ["follow", "error", "manual"];
@@ -82,6 +85,137 @@ function sniffKind(url: string, response: Response): DecodeKind {
   return "binary";
 }
 
+/** How a streamed body splits into messages, from its Content-Type alone. */
+function sniffStream(response: Response): StreamKind {
+  const contentType = (response.headers.get("content-type") ?? "").toLowerCase();
+  if (contentType.startsWith("text/event-stream")) return "sse";
+  if (NDJSON_TYPES.some(type => contentType.startsWith(type))) return "ndjson";
+  if (contentType.startsWith("text/") || contentType.includes("application/json") || contentType.includes("+json")) return "text";
+  return "binary";
+}
+
+type BodyReader = ReadableStreamDefaultReader<Uint8Array>;
+
+/** The body's chunks as they arrive; leaving early cancels the rest of it. */
+async function* chunks(reader: BodyReader): AsyncGenerator<Uint8Array> {
+  let finished = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        finished = true;
+        return;
+      }
+      yield value;
+    }
+  } finally {
+    // Not awaited: the error that ended the loop is the one to report, and a
+    // cancel that fails only means the connection is already gone.
+    if (!finished) reader.cancel().catch(() => undefined);
+  }
+}
+
+/** The body decoded as UTF-8, a character split across chunks kept whole. */
+async function* texts(reader: BodyReader): AsyncGenerator<string> {
+  const decoder = new TextDecoder();
+  for await (const chunk of chunks(reader)) {
+    const text = decoder.decode(chunk, { stream: true });
+    if (text) yield text;
+  }
+  const rest = decoder.decode();
+  if (rest) yield rest;
+}
+
+/** The body's lines, without their LF, CRLF or CR, the last one also when unterminated. */
+async function* lines(reader: BodyReader): AsyncGenerator<string> {
+  let buffer = "";
+  for await (const text of texts(reader)) {
+    buffer += text;
+    for (;;) {
+      const lineBreak = /\r\n|\r|\n/.exec(buffer);
+      if (!lineBreak) break;
+      // A CR that ends the buffer may be the first half of a CRLF still on its way.
+      if (lineBreak[0] === "\r" && lineBreak.index === buffer.length - 1) break;
+      yield buffer.slice(0, lineBreak.index);
+      buffer = buffer.slice(lineBreak.index + lineBreak[0].length);
+    }
+  }
+  if (buffer) yield buffer.replace(/\r$/, "");
+}
+
+/** One parsed value per non-blank line. */
+async function* ndjson(reader: BodyReader): AsyncGenerator<unknown> {
+  for await (const line of lines(reader)) {
+    if (line.trim()) yield JSON.parse(line);
+  }
+}
+
+/**
+ * Server-Sent Events, as the HTML spec frames them: each event's `data`, or with
+ * `full` the whole `{ event, data, id }`. `data` lines join with `\n` and parse
+ * as JSON when they can, an event without data is skipped, and `event` defaults
+ * to `"message"`.
+ */
+async function* sse(reader: BodyReader, full: boolean): AsyncGenerator<unknown> {
+  let event = "";
+  let data: string[] = [];
+  let id: string | undefined;
+  const message = (): unknown => {
+    const value = jsonOrText(data.join("\n"));
+    return full ? { event: event || "message", data: value, ...(id === undefined ? {} : { id }) } : value;
+  };
+  for await (const line of lines(reader)) {
+    if (line === "") {
+      if (data.length > 0) yield message();
+      event = "";
+      data = [];
+      id = undefined;
+      continue;
+    }
+    if (line.startsWith(":")) continue;
+    const colon = line.indexOf(":");
+    const field = colon < 0 ? line : line.slice(0, colon);
+    const value = colon < 0 ? "" : line.slice(colon + (line[colon + 1] === " " ? 2 : 1));
+    if (field === "data") data.push(value);
+    else if (field === "event") event = value;
+    else if (field === "id") id = value;
+  }
+  if (data.length > 0) yield message();
+}
+
+function jsonOrText(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+function messagesOf(reader: BodyReader, kind: StreamKind, full: boolean): AsyncGenerator<unknown> {
+  if (kind === "sse") return sse(reader, full);
+  if (kind === "ndjson") return ndjson(reader);
+  if (kind === "lines") return lines(reader);
+  if (kind === "text") return texts(reader);
+  return chunks(reader);
+}
+
+/**
+ * The messages as a stream read on demand: each read pulls one message off the
+ * body, so a slow reader slows the download instead of buffering it. Cancelling
+ * cancels the body itself, which settles a read still waiting on the network and
+ * aborts the request.
+ */
+function streamOf(reader: BodyReader, messages: AsyncGenerator<unknown>): ReadableStream<unknown> {
+  return new ReadableStream<unknown>({
+    async pull(controller) {
+      const { done, value } = await messages.next();
+      if (done) controller.close();
+      else controller.enqueue(value);
+    },
+    cancel: reason => reader.cancel(reason),
+  }, { highWaterMark: 0 });
+}
+
 function decode(response: Response, kind: DecodeKind): Promise<unknown> {
   if (kind === "text") return response.text();
   if (kind === "binary") return response.arrayBuffer();
@@ -106,12 +240,7 @@ function excerpt(text: string): string {
  */
 function errorBody(response: Response, text: string): unknown {
   const contentType = response.headers.get("content-type") ?? "";
-  if (!(contentType.includes("application/json") || contentType.includes("+json"))) return text;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
+  return contentType.includes("application/json") || contentType.includes("+json") ? jsonOrText(text) : text;
 }
 
 export class FetchNode extends Node {
@@ -119,10 +248,10 @@ export class FetchNode extends Node {
     fetch: {
       type: "string",
       output: "any",
-      markdownDescription: "Makes an HTTP request to the URL in `fetch`. Defaults to GET; pass `method` and `body` for writes, and `headers` for auth or content negotiation.\n\nResponse decoding takes the first of these that applies:\n1. The `type` sibling, when set.\n2. URL extension: `.json`/`.gltf` → JSON, text-like extensions → string,\n   known binary extensions (`.glb`, `.bin`, `.png`, etc.) → ArrayBuffer.\n3. Response Content-Type: `application/json` (or a `+json` suffix) → JSON, `text/*` → string,\n   everything else → ArrayBuffer.\n\nAn HTML response is a string like any other text, so content and the browser's markup ops (`$setProp` `innerHTML`, `$insertHtml`) show it as text. To insert a fragment your own server rendered as markup, trust it with `$html`: `{ \"$html\": { \"$fetch\": \"/fragment\" } }`.\n\nA non-2xx status throws an HTTP error carrying that status. An enclosing `$catch` gets the usual `error` (`{ status, message }`) plus `response`, the failing response in the same shape `full` returns, so `{ \"$var\": \"response.body.message\" }` reads the server's error body; a request that never completed (a timeout, a refused connection) reaches `$catch` without one. Pass `full` to get the headers and status alongside the body.\n\nIn a page served by a Jexs server, a POST, PUT, PATCH or DELETE to the page's own origin carries the session's CSRF token (`x-csrf-token`, from the `csrf` cookie) on its own.",
-      outputDescription: "The decoded response body: a parsed value for JSON, a string for text, an ArrayBuffer (or a Blob with `type: \"blob\"`) for binary. A `204`/`205` response and any HEAD request resolve to `null`.",
+      markdownDescription: "Makes an HTTP request to the URL in `fetch`. Defaults to GET; pass `method` and `body` for writes, and `headers` for auth or content negotiation.\n\nResponse decoding takes the first of these that applies:\n1. The `type` sibling, when set.\n2. URL extension: `.json`/`.gltf` → JSON, text-like extensions → string,\n   known binary extensions (`.glb`, `.bin`, `.png`, etc.) → ArrayBuffer.\n3. Response Content-Type: `application/json` (or a `+json` suffix) → JSON, `text/*` → string,\n   everything else → ArrayBuffer.\n\nAn HTML response is a string like any other text, so content and the browser's markup ops (`$setProp` `innerHTML`, `$insertHtml`) show it as text. To insert a fragment your own server rendered as markup, trust it with `$html`: `{ \"$html\": { \"$fetch\": \"/fragment\" } }`.\n\nA non-2xx status throws an HTTP error carrying that status. An enclosing `$catch` gets the usual `error` (`{ status, message }`) plus `response`, the failing response in the same shape `full` returns, so `{ \"$var\": \"response.body.message\" }` reads the server's error body; a request that never completed (a timeout, a refused connection) reaches `$catch` without one. Pass `full` to get the headers and status alongside the body.\n\nTo stream the response instead, pass `onMessage`, whose steps run per message as the body arrives (each Server-Sent Event of a streaming LLM API, say), or `stream` alone, which resolves to the messages as a `ReadableStream`: a Jexs server sends one on as it reads it, so `{ \"response\": { \"$fetch\": ..., \"stream\": \"sse\" }, \"responseType\": \"sse\" }` relays an upstream stream to the page.\n\nIn a page served by a Jexs server, a POST, PUT, PATCH or DELETE to the page's own origin carries the session's CSRF token (`x-csrf-token`, from the `csrf` cookie) on its own.",
+      outputDescription: "The decoded response body: a parsed value for JSON, a string for text, an ArrayBuffer (or a Blob with `type: \"blob\"`) for binary. With `stream` and no `onMessage`, a `ReadableStream` of the messages. A `204`/`205` response, any HEAD request and a body streamed to `onMessage` resolve to `null`.",
       examples: [
-        "{ \"$fetch\": \"/api/users\", \"method\": \"POST\", \"body\": { \"name\": { \"$var\": \"name\" } } }\n{ \"$fetch\": \"/api/me\", \"headers\": { \"Authorization\": { \"$concat\": [\"Bearer \", { \"$var\": \"token\" }] } } }\n{ \"$fetch\": \"/api/flaky\", \"timeout\": 5000, \"$catch\": [{ \"$concat\": [\"failed: \", { \"$var\": \"error.status\" }] }] }\n{ \"$fetch\": \"/models/Duck.glb\", \"$as\": \"buf\" }",
+        "{ \"$fetch\": \"/api/users\", \"method\": \"POST\", \"body\": { \"name\": { \"$var\": \"name\" } } }\n{ \"$fetch\": \"/api/me\", \"headers\": { \"Authorization\": { \"$concat\": [\"Bearer \", { \"$var\": \"token\" }] } } }\n{ \"$fetch\": \"/api/flaky\", \"timeout\": 5000, \"$catch\": [{ \"$concat\": [\"failed: \", { \"$var\": \"error.status\" }] }] }\n{ \"$fetch\": \"/models/Duck.glb\", \"$as\": \"buf\" }\n{ \"$fetch\": \"https://api.anthropic.com/v1/messages\", \"method\": \"POST\", \"headers\": { \"x-api-key\": { \"$var\": \"env.ANTHROPIC_API_KEY\" }, \"anthropic-version\": \"2023-06-01\" }, \"body\": { \"model\": \"claude-opus-5-5\", \"max_tokens\": 1024, \"stream\": true, \"messages\": [{ \"role\": \"user\", \"content\": { \"$var\": \"prompt\" } }] }, \"onMessage\": [{ \"$if\": { \"$eq\": [{ \"$var\": \"message.type\" }, \"content_block_delta\"] }, \"then\": { \"$socketSend\": { \"$var\": \"message.delta.text\" } } }] }",
       ],
       siblings: {
         method: {
@@ -153,7 +282,29 @@ export class FetchNode extends Node {
         },
         timeout: {
           type: "number",
-          markdownDescription: "Abort the request after this many milliseconds and throw a `408` HTTP error. `0` (the default) waits indefinitely.",
+          markdownDescription: "Abort the request after this many milliseconds and throw a `408` HTTP error. `0` (the default) waits indefinitely. It bounds the whole exchange, so on a streamed body it is a limit on the entire stream, not on the gap between messages.",
+        },
+        onMessage: {
+          steps: true,
+          markdownDescription: "Stream the response: run these steps once per message as it arrives, with `message` in scope, instead of waiting for the whole body. Each run finishes before the next message is read, so they run in order. How the body splits into messages is `stream`'s, or else the response Content-Type's: `text/event-stream` as Server-Sent Events (each event's `data`, or with `full` the whole event), `application/x-ndjson` (also `application/ndjson`, `application/jsonl`) as one JSON value per line, other text and JSON as text chunks, anything else as byte chunks.\n\nThe step resolves to `null` once the body ends (with `full`, the response with a `null` body); gather what the messages carry with `$setVars` as they come. A non-2xx status throws before any message runs, as without `onMessage`. An error in the steps stops the reading, cancels the rest of the body and reaches this step's `$catch`.",
+          examples: [
+            "{ \"$fetch\": \"/api/events\", \"onMessage\": [{ \"$push\": [{ \"$var\": \"events\" }, { \"$var\": \"message\" }] }] }",
+          ],
+        },
+        stream: {
+          type: "string",
+          enum: STREAM_KINDS,
+          markdownDescription: "How the body splits into messages, instead of inferring it from the Content-Type as `onMessage` does: for a server that sends the wrong Content-Type, or for `lines`, which no Content-Type names.\n\nWithout `onMessage`, the step resolves to the messages as a `ReadableStream` once the status is in, and reads the body only as the stream is read. Cancelling the stream aborts the request. Yielded as a response's `response`, a Jexs server sends it on message by message; `binary` relays the upstream bytes untouched.",
+          examples: [
+            "{ \"response\": { \"$fetch\": \"https://api.example.com/events\", \"stream\": \"sse\" }, \"responseType\": \"sse\" }",
+          ],
+          variants: {
+            sse: { markdownDescription: "Server-Sent Events: a message per event, its `data`, or with `full` the whole `{ event, data, id }`. `data` lines are joined with a newline and parsed as JSON when they parse, `event` is `\"message\"` when the server names none, `id` is present when it sends one, and comments and events without data are skipped." },
+            ndjson: { markdownDescription: "One JSON value per non-blank line." },
+            lines: { markdownDescription: "One string per line, without its line break." },
+            text: { markdownDescription: "The body as UTF-8 text, a string per chunk as the network delivers it: chunk boundaries fall anywhere, a character split across two is kept whole." },
+            binary: { markdownDescription: "A `Uint8Array` per chunk as the network delivers it." },
+          },
         },
         credentials: {
           type: "string",
@@ -181,7 +332,7 @@ export class FetchNode extends Node {
         full: {
           type: "boolean",
           output: { $ref: "#/$defs/_fetchResponse" },
-          markdownDescription: "Resolves to the whole response instead of the bare body: for a response header such as an `ETag`, to tell a `201` from a `200`, or to read a `redirect: \"manual\"` 3xx. Shape only: a non-2xx still throws, and `$catch` gets the response in the same shape as `response`.",
+          markdownDescription: "Resolves to the whole response instead of the bare body: for a response header such as an `ETag`, to tell a `201` from a `200`, or to read a `redirect: \"manual\"` 3xx. Shape only: a non-2xx still throws, and `$catch` gets the response in the same shape as `response`. A Server-Sent Events stream also hands over whole events, `{ event, data, id }`, instead of their `data`.",
           outputDescription: "The whole response: `status`, `ok`, `headers`, the decoded `body` and the final `url`.",
           examples: [
             "{ \"$fetch\": \"/api/thing\", \"full\": true, \"$as\": \"res\" }",
@@ -214,8 +365,11 @@ export class FetchNode extends Node {
       type: def.type ?? null,
       full: def.full,
       timeout: def.timeout,
+      stream: def.stream ?? null,
     };
     for (const [key] of PASSTHROUGH) opts[key] = def[key] ?? null;
+    // Steps run per message, so they stay a template rather than resolving here.
+    const onMessage = def.onMessage;
     return resolveFields(opts, context, async o => {
       const url = this.toString(o.url);
       const method = this.toString(o.method).toUpperCase() || "GET";
@@ -249,6 +403,9 @@ export class FetchNode extends Node {
       }
       // Checked before the request goes out: a typo here should not cost a round trip.
       const forcedKind = this.getOption(o.type, DECODE_KINDS, "fetch type");
+      const forcedStream = this.getOption(o.stream, STREAM_KINDS, "fetch stream");
+      const streamed = onMessage !== undefined || forcedStream !== undefined;
+      if (streamed && forcedKind) throw new Error("fetch type does not apply to a streamed body, which is never decoded whole: use stream");
       const timeout = this.toNumber(o.timeout);
       if (timeout > 0) options.signal = AbortSignal.timeout(timeout);
 
@@ -289,9 +446,25 @@ export class FetchNode extends Node {
       }
 
       // 204/205 and HEAD carry no body by spec, so there is nothing to decode.
-      const body = method === "HEAD" || response.status === 204 || response.status === 205
-        ? null
-        : await decode(response, forcedKind ?? sniffKind(url, response));
+      const bodyless = method === "HEAD" || response.status === 204 || response.status === 205;
+      let body: unknown = null;
+      if (streamed) {
+        if (!bodyless && response.body) {
+          const reader = response.body.getReader();
+          const messages = messagesOf(reader, forcedStream ?? sniffStream(response), full);
+          if (onMessage === undefined) {
+            body = streamOf(reader, messages);
+          } else {
+            // Each message's steps finish before the next is read: they run in order,
+            // and a slow handler slows the reading rather than piling up behind it.
+            for await (const message of messages) {
+              await runSteps(onMessage, childContext(context, { message }));
+            }
+          }
+        }
+      } else if (!bodyless) {
+        body = await decode(response, forcedKind ?? sniffKind(url, response));
+      }
 
       if (!full) return body;
       return {

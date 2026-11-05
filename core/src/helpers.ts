@@ -225,9 +225,10 @@ export function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Walk a value collecting the transferable objects inside it (ArrayBuffer and
- * ImageBitmap — the practically-only transferable types) for a `postMessage`
- * transfer list, so heavy buffers move zero-copy instead of being cloned. The
+ * Walk a value collecting the transferable objects inside it (ArrayBuffer,
+ * ImageBitmap, and ReadableStream, which cannot be cloned at all) for a
+ * `postMessage` transfer list, so heavy buffers move zero-copy instead of being
+ * cloned and a stream reaches the other side still readable. The
  * source buffers DETACH on send (the sender can no longer read them) — a
  * hand-off, which is what asset decode wants. A typed array contributes its
  * `.buffer`. Cycles are guarded with a seen-set. Used symmetrically: the worker
@@ -242,6 +243,7 @@ export function collectTransferables(value: unknown): Transferable[] {
     seen.add(v);
     if (v instanceof ArrayBuffer) { out.push(v); return; }
     if (typeof ImageBitmap !== "undefined" && v instanceof ImageBitmap) { out.push(v); return; }
+    if (typeof ReadableStream !== "undefined" && v instanceof ReadableStream) { out.push(v); return; }
     if (ArrayBuffer.isView(v)) { out.push((v as ArrayBufferView).buffer as ArrayBuffer); return; }
     if (Array.isArray(v)) { for (const item of v) walk(item); return; }
     for (const key in v) {

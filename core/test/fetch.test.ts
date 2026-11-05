@@ -363,3 +363,201 @@ test("fetch: outside a page, no csrf header is added", async () => {
   await resolve({ $fetch: "https://app.test/api", method: "POST" }, {});
   assert.equal(sentHeaders(calls[0].init)["x-csrf-token"], undefined);
 });
+
+/** A response whose body arrives in `parts`, one chunk per read, noting a cancel. */
+function streamReply(parts: (string | number[])[], init: ResponseInit = {}): { reply: Reply; cancelled: () => boolean } {
+  let cancelled = false;
+  const reply: Reply = () => {
+    const encoder = new TextEncoder();
+    let next = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (next >= parts.length) return controller.close();
+        const part = parts[next++];
+        controller.enqueue(typeof part === "string" ? encoder.encode(part) : new Uint8Array(part));
+      },
+      cancel() { cancelled = true; },
+    });
+    return new Response(body, init);
+  };
+  return { reply, cancelled: () => cancelled };
+}
+
+const collect = [{ $push: [{ $var: "out" }, { $var: "message" }] }];
+
+const sseParts = [
+  ": keep-alive\r\n\r\nevent: content_block_delta\r\ndata: {\"delta\":{\"text\":\"Hel\"}}\r\n",
+  "\r\nevent: content_block_delta\ndata: {\"delta\":{\"text\":\"lo\"}}\n\n",
+  "data: first\ndata: second\nid: 7\n\nevent: ping\n\ndata: null\n\ndata: tail",
+];
+const sseInit = { headers: { "content-type": "text/event-stream; charset=utf-8" } };
+
+test("fetch stream: a text/event-stream body runs onMessage per Server-Sent Event, with its data", async () => {
+  stubFetch(streamReply(sseParts, sseInit).reply);
+  const ctx = { out: [] as unknown[] };
+  const result = await resolve({ $fetch: "/api/stream", onMessage: collect }, ctx);
+  assert.equal(result, null);
+  assert.deepEqual(ctx.out, [{ delta: { text: "Hel" } }, { delta: { text: "lo" } }, "first\nsecond", null, "tail"]);
+});
+
+test("fetch stream: with full, onMessage gets each whole Server-Sent Event", async () => {
+  stubFetch(streamReply(sseParts, sseInit).reply);
+  const ctx = { out: [] as unknown[] };
+  await resolve({ $fetch: "/api/stream", full: true, onMessage: collect }, ctx);
+  assert.deepEqual(ctx.out, [
+    { event: "content_block_delta", data: { delta: { text: "Hel" } } },
+    { event: "content_block_delta", data: { delta: { text: "lo" } } },
+    { event: "message", data: "first\nsecond", id: "7" },
+    { event: "message", data: null },
+    { event: "message", data: "tail" },
+  ]);
+});
+
+test("fetch stream: an NDJSON body runs onMessage per value, blank lines skipped", async () => {
+  stubFetch(streamReply(["{\"a\":1}\n\n{\"a\"", ":2}\n[3]"], { headers: { "content-type": "application/x-ndjson" } }).reply);
+  const ctx = { out: [] as unknown[] };
+  await resolve({ $fetch: "/api/stream", onMessage: collect }, ctx);
+  assert.deepEqual(ctx.out, [{ a: 1 }, { a: 2 }, [3]]);
+});
+
+test("fetch stream: a text body arrives in chunks, a character split across two kept whole", async () => {
+  // "añb", with the two bytes of "ñ" in different chunks.
+  stubFetch(streamReply([[0x61, 0xc3], [0xb1, 0x62]], { headers: { "content-type": "text/plain" } }).reply);
+  const ctx = { out: [] as unknown[] };
+  await resolve({ $fetch: "/api/stream", onMessage: collect }, ctx);
+  assert.deepEqual(ctx.out, ["a", "ñb"]);
+});
+
+test("fetch stream: any other body arrives as byte chunks", async () => {
+  stubFetch(streamReply([[1, 2], [3]], { headers: { "content-type": "application/octet-stream" } }).reply);
+  const ctx = { out: [] as unknown[] };
+  await resolve({ $fetch: "/api/stream", onMessage: collect }, ctx);
+  assert.deepEqual(ctx.out.map(chunk => chunk instanceof Uint8Array ? [...chunk] : chunk), [[1, 2], [3]]);
+});
+
+test("fetch stream: stream overrides the Content-Type, and lines splits on LF, CRLF and CR", async () => {
+  stubFetch(streamReply(["a\r", "\nb\rc\n", "d"], { headers: { "content-type": "application/json" } }).reply);
+  const ctx = { out: [] as unknown[] };
+  await resolve({ $fetch: "/api/stream", stream: "lines", onMessage: collect }, ctx);
+  assert.deepEqual(ctx.out, ["a", "b", "c", "d"]);
+});
+
+test("fetch stream: each message's steps finish before the next one runs", async () => {
+  stubFetch(streamReply(["1\n2\n"], { headers: { "content-type": "text/plain" } }).reply);
+  const ctx = { out: [] as unknown[] };
+  await resolve({
+    $fetch: "/api/stream",
+    stream: "lines",
+    onMessage: [
+      { $push: [{ $var: "out" }, { $concat: ["start ", { $var: "message" }] }] },
+      { $sleep: 10 },
+      { $push: [{ $var: "out" }, { $concat: ["end ", { $var: "message" }] }] },
+    ],
+  }, ctx);
+  assert.deepEqual(ctx.out, ["start 1", "end 1", "start 2", "end 2"]);
+});
+
+test("fetch stream: an error in onMessage cancels the body and reaches $catch", async () => {
+  const stream = streamReply(["1\n", "2\n", "3\n"], { headers: { "content-type": "text/plain" } });
+  stubFetch(stream.reply);
+  const ctx = { out: [] as unknown[] };
+  const out = await resolve({
+    $fetch: "/api/stream",
+    stream: "lines",
+    onMessage: [...collect, { $error: 500, message: "stop" }],
+    $catch: [{ $var: "error.message" }],
+  }, ctx);
+  assert.equal(out, "stop");
+  assert.deepEqual(ctx.out, ["1"]);
+  assert.equal(stream.cancelled(), true);
+});
+
+test("fetch stream: full resolves to the response with a null body", async () => {
+  stubFetch(streamReply(["x"], { status: 201, headers: { "content-type": "text/plain" } }).reply);
+  const ctx = { out: [] as unknown[] };
+  const out = await resolve({ $fetch: "/api/stream", full: true, onMessage: collect }, ctx) as Record<string, unknown>;
+  assert.equal(out.status, 201);
+  assert.equal(out.body, null);
+  assert.deepEqual(ctx.out, ["x"]);
+});
+
+test("fetch stream: a non-2xx throws before any message runs", async () => {
+  stubFetch(streamReply(["{\"message\":\"nope\"}"], { status: 429, headers: { "content-type": "application/json" } }).reply);
+  const ctx = { out: [] as unknown[] };
+  const out = await resolve({ $fetch: "/api/stream", onMessage: collect, $catch: [{ $var: "response.body.message" }] }, ctx);
+  assert.equal(out, "nope");
+  assert.deepEqual(ctx.out, []);
+});
+
+test("fetch stream: a 204 runs no message", async () => {
+  stubFetch(() => new Response(null, { status: 204 }));
+  const ctx = { out: [] as unknown[] };
+  assert.equal(await resolve({ $fetch: "/api/stream", onMessage: collect }, ctx), null);
+  assert.deepEqual(ctx.out, []);
+});
+
+test("fetch stream: type does not combine with onMessage or stream", async () => {
+  const { calls } = stubFetch();
+  await assert.rejects(Promise.resolve(resolve({ $fetch: "/api/stream", type: "text", onMessage: collect }, { out: [] })), /does not apply/);
+  await assert.rejects(Promise.resolve(resolve({ $fetch: "/api/stream", type: "text", stream: "text" }, {})), /does not apply/);
+  assert.equal(calls.length, 0);
+});
+
+/** Every value a stream yields, read to its end. */
+async function readAll(stream: unknown): Promise<unknown[]> {
+  assert.ok(stream instanceof ReadableStream, "expected a ReadableStream");
+  const reader = stream.getReader();
+  const out: unknown[] = [];
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return out;
+    out.push(value);
+  }
+}
+
+test("fetch stream: stream alone resolves to a ReadableStream of the messages", async () => {
+  stubFetch(streamReply(sseParts, sseInit).reply);
+  const stream = await resolve({ $fetch: "/api/stream", stream: "sse" }, {});
+  assert.deepEqual(await readAll(stream), [{ delta: { text: "Hel" } }, { delta: { text: "lo" } }, "first\nsecond", null, "tail"]);
+});
+
+test("fetch stream: stream alone frames as its kind says, NDJSON and bytes alike", async () => {
+  stubFetch(streamReply(["{\"a\":1}\n{\"a\"", ":2}\n"]).reply);
+  assert.deepEqual(await readAll(await resolve({ $fetch: "/api/stream", stream: "ndjson" }, {})), [{ a: 1 }, { a: 2 }]);
+  stubFetch(streamReply([[1, 2], [3]]).reply);
+  const bytes = await readAll(await resolve({ $fetch: "/api/stream", stream: "binary" }, {}));
+  assert.deepEqual(bytes.map(chunk => chunk instanceof Uint8Array ? [...chunk] : chunk), [[1, 2], [3]]);
+});
+
+test("fetch stream: stream with full resolves to the response, the stream as its body", async () => {
+  stubFetch(streamReply(sseParts, sseInit).reply);
+  const out = await resolve({ $fetch: "/api/stream", stream: "sse", full: true }, {}) as Record<string, unknown>;
+  assert.equal(out.status, 200);
+  assert.equal(out.headers && (out.headers as Record<string, string>)["content-type"], "text/event-stream; charset=utf-8");
+  const events = await readAll(out.body);
+  assert.deepEqual(events[0], { event: "content_block_delta", data: { delta: { text: "Hel" } } });
+});
+
+test("fetch stream: with stream, a non-2xx still reaches $catch", async () => {
+  stubFetch(streamReply(["{\"message\":\"nope\"}"], { status: 500, headers: { "content-type": "application/json" } }).reply);
+  const out = await resolve({ $fetch: "/api/stream", stream: "sse", $catch: [{ $var: "response.body.message" }] }, {});
+  assert.equal(out, "nope");
+});
+
+test("fetch stream: cancelling the returned stream cancels the body, even mid-read", async () => {
+  let cancelled = false;
+  // One message, then a body that never sends another: the second read waits on the network.
+  stubFetch(() => new Response(new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(new TextEncoder().encode("1\n")); },
+    pull() { return new Promise(() => undefined); },
+    cancel() { cancelled = true; },
+  }), { headers: { "content-type": "text/plain" } }));
+  const stream = await resolve({ $fetch: "/api/stream", stream: "lines" }, {});
+  assert.ok(stream instanceof ReadableStream);
+  const reader = stream.getReader();
+  assert.deepEqual(await reader.read(), { done: false, value: "1" });
+  const pending = reader.read();
+  await reader.cancel("gone");
+  assert.deepEqual(await pending, { done: true, value: undefined });
+  assert.equal(cancelled, true);
+});
