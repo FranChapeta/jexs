@@ -282,7 +282,7 @@ export class FetchNode extends Node {
         },
         timeout: {
           type: "number",
-          markdownDescription: "Abort the request after this many milliseconds and throw a `408` HTTP error. `0` (the default) waits indefinitely. It bounds the whole exchange, so on a streamed body it is a limit on the entire stream, not on the gap between messages.",
+          markdownDescription: "Abort the request after this many milliseconds and throw a `408` HTTP error. `0` (the default) waits indefinitely. It bounds the whole exchange, so on a streamed body it is a limit on the entire stream, not on the wait for the first message or the gap between messages: leave it at `0` for a reply that may run long.",
         },
         onMessage: {
           steps: true,
@@ -294,7 +294,7 @@ export class FetchNode extends Node {
         stream: {
           type: "string",
           enum: STREAM_KINDS,
-          markdownDescription: "How the body splits into messages, instead of inferring it from the Content-Type as `onMessage` does: for a server that sends the wrong Content-Type, or for `lines`, which no Content-Type names.\n\nWithout `onMessage`, the step resolves to the messages as a `ReadableStream` once the status is in, and reads the body only as the stream is read. Cancelling the stream aborts the request. Yielded as a response's `response`, a Jexs server sends it on message by message; `binary` relays the upstream bytes untouched.",
+          markdownDescription: "Streams the response instead of reading it whole. On its own, the step resolves to a `ReadableStream` of the body's messages as soon as the status is in; the body downloads only as fast as the stream is read, and cancelling the stream aborts the request. Beside `onMessage`, it sets how the messages that run it are split.\n\nThe value says how the body splits into messages (each kind below). `onMessage` without it infers that from the Content-Type, so set it for a server that sends the wrong one, or for `lines`, which no Content-Type names.\n\nTo relay the stream, send it as a response's `response`: a Jexs server writes each message as it arrives, and `binary` passes the upstream bytes through untouched. A stream that is never sent, read or cancelled keeps its request open until `timeout` or until it is garbage-collected.",
           examples: [
             "{ \"response\": { \"$fetch\": \"https://api.example.com/events\", \"stream\": \"sse\" }, \"responseType\": \"sse\" }",
           ],
