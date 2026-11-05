@@ -53,6 +53,7 @@ import { DateNode } from "./nodes/Date.js";
 
 import { ErrorNode } from "./nodes/Error.js";
 import { FetchNode } from "./nodes/Fetch.js";
+import { StreamNode } from "./nodes/Stream.js";
 
 /**
  * Core nodes — pure logic plus global-fetch HTTP; no DOM or Node.js APIs. Safe
@@ -77,6 +78,7 @@ export function coreNodes(): Node[] {
     new DateNode(),
     new ErrorNode(),
     new FetchNode(),
+    new StreamNode(),
   ];
 }
 

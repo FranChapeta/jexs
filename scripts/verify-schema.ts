@@ -939,6 +939,14 @@ const cases: Case[] = [
     expr: { $between: [10, 1] } },
   { label: "as must be string (exprFlat)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { $if: { $var: "x" }, $as: 42 } },
+  { label: "stream write to a stream from $stream", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $streamWrite: [{ $stream: [] }, 1] } },
+  { label: "stream write to an op returning a number", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $streamWrite: [{ $length: "abc" }, 1] } },
+  { label: "stream close of a stream in a var", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $streamClose: { $var: "out" }, error: "failed" } },
+  { label: "stream close of a data object", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $streamClose: {} } },
 ];
 
 // Register the full schema so $ref into $defs (for nested expressions) resolves.
