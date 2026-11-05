@@ -1,6 +1,6 @@
 // ── Node system ──
 export {
-  Node, childContext, boundaryContext, CLIENT_SCRIPT, SW_SCRIPT, CSRF_TOKEN, TRANSLATE, ALLOWED_OPS,
+  Node, childContext, boundaryContext, CLIENT_SCRIPT, SW_SCRIPT, CSRF_TOKEN, TRANSLATE, ALLOWED_OPS, OPEN_STREAMS,
   type Context, type NodeValue, type Translator,
 } from "./nodes/Node.js";
 

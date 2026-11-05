@@ -47,6 +47,16 @@ export type Translator = (text: string) => string | Promise<string>;
 /** The ops steps may run in this scope and every scope under it, set by
  *  `$runVar`'s `allow`: a `ReadonlySet` of op names. Absent means any op. */
 export const ALLOWED_OPS = Symbol("jexs.allowedOps");
+/** The streams made in this scope and the scopes under it: a `Set` a host puts
+ *  here, such as a server for a request, to end the ones nothing reads when the
+ *  scope ends. Absent means nothing ends them but their readers. */
+export const OPEN_STREAMS = Symbol("jexs.openStreams");
+
+/** Record a stream on the scope that made it, when the scope keeps that record. */
+export function trackStream(context: Context, stream: ReadableStream<unknown>): void {
+  const open = context[OPEN_STREAMS];
+  if (open instanceof Set) open.add(stream);
+}
 
 /**
  * Derive a child scope from `parent`. It reads every variable of `parent` as it

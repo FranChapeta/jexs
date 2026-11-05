@@ -172,7 +172,41 @@ class SourceNode extends Node {
   }
 }
 
-const upstream = (path: string) => ({ $concat: ["http://", { $var: "request.headers.host" }, path] });
+const upstream = (path: unknown) => ({ $concat: ["http://", { $var: "request.headers.host" }, path] });
+
+/** What background steps of the stream server caught, pushed there by their `$catch`. */
+const caught: string[] = [];
+
+// Step lists the routes below run with `$runVar`, so each runs in sequence.
+const streamSteps = {
+  // Two rounds, each a `$fetch` stream read in the background into one response.
+  rounds: [
+    { $stream: [], $as: "out" },
+    {
+      $foreach: ["/sse", "/sse"],
+      item: "path",
+      do: { $foreach: { $fetch: upstream({ $var: "path" }), stream: "sse" }, do: { $streamWrite: [{ $var: "out" }, { $var: "item" }] } },
+      $then: { $streamClose: { $var: "out" } },
+    },
+    { response: { $var: "out" }, responseType: "sse" },
+  ],
+  // A `$fetch` stream left in a variable when the request ends.
+  left: [
+    { $fetch: upstream("/hold"), stream: "sse", $as: "held" },
+    { $concat: ["left"] },
+  ],
+  // A `$stream` never sent, its background writer waiting for room.
+  orphan: [
+    { $stream: [], $as: "orphan" },
+    {
+      $foreach: [1, 2],
+      do: { $streamWrite: [{ $var: "orphan" }, { $var: "item" }] },
+      $then: [],
+      $catch: { $push: [{ $var: "caught" }, { $var: "error.message" }] },
+    },
+    { $concat: ["orphan"] },
+  ],
+};
 
 before(async () => {
   const log = (message: string) => { streamErrors.push(message); };
@@ -190,8 +224,12 @@ before(async () => {
       { $if: at("/relay"), then: { $return: { response: { $fetch: upstream("/sse"), stream: "sse" }, responseType: "sse" } } },
       { $if: at("/relay-bytes"), then: { $return: { response: { $fetch: upstream("/sse"), stream: "binary" }, responseType: "sse" } } },
       { $if: at("/relay-hold"), then: { $return: { response: { $fetch: upstream("/hold"), stream: "sse" }, responseType: "sse" } } },
+      { $if: at("/rounds"), then: { $return: { $runVar: "steps.rounds" } } },
+      { $if: at("/left"), then: { $return: { $runVar: "steps.left" } } },
+      { $if: at("/orphan"), then: { $return: { $runVar: "steps.orphan" } } },
+      { $if: at("/nested"), then: { $return: { response: { data: { $stream: [] } } } } },
     ],
-  }, {});
+  }, { steps: streamSteps, caught });
   streamBase = `http://127.0.0.1:${port}`;
 });
 
@@ -272,4 +310,49 @@ test("a stream that fails cuts the connection and logs the error", async () => {
   await assert.rejects(res.text());
   await until(() => streamErrors.length > 0);
   assert.match(streamErrors[0], /after the response started/);
+});
+
+test("a $stream fed by background steps carries several upstream rounds in one response", async () => {
+  const res = await fetch(`${streamBase}/rounds`);
+  assert.equal(res.headers.get("content-type"), "text/event-stream");
+  assert.equal(await res.text(), sseBody + sseBody);
+});
+
+test("when a request ends, a $fetch stream it left unread is cancelled, aborting its upstream", async () => {
+  cancelled.length = 0;
+  assert.equal(await (await fetch(`${streamBase}/left`)).text(), "left");
+  await until(() => cancelled.includes("hold"));
+});
+
+test("when a request ends, a $stream it never sent is cancelled, so a push waiting on it throws", async () => {
+  caught.length = 0;
+  assert.equal(await (await fetch(`${streamBase}/orphan`)).text(), "orphan");
+  await until(() => caught.length > 0);
+  assert.match(caught[0], /cancelled/);
+});
+
+test("a stream inside a value sent as JSON is an error, not {}", async () => {
+  streamErrors.length = 0;
+  const res = await fetch(`${streamBase}/nested`);
+  assert.equal(res.status, 500);
+  await until(() => streamErrors.length > 0);
+});
+
+test("a stream response that writes nothing for streamIdleTimeout is cut", async () => {
+  const errors: string[] = [];
+  const own = createResolver([...coreNodes(), new ServerNode()], { logger: { info: () => {}, warn: () => {}, error: m => { errors.push(m); } } });
+  try {
+    const port = await own({ $listen: 0, streamIdleTimeout: 100, do: [{ response: { $stream: ["first"] }, responseType: "sse" }] }, {});
+    const res = await fetch(`http://127.0.0.1:${port}/`);
+    assert.ok(res.body);
+    const reader = res.body.getReader();
+    assert.equal(new TextDecoder().decode((await reader.read()).value), 'data: "first"\n\n');
+    const started = Date.now();
+    await assert.rejects(async () => { for (;;) if ((await reader.read()).done) return; });
+    assert.ok(Date.now() - started < 2000);
+    await until(() => errors.length > 0);
+    await assert.rejects(Promise.resolve(own({ $listen: 0, streamIdleTimeout: -1, do: [] }, {})), /streamIdleTimeout/);
+  } finally {
+    own.destroy();
+  }
 });

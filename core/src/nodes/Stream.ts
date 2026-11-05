@@ -1,4 +1,4 @@
-import { Node, Context, NodeValue } from "./Node.js";
+import { Node, Context, NodeValue, trackStream } from "./Node.js";
 import { resolve, resolveAll } from "../Resolver.js";
 import { operands } from "../helpers.js";
 import { closeStream, makeStream, writeStream } from "../streams.js";
@@ -9,7 +9,7 @@ export class StreamNode extends Node {
     stream: {
       type: "array",
       output: { $ref: "#/$defs/_stream" },
-      markdownDescription: "Makes a stream of values, read as they arrive: hold it with `$as`, write to it with `streamWrite` and end it with `streamClose`. The operand is the values it starts with (`[]` for none). It holds one value until that is read, so a write waits for a slow reader. That includes a reader still to come: before the stream is handed to one (a response going out once the steps return), write from steps running on with `$then`, since a second write in the steps themselves waits for a reader that only arrives after them. Read it with `$foreach`, `$map`, `$filter`, `$find` or `$reduce`.\n\nYielded as a response's `response`, a Jexs server sends each value as it arrives and keeps the response open until the stream ends, so steps running on with `$then` can keep writing after the response has gone out.",
+      markdownDescription: "Makes a stream of values, read as they arrive: hold it with `$as`, write to it with `streamWrite` and end it with `streamClose`. The operand is the values it starts with (`[]` for none). It holds one value until that is read, so a write waits for a slow reader. That includes a reader still to come: before the stream is handed to one (a response going out once the steps return), write from steps running on with `$then`, since a second write in the steps themselves waits for a reader that only arrives after them. Read it with `$foreach`, `$map`, `$filter`, `$find` or `$reduce`.\n\nYielded as a response's `response`, a Jexs server sends each value as it arrives and keeps the response open until the stream ends, so steps running on with `$then` can keep writing after the response has gone out. On a Jexs server a stream lives as long as the request that made it: when the request ends, one that nothing is reading is cancelled, so a `streamWrite` still waiting on it throws.",
       examples: [
         "{ \"$stream\": [\"a\", \"b\"], \"$as\": \"out\" }",
         "[{ \"$stream\": [], \"$as\": \"out\" }, { \"$streamWrite\": [{ \"$var\": \"out\" }, \"first\"], \"$then\": { \"$streamClose\": { \"$var\": \"out\" } } }, { \"response\": { \"$var\": \"out\" }, \"responseType\": \"sse\" }]",
@@ -55,7 +55,9 @@ export class StreamNode extends Node {
   stream(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$stream, context, initial => {
       if (!Array.isArray(initial)) throw new Error("$stream takes an array of the values it starts with ([] for none)");
-      return makeStream(initial);
+      const stream = makeStream(initial);
+      trackStream(context, stream);
+      return stream;
     });
   }
 

@@ -5,7 +5,7 @@ import path from "node:path";
 import { URL } from "node:url";
 import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
-import { CLIENT_SCRIPT, Context, Html, Node, NodeValue, SW_SCRIPT, boundaryContext, createHttpError, isHttpError, isObject, isStep, loggerFor, resolve, resolveAll, resolveFields, runSteps } from "@jexs/core";
+import { CLIENT_SCRIPT, Context, Html, Node, NodeValue, OPEN_STREAMS, SW_SCRIPT, boundaryContext, createHttpError, isHttpError, isObject, isStep, loggerFor, resolve, resolveAll, resolveFields, runSteps } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { COOKIES, DEFERRED, UPGRADE, type Deferred } from "../context.js";
 import { safeRelative } from "./File.js";
@@ -109,6 +109,8 @@ interface Listener {
   maxBodySize: number;
   /** The largest WebSocket message, in bytes, its upgrade server accepts. */
   maxMessageSize: number;
+  /** How long a stream response may write nothing before it is cut, in ms; `0` for no limit. */
+  streamIdleTimeout: number;
   /** Completes this listener's WebSocket upgrades; made on the first one. */
   wss: WebSocketServer | null;
   staticDirs: Map<string, string>;
@@ -306,9 +308,14 @@ async function handleRequest(
 
     const setCookies: string[] = [];
     const deferred: Deferred[] = [];
+    const openStreams = new Set<ReadableStream<unknown>>();
+    // A request's streams live as long as it does. Registered before the steps
+    // run, so a client that leaves while they still run ends them too.
+    res.once("close", () => cancelUnread(openStreams));
     const context = requestContext(listener, req, { method, path: requestPath, body, rawBody, query }, {
       [COOKIES]: setCookies,
       [DEFERRED]: deferred,
+      [OPEN_STREAMS]: openStreams,
     });
 
     // The steps yield the response: what a `$return` gives, or the last step's value.
@@ -322,7 +329,7 @@ async function handleRequest(
     // sets itself wins, since `writeHead` headers override this one.
     if (setCookies.length > 0) res.setHeader("Cache-Control", 'private="Set-Cookie"');
 
-    await sendResponse(res, result, deferred);
+    await sendResponse(res, result, deferred, listener.streamIdleTimeout);
   } catch (error) {
     // Once the status line is out (a static file, a streamed render) there is no
     // status left to change. Log and close, rather than raise a second error
@@ -399,7 +406,7 @@ function replyFor(value: unknown): Reply {
   return {
     status: typeof responseStatus === "number" ? responseStatus : redirect ? 302 : 200,
     headers,
-    body: redirect || stream ? "" : type === "json" ? JSON.stringify(body ?? null) : body == null ? "" : String(body),
+    body: redirect || stream ? "" : type === "json" ? toJson(body ?? null) : body == null ? "" : String(body),
     stream: redirect ? null : stream,
   };
 }
@@ -629,10 +636,10 @@ function getMimeType(ext: string): string {
  * deferred parts is streamed: the page with their placeholders first, then each
  * part as it resolves, in whatever order they finish.
  */
-function sendResponse(res: http.ServerResponse, value: unknown, deferred: Deferred[] = []): void | Promise<void> {
+function sendResponse(res: http.ServerResponse, value: unknown, deferred: Deferred[] = [], streamIdleTimeout = 0): void | Promise<void> {
   const { status, headers, body, stream } = replyFor(value);
   res.writeHead(status, headers);
-  if (stream) return sendStream(res, stream, headers["Content-Type"] ?? "");
+  if (stream) return sendStream(res, stream, headers["Content-Type"] ?? "", streamIdleTimeout);
   if (deferred.length === 0 || headers["Content-Type"] !== HTML) {
     res.end(body);
     return;
@@ -664,7 +671,7 @@ const SSE_PING_MS = 15_000;
  * a broken response rather than a complete one, and the error goes on to the
  * request's handler.
  */
-async function sendStream(res: http.ServerResponse, source: ReadableStream<unknown>, contentType: string): Promise<void> {
+async function sendStream(res: http.ServerResponse, source: ReadableStream<unknown>, contentType: string, idleTimeout: number): Promise<void> {
   // Node drops the body of these, so reading the source would only spend it:
   // a relayed request would download its whole upstream body for nothing.
   if (res.req.method === "HEAD" || res.statusCode === 204 || res.statusCode === 304) {
@@ -682,21 +689,56 @@ async function sendStream(res: http.ServerResponse, source: ReadableStream<unkno
   };
   res.on("close", cancel);
   const ping = framing === "sse" ? setInterval(() => res.write(": ping\n\n"), SSE_PING_MS) : null;
+  // Restarted on every value written, not on the pings: a stream nothing ever
+  // closes would otherwise hold the connection for good.
+  let idle: ReturnType<typeof setTimeout> | null = null;
+  let timedOut = false;
+  const restartIdle = (): void => {
+    if (idleTimeout <= 0) return;
+    if (idle) clearTimeout(idle);
+    idle = setTimeout(() => {
+      timedOut = true;
+      res.destroy();
+      reader.cancel().catch(() => undefined);
+    }, idleTimeout);
+  };
+  restartIdle();
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       const chunk = frameChunk(framing, value);
-      if (chunk !== null && !res.write(chunk)) await drained(res);
+      if (chunk === null) continue;
+      const flushed = res.write(chunk);
+      restartIdle();
+      if (!flushed) await drained(res);
     }
   } catch (err) {
     res.destroy();
     throw err;
   } finally {
     if (ping) clearInterval(ping);
+    if (idle) clearTimeout(idle);
     res.off("close", cancel);
   }
+  if (timedOut) throw new Error(`The stream wrote nothing for ${idleTimeout}ms, so its response was cut (streamIdleTimeout)`);
   res.end();
+}
+
+/** Cancel the streams a request made that nothing is reading: one left in a
+ *  variable, or never sent. One being read is ended by its reader instead, so
+ *  steps still reading one after the response has gone out keep it. */
+function cancelUnread(open: Set<ReadableStream<unknown>>): void {
+  for (const stream of open) if (!stream.locked) stream.cancel().catch(() => undefined);
+  open.clear();
+}
+
+/** JSON for a response, refusing a stream inside it, which JSON would write as `{}`. */
+function toJson(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) => {
+    if (v instanceof ReadableStream) throw new Error("A stream is sent as a response's body, not inside a value sent as JSON");
+    return v;
+  });
 }
 
 /**
@@ -711,9 +753,9 @@ function frameChunk(framing: "sse" | "ndjson" | "text", value: unknown): string 
   if (value instanceof Uint8Array) return value;
   if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
-  if (framing === "sse") return `data: ${JSON.stringify(value)}\n\n`;
-  if (framing === "ndjson") return `${JSON.stringify(value)}\n`;
-  return typeof value === "string" ? value : JSON.stringify(value);
+  if (framing === "sse") return `data: ${toJson(value)}\n\n`;
+  if (framing === "ndjson") return `${toJson(value)}\n`;
+  return typeof value === "string" ? value : toJson(value);
 }
 
 /** Resolves once the client has taken what was written, or has gone. */
@@ -786,7 +828,7 @@ export class ServerNode extends Node {
       type: "number",
       output: "number",
       outputDescription: "The port it listens on: the one given, or the free port the OS picked for `0`.",
-      markdownDescription: "Starts an HTTP listener on the given port (default 3000; `0` picks any free port). Pass per-request steps in `\"do\"`.\nSet `\"client\": true` (or a path string) to auto-serve the `@jexs/client` browser bundle\nand inject the script tag into rendered `<head>` elements.\nSet `\"sw\"` (with `\"client\"`) to run a service worker: what it precaches, how it answers requests (`routes`), and the steps it resolves per event (`events`).\n\n**Multiple ports.** Bind more ports by adding more `{ \"$listen\": ..., \"do\": [...] }` steps. Each is an independent listener with its own `do` pipeline, `client`, `sw`, `maxBodySize` and `maxMessageSize`.\n\n**Cross-site requests.** A POST, PUT, PATCH or DELETE, or a WebSocket upgrade, that a browser sends from another site's page is refused with 403 before any step runs, since it would carry the user's cookies. Requests from outside a browser (webhooks, scripts) are not affected. Allow other origins with `trustedOrigins`.\n\n**Per-request `do` execution.** The steps run in order in a fresh scope of their own, as any step list does: `$as` and `$setVars` write into it for later steps, and a step resolving to `{ \"$return\": X }` ends the list early with `X`.\n\n**Shared data.** Each request reads the variables of the scope `$listen` ran in, and cannot rebind them: its writes, `$bubble` included, stay in the request. The objects and arrays those variables hold are shared by every request, though, so write data no request should change with `\"readonly\": true` on its `$setVars`, which makes it read-only.\n\n**The request.** The steps read it as `request`: `method`, `path`, `query`, `headers`, `cookies`, `ip` (the client's address, from `X-Forwarded-For` with `trustProxy`), `body` (JSON or form fields, parsed by its content type, else the text) and `rawBody` (the body as the text it came as, for checking a webhook's signature with `$hmac`), beside `baseUrl`, the URL the app is reached at. A WebSocket upgrade runs the same steps, with `method` `\"WS\"`, for `$socketAccept` to take it. No step can bind `request` or `session` to another value, or change `method`, `ip`, `headers` or `cookies`, which the session's checks and database validators rely on; the rest of `request` (`path`, `query`, `body`, `params`, and keys of its own) is the steps' to change.\n\n**The response.** What the steps yield, `$return`'s value or the last step's, is the response. HTML (what `$tag` and `$html` return) is sent as `text/html`, a string as `text/plain`, nothing at all as a 404, and any other value as JSON. For full control yield a response object, one with a `response`:\n- `response`: the body (string, any JSON value for `responseType: \"json\"`, or a `ReadableStream`, such as `$fetch` with `stream` resolves to). For `responseType: \"redirect\"` it is the `Location` URL.\n- `responseStatus`: HTTP status code (default `200`, or `302` for a redirect).\n- `responseType`: `\"html\"` | `\"json\"` | `\"text\"` | `\"sse\"` (`text/event-stream`) | `\"ndjson\"` (`application/x-ndjson`) | `\"redirect\"` | a literal MIME string (e.g. `\"image/png\"`). When omitted it is inferred: markup → `html`, a string → `text`, a stream → `application/octet-stream`, otherwise `json`.\n- `responseHeaders`: extra response headers.\n\nIts other keys are not sent.\n\n**Streaming.** A `ReadableStream` body is sent as it is read, each value as it arrives: bytes as they are, and other values framed for the type, a `data:` event of JSON each for `sse`, a JSON line each for `ndjson`, and otherwise a string as it is and anything else as JSON. Strings go out with nothing between them, so a `$fetch` with `stream: \"lines\"` is relayed as `binary`, or as `ndjson` to keep each line apart. So `{ \"response\": { \"$fetch\": \"https://api.example.com/v1/chat\", \"method\": \"POST\", \"body\": ..., \"stream\": \"sse\" }, \"responseType\": \"sse\" }` relays an upstream event stream, its API key kept on the server, and a page reads it with `$fetch` and `onMessage`. An `sse` response is sent uncached and unbuffered by proxies, with a comment every 15 seconds to keep it open while quiet. A client that disconnects cancels the stream, which aborts the upstream request, and a stream that fails cuts the connection, so the client's `$fetch` fails rather than seeing a complete response. To send a value that has a `response` of its own (a row with a `response` column, say) as data, yield it as a response object's `response`.",
+      markdownDescription: "Starts an HTTP listener on the given port (default 3000; `0` picks any free port). Pass per-request steps in `\"do\"`.\nSet `\"client\": true` (or a path string) to auto-serve the `@jexs/client` browser bundle\nand inject the script tag into rendered `<head>` elements.\nSet `\"sw\"` (with `\"client\"`) to run a service worker: what it precaches, how it answers requests (`routes`), and the steps it resolves per event (`events`).\n\n**Multiple ports.** Bind more ports by adding more `{ \"$listen\": ..., \"do\": [...] }` steps. Each is an independent listener with its own `do` pipeline, `client`, `sw`, `maxBodySize` and `maxMessageSize`.\n\n**Cross-site requests.** A POST, PUT, PATCH or DELETE, or a WebSocket upgrade, that a browser sends from another site's page is refused with 403 before any step runs, since it would carry the user's cookies. Requests from outside a browser (webhooks, scripts) are not affected. Allow other origins with `trustedOrigins`.\n\n**Per-request `do` execution.** The steps run in order in a fresh scope of their own, as any step list does: `$as` and `$setVars` write into it for later steps, and a step resolving to `{ \"$return\": X }` ends the list early with `X`.\n\n**Shared data.** Each request reads the variables of the scope `$listen` ran in, and cannot rebind them: its writes, `$bubble` included, stay in the request. The objects and arrays those variables hold are shared by every request, though, so write data no request should change with `\"readonly\": true` on its `$setVars`, which makes it read-only.\n\n**The request.** The steps read it as `request`: `method`, `path`, `query`, `headers`, `cookies`, `ip` (the client's address, from `X-Forwarded-For` with `trustProxy`), `body` (JSON or form fields, parsed by its content type, else the text) and `rawBody` (the body as the text it came as, for checking a webhook's signature with `$hmac`), beside `baseUrl`, the URL the app is reached at. A WebSocket upgrade runs the same steps, with `method` `\"WS\"`, for `$socketAccept` to take it. No step can bind `request` or `session` to another value, or change `method`, `ip`, `headers` or `cookies`, which the session's checks and database validators rely on; the rest of `request` (`path`, `query`, `body`, `params`, and keys of its own) is the steps' to change.\n\n**The response.** What the steps yield, `$return`'s value or the last step's, is the response. HTML (what `$tag` and `$html` return) is sent as `text/html`, a string as `text/plain`, nothing at all as a 404, and any other value as JSON. For full control yield a response object, one with a `response`:\n- `response`: the body (string, any JSON value for `responseType: \"json\"`, or a `ReadableStream`, such as `$fetch` with `stream` resolves to). For `responseType: \"redirect\"` it is the `Location` URL.\n- `responseStatus`: HTTP status code (default `200`, or `302` for a redirect).\n- `responseType`: `\"html\"` | `\"json\"` | `\"text\"` | `\"sse\"` (`text/event-stream`) | `\"ndjson\"` (`application/x-ndjson`) | `\"redirect\"` | a literal MIME string (e.g. `\"image/png\"`). When omitted it is inferred: markup → `html`, a string → `text`, a stream → `application/octet-stream`, otherwise `json`.\n- `responseHeaders`: extra response headers.\n\nIts other keys are not sent. To send a value that has a `response` of its own (a row with a `response` column, say) as data, yield it as a response object's `response`.\n\n**Streaming.** A `ReadableStream` body is sent as it is read, each value as it arrives: bytes as they are, and other values framed for the type, a `data:` event of JSON each for `sse`, a JSON line each for `ndjson`, and otherwise a string as it is and anything else as JSON. Strings go out with nothing between them, so a `$fetch` with `stream: \"lines\"` is relayed as `binary`, or as `ndjson` to keep each line apart. So `{ \"response\": { \"$fetch\": \"https://api.example.com/v1/chat\", \"method\": \"POST\", \"body\": ..., \"stream\": \"sse\" }, \"responseType\": \"sse\" }` relays an upstream event stream, its API key kept on the server, and a page reads it with `$fetch` and `onMessage`. An `sse` response is sent uncached and unbuffered by proxies, with a comment every 15 seconds to keep it open while quiet. A client that disconnects cancels the stream, which aborts the upstream request, and a stream that fails cuts the connection, so the client's `$fetch` fails rather than seeing a complete response. A response fed by later steps is a `$stream`: the steps return it while steps running on with `$then` write to it with `$streamWrite` and end it with `$streamClose`.\n\nA request's streams live as long as it does: when it ends, any stream it made that nothing is reading (a `$fetch` stream left in a variable, a `$stream` never sent) is cancelled, so its upstream request aborts and a `$streamWrite` waiting on it throws. A stream being read, by steps still running after the response has gone out, is left to them. A stream response that writes nothing for `streamIdleTimeout` (five minutes by default; the `sse` comments do not count) is cut, and a stream inside a value sent as JSON is an error rather than `{}`.",
       examples: [
         "{ \"$listen\": 3000, \"client\": true, \"do\": [{ \"$session\": \"load\" }, { \"$routes\": { \"$var\": \"routes\" } }] }",
         "{ \"response\": { \"id\": 7 }, \"responseStatus\": 201 }",
@@ -808,6 +850,11 @@ export class ServerNode extends Node {
           type: "number",
           default: 300000,
           description: "How long a client has to send a whole request, headers and body, in milliseconds (default 300000, five minutes). A slower one is answered 408 and its connection closed. Raise it for large uploads over slow connections; `0` sets no limit on the body, which leaves nothing to end a client that stops sending partway; the headers still have 60 seconds.",
+        },
+        streamIdleTimeout: {
+          type: "number",
+          default: 300000,
+          description: "How long a stream response may go without writing a value before it is cut, in milliseconds (default 300000, five minutes), so a stream nothing closes cannot hold a connection open for good. The comments that keep an `sse` response open do not count as writes. `0` sets no limit.",
         },
         host: {
           type: "string",
@@ -914,8 +961,8 @@ export class ServerNode extends Node {
     const steps = def.do;
     if (!Array.isArray(steps)) throw new Error('$listen needs "do": an array of the steps each request runs');
 
-    const options = [def.maxBodySize, def.maxMessageSize, def.trustedOrigins, def.host, def.trustProxy, def.system, def.client, def.requestTimeout].map(o => o ?? null);
-    return resolveAll([def.$listen, ...options], context, async ([portRaw, maxBodyRaw, maxMessageRaw, originsRaw, hostRaw, trustProxy, system, client, timeoutRaw]) => {
+    const options = [def.maxBodySize, def.maxMessageSize, def.trustedOrigins, def.host, def.trustProxy, def.system, def.client, def.requestTimeout, def.streamIdleTimeout].map(o => o ?? null);
+    return resolveAll([def.$listen, ...options], context, async ([portRaw, maxBodyRaw, maxMessageRaw, originsRaw, hostRaw, trustProxy, system, client, timeoutRaw, idleRaw]) => {
       // `0` asks the OS for any free port; the step returns the one it got.
       const requested = portRaw == null || portRaw === "" ? 3000 : Number(portRaw);
       if (!Number.isInteger(requested) || requested < 0 || requested > 65535) {
@@ -935,6 +982,10 @@ export class ServerNode extends Node {
       if (!Number.isInteger(requestTimeout) || requestTimeout < 0) {
         throw new Error(`$listen: requestTimeout ${JSON.stringify(timeoutRaw)} is not a whole number of milliseconds`);
       }
+      const streamIdleTimeout = idleRaw === null ? 300_000 : Number(idleRaw);
+      if (!Number.isInteger(streamIdleTimeout) || streamIdleTimeout < 0) {
+        throw new Error(`$listen: streamIdleTimeout ${JSON.stringify(idleRaw)} is not a whole number of milliseconds`);
+      }
 
       const listener: Listener = {
         httpServer: null as unknown as http.Server, // assigned below
@@ -943,6 +994,7 @@ export class ServerNode extends Node {
         startupContext: context,
         maxBodySize: 1_048_576, // 1 MB default
         maxMessageSize: 65_536, // 64 KiB default
+        streamIdleTimeout,
         wss: null,
         staticDirs: new Map(),
         sw: null,
