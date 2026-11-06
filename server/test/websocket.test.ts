@@ -122,6 +122,81 @@ test("a connection's handlers share its id and what they bubble, and onClose get
   }
 });
 
+test("a connection's messages are handled in the order they came, after onOpen, and onClose after them", { timeout: 5000 }, async () => {
+  const seen: unknown[] = [];
+  class SeenNode extends Node {
+    seen(def: Record<string, unknown>, context: Context) {
+      seen.push(def.$seen === true ? (context.message as { name: string }).name : def.$seen);
+      return null;
+    }
+  }
+  const resolver = createResolver([...coreNodes(), new ServerNode(), new WebSocketNode(), new SeenNode()]);
+  const port = await resolver({
+    $listen: 0,
+    do: [{
+      "$socketAccept": true,
+      onOpen: [{ $sleep: 60 }, { $setVars: { ready: "yes" }, $bubble: true }, { $seen: "open" }],
+      onMessage: [
+        { $sleep: { $var: "message.wait" } },
+        { $seen: true },
+        { "$socketSend": { $concat: [{ $var: "message.name" }, ":", { $var: "ready" }] } },
+      ],
+      onClose: [{ $seen: "close" }],
+    }],
+  }, {});
+  try {
+    const ws = await connect(port);
+    const replies: string[] = [];
+    const got = new Promise<void>(resolve => ws.on("message", data => { replies.push(data.toString()); if (replies.length === 3) resolve(); }));
+    ws.send(JSON.stringify({ name: "slow", wait: 80 }));
+    ws.send(JSON.stringify({ name: "fast", wait: 0 }));
+    ws.send(JSON.stringify({ name: "last", wait: 10 }));
+    await got;
+    assert.deepEqual(replies, ["slow:yes", "fast:yes", "last:yes"], "each after the one before it, and after onOpen");
+    ws.close();
+    await new Promise(r => setTimeout(r, 100));
+    assert.deepEqual(seen, ["open", "slow", "fast", "last", "close"]);
+  } finally {
+    resolver.destroy();
+  }
+});
+
+test("a message handled after its connection closed cannot join it to a room", { timeout: 5000 }, async () => {
+  let failed!: (message: string) => void;
+  const failure = new Promise<string>(resolve => { failed = resolve; });
+  const resolver = createResolver([...coreNodes(), new ServerNode(), new WebSocketNode()], {
+    logger: { info: () => {}, warn: () => {}, error: (_message, err) => failed(err instanceof Error ? err.message : String(err)) },
+  });
+  const port = await resolver({
+    $listen: 0,
+    do: [{
+      "$socketAccept": true,
+      onMessage: {
+        $if: { $var: "message.count" },
+        then: { "$socketSend": { "$socketCount": "late" } },
+        else: [{ $sleep: 50 }, { "$socketJoin": "late" }],
+      },
+    }],
+  }, {});
+  try {
+    const leaving = await connect(port);
+    leaving.send(JSON.stringify({}));
+    leaving.close();
+    assert.equal(await failure, "$socketJoin: the connection is closed");
+
+    const ws = await connect(port);
+    try {
+      const count = new Promise<string>(resolve => ws.once("message", data => resolve(data.toString())));
+      ws.send(JSON.stringify({ count: true }));
+      assert.equal(await count, "0");
+    } finally {
+      ws.close();
+    }
+  } finally {
+    resolver.destroy();
+  }
+});
+
 test("socketList reports each connection's id and the meta it was accepted with", { timeout: 5000 }, async () => {
   const resolver = createResolver([...coreNodes(), new ServerNode(), new WebSocketNode()]);
   const port = await resolver({

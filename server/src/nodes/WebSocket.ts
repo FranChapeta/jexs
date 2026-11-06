@@ -61,15 +61,15 @@ export class WebSocketNode extends Node {
       siblings: {
         onOpen: {
           steps: true,
-          description: "Steps run once after the upgrade completes. Every handler sees `id`, the connection's id (for `socketSendTo`), and the request that opened it; a value it sets with `$bubble` stays for the connection's later handlers.",
+          description: "Steps run once after the upgrade completes, before any message's. Every handler sees `id`, the connection's id (for `socketSendTo`), and the request that opened it; a value it sets with `$bubble` stays for the connection's later handlers.",
         },
         onMessage: {
           steps: true,
-          description: "Steps run on each incoming message. `message` is the parsed JSON payload.",
+          description: "Steps run on each incoming message, `message` the parsed JSON payload. A connection's messages are handled one at a time, in the order they came: a message's steps start once `onOpen`'s and the last message's are done, so steps that read and write what the connection shares see its messages in order. A step that should run on without holding up the next message takes `$then`.",
         },
         onClose: {
           steps: true,
-          description: "Steps run once when the connection closes. `code` and `reason` are the close code and its reason text.",
+          description: "Steps run once when the connection closes, after the messages that came before it. `code` and `reason` are the close code and its reason text.",
         },
         meta: {
           type: "object",
@@ -108,7 +108,7 @@ export class WebSocketNode extends Node {
     socketJoin: {
       type: "string",
       output: "null",
-      markdownDescription: "Adds the current connection to the named room.",
+      markdownDescription: "Adds the current connection to the named room. Throws once the connection has closed.",
       examples: [
         "{ \"$socketJoin\": \"lobby\" }",
       ],
@@ -180,8 +180,14 @@ export class WebSocketNode extends Node {
         // `$bubble` the connection's later handlers read.
         const connection = childContext(context, { [WS]: ws, [WS_PATH]: path, [UPGRADE]: undefined, id });
 
+        // The connection's handlers run one after another, onOpen first and onClose
+        // last, each message's once the last one's are done: steps that wait (a cache
+        // read, a query) would otherwise let a later message overtake an earlier one.
+        // runStepsDetached logs what goes wrong instead of rejecting, so one failing
+        // handler never holds up the rest.
+        let turn: Promise<unknown> = Promise.resolve();
         if (onOpen) {
-          void runStepsDetached(onOpen, childContext(connection), { step: def, logAs: "[WebSocket] onOpen error:" });
+          turn = runStepsDetached(onOpen, childContext(connection), { step: def, logAs: "[WebSocket] onOpen error:" });
         }
 
         ws.on("message", (raw: WebSocket.RawData) => {
@@ -203,7 +209,7 @@ export class WebSocketNode extends Node {
             return;
           }
 
-          void runStepsDetached(onMessage, childContext(connection, { message: messageData }), { step: def, logAs: "[WebSocket] onMessage error:" });
+          turn = turn.then(() => runStepsDetached(onMessage, childContext(connection, { message: messageData }), { step: def, logAs: "[WebSocket] onMessage error:" }));
         });
 
         // A client that breaks the protocol (a frame over `maxMessageSize`, invalid
@@ -215,7 +221,7 @@ export class WebSocketNode extends Node {
         ws.on("close", (code: number, reason: Buffer) => {
           if (onClose) {
             const closed = childContext(connection, { code, reason: reason.toString() });
-            void runStepsDetached(onClose, closed, { step: def, logAs: "[WebSocket] onClose error:" });
+            turn = turn.then(() => runStepsDetached(onClose, closed, { step: def, logAs: "[WebSocket] onClose error:" }));
           }
 
           this.paths.get(path)?.delete(ws);
@@ -283,10 +289,14 @@ export class WebSocketNode extends Node {
   socketJoin(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$socketJoin, context, roomRaw => {
       const ws = handlerSocket("socketJoin", context);
+      // A connection's rooms are cleared when it closes, so a message's steps that
+      // run after that (they waited on the ones before) must not join it to one.
+      const memberRooms = this.clients.get(ws);
+      if (!memberRooms) throw new Error("$socketJoin: the connection is closed");
       const room = String(roomRaw);
       if (!this.rooms.has(room)) this.rooms.set(room, new Set());
       this.rooms.get(room)!.add(ws);
-      this.clients.get(ws)?.add(room);
+      memberRooms.add(room);
       return null;
     });
   }
