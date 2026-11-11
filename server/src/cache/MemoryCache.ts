@@ -51,18 +51,11 @@ export class MemoryCache implements CacheAdapter {
   }
 
   async set<T = unknown>(key: string, value: T, ttl?: number): Promise<void> {
-    // Evict oldest if at capacity
-    if (this.cache.size >= this.maxSize) {
-      const firstKey = this.cache.keys().next().value;
-      if (firstKey) this.cache.delete(firstKey);
-    }
-
     const entry: CacheEntry<T> = {
       value,
       expiresAt: ttl && ttl > 0 ? Date.now() + ttl * 1000 : null,
     };
-
-    this.cache.set(this.key(key), entry);
+    this.store(this.key(key), entry);
   }
 
   async increment(key: string, by: number, ttl?: number): Promise<number> {
@@ -73,10 +66,28 @@ export class MemoryCache implements CacheAdapter {
     const value = (Number(live?.value) || 0) + by;
     if (live) {
       live.value = value;
+      this.store(k, live);
       return value;
     }
-    await this.set(key, value, ttl);
+    this.store(k, { value, expiresAt: ttl && ttl > 0 ? Date.now() + ttl * 1000 : null });
     return value;
+  }
+
+  /**
+   * Keep `entry` under the full key `k` as the most recently used. A key
+   * already held is moved to the end and takes no room; only a new key past
+   * `maxSize` evicts, the least recently used first. Every write goes through
+   * here, so an entry written often (a counter, a session) is never the first
+   * to go merely for having been written before the others.
+   */
+  private store(k: string, entry: CacheEntry): void {
+    if (this.cache.has(k)) {
+      this.cache.delete(k);
+    } else if (this.cache.size >= this.maxSize) {
+      const oldest = this.cache.keys().next();
+      if (!oldest.done) this.cache.delete(oldest.value);
+    }
+    this.cache.set(k, entry);
   }
 
   async has(key: string): Promise<boolean> {

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createResolver, coreNodes } from "@jexs/core";
 import { COOKIES } from "../src/context.js";
 import { CacheNode } from "../src/nodes/Cache.js";
+import { MemoryCache } from "../src/cache/MemoryCache.js";
 import { SessionNode } from "../src/nodes/Session.js";
 import { TranslationNode } from "../src/nodes/Translation.js";
 import { sha256 } from "../src/nodes/Crypto.js";
@@ -252,5 +253,29 @@ test("cacheDecrement takes from a count, by 1 or by `by`, starting a missing key
     assert.equal(await resolver({ $cacheDecrement: "fresh" }, {}), -1);
   } finally {
     resolver.destroy();
+  }
+});
+
+// The memory cache evicts the least recently used key once full: a key that is
+// written again, counted or read is used, and rewriting a key takes no room.
+test("the memory cache keeps the keys used last, a count and a rewrite included", async () => {
+  const cache = new MemoryCache({ maxSize: 3, checkPeriod: 0 });
+  try {
+    await cache.set("a", 1);
+    await cache.set("b", 1);
+    await cache.set("c", 1);
+    await cache.increment("a", 1);
+    await cache.set("d", 1);
+    assert.equal(await cache.get("b"), undefined, "b, used least recently, went first");
+    assert.equal(await cache.get("a"), 2, "a counted is a used key");
+
+    await cache.set("c", 2);
+    await cache.set("c", 3);
+    assert.equal(await cache.get("a"), 2, "rewriting c evicted nothing");
+    assert.equal(await cache.get("d"), 1);
+    assert.equal(await cache.get("c"), 3);
+    assert.equal((await cache.stats()).size, 3);
+  } finally {
+    await cache.close();
   }
 });
