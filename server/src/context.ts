@@ -9,6 +9,10 @@ import type { SessionState } from "./nodes/Session.js";
 export const COOKIES = Symbol("jexs.cookies");
 /** The innermost `$database: "validator"` around a step, whose `scope` holds the one around it. */
 export const DATABASE_VALIDATORS = Symbol("jexs.databaseValidators");
+/** The cookies the session ops keep from steps: the session id's, HttpOnly, as
+ *  the request sent it. `request.cookies` and its `cookie` header leave it out,
+ *  so a page that echoes them can't hand a visitor's session to anyone. */
+export const SESSION_COOKIES = Symbol("jexs.sessionCookies");
 /** The session a scope's `$session` ops keep, which its `session` reads. */
 export const SESSION = Symbol("jexs.session");
 /** The parts of the page `$defer` resolves in the background, streamed after it. */

@@ -1,6 +1,6 @@
 import { randomUUID, randomBytes } from "crypto";
 import { CSRF_TOKEN, Node, Context, NodeValue, resolveAll, createHttpError, freezeData, isObject } from "@jexs/core";
-import { COOKIES, SESSION } from "../context.js";
+import { COOKIES, SESSION, SESSION_COOKIES } from "../context.js";
 import { isProduction } from "../env.js";
 import { CacheNode, optionalName } from "./Cache.js";
 import { tokensEqual } from "./Crypto.js";
@@ -56,6 +56,8 @@ const TTL = 86400; // 24 hours in seconds
  *  can't plant one. */
 const COOKIE_NAME = "sid";
 const SECURE_COOKIE_NAME = "__Host-sid";
+/** The HttpOnly cookies the session keeps; steps never see them. */
+export const SESSION_COOKIE_NAMES: readonly string[] = [COOKIE_NAME, SECURE_COOKIE_NAME];
 /** Read by the client's `$fetch`, which sends it back as `x-csrf-token`. */
 const CSRF_COOKIE = "csrf";
 /** Methods that must not change state, so they carry no CSRF token. */
@@ -69,7 +71,7 @@ export class SessionNode extends Node {
         "load",
         "destroy",
       ],
-      markdownDescription: "Manages request sessions stored in cache. Pass an object to set session values. Read values with `{ \"$var\": \"session.key\" }`: `session` is read-only, and only a `$session` op changes it, for the whole request whichever scope it runs in.\r\nSession ID is stored in an HTTP-only cookie with a 24-hour TTL: `sid`, or `__Host-sid` once Secure. Its cookies are Secure in production (`NODE_ENV=production`) and whenever the app's URL is https (`BASE_URL`, or a trusted proxy's `X-Forwarded-Proto`; see `$listen`'s `trustProxy`).\r\nOn a request other than GET, HEAD or OPTIONS that carries a session cookie, every operation first checks the session's CSRF token, sent as the `_csrf` body field or the `x-csrf-token` header, and fails with 403 without it. The client runtime sends it on its own, read from the `csrf` cookie the session sets: as the header on the page's `$fetch`, and as the field on its form posts. A page served without the client gets the field rendered into its non-GET forms instead.\r\nWith no request, as in a CLI, the session belongs to the flow its first op runs in, for as long as that flow runs.",
+      markdownDescription: "Manages request sessions stored in cache. Pass an object to set session values. Read values with `{ \"$var\": \"session.key\" }`: `session` is read-only, and only a `$session` op changes it, for the whole request whichever scope it runs in.\r\nSession ID is stored in an HTTP-only cookie with a 24-hour TTL: `sid`, or `__Host-sid` once Secure. Steps never see it: `request.cookies` and the `cookie` header leave it out, so a page that shows the request cannot hand a visitor's session to anyone. Its cookies are Secure in production (`NODE_ENV=production`) and whenever the app's URL is https (`BASE_URL`, or a trusted proxy's `X-Forwarded-Proto`; see `$listen`'s `trustProxy`).\r\nOn a request other than GET, HEAD or OPTIONS that carries a session cookie, every operation first checks the session's CSRF token, sent as the `_csrf` body field or the `x-csrf-token` header, and fails with 403 without it. The client runtime sends it on its own, read from the `csrf` cookie the session sets: as the header on the page's `$fetch`, and as the field on its form posts. A page served without the client gets the field rendered into its non-GET forms instead.\r\nWith no request, as in a CLI, the session belongs to the flow its first op runs in, for as long as that flow runs.",
       outputDescription: "The session's data, which `load` and setting values also make readable as `session`; `null` after `destroy`. The cookies are queued onto the response for you; you don't return them yourself.",
       examples: [
         "{ \"$session\": { \"user_id\": { \"$var\": \"user.id\" }, \"role\": { \"$var\": \"user.role\" } }, \"regenerate\": true }",
@@ -168,7 +170,9 @@ async function readSession(state: SessionState): Promise<StoredSession | null> {
   const cache = cacheOf(state);
   if (state.stored && state.storedIn === cache) return state.stored;
 
-  const id = state.issuedSid ?? state.scope.request?.cookies?.[sidCookie(state)];
+  const name = sidCookie(state);
+  const kept = state.scope[SESSION_COOKIES] as Record<string, string> | undefined;
+  const id = state.issuedSid ?? kept?.[name] ?? state.scope.request?.cookies?.[name];
   if (!id) return null;
   const stored = await cache.get<StoredSession>(PREFIX + id);
   // A record without a token can't be checked, so it counts as no session.
