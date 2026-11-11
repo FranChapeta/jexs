@@ -71,7 +71,7 @@ export class SessionNode extends Node {
         "load",
         "destroy",
       ],
-      markdownDescription: "Manages request sessions stored in cache. Pass an object to set session values. Read values with `{ \"$var\": \"session.key\" }`: `session` is read-only, and only a `$session` op changes it, for the whole request whichever scope it runs in.\r\nSession ID is stored in an HTTP-only cookie with a 24-hour TTL: `sid`, or `__Host-sid` once Secure. Steps never see it: `request.cookies` and the `cookie` header leave it out, so a page that shows the request cannot hand a visitor's session to anyone. Its cookies are Secure in production (`NODE_ENV=production`) and whenever the app's URL is https (`BASE_URL`, or a trusted proxy's `X-Forwarded-Proto`; see `$listen`'s `trustProxy`).\r\nOn a request other than GET, HEAD or OPTIONS that carries a session cookie, every operation first checks the session's CSRF token, sent as the `_csrf` body field or the `x-csrf-token` header, and fails with 403 without it. The client runtime sends it on its own, read from the `csrf` cookie the session sets: as the header on the page's `$fetch`, and as the field on its form posts. A page served without the client gets the field rendered into its non-GET forms instead.\r\nWith no request, as in a CLI, the session belongs to the flow its first op runs in, for as long as that flow runs.",
+      markdownDescription: "Manages request sessions stored in cache. Pass an object to set session values. Read values with `{ \"$var\": \"session.key\" }`: `session` is read-only, and only a `$session` op changes it, for the whole request whichever scope it runs in.\r\nSession ID is stored in an HTTP-only cookie with a 24-hour TTL: `sid`, or `__Host-sid` once Secure. Steps never see it: `request.cookies` and the `cookie` header leave it out, so a page that shows the request cannot hand a visitor's session to anyone. Its cookies are Secure in production (`NODE_ENV=production`) and whenever the app's URL is https (`BASE_URL`, or a trusted proxy's `X-Forwarded-Proto`; see `$listen`'s `trustProxy`).\r\nOn a request other than GET, HEAD or OPTIONS that carries a session cookie, every operation first checks the session's CSRF token, sent as the `_csrf` body field or the `x-csrf-token` header, and fails with 403 without it. The client runtime sends it on its own, read from the `csrf` cookie the session sets: as the header on the page's `$fetch`, and as the field on its form posts. A page served without the client gets the field rendered into its non-GET forms instead, masked anew on every response so that a compressed page never repeats the token.\r\nWith no request, as in a CLI, the session belongs to the flow its first op runs in, for as long as that flow runs.",
       outputDescription: "The session's data, which `load` and setting values also make readable as `session`; `null` after `destroy`. The cookies are queued onto the response for you; you don't return them yourself.",
       examples: [
         "{ \"$session\": { \"user_id\": { \"$var\": \"user.id\" }, \"role\": { \"$var\": \"user.role\" } }, \"regenerate\": true }",
@@ -183,14 +183,14 @@ async function readSession(state: SessionState): Promise<StoredSession | null> {
 
 /**
  * Make `stored` the session: readable as `session`, reused by later ops, and
- * its CSRF token handed to the page. Its data is frozen, since a write to it
+ * its CSRF token handed to the page, masked. Its data is frozen, since a write to it
  * would change the session for every request holding it without a `$session`
  * op; a `$session` op replaces it instead.
  */
 function useSession(state: SessionState, stored: StoredSession): Readonly<Record<string, unknown>> {
   state.stored = stored;
   state.storedIn = cacheOf(state);
-  state.scope[CSRF_TOKEN] = stored.csrf;
+  state.scope[CSRF_TOKEN] = maskToken(stored.csrf);
   syncCsrfCookie(state, stored.csrf);
   return freezeData(stored.data);
 }
@@ -201,10 +201,33 @@ function checkCsrf(state: SessionState, stored: string): void {
   // A WebSocket upgrade can't send a token; the listener checks its origin.
   const method = methodOf(state);
   if (method === "WS" || SAFE_METHODS.includes(method)) return;
-  if (stored === "" || typeof state.sentCsrf !== "string" || !tokensEqual(stored, state.sentCsrf)) {
+  // The token itself, as the client runtime sends it from the `csrf` cookie, or
+  // masked, as a rendered form sends it.
+  const sent = state.sentCsrf;
+  if (stored === "" || typeof sent !== "string" || !(tokensEqual(stored, sent) || tokensEqual(stored, unmaskToken(sent)))) {
     throw createHttpError(403, "CSRF token mismatch");
   }
   state.trusted = true;
+}
+
+/**
+ * The session's token as a page renders it: a random mask, then the token
+ * XORed with it, so a new string on every response. A compressed page that
+ * carried the token as is would leak it to anyone who can watch its size
+ * while echoing guesses into it (BREACH); masked, its bytes never repeat.
+ */
+function maskToken(token: string): string {
+  const bytes = Buffer.from(token);
+  const mask = randomBytes(bytes.length);
+  return Buffer.concat([mask, Buffer.from(bytes.map((byte, i) => byte ^ mask[i]))]).toString("base64url");
+}
+
+/** The token a masked one carries; `""` for a value no mask made. */
+function unmaskToken(masked: string): string {
+  const bytes = Buffer.from(masked, "base64url");
+  const half = bytes.length / 2;
+  if (half === 0 || !Number.isInteger(half)) return "";
+  return Buffer.from(bytes.subarray(half).map((byte, i) => byte ^ bytes[i])).toString();
 }
 
 /**

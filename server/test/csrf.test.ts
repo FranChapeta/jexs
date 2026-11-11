@@ -16,7 +16,7 @@ const request = (method: string, cookies: Record<string, string>, extra: Record<
   [COOKIES]: [],
 });
 
-/** The Set-Cookie lines a request queued, and the session token it was handed. */
+/** The Set-Cookie lines a request queued, and the session token its page renders (masked). */
 const cookiesOf = (ctx: Context) => ctx[COOKIES] as string[];
 const tokenOf = (ctx: Context) => String(ctx[CSRF_TOKEN] ?? "");
 /** The session id the last `sid` cookie a request queued carries. */
@@ -255,8 +255,9 @@ test("on an https app the session cookie is Secure and host-only", async () => {
   }
 });
 
-/** The `csrf` cookie a response queued, as its raw Set-Cookie line. */
+/** The `csrf` cookie a response queued, as its raw Set-Cookie line, and the token it carries. */
 const csrfCookie = (ctx: Context) => cookiesOf(ctx).find(c => c.startsWith("csrf="));
+const secretOf = (ctx: Context) => csrfCookie(ctx)?.match(/^csrf=([^;]*)/)?.[1] ?? "";
 
 // The token reaches page scripts in a cookie, not in the HTML, so `$fetch` can
 // send it back while the page itself stays cacheable.
@@ -266,10 +267,9 @@ test("the CSRF token is handed to page scripts in a readable cookie", async () =
   try {
     const first = request("GET", {});
     await resolver({ $session: "load" }, first);
-    const token = tokenOf(first);
-    const cookie = csrfCookie(first) ?? "";
-    assert.ok(cookie.startsWith(`csrf=${token};`), "the cookie carries the session's token");
-    assert.ok(!/HttpOnly/i.test(cookie), "page scripts can read it");
+    const token = secretOf(first);
+    assert.match(token, /^[0-9a-f]{64}$/, "the cookie carries the session's token");
+    assert.ok(!/HttpOnly/i.test(csrfCookie(first) ?? ""), "page scripts can read it");
     assert.match(cookiesOf(first).find(c => c.startsWith("sid=")) ?? "", /HttpOnly/, "the session id stays out of reach");
 
     // A browser already holding the current token isn't sent it again.
@@ -279,14 +279,50 @@ test("the CSRF token is handed to page scripts in a readable cookie", async () =
     assert.equal(csrfCookie(again), undefined);
 
     // A rotation sends the new one; logging out clears it.
-    const login = request("POST", { sid, csrf: token }, { body: { _csrf: token } });
+    const login = request("POST", { sid, csrf: token }, { headers: { "x-csrf-token": token } });
     await resolver({ $session: {}, regenerate: true }, login);
-    assert.ok(csrfCookie(login)?.startsWith(`csrf=${tokenOf(login)};`));
-    assert.notEqual(tokenOf(login), token);
+    assert.match(secretOf(login), /^[0-9a-f]{64}$/);
+    assert.notEqual(secretOf(login), token);
 
-    const logout = request("POST", { sid: sidOf(login) }, { body: { _csrf: tokenOf(login) } });
+    const logout = request("POST", { sid: sidOf(login) }, { body: { _csrf: secretOf(login) } });
     await resolver({ $session: "destroy" }, logout);
     assert.match(csrfCookie(logout) ?? "", /^csrf=;.*Max-Age=0/);
+  } finally {
+    resolver.destroy();
+  }
+});
+
+// A compressed page that repeated the token would leak it to an attacker who
+// echoes guesses into the page and watches its size (BREACH).
+test("the token a page renders is masked anew on every response, and both forms pass", async () => {
+  const context: Context = {};
+  const resolver = createResolver([...coreNodes(), new CacheNode(), new SessionNode()], { context });
+  try {
+    const first = request("GET", {});
+    await resolver({ $session: "load" }, first);
+    const secret = secretOf(first);
+    const sid = sidOf(first);
+
+    const second = request("GET", { sid, csrf: secret });
+    await resolver({ $session: "load" }, second);
+    const rendered = [tokenOf(first), tokenOf(second)];
+    assert.notEqual(rendered[0], rendered[1]);
+    for (const masked of rendered) assert.ok(masked && !masked.includes(secret), "the token is not in what the page renders");
+
+    // Each masked copy, as a form sends it, and the token itself, as $fetch sends it from the cookie.
+    for (const sent of [...rendered, secret]) {
+      const post = request("POST", { sid, csrf: secret }, { body: { _csrf: sent } });
+      await resolver({ $session: "load" }, post);
+      assert.ok(post.session, sent);
+    }
+
+    // A masked copy of another session's token is not this one's.
+    const other = request("GET", {});
+    await resolver({ $session: "load" }, other);
+    await assert.rejects(
+      async () => resolver({ $session: "load" }, request("POST", { sid }, { body: { _csrf: tokenOf(other) } })),
+      /CSRF token mismatch/,
+    );
   } finally {
     resolver.destroy();
   }
