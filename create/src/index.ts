@@ -290,9 +290,7 @@ function buildClaudeMd(useServer: boolean, useTailwind: boolean, useElectron: bo
     lines.push(`## Scripts`);
     lines.push(``);
     lines.push(`- \`npm run dev\`: \`jexs run src/index.json src --watch\` (restarts when a template under \`src/\` changes)${useTailwind ? ` + \`tailwindcss --watch\` in parallel via \`concurrently\`` : ``}.`);
-    if (useTailwind) {
-      lines.push(`- \`npm run build\`: compiles Tailwind (minified). There is no JS build, the app is JSON run by \`jexs run\`.`);
-    }
+    lines.push(`- \`npm run build\`: ${useTailwind ? `compiles Tailwind (minified), then ` : ``}\`jexs bundle --compress\`, which builds the browser bundle with a brotli and a gzip copy of each script; the listener sends a copy to a browser that takes it. There is no server build, the app is JSON run by \`jexs run\`.`);
     lines.push(`- \`npm start\`: \`jexs run src/index.json src --prod\`. Run from the project root so FileNode and the static server find \`src/\` and \`public/\`. The \`--prod\` flag sets \`NODE_ENV=production\` and \`process.env.prod = "1"\`, so JSON templates can branch on \`{ "$var": "env.prod" }\`. The listener binds the port in the \`PORT\` environment variable, as hosting platforms set it, else 80 in prod and 3000 in dev.`);
     lines.push(`- \`npm run format\`: Prettier sweep over JSON templates.`);
     lines.push(``);
@@ -503,7 +501,8 @@ async function main(): Promise<void> {
     // dev:    `jexs run src/index.json src --watch` restarts the app on changes under src/.
     //         With tailwind, the CSS compiler runs in --watch alongside it via
     //         concurrently, so new class names in JSON produce updated CSS.
-    // build:  only the CSS step (when tailwind is on). No JS build.
+    // build:  the browser bundle with its .br/.gz copies, which the listener
+    //         sends to clients that take them, after the CSS (with tailwind).
     // start:  `jexs run src/index.json src --prod`.
     // format: prettier sweep over the JSON templates, the bulk of a Jexs app.
     const tailwindWatch = "tailwindcss -i input.css -o public/styles.css --watch --minify";
@@ -521,7 +520,7 @@ async function main(): Promise<void> {
     ].filter(Boolean).join(" ");
     scripts.dev = `jexs bundle && concurrently -k -n ${names} ${cmds}`;
     scripts.bundle = "jexs bundle";
-    scripts.build = useTailwind ? `${tailwindBuild} && jexs bundle` : "jexs bundle";
+    scripts.build = useTailwind ? `${tailwindBuild} && jexs bundle --compress` : "jexs bundle --compress";
     scripts.start  = "jexs run src/index.json src --prod";
     scripts.schema = "jexs schema";
     scripts.postinstall = "jexs schema";

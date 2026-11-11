@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { brotliCompressSync, gzipSync } from "node:zlib";
 import { createResolver, coreNodes } from "@jexs/core";
 import type { Resolver } from "@jexs/core";
 import { ServerNode } from "../src/nodes/Server.js";
@@ -11,6 +12,8 @@ import { ServerNode } from "../src/nodes/Server.js";
 // response headers, and only an actual HTTP round trip shows those. It takes a
 // free port (`0`), which the step returns.
 let base = "";
+
+const BIG = "console.log('compress me');\n".repeat(200);
 
 let root = "";
 let previousCwd = "";
@@ -35,6 +38,11 @@ before(async () => {
   // moved on from the static dir rather than stopping there.
   await fs.mkdir(path.join(root, "public", "jexs"), { recursive: true });
   await fs.writeFile(path.join(root, "public", "jexs", "extra.css"), "em{}");
+  // A script with the copies `jexs bundle --compress` writes beside it.
+  const big = path.join(root, "dist", "browser", "big.js");
+  await fs.writeFile(big, BIG);
+  await fs.writeFile(`${big}.br`, brotliCompressSync(BIG));
+  await fs.writeFile(`${big}.gz`, gzipSync(BIG));
 
   previousCwd = process.cwd();
   process.chdir(root);
@@ -256,6 +264,75 @@ test("a rewritten file invalidates the tag the client holds", async () => {
   const res = await fetch(`${base}/churn.css`, { headers: { "If-None-Match": etag } });
   assert.equal(res.status, 200);
   assert.equal(await res.text(), "a{color:blue}");
+});
+
+// fetch decodes the body itself, so the text being the script is the proof the
+// encoding named in the header is the one the bytes are in.
+const getBig = (acceptEncoding: string, init: RequestInit = {}): Promise<Response> =>
+  fetch(`${base}/jexs/big.js`, { ...init, headers: { "Accept-Encoding": acceptEncoding, ...init.headers } });
+
+test("a precompressed copy is sent to a client that takes its encoding, brotli first", async () => {
+  const br = await getBig("gzip, deflate, br");
+  assert.equal(br.headers.get("content-encoding"), "br");
+  assert.equal(br.headers.get("vary"), "Accept-Encoding");
+  assert.equal(br.headers.get("content-type"), "application/javascript");
+  assert.equal(br.headers.get("content-length"), String(brotliCompressSync(BIG).length));
+  assert.match(br.headers.get("etag") ?? "", /-br"$/);
+  assert.equal(await br.text(), BIG);
+
+  const gz = await getBig("gzip");
+  assert.equal(gz.headers.get("content-encoding"), "gzip");
+  assert.match(gz.headers.get("etag") ?? "", /-gzip"$/);
+  assert.equal(await gz.text(), BIG);
+});
+
+test("q-values pick the encoding, and q=0 refuses one", async () => {
+  assert.equal((await getBig("br;q=0.5, gzip")).headers.get("content-encoding"), "gzip");
+  assert.equal((await getBig("gzip, br;q=0")).headers.get("content-encoding"), "gzip");
+  assert.equal((await getBig("*")).headers.get("content-encoding"), "br");
+  assert.equal((await getBig("*;q=0.1, br;q=0")).headers.get("content-encoding"), "gzip");
+});
+
+// Vary still, since the response depends on the header whichever way it goes.
+test("a client that takes neither encoding gets the file itself", async () => {
+  const res = await getBig("identity");
+  assert.equal(res.headers.get("content-encoding"), null);
+  assert.equal(res.headers.get("vary"), "Accept-Encoding");
+  assert.equal(res.headers.get("content-length"), String(BIG.length));
+  assert.match(res.headers.get("etag") ?? "", /^W\/"[0-9a-f]+-[0-9a-f]+"$/);
+  assert.equal(await res.text(), BIG);
+});
+
+test("a file with no copies beside it goes out plain", async () => {
+  const res = await fetch(`${base}/jexs/client.js`, { headers: { "Accept-Encoding": "br, gzip" } });
+  assert.equal(res.headers.get("content-encoding"), null);
+  assert.equal(await res.text(), "// bundle");
+});
+
+test("a copy older than its file is passed over", async () => {
+  const file = path.join(root, "dist", "browser", "stale.js");
+  await fs.writeFile(`${file}.br`, brotliCompressSync("old"));
+  const past = new Date(Date.now() - 60_000);
+  await fs.utimes(`${file}.br`, past, past);
+  await fs.writeFile(file, "new");
+
+  const res = await fetch(`${base}/jexs/stale.js`, { headers: { "Accept-Encoding": "br" } });
+  assert.equal(res.headers.get("content-encoding"), null);
+  assert.equal(await res.text(), "new");
+});
+
+// Each encoding is its own representation: a tag held for one is current only
+// while the client is still sent that one.
+test("a compressed copy's tag revalidates only that encoding", async () => {
+  const etag = (await getBig("br")).headers.get("etag") as string;
+
+  const same = await getBig("br", { headers: { "If-None-Match": etag } });
+  assert.equal(same.status, 304);
+  assert.equal(same.headers.get("vary"), "Accept-Encoding");
+
+  const other = await getBig("gzip", { headers: { "If-None-Match": etag } });
+  assert.equal(other.status, 200);
+  assert.equal(other.headers.get("content-encoding"), "gzip");
 });
 
 // `0` takes a free port and the step says which; a value that is no port is an

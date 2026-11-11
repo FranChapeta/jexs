@@ -97,17 +97,20 @@ test("with tailwind, a server project's greeting is a page that links the styles
   }
 });
 
+// A both project's listener serves the bundle, so its build compresses it too.
 test("a client project and a both project bundle with jexs bundle", () => {
   for (const env of ["client", "both"]) {
     const { project, pkg, index } = scaffold(`app-${env}`, "--env", env, "--css", "none");
-    assert.equal(pkg.scripts.build, "jexs bundle");
+    const args = env === "both" ? ["bundle", "--compress"] : ["bundle"];
+    assert.equal(pkg.scripts.build, `jexs ${args.join(" ")}`);
     assert.ok(pkg.dependencies["@jexs/client"]);
     assertValid(index);
 
     // What its build script runs, from the project's directory.
-    const run = spawnSync(process.execPath, [jexs, "bundle"], { cwd: project, encoding: "utf8", timeout: 120_000 });
+    const run = spawnSync(process.execPath, [jexs, ...args], { cwd: project, encoding: "utf8", timeout: 120_000 });
     assert.equal(run.status, 0, run.stderr);
     assert.ok(existsSync(path.join(project, "dist", "browser", "client.js")), env);
+    assert.equal(existsSync(path.join(project, "dist", "browser", "client.js.br")), env === "both", env);
   }
 });
 

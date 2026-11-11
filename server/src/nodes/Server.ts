@@ -600,13 +600,19 @@ async function sendStaticFile(
   // Both the cache policy and the registration header turn on this one fact,
   // so establish it once rather than taking the basename apart twice.
   const isServiceWorker = path.basename(filePath) === "sw.js";
-  const etag = etagFor(stat);
+  const compressible = PRECOMPRESSED_EXTENSIONS.has(ext);
+  const copy = compressible ? await compressedCopy(req, filePath, stat) : null;
+  const etag = etagFor(stat, copy?.encoding);
   const headers: Record<string, string> = {
     "Cache-Control": cacheControlFor(requestPath, isServiceWorker),
     "Last-Modified": stat.mtime.toUTCString(),
     ETag: etag,
   };
   if (isServiceWorker) headers["Service-Worker-Allowed"] = "/";
+  // On every response for such a file, whichever bytes it got: a cache that
+  // stored the plain file must not hand it out for a brotli request, nor the
+  // brotli copy to a client that cannot read it.
+  if (compressible) headers.Vary = "Accept-Encoding";
 
   if (isFresh(req.headers, etag, stat.mtime)) {
     // No body on a 304, so nothing describing one either: the client keeps the
@@ -616,7 +622,8 @@ async function sendStaticFile(
     return;
   }
 
-  const content = await fs.promises.readFile(filePath);
+  const content = await fs.promises.readFile(copy?.path ?? filePath);
+  if (copy) headers["Content-Encoding"] = copy.encoding;
   // Length from the buffer in hand rather than from the stat, which is one
   // filesystem round trip out of date by now. Without it every asset goes out
   // chunked, which costs framing and denies the client a total to count against.
@@ -628,11 +635,63 @@ async function sendStaticFile(
   res.end(content);
 }
 
+/** The suffix of each encoding's precompressed copy, in the order preferred on a tie. */
+const COPY_SUFFIXES: Record<string, string> = { br: ".br", gzip: ".gz" };
+
+/** The static files a build may have precompressed (`jexs bundle --compress`). */
+const PRECOMPRESSED_EXTENSIONS = new Set([".js", ".css", ".map", ".svg"]);
+
+/**
+ * The encodings among the copies' that the client takes, best first: by its
+ * q-values, ties going to brotli. `*` stands for each one it does not name,
+ * and a q of 0 refuses (RFC 9110 §12.5.3).
+ */
+function acceptedEncodings(header: string | undefined): string[] {
+  if (!header) return [];
+  const weights = new Map<string, number>();
+  for (const part of header.toLowerCase().split(",")) {
+    const [name, ...params] = part.split(";").map((piece) => piece.trim());
+    const q = params.find((param) => param.startsWith("q="));
+    const weight = q === undefined ? 1 : Number(q.slice(2));
+    weights.set(name, Number.isNaN(weight) ? 0 : weight);
+  }
+  const wildcard = weights.get("*") ?? 0;
+  return Object.keys(COPY_SUFFIXES)
+    .map((encoding) => ({ encoding, weight: weights.get(encoding) ?? wildcard }))
+    .filter(({ weight }) => weight > 0)
+    .sort((a, b) => b.weight - a.weight)
+    .map(({ encoding }) => encoding);
+}
+
+/**
+ * The precompressed copy of `filePath` to send instead, if the client takes
+ * one of the encodings and a current copy is on disk. A copy older than its
+ * file was made from bytes the file no longer has, so it is passed over.
+ */
+async function compressedCopy(
+  req: http.IncomingMessage,
+  filePath: string,
+  stat: fs.Stats,
+): Promise<{ encoding: string; path: string } | null> {
+  for (const encoding of acceptedEncodings(req.headers["accept-encoding"])) {
+    const copyPath = filePath + COPY_SUFFIXES[encoding];
+    try {
+      const copyStat = await fs.promises.stat(copyPath);
+      if (copyStat.isFile() && copyStat.mtimeMs >= stat.mtimeMs) return { encoding, path: copyPath };
+    } catch (err) {
+      if (!isMissingFile(err)) throw err;
+    }
+  }
+  return null;
+}
+
 // Derived from size + mtime rather than the bytes, so freshness can be decided
 // from the stat alone without reading the file. That is exactly what makes it
 // weak: two writes in the same millisecond that keep the length are one tag.
-function etagFor(stat: fs.Stats): string {
-  return `W/"${stat.size.toString(16)}-${stat.mtime.getTime().toString(16)}"`;
+// Each encoding of the file is its own representation, so its own tag.
+function etagFor(stat: fs.Stats, encoding?: string): string {
+  const tag = `${stat.size.toString(16)}-${stat.mtime.getTime().toString(16)}`;
+  return `W/"${encoding ? `${tag}-${encoding}` : tag}"`;
 }
 
 /** Does the client already hold a good copy? RFC 9110 conditional GET rules. */
