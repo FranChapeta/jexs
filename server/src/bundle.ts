@@ -6,7 +6,10 @@
 // bundle a listener with `client` serves; no prebuilt one ships.
 
 import { rmSync } from "node:fs";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { brotliCompress, constants, gzip } from "node:zlib";
 import path from "node:path";
 import * as esbuild from "esbuild";
 import { walkJexsPackages } from "./discover.js";
@@ -27,6 +30,37 @@ function isInstalled(pkg: string): boolean {
   }
 }
 
+const brotliAsync = promisify(brotliCompress);
+const gzipAsync = promisify(gzip);
+
+/** The outputs worth compressing: text. A binary the bundle emits is left as is. */
+const COMPRESSIBLE = /\.(js|css|map|svg)$/;
+
+/**
+ * Write `<file>.br` and `<file>.gz` beside each compressible file, at the
+ * highest levels: they are made once per build, not per request, so the time
+ * is spent where it costs nothing. A copy no smaller than its file is not kept,
+ * and one a previous build left beside it is removed, so a copy on disk is
+ * always the current bytes and always worth sending.
+ */
+async function precompress(files: string[]): Promise<void> {
+  await Promise.all(files.filter((file) => COMPRESSIBLE.test(file)).map(async (file) => {
+    const content = await readFile(file);
+    const [br, gz] = await Promise.all([
+      brotliAsync(content, {
+        params: {
+          [constants.BROTLI_PARAM_QUALITY]: constants.BROTLI_MAX_QUALITY,
+          [constants.BROTLI_PARAM_SIZE_HINT]: content.length,
+        },
+      }),
+      gzipAsync(content, { level: constants.Z_BEST_COMPRESSION }),
+    ]);
+    const keep = (copy: string, bytes: Buffer) =>
+      bytes.length < content.length ? writeFile(copy, bytes) : rm(copy, { force: true });
+    await Promise.all([keep(`${file}.br`, br), keep(`${file}.gz`, gz)]);
+  }));
+}
+
 /**
  * Bundle the project's browser runtime into `dist/browser`. Generates an entry
  * that boots @jexs/client (which wires core/client/physics/gl) with the nodes of
@@ -39,10 +73,13 @@ function isInstalled(pkg: string): boolean {
  * resolved to HTML at runtime. The @jexs/server SSR path renders them directly,
  * and the electron runner resolves a shell template that `{ file }`-imports the
  * page over `app://` — neither needs a build-time page file.
+ *
+ * With `compress`, every build (each rebuild too, when watching) also writes a
+ * brotli and a gzip copy beside each script, for a server to send in its place.
  */
 export async function bundleClient(
   projectDir: string,
-  { outDir, watch = false }: { outDir?: string; watch?: boolean } = {},
+  { outDir, watch = false, compress = false }: { outDir?: string; watch?: boolean; compress?: boolean } = {},
 ): Promise<esbuild.BuildContext | void> {
   const out = outDir ?? path.join(projectDir, "dist", "browser");
 
@@ -75,6 +112,18 @@ export async function bundleClient(
     },
   };
 
+  // After each build, from the files the build says it wrote, so a rebuild
+  // compresses what it emitted and nothing older.
+  const precompressOutputs: esbuild.Plugin = {
+    name: "jexs-precompress",
+    setup(build) {
+      build.onEnd(async (result) => {
+        if (!result.metafile) return;
+        await precompress(Object.keys(result.metafile.outputs).map((file) => path.resolve(projectDir, file)));
+      });
+    },
+  };
+
   const entryPoints: Record<string, string> = {
     client: "jexs:page",
     "sw-runtime": clientFile("sw"),
@@ -99,7 +148,8 @@ export async function bundleClient(
     minify: true,
     target: "es2022",
     absWorkingDir: projectDir,
-    plugins: [pageEntry],
+    metafile: compress,
+    plugins: compress ? [pageEntry, precompressOutputs] : [pageEntry],
   };
 
   if (watch) {
@@ -111,6 +161,6 @@ export async function bundleClient(
 
   rmSync(out, { recursive: true, force: true });
   await esbuild.build(buildOptions);
-  console.error(`jexs bundle: ${pkgs.length} third-party browser package(s) → ${out}`);
+  console.error(`jexs bundle: ${pkgs.length} third-party browser package(s) → ${out}${compress ? " (with .br and .gz copies)" : ""}`);
 }
 

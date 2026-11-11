@@ -30,7 +30,9 @@ const USAGE =
   "usage:\n" +
   "  jexs run <entry.json|package> [root] [--prod] [--watch] [--log stderr|stdout|silent] [-- <app args>]\n" +
   "                                run a JSON app; [root] anchors `/` paths (default: the current directory)\n" +
-  "  jexs bundle [--watch]         build the project's browser bundle (client + discovered browser nodes)\n" +
+  "  jexs bundle [--watch] [--compress]\n" +
+  "                                build the project's browser bundle (client + discovered browser nodes);\n" +
+  "                                --compress also writes .br and .gz copies of each script\n" +
   "  jexs schema [dir]             regenerate .jexs/ for a project (autocomplete + MCP)\n" +
   "  jexs schema --package [dir]   (package authors) prebuild a package's dist/schema.json\n" +
   "  jexs --help | --version\n";
@@ -249,8 +251,8 @@ try {
   if (cmd === "run") {
     await run(rest);
   } else if (cmd === "bundle") {
-    const { values } = flagsOf("bundle", rest, { watch: { type: "boolean" } });
-    await bundleClient(process.cwd(), { watch: values.watch });
+    const { values } = flagsOf("bundle", rest, { watch: { type: "boolean" }, compress: { type: "boolean" } });
+    await bundleClient(process.cwd(), { watch: values.watch, compress: values.compress });
   } else if (cmd === "schema") {
     const { values, positionals } = flagsOf("schema", rest, { package: { type: "boolean" } });
     const dir = positionals[0] ?? process.cwd();

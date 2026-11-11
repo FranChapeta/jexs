@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { bundleClient } from "../src/bundle.js";
 
 // Inside the repo (under the gitignored scratch/), so the bundle resolves
@@ -42,4 +43,19 @@ test("jexs bundle boots the page with every third-party browser package's nodes"
   const loaded = [page, ...await Promise.all(chunks.map(c => fs.readFile(path.join(out, c), "utf8")))].join("");
   assert.match(loaded, /fake-nodes-loaded/);
   assert.equal(existsSync(path.join(project, ".jexs")), false, "nothing is written beside the project's sources");
+  assert.equal(existsSync(path.join(out, "client.js.br")), false, "no compressed copies unless asked for");
+});
+
+test("jexs bundle --compress writes a brotli and a gzip copy of each script", async () => {
+  await bundleClient(project, { compress: true });
+
+  const out = path.join(project, "dist", "browser");
+  const page = await fs.readFile(path.join(out, "client.js"));
+  const chunks = [...page.toString().matchAll(/from"\.\/(chunks\/[A-Z0-9]+\.js)"/g)].map(m => m[1]);
+  for (const file of ["client.js", "resolverWorker.js", ...chunks]) {
+    const content = await fs.readFile(path.join(out, file));
+    // Kept only where smaller; these are all large enough that both are.
+    assert.deepEqual(brotliDecompressSync(await fs.readFile(path.join(out, `${file}.br`))), content, `${file}.br`);
+    assert.deepEqual(gunzipSync(await fs.readFile(path.join(out, `${file}.gz`))), content, `${file}.gz`);
+  }
 });
