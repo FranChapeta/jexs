@@ -22,6 +22,21 @@ test("dateParse: unparseable input is an error", () => {
   assert.throws(() => resolve({ $dateParse: "not a date" }, {}), /\$dateParse: "not a date" is not a date/);
 });
 
+// A database driver (mysql2, pg) gives a date column as a Date: it parses as
+// its instant, and as text it is its ISO string, not a quoted JSON copy.
+test("dateParse and concat read a Date as its instant", () => {
+  const at = new Date(TS);
+  assert.equal(resolve({ $dateParse: { $var: "at" } }, { at }), TS);
+  assert.equal(resolve({ $concat: ["", { $var: "at" }] }, { at }), "2026-07-01T12:30:45.123Z");
+  assert.equal(resolve({ $dateParse: { $concat: ["", { $var: "at" }] } }, { at }), TS);
+});
+
+test("the date ops take a Date as the timestamp it stands for", () => {
+  const at = new Date(TS);
+  assert.equal(resolve({ $dateFormat: { $var: "at" }, format: "iso" }, { at }), resolve({ $dateFormat: TS, format: "iso" }, {}));
+  assert.throws(() => resolve({ $dateParse: { $var: "at" } }, { at: new Date(NaN) }), /\$dateParse: an invalid Date is not a date/);
+});
+
 test("dateParse round-trips dateFormat(iso)", () => {
   const iso = resolve({ $dateFormat: TS, format: "iso" }, {});
   assert.equal(resolve({ $dateParse: iso }, {}), TS);

@@ -276,19 +276,24 @@ export function hasAnyKey(obj: object): boolean {
 // the same four as protected instance sugar (`this.toNumber(v)`), which is what
 // handler bodies use.
 
-/** Coerce to string. Objects and arrays serialize as JSON; null/undefined are "". */
+/** Coerce to string. Objects and arrays serialize as JSON; null/undefined are "".
+ *  A Date (what MySQL and Postgres drivers give for a date column) is its ISO
+ *  8601 text, not JSON's quoted copy of it, so it reads back with `$dateParse`. */
 export function toStringValue(value: unknown): string {
   if (value === null || value === undefined) return "";
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (value instanceof Html) return value.markup;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? "" : value.toISOString();
   return JSON.stringify(value);
 }
 
 /** Coerce to number. Unparseable input is 0 rather than NaN, so arithmetic on a
- *  missing variable yields a number instead of poisoning the whole expression. */
+ *  missing variable yields a number instead of poisoning the whole expression.
+ *  A Date is its Unix-ms instant, the timestamp the date ops take. */
 export function toNumberValue(value: unknown): number {
   if (typeof value === "number") return value;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? 0 : value.getTime();
   if (typeof value === "string") {
     const num = parseFloat(value);
     return isNaN(num) ? 0 : num;

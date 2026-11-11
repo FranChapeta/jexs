@@ -71,7 +71,7 @@ export class DateNode extends Node {
     },
     dateParse: {
       output: "number",
-      markdownDescription: "Parses a date string into a Unix-ms timestamp, the inverse of `dateFormat`. Accepts anything `Date.parse` understands (ISO-8601 recommended). A number passes through unchanged.",
+      markdownDescription: "Parses a date string into a Unix-ms timestamp, the inverse of `dateFormat`. Accepts anything `Date.parse` understands (ISO-8601 recommended). A number passes through unchanged, and a Date (what MySQL and Postgres drivers give for a date column) is its instant; the other date ops read a Date that way too.",
       outputDescription: "A **number** (Unix milliseconds). A value that cannot be parsed is an error.",
       examples: [
         "{ \"$dateParse\": \"2026-07-01T12:00:00Z\" }",
@@ -253,8 +253,8 @@ export class DateNode extends Node {
   dateParse(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$dateParse, context, v => {
       if (typeof v === "number") return v;
-      const ms = Date.parse(String(v));
-      if (Number.isNaN(ms)) throw new Error(`$dateParse: ${JSON.stringify(v)} is not a date`);
+      const ms = v instanceof Date ? v.getTime() : Date.parse(String(v));
+      if (Number.isNaN(ms)) throw new Error(`$dateParse: ${v instanceof Date ? "an invalid Date" : JSON.stringify(v)} is not a date`);
       return ms;
     });
   }
