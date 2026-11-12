@@ -87,6 +87,8 @@ Routes are a tree, not flat path strings: `methods` handles the current path (ke
 
 A route node can also be a step that produces one. It is resolved only when the matcher reaches it, after the params above it are captured into `request.params`, so `"admin": { "$if": { "$var": "session.admin" }, "then": { "$var": "adminRoutes" } }` adds the admin subtree only for admins, and a failed condition leaves no node there. Hold such a subtree by reference, stored with `{ "$setVars": { "adminRoutes": { ... } }, "data": true }` or loaded with `{ "$file": "routes/admin.json", "data": true }`: `$if` resolves the branch it picks, so an inline subtree would run its handlers.
 
+A response is compressed, with brotli or gzip as the client's `Accept-Encoding` takes, when it is text (HTML, JSON, plain text) of 1 KiB or more; a page with deferred parts is compressed as each part goes out, so it still arrives in parts. A stream body, a response that sets its own `Content-Encoding` or `Content-Length`, and one with `Cache-Control: no-transform` go out as they are. `$listen`'s `compress: false` turns it off, for a proxy in front that compresses.
+
 ## Security defaults
 
 These are on without any configuration:

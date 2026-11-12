@@ -3,7 +3,9 @@ import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
 import { URL } from "node:url";
-import type { Duplex } from "node:stream";
+import { promisify } from "node:util";
+import zlib from "node:zlib";
+import { pipeline, type Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
 import { CLIENT_SCRIPT, Context, Html, Node, NodeValue, OPEN_STREAMS, SW_SCRIPT, boundaryContext, createHttpError, isHttpError, isObject, isStep, loggerFor, resolve, resolveAll, resolveFields, runSteps } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
@@ -111,6 +113,8 @@ interface Listener {
   maxMessageSize: number;
   /** How long a stream response may write nothing before it is cut, in ms; `0` for no limit. */
   streamIdleTimeout: number;
+  /** Whether the bodies its steps yield are compressed for clients that take it. */
+  compress: boolean;
   /** Completes this listener's WebSocket upgrades; made on the first one. */
   wss: WebSocketServer | null;
   staticDirs: Map<string, string>;
@@ -359,7 +363,7 @@ async function handleRequest(
     // sets itself wins, since `writeHead` headers override this one.
     if (setCookies.length > 0) res.setHeader("Cache-Control", 'private="Set-Cookie"');
 
-    await sendResponse(res, result, deferred, listener.streamIdleTimeout);
+    await sendResponse(res, result, deferred, listener);
   } catch (error) {
     // Once the status line is out (a static file, a streamed render) there is no
     // status left to change. Log and close, rather than raise a second error
@@ -737,27 +741,112 @@ function getMimeType(ext: string): string {
  * deferred parts is streamed: the page with their placeholders first, then each
  * part as it resolves, in whatever order they finish.
  */
-function sendResponse(res: http.ServerResponse, value: unknown, deferred: Deferred[] = [], streamIdleTimeout = 0): void | Promise<void> {
+function sendResponse(res: http.ServerResponse, value: unknown, deferred: Deferred[] = [], listener?: Listener): void | Promise<void> {
   const { status, headers, body, stream } = replyFor(value);
-  res.writeHead(status, headers);
-  if (stream) return sendStream(res, stream, headers["Content-Type"] ?? "", streamIdleTimeout);
-  if (deferred.length === 0 || headers["Content-Type"] !== HTML) {
-    res.end(body);
-    return;
+  if (stream) {
+    res.writeHead(status, headers);
+    return sendStream(res, stream, headers["Content-Type"] ?? "", listener?.streamIdleTimeout ?? 0);
   }
-  res.write(body);
-  // Defines the function each part's script calls to replace its placeholder.
-  res.write(
+  const encoding = listener?.compress ? compressionFor(res, status, headers) : null;
+  if (deferred.length === 0 || headers["Content-Type"] !== HTML) {
+    const bytes = Buffer.from(body);
+    if (encoding === null || bytes.length < MIN_COMPRESSED_SIZE) {
+      res.writeHead(status, headers);
+      res.end(bytes);
+      return;
+    }
+    return compressBody(bytes, encoding).then(compressed => {
+      res.writeHead(status, { ...headers, "Content-Encoding": encoding, "Content-Length": String(compressed.length) });
+      res.end(compressed);
+    });
+  }
+
+  res.writeHead(status, encoding === null ? headers : { ...headers, "Content-Encoding": encoding });
+  // Each write is flushed through the compressor as it is made: held back
+  // until its buffer fills, the page would no longer arrive in parts.
+  const out = encoding === null ? null : compressorFor(encoding);
+  if (out) pipeline(out, res, () => undefined);
+  const write = (chunk: string): void => {
+    if (!out) res.write(chunk);
+    else if (!out.destroyed) {
+      out.write(chunk);
+      out.flush(encoding === "br" ? zlib.constants.BROTLI_OPERATION_FLUSH : zlib.constants.Z_SYNC_FLUSH);
+    }
+  };
+  // The page, then the function each part's script calls to replace its placeholder.
+  write(
+    body +
     '<script>function __jexs_defer(i,h){var e=document.getElementById(i);if(!e)return;var t=document.createElement("template");t.innerHTML=h;e.replaceWith(t.content);if(window.jexs)window.jexs.hydrate()}</script>',
   );
   const parts = deferred.map(({ id, html }) =>
     html.then(part => {
       // Escaped for a JS string literal inside a script element.
       const escaped = JSON.stringify(part).replace(/<\//g, "<\\/");
-      res.write(`<script>__jexs_defer("${id}",${escaped})</script>`);
+      write(`<script>__jexs_defer("${id}",${escaped})</script>`);
     }),
   );
-  return Promise.all(parts).then(() => void res.end());
+  return Promise.all(parts).then(
+    () => void (out ? out.end() : res.end()),
+    (error: unknown) => {
+      out?.destroy();
+      throw error;
+    },
+  );
+}
+
+/** Below this many bytes a body goes out as it is: compressing it saves less than it costs. */
+const MIN_COMPRESSED_SIZE = 1024;
+
+/** The content types worth compressing: text, which an image or an archive is not. */
+const COMPRESSIBLE_TYPE = /^(text\/|application\/(json|javascript|xml|x-ndjson)\b|image\/svg\+xml)|\+(json|xml)\b/i;
+
+/**
+ * Brotli settings cheap enough to run on every request: quality 4 of 11
+ * compresses about as fast as gzip's default and still smaller. The bundle's
+ * copies, made once, take the highest.
+ */
+const BROTLI_PARAMS = {
+  [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT,
+  [zlib.constants.BROTLI_PARAM_QUALITY]: 4,
+};
+const brotliAsync = promisify(zlib.brotliCompress);
+const gzipAsync = promisify(zlib.gzip);
+
+function compressBody(bytes: Buffer, encoding: string): Promise<Buffer> {
+  return encoding === "br"
+    ? brotliAsync(bytes, { params: { ...BROTLI_PARAMS, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: bytes.length } })
+    : gzipAsync(bytes);
+}
+
+function compressorFor(encoding: string): zlib.BrotliCompress | zlib.Gzip {
+  return encoding === "br" ? zlib.createBrotliCompress({ params: BROTLI_PARAMS }) : zlib.createGzip();
+}
+
+/**
+ * The encoding to compress a response with, or null to send it as it is. Not
+ * one without a body, nor one whose type is not text, nor one that set its own
+ * `Content-Encoding` or `Content-Length` (a relayed upstream response, say) or
+ * asked not to be transformed. Every response that could have gone either way
+ * gets `Vary: Accept-Encoding`, so a cache keeps the two apart.
+ */
+function compressionFor(res: http.ServerResponse, status: number, headers: Record<string, string>): string | null {
+  if (res.req.method === "HEAD" || status === 204 || status === 206 || status === 304) return null;
+  if (!COMPRESSIBLE_TYPE.test(headers[headerKey(headers, "content-type") ?? ""] ?? "")) return null;
+  if (headerKey(headers, "content-encoding") !== undefined || headerKey(headers, "content-length") !== undefined) return null;
+  if (/\bno-transform\b/i.test(headers[headerKey(headers, "cache-control") ?? ""] ?? "")) return null;
+
+  const varyKey = headerKey(headers, "vary") ?? "Vary";
+  const vary = headers[varyKey];
+  if (vary === undefined) headers[varyKey] = "Accept-Encoding";
+  else if (!vary.split(",").some(field => ["*", "accept-encoding"].includes(field.trim().toLowerCase()))) {
+    headers[varyKey] = `${vary}, Accept-Encoding`;
+  }
+  return acceptedEncodings(res.req.headers["accept-encoding"])[0] ?? null;
+}
+
+/** The key `headers` holds `name` under, in whatever case a response gave it. */
+function headerKey(headers: Record<string, string>, name: string): string | undefined {
+  return Object.keys(headers).find(key => key.toLowerCase() === name);
 }
 
 /** How long an event stream may stay quiet before a comment keeps proxies from closing it. */
@@ -957,6 +1046,11 @@ export class ServerNode extends Node {
           default: 300000,
           description: "How long a stream response may go without writing a value before it is cut, in milliseconds (default 300000, five minutes), so a stream nothing closes cannot hold a connection open for good. The comments that keep an `sse` response open do not count as writes. `0` sets no limit.",
         },
+        compress: {
+          type: "boolean",
+          default: true,
+          description: "Compress what the steps yield, with brotli or gzip as the client's `Accept-Encoding` takes, when it is text of 1 KiB or more: HTML, JSON, plain text, and a page with deferred parts as each part goes out. Not a stream body, nor a response that sets its own `Content-Encoding` or `Content-Length` or has `Cache-Control: no-transform`. Static files are not compressed per request; `jexs bundle --compress` writes copies that are sent in their place either way. Set `false` when a proxy in front compresses.",
+        },
         host: {
           type: "string",
           default: "0.0.0.0",
@@ -1062,8 +1156,8 @@ export class ServerNode extends Node {
     const steps = def.do;
     if (!Array.isArray(steps)) throw new Error('$listen needs "do": an array of the steps each request runs');
 
-    const options = [def.maxBodySize, def.maxMessageSize, def.trustedOrigins, def.host, def.trustProxy, def.system, def.client, def.requestTimeout, def.streamIdleTimeout].map(o => o ?? null);
-    return resolveAll([def.$listen, ...options], context, async ([portRaw, maxBodyRaw, maxMessageRaw, originsRaw, hostRaw, trustProxy, system, client, timeoutRaw, idleRaw]) => {
+    const options = [def.maxBodySize, def.maxMessageSize, def.trustedOrigins, def.host, def.trustProxy, def.system, def.client, def.requestTimeout, def.streamIdleTimeout, def.compress].map(o => o ?? null);
+    return resolveAll([def.$listen, ...options], context, async ([portRaw, maxBodyRaw, maxMessageRaw, originsRaw, hostRaw, trustProxy, system, client, timeoutRaw, idleRaw, compress]) => {
       // `0` asks the OS for any free port; the step returns the one it got.
       const requested = portRaw == null || portRaw === "" ? 3000 : Number(portRaw);
       if (!Number.isInteger(requested) || requested < 0 || requested > 65535) {
@@ -1087,6 +1181,9 @@ export class ServerNode extends Node {
       if (!Number.isInteger(streamIdleTimeout) || streamIdleTimeout < 0) {
         throw new Error(`$listen: streamIdleTimeout ${JSON.stringify(idleRaw)} is not a whole number of milliseconds`);
       }
+      if (compress !== null && typeof compress !== "boolean") {
+        throw new Error(`$listen: compress ${JSON.stringify(compress)} is neither true nor false`);
+      }
 
       const listener: Listener = {
         httpServer: null as unknown as http.Server, // assigned below
@@ -1096,6 +1193,7 @@ export class ServerNode extends Node {
         maxBodySize: 1_048_576, // 1 MB default
         maxMessageSize: 65_536, // 64 KiB default
         streamIdleTimeout,
+        compress: compress !== false,
         wss: null,
         staticDirs: new Map(),
         sw: null,
