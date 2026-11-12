@@ -47,6 +47,9 @@ export interface SessionState {
    *  request's cookies don't carry. */
   issuedSid?: string;
   issuedCsrf?: string;
+  /** Whether the page read the session's token to render it, which makes its
+   *  HTML this visitor's alone. */
+  csrfRendered: boolean;
 }
 
 const PREFIX = "session:";
@@ -71,8 +74,8 @@ export class SessionNode extends Node {
         "load",
         "destroy",
       ],
-      markdownDescription: "Manages request sessions stored in cache. Pass an object to set session values. Read values with `{ \"$var\": \"session.key\" }`: `session` is read-only, and only a `$session` op changes it, for the whole request whichever scope it runs in.\r\nSession ID is stored in an HTTP-only cookie with a 24-hour TTL: `sid`, or `__Host-sid` once Secure. Steps never see it: `request.cookies` and the `cookie` header leave it out, so a page that shows the request cannot hand a visitor's session to anyone. Its cookies are Secure in production (`NODE_ENV=production`) and whenever the app's URL is https (`BASE_URL`, or a trusted proxy's `X-Forwarded-Proto`; see `$listen`'s `trustProxy`).\r\nOn a request other than GET, HEAD or OPTIONS that carries a session cookie, every operation first checks the session's CSRF token, sent as the `_csrf` body field or the `x-csrf-token` header, and fails with 403 without it. The client runtime sends it on its own, read from the `csrf` cookie the session sets: as the header on the page's `$fetch`, and as the field on its form posts. A page served without the client gets the field rendered into its non-GET forms instead, masked anew on every response so that a compressed page never repeats the token.\r\nWith no request, as in a CLI, the session belongs to the flow its first op runs in, for as long as that flow runs.",
-      outputDescription: "The session's data, which `load` and setting values also make readable as `session`; `null` after `destroy`. The cookies are queued onto the response for you; you don't return them yourself.",
+      markdownDescription: "Manages request sessions stored in cache. Pass an object to set session values. Read values with `{ \"$var\": \"session.key\" }`: `session` is read-only, and only a `$session` op changes it, for the whole request whichever scope it runs in.\r\n`load` reads the session the request's cookie names and starts none: a session starts when values are first set, so a visitor with nothing stored (a crawler, say) is sent no cookie and gets a page a cache may keep.\r\nSession ID is stored in an HTTP-only cookie with a 24-hour TTL: `sid`, or `__Host-sid` once Secure. Steps never see it: `request.cookies` and the `cookie` header leave it out, so a page that shows the request cannot hand a visitor's session to anyone. Its cookies are Secure in production (`NODE_ENV=production`) and whenever the app's URL is https (`BASE_URL`, or a trusted proxy's `X-Forwarded-Proto`; see `$listen`'s `trustProxy`).\r\nOn a request other than GET, HEAD or OPTIONS that carries a session cookie, every operation first checks the session's CSRF token, sent as the `_csrf` body field or the `x-csrf-token` header, and fails with 403 without it. The client runtime sends it on its own, read from the `csrf` cookie the session sets: as the header on the page's `$fetch`, and as the field on its form posts. A page served without the client gets the field rendered into its non-GET forms instead, once there is a session, masked anew on every response so that a compressed page never repeats the token.\r\nWith no request, as in a CLI, the session belongs to the flow its first op runs in, for as long as that flow runs.",
+      outputDescription: "The session's data, which `load` and setting values also make readable as `session`; `{}` from `load` when there is no session, and `null` after `destroy`. The cookies are queued onto the response for you; you don't return them yourself.",
       examples: [
         "{ \"$session\": { \"user_id\": { \"$var\": \"user.id\" }, \"role\": { \"$var\": \"user.role\" } }, \"regenerate\": true }",
         "{ \"$session\": \"load\", \"cache\": \"sessions\" }",
@@ -113,15 +116,14 @@ export class SessionNode extends Node {
 export function bindSession(scope: Context): SessionState {
   const request = scope.request;
   const sentCsrf = (isObject(request?.body) ? request.body._csrf : undefined) ?? request?.headers?.["x-csrf-token"];
-  const state: SessionState = { scope, sentCsrf, trusted: false };
+  const state: SessionState = { scope, sentCsrf, trusted: false, csrfRendered: false };
   scope[SESSION] = state;
   Object.defineProperty(scope, "session", { get: () => state.stored?.data, enumerable: true });
   return state;
 }
 
 /** What another node keeps with the request's session under `key`, loading the
- *  session first when no `$session` op has (a page view starts one, as `load`
- *  does). */
+ *  session first when no `$session` op has; nothing when there is no session. */
 export async function internalValue(context: Context, key: string): Promise<unknown> {
   return (await openSession(stateOf(context)))?.internal[key];
 }
@@ -183,14 +185,21 @@ async function readSession(state: SessionState): Promise<StoredSession | null> {
 
 /**
  * Make `stored` the session: readable as `session`, reused by later ops, and
- * its CSRF token handed to the page, masked. Its data is frozen, since a write to it
+ * its CSRF token handed to the page, masked, and noted as rendered once the page
+ * reads it. Its data is frozen, since a write to it
  * would change the session for every request holding it without a `$session`
  * op; a `$session` op replaces it instead.
  */
 function useSession(state: SessionState, stored: StoredSession): Readonly<Record<string, unknown>> {
   state.stored = stored;
   state.storedIn = cacheOf(state);
-  state.scope[CSRF_TOKEN] = maskToken(stored.csrf);
+  Object.defineProperty(state.scope, CSRF_TOKEN, {
+    get: () => {
+      state.csrfRendered = true;
+      return maskToken(stored.csrf);
+    },
+    configurable: true,
+  });
   syncCsrfCookie(state, stored.csrf);
   return freezeData(stored.data);
 }
@@ -330,15 +339,13 @@ async function regenerateSession(state: SessionState, values: Record<string, unk
 }
 
 /**
- * The session: the one the request's cookie names, or a new one for a page
- * view. A state-changing request without one has nothing to protect, so it
- * gets none.
+ * The session the request's cookie names, if there is one. Reading starts
+ * none: a visitor with nothing stored is sent no cookie, so the page they get
+ * is the same as any other's and a cache may keep it. A request without a
+ * session has nothing for a token to protect.
  */
 async function openSession(state: SessionState): Promise<StoredSession | null> {
   const stored = await readSession(state);
-  if (stored) {
-    useSession(state, stored);
-    return stored;
-  }
-  return SAFE_METHODS.includes(methodOf(state)) ? initSession(state) : null;
+  if (stored) useSession(state, stored);
+  return stored;
 }

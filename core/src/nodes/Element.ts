@@ -316,8 +316,10 @@ function buildInjections(tag: string, def: Record<string, unknown>, context: Con
   // be cached. Only a page without the client needs the token rendered in.
   if (tag === "form" && typeof clientScript !== "string") {
     const method = (def.method || "GET").toString().toUpperCase();
-    const csrfToken = context[CSRF_TOKEN];
-    if (method !== "GET" && typeof csrfToken === "string" && csrfToken !== "") {
+    // Read only where it is rendered: the read is what tells the server the
+    // page carries it.
+    const csrfToken = method === "GET" ? undefined : context[CSRF_TOKEN];
+    if (typeof csrfToken === "string" && csrfToken !== "") {
       result += `<input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}">`;
     }
   }

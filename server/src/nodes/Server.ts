@@ -9,7 +9,7 @@ import { pipeline, type Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
 import { CLIENT_SCRIPT, Context, Html, Node, NodeValue, OPEN_STREAMS, SW_SCRIPT, boundaryContext, createHttpError, isHttpError, isObject, isStep, loggerFor, resolve, resolveAll, resolveFields, runSteps } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
-import { COOKIES, DEFERRED, SESSION_COOKIES, UPGRADE, type Deferred } from "../context.js";
+import { COOKIES, DEFERRED, SESSION, SESSION_COOKIES, UPGRADE, type Deferred } from "../context.js";
 import { safeRelative } from "./File.js";
 import { SAFE_METHODS, SESSION_COOKIE_NAMES, bindSession } from "./Session.js";
 import { serviceWorkerScript } from "../sw.js";
@@ -357,11 +357,21 @@ async function handleRequest(
 
     // Cookies the session ops queued.
     for (const cookie of setCookies) res.appendHeader("Set-Cookie", cookie);
-    // A shared cache must never replay one visitor's cookies to another, but it
-    // may keep the page without them (RFC 9111 §5.2.2.7); a cache that doesn't
-    // know this form treats it as plain `private`. A `Cache-Control` the response
-    // sets itself wins, since `writeHead` headers override this one.
-    if (setCookies.length > 0) res.setHeader("Cache-Control", 'private="Set-Cookie"');
+
+    // A form on a page without the client script carries the session's token. A
+    // deferred part renders after the headers are out, so such a page with a
+    // session counts as carrying it.
+    const session = context[SESSION];
+    const rendersToken = session !== undefined && (
+      session.csrfRendered ||
+      (deferred.length > 0 && session.stored !== undefined && typeof context[CLIENT_SCRIPT] !== "string")
+    );
+    // What a shared cache (a CDN, a proxy) must leave to this visitor: the whole
+    // page when its body carries their token, else only the cookies it sets,
+    // which leaves the page cacheable without them (RFC 9111 §5.2.2.7; a cache
+    // that doesn't know this form reads it as plain `private`).
+    if (rendersToken) res.setHeader("Cache-Control", "private");
+    else if (setCookies.length > 0) res.setHeader("Cache-Control", 'private="Set-Cookie"');
 
     await sendResponse(res, result, deferred, listener);
   } catch (error) {
@@ -743,6 +753,7 @@ function getMimeType(ext: string): string {
  */
 function sendResponse(res: http.ServerResponse, value: unknown, deferred: Deferred[] = [], listener?: Listener): void | Promise<void> {
   const { status, headers, body, stream } = replyFor(value);
+  keepFromSharedCaches(res, headers);
   if (stream) {
     res.writeHead(status, headers);
     return sendStream(res, stream, headers["Content-Type"] ?? "", listener?.streamIdleTimeout ?? 0);
@@ -792,6 +803,23 @@ function sendResponse(res: http.ServerResponse, value: unknown, deferred: Deferr
       throw error;
     },
   );
+}
+
+/**
+ * Hold the `Cache-Control` a response sets itself to the one the request
+ * already put on `res` for what is this visitor's alone. `private` replaces it:
+ * the whole page is theirs. `private="Set-Cookie"` is added to it, so a page
+ * that says `public, max-age=60` keeps its lifetime, for the visitor with no
+ * cookies yet (every crawler) too. A response already `private` or `no-store`
+ * is out of shared caches and stays as it is.
+ */
+function keepFromSharedCaches(res: http.ServerResponse, headers: Record<string, string>): void {
+  const limit = res.getHeader("Cache-Control");
+  const key = headerKey(headers, "cache-control");
+  if (typeof limit !== "string" || key === undefined) return;
+  const directives = headers[key].split(",").map(directive => directive.trim().toLowerCase());
+  if (directives.includes("private") || directives.includes("no-store")) return;
+  headers[key] = limit === "private" ? limit : `${headers[key]}, ${limit}`;
 }
 
 /** Below this many bytes a body goes out as it is: compressing it saves less than it costs. */

@@ -183,14 +183,33 @@ test("a session id the server didn't issue is never adopted", async () => {
   try {
     const viaLoad = request("GET", { sid: "planted" });
     await resolver({ $session: "load" }, viaLoad);
+    assert.deepEqual(cookiesOf(viaLoad), [], "reading it starts nothing");
+
     const viaSet = request("POST", { sid: "planted" });
     await resolver({ $session: { user: "eve" } }, viaSet);
-
-    for (const ctx of [viaLoad, viaSet]) {
-      const issued = cookiesOf(ctx).join(";").match(/sid=([^;]+)/)?.[1];
-      assert.ok(issued && issued !== "planted", "a new id was issued");
-    }
+    assert.ok(sidOf(viaSet) && sidOf(viaSet) !== "planted", "a new id was issued");
     assert.equal(await stored(context, "planted"), undefined);
+  } finally {
+    resolver.destroy();
+  }
+});
+
+// A visitor with nothing stored is sent no cookie, so their page is anyone's and
+// a cache may keep it; a crawler, which never returns one, costs no session.
+test("reading a session starts none, and setting a value does", async () => {
+  const context: Context = {};
+  const resolver = createResolver([...coreNodes(), new CacheNode(), new SessionNode()], { context });
+  try {
+    const view = request("GET", {});
+    assert.deepEqual(await resolver({ $session: "load" }, view), {});
+    assert.deepEqual(cookiesOf(view), []);
+    assert.equal(view.session, undefined);
+    assert.equal(tokenOf(view), "", "no token to render");
+
+    const set = request("GET", {});
+    await resolver([{ $session: "load" }, { $session: { theme: "dark" } }], set);
+    assert.equal(cookiesOf(set).length, 2, "the session's id and its token");
+    assert.equal((await stored(context, sidOf(set)))?.theme, "dark");
   } finally {
     resolver.destroy();
   }
@@ -248,7 +267,7 @@ test("on an https app the session cookie is Secure and host-only", async () => {
     assert.equal(again.session?.user, "ada");
 
     const plain = request("GET", {});
-    await resolver({ $session: "load" }, plain);
+    await resolver({ $session: {} }, plain);
     assert.ok(cookiesOf(plain).some(c => c.startsWith("sid=") && !/Secure/.test(c)), "plain http in development keeps `sid`");
   } finally {
     resolver.destroy();
@@ -266,7 +285,7 @@ test("the CSRF token is handed to page scripts in a readable cookie", async () =
   const resolver = createResolver([...coreNodes(), new CacheNode(), new SessionNode()], { context });
   try {
     const first = request("GET", {});
-    await resolver({ $session: "load" }, first);
+    await resolver({ $session: {} }, first);
     const token = secretOf(first);
     assert.match(token, /^[0-9a-f]{64}$/, "the cookie carries the session's token");
     assert.ok(!/HttpOnly/i.test(csrfCookie(first) ?? ""), "page scripts can read it");
@@ -299,7 +318,7 @@ test("the token a page renders is masked anew on every response, and both forms 
   const resolver = createResolver([...coreNodes(), new CacheNode(), new SessionNode()], { context });
   try {
     const first = request("GET", {});
-    await resolver({ $session: "load" }, first);
+    await resolver({ $session: {} }, first);
     const secret = secretOf(first);
     const sid = sidOf(first);
 
@@ -318,7 +337,7 @@ test("the token a page renders is masked anew on every response, and both forms 
 
     // A masked copy of another session's token is not this one's.
     const other = request("GET", {});
-    await resolver({ $session: "load" }, other);
+    await resolver({ $session: {} }, other);
     await assert.rejects(
       async () => resolver({ $session: "load" }, request("POST", { sid }, { body: { _csrf: tokenOf(other) } })),
       /CSRF token mismatch/,
@@ -328,28 +347,92 @@ test("the token a page renders is masked anew on every response, and both forms 
   }
 });
 
-test("a response that sets a cookie keeps it from shared caches, unless the app says otherwise", async () => {
+/**
+ * A server whose every request loads the session, and whose `/start` and
+ * `/start/public` store a value in it; and the cookies a visit to `/start` is handed.
+ */
+async function sessionServer(resolver: Resolver, routes: Record<string, unknown>): Promise<{ get: (path: string, cookie?: string) => Promise<Response>; visit: () => Promise<string> }> {
+  const at = (path: string) => ({ $eq: [{ $var: "request.path" }, path] });
+  const port = await resolver({
+    $listen: 0,
+    do: [
+      { $session: "load" },
+      { $if: at("/start"), then: { $session: { seen: true } } },
+      { $if: at("/start/public"), then: { $session: { seen: true } } },
+      ...Object.entries(routes).map(([path, response]) => ({ $if: at(path), then: { $return: response } })),
+      { response: "page" },
+    ],
+  }, {});
+  const get = (path: string, cookie?: string) => fetch(`http://127.0.0.1:${port}${path}`, cookie ? { headers: { cookie } } : {});
+  const visit = async () => (await get("/start")).headers.getSetCookie().map(c => c.split(";")[0]).join("; ");
+  return { get, visit };
+}
+
+const PUBLIC = { "Cache-Control": "public, max-age=60" };
+
+test("a page goes out as cacheable as it says, and a response that sets a cookie keeps the cookie from shared caches", async () => {
   const resolver = createResolver([...coreNodes(), new CacheNode(), new SessionNode(), new ServerNode()]);
   try {
-    const PORT = await resolver({
-      $listen: 0,
-      do: [
-        { $session: "load" },
-        { $if: { $eq: [{ $var: "request.path" }, "/public"] }, then: { $return: { response: "page", responseHeaders: { "Cache-Control": "public, max-age=60" } } } },
-        { response: "page" },
-      ],
-    }, {});
-    const first = await fetch(`http://127.0.0.1:${PORT}/`);
-    assert.equal(first.headers.get("cache-control"), 'private="Set-Cookie"');
+    const { get, visit } = await sessionServer(resolver, {
+      "/public": { response: "page", responseHeaders: PUBLIC },
+      "/start/public": { response: "page", responseHeaders: PUBLIC },
+      "/secret": { response: "page", responseHeaders: { "cache-control": "no-store" } },
+    });
+    const cookie = await visit();
 
-    // The browser now holds the session and its token, so nothing is set.
-    const cookie = first.headers.getSetCookie().map(c => c.split(";")[0]).join("; ");
-    const second = await fetch(`http://127.0.0.1:${PORT}/`, { headers: { cookie } });
-    assert.equal(second.headers.getSetCookie().length, 0);
-    assert.equal(second.headers.get("cache-control"), null);
+    // Loading the session changes nothing a cache sees: a visitor with no
+    // cookies, as every crawler is, and one with a session get the same headers.
+    for (const sent of [undefined, cookie]) {
+      const plain = await get("/", sent);
+      assert.equal(plain.headers.getSetCookie().length, 0);
+      assert.equal(plain.headers.get("cache-control"), null);
 
-    const own = await fetch(`http://127.0.0.1:${PORT}/public`);
-    assert.equal(own.headers.get("cache-control"), "public, max-age=60");
+      const page = await get("/public", sent);
+      assert.equal(page.headers.getSetCookie().length, 0);
+      assert.equal(page.headers.get("cache-control"), "public, max-age=60");
+    }
+
+    // The response that starts a session carries its cookies, which stay the visitor's.
+    const started = await get("/start");
+    assert.equal(started.headers.getSetCookie().length, 2);
+    assert.equal(started.headers.get("cache-control"), 'private="Set-Cookie"');
+    const startedPublic = await get("/start/public");
+    assert.equal(startedPublic.headers.get("cache-control"), 'public, max-age=60, private="Set-Cookie"');
+
+    // A response already out of shared caches is left alone.
+    assert.equal((await get("/secret")).headers.get("cache-control"), "no-store");
+  } finally {
+    resolver.destroy();
+  }
+});
+
+// The token in a form is one visitor's: a shared cache that kept the page would
+// hand it to the next, whose own session refuses it.
+test("a page that renders the session's token is private, whatever it says", async () => {
+  const form = { $tag: "form", method: "POST", action: "/save", content: [] };
+  const resolver = createResolver([...coreNodes(), new CacheNode(), new SessionNode(), new ServerNode()]);
+  try {
+    const { get, visit } = await sessionServer(resolver, {
+      "/form": form,
+      "/public-form": { response: form, responseHeaders: PUBLIC },
+      "/search": { response: { ...form, method: "GET" }, responseHeaders: PUBLIC },
+    });
+    const cookie = await visit();
+    for (const path of ["/form", "/public-form"]) {
+      const res = await get(path, cookie);
+      assert.match(await res.text(), /name="_csrf"/);
+      assert.equal(res.headers.get("cache-control"), "private", path);
+    }
+
+    // Without a session there is no token, and the page is anyone's.
+    const anonymous = await get("/public-form");
+    assert.doesNotMatch(await anonymous.text(), /_csrf/);
+    assert.equal(anonymous.headers.get("cache-control"), "public, max-age=60");
+
+    // A form that carries no token leaves the page as cacheable as it said.
+    const search = await get("/search", cookie);
+    assert.doesNotMatch(await search.text(), /_csrf/);
+    assert.equal(search.headers.get("cache-control"), "public, max-age=60");
   } finally {
     resolver.destroy();
   }
