@@ -10,6 +10,7 @@ interface TranslationConfig {
   table: string;
   columns: { hash: string; language: string; translation: string };
   cache?: string;
+  ttl?: number;
   database?: string;
 }
 
@@ -43,6 +44,10 @@ export class TranslationNode extends Node {
           type: "string",
           description: "Named cache that holds looked-up translations (default cache if omitted).",
         },
+        ttl: {
+          type: "number",
+          description: "Seconds the cache keeps a looked-up translation, or the lack of one, before the table is asked again, so a row that is edited or added shows within that time. Kept until the cache drops it if omitted or `0`.",
+        },
         database: {
           type: "string",
           description: "Named database connection holding the table (default if omitted).",
@@ -58,6 +63,10 @@ export class TranslationNode extends Node {
         context[TRANSLATE] = undefined;
         return null;
       }
+      const ttl = r.ttl == null ? undefined : Number(r.ttl);
+      if (ttl !== undefined && !(ttl >= 0)) {
+        throw new Error(`$translate: ttl ${JSON.stringify(r.ttl)} is not a number of seconds`);
+      }
       const columns = isObject(r.columns) ? r.columns : {};
       const config: TranslationConfig = {
         to: String(r.$translate),
@@ -68,6 +77,7 @@ export class TranslationNode extends Node {
           translation: typeof columns.translation === "string" ? columns.translation : COLUMNS.translation,
         },
         cache: optionalName(r.cache),
+        ttl,
         database: optionalName(r.database),
       };
       context[TRANSLATE] = text => translateText(text, config, context);
@@ -78,7 +88,8 @@ export class TranslationNode extends Node {
 
 /**
  * `text` in the configured language: from the cache, else the table, whose
- * answer (or the text itself, when it has none) the cache then keeps. A cache
+ * answer (or the text itself, when it has none) the cache then keeps, for the
+ * configured `ttl` when there is one. A cache
  * or database that fails throws, so the page shows the failure rather than an
  * untranslated page that looks fine.
  */
@@ -98,6 +109,6 @@ async function translateText(text: string, config: TranslationConfig, context: C
     .first();
   const translated = row?.[columns.translation] ? String(row[columns.translation]) : text;
   // A miss is kept too, so the table is asked once per text.
-  await cache.set(cacheKey, translated);
+  await cache.set(cacheKey, translated, config.ttl);
   return translated;
 }

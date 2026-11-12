@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { createResolver, coreNodes, TRANSLATE } from "@jexs/core";
 import { serverNodes } from "../src/index.js";
 import { sha256 } from "../src/nodes/Crypto.js";
@@ -100,6 +101,25 @@ test("$translate: null in an inner scope stops the translator set outside it", a
 test("without $translate, or after it is given null, content renders as written", async () => {
   assert.equal(await render({ $tag: "p", content: "Bye" }, {}), "<p>Bye</p>");
   assert.equal(await render([translate, { $translate: null }, { $tag: "p", content: "Bye" }], {}), "<p>Bye</p>");
+});
+
+test("with a ttl, a row edited or added shows once the cached lookup expires", async () => {
+  const page = [{ ...translate, ttl: 0.05 }, { $tag: "p", content: ["Late", { $tag: "b", content: "Soon" }] }];
+  const write = (sql: string) => resolve({ $database: "raw", connection: "words", sql }, {});
+  await write(`INSERT INTO t VALUES ('${sha256("Soon")}', 'es', 'Pronto')`);
+  assert.equal(await render(page, {}), "<p>Late<b>Pronto</b></p>");
+
+  await write(`INSERT INTO t VALUES ('${sha256("Late{0}")}', 'es', 'Tarde{0}')`);
+  await write(`UPDATE t SET out = 'Ya' WHERE src = '${sha256("Soon")}'`);
+  assert.equal(await render(page, {}), "<p>Late<b>Pronto</b></p>");
+
+  await sleep(80);
+  assert.equal(await render(page, {}), "<p>Tarde<b>Ya</b></p>");
+});
+
+test("a ttl that is not a number of seconds is an error", async () => {
+  await assert.rejects(async () => resolve({ ...translate, ttl: "soon" }, {}), /ttl "soon"/);
+  await assert.rejects(async () => resolve({ ...translate, ttl: -1 }, {}), /ttl -1/);
 });
 
 test("a table that fails to answer is an error, not an untranslated page", async () => {
