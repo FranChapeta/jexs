@@ -5,13 +5,14 @@ import path from "node:path";
 import { URL } from "node:url";
 import { promisify } from "node:util";
 import zlib from "node:zlib";
+import { createHash } from "node:crypto";
 import { pipeline, type Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
 import { CLIENT_SCRIPT, Context, Html, Node, NodeValue, OPEN_STREAMS, SW_SCRIPT, boundaryContext, createHttpError, isHttpError, isObject, isStep, loggerFor, resolve, resolveAll, resolveFields, runSteps } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { COOKIES, DEFERRED, SESSION, SESSION_COOKIES, UPGRADE, type Deferred } from "../context.js";
 import { safeRelative } from "./File.js";
-import { SAFE_METHODS, SESSION_COOKIE_NAMES, bindSession } from "./Session.js";
+import { SAFE_METHODS, SESSION_COOKIE_NAMES, bindSession, type SessionState } from "./Session.js";
 import { serviceWorkerScript } from "../sw.js";
 import { isProduction } from "../env.js";
 
@@ -325,11 +326,21 @@ async function handleRequest(
     // The service worker is generated, not a file: its bytes carry the config.
     if (method === "GET" && listener.sw !== null && requestPath === listener.sw.path) {
       const script = await serviceWorkerScript(listener.sw.config, listener.sw.dir);
-      res.writeHead(200, {
-        "Content-Type": "text/javascript; charset=utf-8",
-        "Content-Length": String(Buffer.byteLength(script)),
+      const headers = {
         "Cache-Control": cacheControlFor(requestPath, true),
         "Service-Worker-Allowed": "/",
+        ETag: bodyTag(script, null),
+      };
+      // The browser checks on every load; unchanged, it is spared the script.
+      if (isFresh(req.headers, headers.ETag)) {
+        res.writeHead(304, headers);
+        res.end();
+        return;
+      }
+      res.writeHead(200, {
+        ...headers,
+        "Content-Type": "text/javascript; charset=utf-8",
+        "Content-Length": String(Buffer.byteLength(script)),
       });
       res.end(script);
       return;
@@ -363,7 +374,7 @@ async function handleRequest(
     // session counts as carrying it.
     const session = context[SESSION];
     const rendersToken = session !== undefined && (
-      session.csrfRendered ||
+      session.csrfMasks.length > 0 ||
       (deferred.length > 0 && session.stored !== undefined && typeof context[CLIENT_SCRIPT] !== "string")
     );
     // What a shared cache (a CDN, a proxy) must leave to this visitor: the whole
@@ -373,7 +384,7 @@ async function handleRequest(
     if (rendersToken) res.setHeader("Cache-Control", "private");
     else if (setCookies.length > 0) res.setHeader("Cache-Control", 'private="Set-Cookie"');
 
-    await sendResponse(res, result, deferred, listener);
+    await sendResponse(res, result, deferred, listener, session);
   } catch (error) {
     // Once the status line is out (a static file, a streamed render) there is no
     // status left to change. Log and close, rather than raise a second error
@@ -708,11 +719,30 @@ function etagFor(stat: fs.Stats, encoding?: string): string {
   return `W/"${encoding ? `${tag}-${encoding}` : tag}"`;
 }
 
-/** Does the client already hold a good copy? RFC 9110 conditional GET rules. */
+/**
+ * A weak tag for a body the server made, so one that is the same again is not
+ * sent again. Each encoding it goes out in is its own representation, so its
+ * own tag.
+ *
+ * A form's token is masked anew on every response, which would make every body
+ * a new one, so the masks are left out of what is hashed and the token they
+ * carry is hashed in their place: the page is the same until its content or the
+ * session's token changes, and a page kept from before a login, whose token no
+ * longer passes, is sent again. The tag says nothing of the token.
+ */
+function bodyTag(body: string, encoding: string | null, session?: SessionState): string {
+  const masks = session?.csrfMasks ?? [];
+  const hash = createHash("sha256").update(masks.reduce((text, mask) => text.replaceAll(mask, ""), body));
+  if (masks.length > 0) hash.update(`\0${session?.stored?.csrf ?? ""}`);
+  const tag = hash.digest("base64url");
+  return `W/"${encoding ? `${tag}-${encoding}` : tag}"`;
+}
+
+/** Does the client already hold a good copy? RFC 9110 conditional GET rules. `mtime` is absent for a body with no date. */
 function isFresh(
   reqHeaders: http.IncomingHttpHeaders,
   etag: string,
-  mtime: Date,
+  mtime?: Date,
 ): boolean {
   // If-None-Match, when sent at all, decides on its own: a client that has an
   // ETag gets no second opinion from the date.
@@ -726,7 +756,7 @@ function isFresh(
   }
 
   const modifiedSince = reqHeaders["if-modified-since"];
-  if (typeof modifiedSince === "string") {
+  if (typeof modifiedSince === "string" && mtime) {
     const since = Date.parse(modifiedSince);
     if (Number.isNaN(since)) return false;
     // HTTP dates carry whole seconds, so compare at that resolution: the header
@@ -750,18 +780,40 @@ function getMimeType(ext: string): string {
  * Send the response for `value`, as `replyFor` makes it. An HTML page with
  * deferred parts is streamed: the page with their placeholders first, then each
  * part as it resolves, in whatever order they finish.
+ *
+ * A 200 to a GET or HEAD whose body is whole before it is sent carries an
+ * `ETag`, its own or one made from the body, and a client that sends it back
+ * while it still holds is answered 304: the headers, cookies among them, and no
+ * body. A stream and a page with deferred parts are not whole, so they get none.
  */
-function sendResponse(res: http.ServerResponse, value: unknown, deferred: Deferred[] = [], listener?: Listener): void | Promise<void> {
+function sendResponse(
+  res: http.ServerResponse,
+  value: unknown,
+  deferred: Deferred[] = [],
+  listener?: Listener,
+  session?: SessionState,
+): void | Promise<void> {
   const { status, headers, body, stream } = replyFor(value);
   keepFromSharedCaches(res, headers);
   if (stream) {
     res.writeHead(status, headers);
     return sendStream(res, stream, headers["Content-Type"] ?? "", listener?.streamIdleTimeout ?? 0);
   }
-  const encoding = listener?.compress ? compressionFor(res, status, headers) : null;
+  const accepted = listener?.compress ? compressionFor(res, status, headers) : null;
   if (deferred.length === 0 || headers["Content-Type"] !== HTML) {
     const bytes = Buffer.from(body);
-    if (encoding === null || bytes.length < MIN_COMPRESSED_SIZE) {
+    const encoding = bytes.length < MIN_COMPRESSED_SIZE ? null : accepted;
+    if (status === 200 && ["GET", "HEAD"].includes(res.req.method ?? "")) {
+      const key = headerKey(headers, "etag") ?? "ETag";
+      headers[key] ??= bodyTag(body, encoding, session);
+      if (isFresh(res.req.headers, headers[key])) {
+        // A 304 has no body, so the Content-* headers that describe one are left out.
+        res.writeHead(304, Object.fromEntries(Object.entries(headers).filter(([name]) => !/^content-/i.test(name))));
+        res.end();
+        return;
+      }
+    }
+    if (encoding === null) {
       res.writeHead(status, headers);
       res.end(bytes);
       return;
@@ -772,6 +824,7 @@ function sendResponse(res: http.ServerResponse, value: unknown, deferred: Deferr
     });
   }
 
+  const encoding = accepted;
   res.writeHead(status, encoding === null ? headers : { ...headers, "Content-Encoding": encoding });
   // Each write is flushed through the compressor as it is made: held back
   // until its buffer fills, the page would no longer arrive in parts.

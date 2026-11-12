@@ -89,6 +89,8 @@ A route node can also be a step that produces one. It is resolved only when the 
 
 A response is compressed, with brotli or gzip as the client's `Accept-Encoding` takes, when it is text (HTML, JSON, plain text) of 1 KiB or more; a page with deferred parts is compressed as each part goes out, so it still arrives in parts. A stream body, a response that sets its own `Content-Encoding` or `Content-Length`, and one with `Cache-Control: no-transform` go out as they are. `$listen`'s `compress: false` turns it off, for a proxy in front that compresses.
 
+A 200 to a GET or HEAD carries an `ETag` made from its body, or the one it sets in `responseHeaders`, and a client that sends it back as `If-None-Match` while it still holds is answered `304 Not Modified`: the headers, any cookies among them, and no body. The steps still run; what is saved is the transfer. A stream body and a page with deferred parts are sent as they are made, so they carry none. A form's CSRF token, masked anew on every response, is left out of the tag, which changes with the session's token instead.
+
 ## Security defaults
 
 These are on without any configuration:

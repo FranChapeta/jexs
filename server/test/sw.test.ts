@@ -62,6 +62,11 @@ test("sw.js starts the runtime with the config inline, settings resolved", async
   assert.equal(res.headers.get("cache-control"), "public, max-age=0, must-revalidate");
   assert.equal(res.headers.get("service-worker-allowed"), "/");
 
+  // The browser checks on every load, and unchanged it is spared the script.
+  const unchanged = await fetch(`${base}/jexs/sw.js`, { headers: { "if-none-match": res.headers.get("etag") ?? "" } });
+  assert.equal(unchanged.status, 304);
+  assert.equal(unchanged.headers.get("service-worker-allowed"), "/");
+
   const script = await res.text();
   assert.ok(script.startsWith('import{startServiceWorker}from"./sw-runtime.js";'));
   const call = /startServiceWorker\((.*),(\{"version":"[0-9a-f]+"\})\);/.exec(script);

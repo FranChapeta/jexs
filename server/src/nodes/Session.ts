@@ -47,9 +47,9 @@ export interface SessionState {
    *  request's cookies don't carry. */
   issuedSid?: string;
   issuedCsrf?: string;
-  /** Whether the page read the session's token to render it, which makes its
-   *  HTML this visitor's alone. */
-  csrfRendered: boolean;
+  /** The session's token as the page rendered it, once per form: each a new
+   *  mask of it. Any at all makes the page's HTML this visitor's alone. */
+  csrfMasks: string[];
 }
 
 const PREFIX = "session:";
@@ -116,7 +116,7 @@ export class SessionNode extends Node {
 export function bindSession(scope: Context): SessionState {
   const request = scope.request;
   const sentCsrf = (isObject(request?.body) ? request.body._csrf : undefined) ?? request?.headers?.["x-csrf-token"];
-  const state: SessionState = { scope, sentCsrf, trusted: false, csrfRendered: false };
+  const state: SessionState = { scope, sentCsrf, trusted: false, csrfMasks: [] };
   scope[SESSION] = state;
   Object.defineProperty(scope, "session", { get: () => state.stored?.data, enumerable: true });
   return state;
@@ -195,8 +195,9 @@ function useSession(state: SessionState, stored: StoredSession): Readonly<Record
   state.storedIn = cacheOf(state);
   Object.defineProperty(state.scope, CSRF_TOKEN, {
     get: () => {
-      state.csrfRendered = true;
-      return maskToken(stored.csrf);
+      const masked = maskToken(stored.csrf);
+      state.csrfMasks.push(masked);
+      return masked;
     },
     configurable: true,
   });
