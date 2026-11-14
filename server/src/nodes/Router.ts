@@ -1,7 +1,7 @@
 import { Node, Context, NodeValue, isStep, resolve, runSteps, createHttpError, isObject } from "@jexs/core";
 import { readRequestBody } from "../request/body.js";
 import type { JexsNodeSchema } from "@jexs/core";
-import { requireSchemaNode, validate } from "./Schema.js";
+import { assertValid } from "./Schema.js";
 
 /**
  * Route handler structure.
@@ -290,9 +290,7 @@ async function executeHandler(handler: RouteHandler, context: Context): Promise<
   // can `$ref` registered schemas, `table/<name>` included. The query is
   // checked before the body is read. The body is then read whole, checked,
   // and made `request.body`, as `$requestBody` does it.
-  if (handler.queryParams) {
-    validateAgainstSchema(context, handler.queryParams, context.request?.query as Record<string, unknown> ?? {}, "query");
-  }
+  if (handler.queryParams) assertValid(context, handler.queryParams, context.request?.query ?? {}, "query");
   await readRequestBody(context, "route", { schema: handler.body });
 
   if (handler.do !== undefined) {
@@ -301,23 +299,6 @@ async function executeHandler(handler: RouteHandler, context: Context): Promise<
   // A `$file` step, then, since `isHandlerShape` admits nothing else. Resolved through
   // the resolver so FileNode loads it and ElementNode renders it.
   return resolve(handler, context);
-}
-
-/**
- * Validate a value against a JSON Schema (draft 2020-12). Used for both
- * `queryParams` and `body`. Throws a 400 HTTP error listing the validation
- * failures.
- */
-function validateAgainstSchema(
-  context: Context,
-  schema: Record<string, unknown>,
-  source: Record<string, unknown>,
-  label: string,
-): void {
-  const { valid, errors } = validate(requireSchemaNode(context), schema, source);
-  if (!valid) {
-    throw createHttpError(400, `Invalid ${label}: ${errors.join("; ")}`);
-  }
 }
 
 /**

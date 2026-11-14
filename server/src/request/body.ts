@@ -1,7 +1,7 @@
 import type http from "node:http";
 import { Context, createHttpError, isObject } from "@jexs/core";
 import { REQUEST_BODY } from "../context.js";
-import { requireSchemaNode, validate } from "../nodes/Schema.js";
+import { assertValid } from "../nodes/Schema.js";
 
 /** How much of a body left unread is discarded after the response before its connection is closed, as Go's server does. */
 const DRAIN_BYTES = 256 * 1024;
@@ -112,9 +112,7 @@ export interface BodyRead {
 export async function readRequestBody(context: Context, where: string, written: BodyRead): Promise<unknown> {
   const schema = isObject(written.schema) && Object.keys(written.schema).length > 0 ? written.schema : undefined;
   const check = (body: unknown): void => {
-    if (!schema) return;
-    const { valid, errors } = validate(requireSchemaNode(context), schema, body);
-    if (!valid) throw createHttpError(400, `Invalid body: ${errors.join("; ")}`);
+    if (schema) assertValid(context, schema, body, "body");
   };
 
   const source = context[REQUEST_BODY];

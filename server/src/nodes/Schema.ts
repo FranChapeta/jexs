@@ -3,7 +3,7 @@ import path from "path";
 import AjvModule from "ajv/dist/2020.js";
 import addFormatsModule from "ajv-formats";
 import type { ValidateFunction, ErrorObject } from "ajv";
-import { Node, Context, NodeValue, freezeData, isObject, isStep, resolve, resolveAll, resolverFor } from "@jexs/core";
+import { Node, Context, NodeValue, createHttpError, freezeData, isObject, isStep, resolve, resolveAll, resolverFor } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
 // ajv/dist/2020 and ajv-formats are CommonJS; under NodeNext the class/plugin
@@ -320,6 +320,17 @@ export function validate(node: SchemaNode, schema: object | string, data: unknow
     return `${where ? `"${where}" ` : ""}${messageOf(err)}`;
   });
   return { valid: false, errors };
+}
+
+/**
+ * Check what a request sent against `schema`, through the resolver's
+ * SchemaNode, so it can `$ref` registered schemas, `table/<name>` included.
+ * Throws a 400 HTTP error that lists what failed, `label` naming what was
+ * checked (`"query"`, `"body"`).
+ */
+export function assertValid(context: Context, schema: object | string, data: unknown, label: string): void {
+  const { valid, errors } = validate(requireSchemaNode(context), schema, data);
+  if (!valid) throw createHttpError(400, `Invalid ${label}: ${errors.join("; ")}`);
 }
 
 /** One error, with the pieces a caller needs to rank or filter it. */
