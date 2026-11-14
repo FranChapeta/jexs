@@ -1,7 +1,7 @@
 import { Node, Context, NodeValue } from "./Node.js";
 import { resolve, resolveAll } from "../Resolver.js";
 import { createHttpError } from "../errors.js";
-import { SNIFF_BYTES, acceptType, typeList } from "../media-type.js";
+import { SNIFF_BYTES, acceptType, blobRule } from "../media-type.js";
 import { bytesOf } from "../streams.js";
 import type { JexsNodeSchema } from "../schema.js";
 
@@ -81,10 +81,11 @@ export class BlobNode extends Node {
   blobCheck(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll([def.$blobCheck, def.types ?? null, def.maxSize ?? null], context, async ([value, types, maxSize]) => {
       const blob = blobOf("$blobCheck", value);
+      const rule = blobRule("$blobCheck", { types, maxSize });
       const label = blob instanceof File ? `"${blob.name}"` : "The blob";
-      if (maxSize !== null && blob.size > this.toNumber(maxSize)) throw createHttpError(413, `${label} is larger than ${this.toNumber(maxSize)} bytes`);
+      if (blob.size > rule.maxSize) throw createHttpError(413, `${label} is larger than ${rule.maxSize} bytes`);
       const head = new Uint8Array(await blob.slice(0, SNIFF_BYTES).arrayBuffer());
-      const type = acceptType(head, blob.type, typeList("$blobCheck", types), label);
+      const type = acceptType(head, blob.type, rule.types, label);
       if (type === blob.type) return blob;
       return blob instanceof File ? new File([blob], blob.name, { type }) : new Blob([blob], { type });
     });

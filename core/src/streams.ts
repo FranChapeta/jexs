@@ -235,19 +235,21 @@ export function messagesOf(reader: BodyReader, kind: StreamKind, full: boolean):
 }
 
 /**
- * The messages as a stream read on demand: each read pulls one message off the
- * body, so a slow reader slows the download instead of buffering it. Cancelling
- * cancels the body itself, which settles a read still waiting on the network and
- * aborts the request.
+ * What a generator gives as a stream read on demand: the generator starts on
+ * the stream's first read, and each read pulls one value from it, so a slow
+ * reader slows what the generator reads from instead of buffering it.
+ * Cancelling the stream runs `cancel`, to cancel what the generator reads from
+ * (a body, which settles a read still waiting on the network and aborts the
+ * request), and with none ends the generator.
  */
-export function streamOf(reader: BodyReader, messages: AsyncGenerator<unknown>): ReadableStream<unknown> {
-  return new ReadableStream<unknown>({
+export function streamOf<T>(values: AsyncGenerator<T>, cancel?: (reason: unknown) => unknown): ReadableStream<T> {
+  return new ReadableStream<T>({
     async pull(controller) {
-      const { done, value } = await messages.next();
+      const { done, value } = await values.next();
       if (done) controller.close();
       else controller.enqueue(value);
     },
-    cancel: reason => reader.cancel(reason),
+    cancel: async reason => void await (cancel ? cancel(reason) : values.return(undefined)),
   }, { highWaterMark: 0 });
 }
 
@@ -257,7 +259,7 @@ export function streamOf(reader: BodyReader, messages: AsyncGenerator<unknown>):
  */
 export function splitStream(source: ReadableStream<Uint8Array>, kind: StreamKind): ReadableStream<unknown> {
   const reader = source.getReader();
-  return streamOf(reader, messagesOf(reader, kind, false));
+  return streamOf(messagesOf(reader, kind, false), reason => reader.cancel(reason));
 }
 
 /**
@@ -280,15 +282,7 @@ export function textStream(source: ReadableStream<unknown>): ReadableStream<stri
       yield bytes;
     }
   }
-  const texts = decodeText(chunks());
-  return new ReadableStream<string>({
-    async pull(controller) {
-      const { done, value } = await texts.next();
-      if (done) controller.close();
-      else controller.enqueue(value);
-    },
-    cancel: reason => reader.cancel(reason),
-  }, { highWaterMark: 0 });
+  return streamOf(decodeText(chunks()), reason => reader.cancel(reason));
 }
 
 /**

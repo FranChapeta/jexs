@@ -331,7 +331,7 @@ export class FetchNode extends Node {
           const reader = response.body.getReader();
           const messages = messagesOf(reader, forcedStream ?? sniffStream(response), full);
           if (onMessage === undefined) {
-            const stream = streamOf(reader, messages);
+            const stream = streamOf(messages, reason => reader.cancel(reason));
             trackStream(context, stream);
             body = stream;
           } else {

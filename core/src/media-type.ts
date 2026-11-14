@@ -1,4 +1,5 @@
 import { createHttpError } from "./errors.js";
+import { isObject } from "./helpers.js";
 
 /** Bytes a file's type is read from: enough for every signature below. */
 export const SNIFF_BYTES = 16;
@@ -100,9 +101,33 @@ export function acceptType(head: Uint8Array, claimed: string, types: string[] | 
   throw createHttpError(415, `${label} takes ${types.join(", ")}, not ${detected ?? `a file that says it is ${type}`}`);
 }
 
-/** A list of media types as written (`["image/png", "image/*"]`), checked; undefined when none is given. */
-export function typeList(where: string, written: unknown): string[] | undefined {
-  if (written === undefined || written === null) return undefined;
-  if (Array.isArray(written) && written.every(t => typeof t === "string")) return written;
-  throw new Error(`${where}: types must be a list of media types`);
+/** What a blob or file may be: wherever it comes from, an upload, a download or a disk. */
+export interface BlobRule {
+  /** Media types it may be (`"image/png"`, `"image/*"`); any when absent. */
+  types?: string[];
+  /** Its largest size in bytes. */
+  maxSize: number;
+}
+
+/**
+ * A rule as written (`{ types, maxSize }`), checked. `where` names it in an
+ * error, and `maxSize` is `fallback` when the rule gives none.
+ */
+export function blobRule(where: string, written: unknown, fallback = Infinity): BlobRule {
+  const rule = written ?? {};
+  if (!isObject(rule)) throw new Error(`${where}: its rules must be an object`);
+  let types: string[] | undefined;
+  if (rule.types !== undefined && rule.types !== null) {
+    if (!Array.isArray(rule.types) || !rule.types.every(t => typeof t === "string")) throw new Error(`${where}: types must be a list of media types`);
+    types = rule.types;
+  }
+  return { types, maxSize: positiveInteger(where, "maxSize", rule.maxSize, fallback) };
+}
+
+/** A count or size as written, checked: a positive whole number, or `fallback` when none is given. */
+export function positiveInteger(where: string, name: string, value: unknown, fallback: number): number {
+  if (value === undefined || value === null) return fallback;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n <= 0) throw new Error(`${where}: ${name} ${JSON.stringify(value)} is not a positive whole number`);
+  return n;
 }

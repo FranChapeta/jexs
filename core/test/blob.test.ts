@@ -49,6 +49,8 @@ test("$blobCheck gives a blob the type its bytes show, and refuses one its rules
   assert.equal((wrongType as { status?: number }).status, 415);
   const tooLarge = await failure({ $blobCheck: { $var: "file" }, maxSize: 4 }, { file: honest });
   assert.equal((tooLarge as { status?: number }).status, 413);
+  const badRule = await failure({ $blobCheck: { $var: "file" }, maxSize: -1 }, { file: honest });
+  assert.match(String(badRule), /maxSize -1 is not a positive whole number/, "a rule written wrong is an error of its own");
   const script = new File(["<svg/>"], "x.svg", { type: "image/svg+xml" });
   assert.equal(((await failure({ $blobCheck: { $var: "file" }, types: ["image/*"] }, { file: script })) as { status?: number }).status, 415, "a wildcard doesn't take an SVG");
 });

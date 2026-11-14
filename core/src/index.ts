@@ -33,11 +33,12 @@ export type { HttpError, ErrorBindings, ErrorResponse } from "./errors.js";
 // ── Streams ──
 // How a body of bytes is split into the messages a stream of it carries: what
 // `$fetch`'s `stream` names, for a host that reads a body of its own.
-export { STREAM_KINDS, splitStream, type StreamKind } from "./streams.js";
+export { STREAM_KINDS, splitStream, streamOf, type StreamKind } from "./streams.js";
 
-// ── Media types ──
-// A file's type as its first bytes show it, for a host that takes files of its own.
-export { SNIFF_BYTES, acceptType, typeList } from "./media-type.js";
+// ── Blobs and files ──
+// What a blob or file may be, and its type as its first bytes show it, for a
+// host that takes files of its own.
+export { SNIFF_BYTES, acceptType, blobRule, positiveInteger, type BlobRule } from "./media-type.js";
 
 // ── Core nodes ──
 export { TimerNode } from "./nodes/Timer.js";
