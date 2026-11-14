@@ -168,8 +168,8 @@ export interface JexsPropertySchema {
  *   3. otherwise this scope's own `output`, or, when it has none, the enclosing
  *      scope's rules continue.
  *
- * So `{ "$fetch": ..., "full": true, "type": "text" }` resolves through the `full`
- * variant (an object) even though `type: "text"` alone narrows to a string, and a
+ * So `{ "$fetch": ..., "full": true, "stream": "lines" }` resolves through the `full`
+ * variant (an object) even though `stream: "lines"` alone narrows to a stream, and a
  * variant that omits `output` inherits both the enclosing output and the
  * enclosing siblings' refinements.
  *

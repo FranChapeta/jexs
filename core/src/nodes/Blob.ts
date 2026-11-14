@@ -9,7 +9,7 @@ export class BlobNode extends Node {
   static schema: JexsNodeSchema = {
     blob: {
       output: { $ref: "#/$defs/_blob" },
-      markdownDescription: "Makes a blob, a run of bytes with a media type, from bytes or text (as UTF-8). With `name` it is a file: a blob that has a name. A blob or file is what a file upload is in `request.body`, what `$fileOpen` gives for a file on disk and what `$fetch` gives with `type: \"blob\"`; its `name`, `type` and `size` are read with `$var`. It is never written as data, only held in a variable and given to what takes one: a `$file` `write`, a `$fetch` `body`, a response.",
+      markdownDescription: "Makes a blob, a run of bytes with a media type, from bytes or text (as UTF-8). With `name` it is a file: a blob that has a name. A blob or file is what a file upload is in `request.body`, and what `$fetch` gives with `raw: true`; its `name`, `type` and `size` are read with `$var`. It is never written as data, only held in a variable and given to what takes one: a `$file` `write`, a `$fetch` `body`, a response.",
       outputDescription: "The blob; a file when `name` is given.",
       examples: [
         "{ \"$blob\": \"id,name\\n1,Ada\\n\", \"type\": \"text/csv\", \"name\": \"people.csv\" }",
@@ -42,7 +42,7 @@ export class BlobNode extends Node {
       markdownDescription: "Checks a blob or file against the rules a file upload's field takes, wherever it came from: a fetched one, or one from disk. Its type is read from its first bytes where they show a known format (a PNG, a PDF, a ZIP), whatever type it says it is, and one that says it is such a format without the bytes of one is refused. One that isn't among `types` fails with status 415, and one larger than `maxSize` with 413.",
       outputDescription: "The blob or file, its `type` the one its bytes show.",
       examples: [
-        "{ \"$blobCheck\": { \"$fetch\": { \"$var\": \"url\" }, \"type\": \"blob\" }, \"types\": [\"image/*\"], \"maxSize\": 1048576 }",
+        "{ \"$blobCheck\": { \"$fetch\": { \"$var\": \"url\" }, \"raw\": true }, \"types\": [\"image/*\"], \"maxSize\": 1048576 }",
       ],
       siblings: {
         types: { type: "array", items: { type: "string" }, description: "Media types it may be: `\"image/png\"`, or `\"image/*\"` for any image but an SVG, which can hold scripts and is taken only when named. Any type when omitted." },
@@ -55,7 +55,7 @@ export class BlobNode extends Node {
     _blob: {
       type: "object",
       not: {},
-      description: "A blob or file: bytes with a `type` and `size`, and for a file a `name`. From `$blob`, a file upload, `$fileOpen` or `$fetch` with `type: \"blob\"`. It is never written as data, only held in a variable.",
+      description: "A blob or file: bytes with a `type` and `size`, and for a file a `name`. From `$blob`, a file upload, or `$fetch` with `raw: true`. It is never written as data, only held in a variable.",
     },
   };
 

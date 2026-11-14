@@ -231,11 +231,15 @@ test("fetch: an empty JSON body reads as null instead of throwing", async () => 
   assert.equal(await resolve({ $fetch: "/api/thing" }, {}), null);
 });
 
-test("fetch: type forces decoding over the URL extension and Content-Type", async () => {
+test("fetch: raw gives the body as a blob, undecoded, for the ops that read one", async () => {
   stubFetch(() => new Response("{\"ok\":true}", { headers: { "content-type": "application/json" } }));
-  assert.equal(await resolve({ $fetch: "/api/thing.json", type: "text" }, {}), "{\"ok\":true}");
+  const blob = await resolve({ $fetch: "/api/thing.json", raw: true }, {});
+  assert.ok(blob instanceof Blob);
+  assert.equal(blob.type, "application/json", "its type is the one the server sent");
+  assert.equal(await resolve({ $fromBytes: { $fetch: "/api/thing.json", raw: true } }, {}), "{\"ok\":true}");
+  // A body the server labelled wrongly is read as what it is.
   stubFetch(() => new Response("{\"ok\":true}", { headers: { "content-type": "application/octet-stream" } }));
-  assert.deepEqual(await resolve({ $fetch: "/api/thing", type: "json" }, {}), { ok: true });
+  assert.deepEqual(await resolve({ $parseJSON: { $fetch: "/api/thing", raw: true } }, {}), { ok: true });
 });
 
 test("fetch: a +json content type decodes as JSON", async () => {
@@ -328,8 +332,8 @@ test("fetch: an enum value outside its list says so instead of being dropped", a
     { message: "Invalid fetch credentials \"sometimes\": expected omit, same-origin, include" },
   );
   await assert.rejects(
-    async () => { await resolve({ $fetch: "/api/thing", type: "buffer" }, {}); },
-    { message: "Invalid fetch type \"buffer\": expected json, text, binary, blob" },
+    async () => { await resolve({ $fetch: "/api/thing", stream: "chunks" }, {}); },
+    { message: "Invalid fetch stream \"chunks\": expected sse, ndjson, lines, text, binary" },
   );
   // Rejected before the request is made, so a typo costs no round trip.
   assert.equal(calls.length, 0);
@@ -496,10 +500,10 @@ test("fetch stream: a 204 runs no message", async () => {
   assert.deepEqual(ctx.out, []);
 });
 
-test("fetch stream: type does not combine with onMessage or stream", async () => {
+test("fetch stream: raw does not combine with onMessage or stream", async () => {
   const { calls } = stubFetch();
-  await assert.rejects(Promise.resolve(resolve({ $fetch: "/api/stream", type: "text", onMessage: collect }, { out: [] })), /does not apply/);
-  await assert.rejects(Promise.resolve(resolve({ $fetch: "/api/stream", type: "text", stream: "text" }, {})), /does not apply/);
+  await assert.rejects(Promise.resolve(resolve({ $fetch: "/api/stream", raw: true, onMessage: collect }, { out: [] })), /does not apply/);
+  await assert.rejects(Promise.resolve(resolve({ $fetch: "/api/stream", raw: true, stream: "text" }, {})), /does not apply/);
   assert.equal(calls.length, 0);
 });
 

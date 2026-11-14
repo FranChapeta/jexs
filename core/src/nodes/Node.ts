@@ -219,7 +219,7 @@ export abstract class Node {
    * present must be a member, an empty string included: a value quietly ignored
    * makes the step do something other than what it says. Spelled exactly as
    * listed, as the schema's `enum` checks it, and `name` reaches the message, so
-   * qualify it ("fetch type", not "type").
+   * qualify it ("fetch stream", not "stream").
    */
   protected getOption<T extends string>(value: unknown, allowed: readonly T[], name: string): T | undefined {
     if (value === null || value === undefined) return undefined;

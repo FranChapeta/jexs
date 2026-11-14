@@ -191,23 +191,25 @@ const cases: Case[] = [
 
   // FetchNode: `full` is a sibling-mode variant, so it narrows the output from
   // the decoded body ("any") to the `{ status, ok, headers, body, url }` envelope.
-  { label: "fetch with headers/type/timeout (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $fetch: "/api/me", headers: { Authorization: { $concat: ["Bearer ", { $var: "token" }] } }, type: "text", timeout: 5000 } },
+  { label: "fetch with headers/raw/timeout (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $fetch: "/api/me", headers: { Authorization: { $concat: ["Bearer ", { $var: "token" }] } }, raw: true, timeout: 5000 } },
   { label: "fetch invalid method (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { $fetch: "/api/me", method: "FETCH" } },
-  { label: "fetch invalid decode type (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
-    expr: { $fetch: "/api/me", type: "buffer" } },
+  { label: "fetch invalid stream kind (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $fetch: "/api/me", stream: "chunks" } },
   { label: "string-slot accepts a bare fetch (any-output) (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $foreach: [1], item: { $fetch: "/api/name" }, do: "y" } },
   { label: "string-slot rejects fetch full (object-output) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { $foreach: [1], item: { $fetch: "/api/name", full: true }, do: "y" } },
-  // `type` is a sibling whose VALUE narrows the output; `full` still wins over it.
-  { label: "string-slot accepts fetch type text (string-output) (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
-    expr: { $foreach: [1], item: { $fetch: "/api/name", type: "text" }, do: "y" } },
-  { label: "number-slot rejects fetch type text (string-output) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
-    expr: { $sleep: { $fetch: "/api/n", type: "text" } } },
-  { label: "string-slot rejects fetch full + type text (full wins: object) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
-    expr: { $foreach: [1], item: { $fetch: "/api/name", full: true, type: "text" }, do: "y" } },
+  // `raw` is a variant too: it narrows the output to a blob, which no string or number slot takes.
+  { label: "string-slot rejects fetch raw (blob-output) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $foreach: [1], item: { $fetch: "/api/name", raw: true }, do: "y" } },
+  { label: "number-slot rejects fetch raw (blob-output) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $sleep: { $fetch: "/api/n", raw: true } } },
+  { label: "blob-slot accepts fetch raw (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $blobBytes: { $fetch: "/api/n", raw: true } } },
+  { label: "string-slot rejects fetch full + raw (object either way) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $foreach: [1], item: { $fetch: "/api/name", full: true, raw: true }, do: "y" } },
 
   // `method` defaults to GET; only the methods that send a body take `body`, and HEAD resolves to null.
   { label: "fetch POST with a body (valid)", schemaRef: "$defs/exprFlat", expectValid: true,

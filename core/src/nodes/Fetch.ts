@@ -10,10 +10,9 @@ const TEXT_EXT = new Set([
 ]);
 const JSON_EXT = new Set(["json", "gltf"]);
 
-type DecodeKind = "json" | "text" | "binary" | "blob";
+type DecodeKind = "json" | "text" | "binary";
 
 const METHODS: readonly string[] = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
-const DECODE_KINDS: readonly DecodeKind[] = ["json", "text", "binary", "blob"];
 const NDJSON_TYPES = ["application/x-ndjson", "application/ndjson", "application/jsonl", "application/x-jsonl"];
 const CREDENTIALS: readonly RequestCredentials[] = ["omit", "same-origin", "include"];
 const MODES: readonly RequestMode[] = ["cors", "no-cors", "same-origin", "navigate"];
@@ -97,7 +96,6 @@ function sniffStream(response: Response): StreamKind {
 function decode(response: Response, kind: DecodeKind): Promise<unknown> {
   if (kind === "text") return response.text();
   if (kind === "binary") return response.arrayBuffer();
-  if (kind === "blob") return response.blob();
   // An empty body reads as null rather than a parse error: endpoints that answer
   // a write with 200 and nothing else are common enough to not be an error here.
   return response.text().then(text => (text.trim() === "" ? null : JSON.parse(text)));
@@ -111,7 +109,7 @@ function excerpt(text: string): string {
 
 /**
  * The body of a failing response, read from its own Content-Type rather than the
- * URL extension or a `type` override: an error page comes from the server's error
+ * URL extension, and never left `raw`: an error page comes from the server's error
  * handler, not from the endpoint whose shape the URL advertises. Text either way,
  * parsed when it says JSON, so `response` stays something a template can read
  * and a worker can clone.
@@ -126,8 +124,8 @@ export class FetchNode extends Node {
     fetch: {
       type: "string",
       output: "any",
-      markdownDescription: "Makes an HTTP request to the URL in `fetch`. Defaults to GET; pass `method` and `body` for writes, and `headers` for auth or content negotiation.\n\nResponse decoding takes the first of these that applies:\n1. The `type` sibling, when set.\n2. URL extension: `.json`/`.gltf` → JSON, text-like extensions → string,\n   known binary extensions (`.glb`, `.bin`, `.png`, etc.) → ArrayBuffer.\n3. Response Content-Type: `application/json` (or a `+json` suffix) → JSON, `text/*` → string,\n   everything else → ArrayBuffer.\n\nAn HTML response is a string like any other text, so content and the browser's markup ops (`$setProp` `innerHTML`, `$insertHtml`) show it as text. To insert a fragment your own server rendered as markup, trust it with `$html`: `{ \"$html\": { \"$fetch\": \"/fragment\" } }`.\n\nA non-2xx status throws an HTTP error carrying that status. An enclosing `$catch` gets the usual `error` (`{ status, message }`) plus `response`, the failing response in the same shape `full` returns, so `{ \"$var\": \"response.body.message\" }` reads the server's error body; a request that never completed (a timeout, a refused connection) reaches `$catch` without one. Pass `full` to get the headers and status alongside the body.\n\nTo stream the response instead, pass `onMessage`, whose steps run per message as the body arrives (each Server-Sent Event of a streaming LLM API, say), or `stream` alone, which resolves to the messages as a `ReadableStream`: a Jexs server sends one on as it reads it, so `{ \"response\": { \"$fetch\": ..., \"stream\": \"sse\" }, \"responseType\": \"sse\" }` relays an upstream stream to the page.\n\nIn a page served by a Jexs server, a POST, PUT, PATCH or DELETE to the page's own origin carries the session's CSRF token (`x-csrf-token`, from the `csrf` cookie) on its own.",
-      outputDescription: "The decoded response body: a parsed value for JSON, a string for text, an ArrayBuffer (or a Blob with `type: \"blob\"`) for binary. With `stream` and no `onMessage`, a `ReadableStream` of the messages. A `204`/`205` response, any HEAD request and a body streamed to `onMessage` resolve to `null`.",
+      markdownDescription: "Makes an HTTP request to the URL in `fetch`. Defaults to GET; pass `method` and `body` for writes, and `headers` for auth or content negotiation.\n\nThe response body is decoded by the first of these that applies:\n1. URL extension: `.json`/`.gltf` → JSON, text-like extensions → string,\n   known binary extensions (`.glb`, `.bin`, `.png`, etc.) → ArrayBuffer.\n2. Response Content-Type: `application/json` (or a `+json` suffix) → JSON, `text/*` → string,\n   everything else → ArrayBuffer.\n\nWith `raw` it is not decoded: the body is given as a blob, as the server sent it. Read it with `$parseJSON`, `$fromBytes` or `$blobBytes`, which is how to read a body the server labelled wrongly, or pass it on as it is, to a `$file` `write` or another `$fetch`'s `body`.\n\nAn HTML response is a string like any other text, so content and the browser's markup ops (`$setProp` `innerHTML`, `$insertHtml`) show it as text. To insert a fragment your own server rendered as markup, trust it with `$html`: `{ \"$html\": { \"$fetch\": \"/fragment\" } }`.\n\nA non-2xx status throws an HTTP error carrying that status. An enclosing `$catch` gets the usual `error` (`{ status, message }`) plus `response`, the failing response in the same shape `full` returns, so `{ \"$var\": \"response.body.message\" }` reads the server's error body; a request that never completed (a timeout, a refused connection) reaches `$catch` without one. Pass `full` to get the headers and status alongside the body.\n\nTo stream the response instead, pass `onMessage`, whose steps run per message as the body arrives (each Server-Sent Event of a streaming LLM API, say), or `stream` alone, which resolves to the messages as a `ReadableStream`: a Jexs server sends one on as it reads it, so `{ \"response\": { \"$fetch\": ..., \"stream\": \"sse\" }, \"responseType\": \"sse\" }` relays an upstream stream to the page.\n\nIn a page served by a Jexs server, a POST, PUT, PATCH or DELETE to the page's own origin carries the session's CSRF token (`x-csrf-token`, from the `csrf` cookie) on its own.",
+      outputDescription: "The decoded response body: a parsed value for JSON, a string for text, an ArrayBuffer for binary. With `raw`, a blob. With `stream` and no `onMessage`, a `ReadableStream` of the messages. A `204`/`205` response, any HEAD request and a body streamed to `onMessage` resolve to `null`.",
       examples: [
         "{ \"$fetch\": \"/api/users\", \"method\": \"POST\", \"body\": { \"name\": { \"$var\": \"name\" } } }\n{ \"$fetch\": \"/api/me\", \"headers\": { \"Authorization\": { \"$concat\": [\"Bearer \", { \"$var\": \"token\" }] } } }\n{ \"$fetch\": \"/api/flaky\", \"timeout\": 5000, \"$catch\": [{ \"$concat\": [\"failed: \", { \"$var\": \"error.status\" }] }] }\n{ \"$fetch\": \"/models/Duck.glb\", \"$as\": \"buf\" }\n{ \"$fetch\": \"https://api.anthropic.com/v1/messages\", \"method\": \"POST\", \"headers\": { \"x-api-key\": { \"$var\": \"env.ANTHROPIC_API_KEY\" }, \"anthropic-version\": \"2023-06-01\" }, \"body\": { \"model\": \"claude-opus-5-5\", \"max_tokens\": 1024, \"stream\": true, \"messages\": [{ \"role\": \"user\", \"content\": { \"$var\": \"prompt\" } }] }, \"onMessage\": [{ \"$if\": { \"$eq\": [{ \"$var\": \"message.type\" }, \"content_block_delta\"] }, \"then\": { \"$socketSend\": { \"$var\": \"message.delta.text\" } } }] }",
       ],
@@ -149,14 +147,6 @@ export class FetchNode extends Node {
           examples: [
             "{ \"headers\": { \"Authorization\": { \"$concat\": [\"Bearer \", { \"$var\": \"token\" }] }, \"Accept\": \"application/json\" } }",
           ],
-        },
-        type: {
-          type: "string",
-          enum: DECODE_KINDS,
-          markdownDescription: "Force how the response body is decoded, instead of inferring it from the URL extension and Content-Type. Use it when the server sends the wrong Content-Type, or when the URL carries no extension.",
-          variants: {
-            text: { output: "string", markdownDescription: "Decode the body as text." },
-          },
         },
         timeout: {
           type: "number",
@@ -216,6 +206,16 @@ export class FetchNode extends Node {
             "{ \"$fetch\": \"/api/thing\", \"full\": true, \"$as\": \"res\" }",
           ],
         },
+        raw: {
+          type: "boolean",
+          output: "object",
+          markdownDescription: "Gives the body as a blob, undecoded, with the media type the server sent as its `type`. The whole body is downloaded to make it; for one too large to hold, use `stream`. With `full`, the blob is the response's `body`.",
+          outputDescription: "The body as a blob.",
+          examples: [
+            "{ \"$file\": \"/downloads/report.pdf\", \"write\": { \"$fetch\": { \"$var\": \"url\" }, \"raw\": true } }",
+            "{ \"$parseJSON\": { \"$fetch\": \"https://example.com/feed\", \"raw\": true } }",
+          ],
+        },
       },
     },
   };
@@ -228,7 +228,7 @@ export class FetchNode extends Node {
         status: { type: "number", description: "HTTP status code; `0` when the request never got a response." },
         ok: { type: "boolean", description: "Whether the status is 2xx." },
         headers: { type: "object", additionalProperties: { type: "string" }, description: "Response headers, names lowercased." },
-        body: { description: "The decoded body: JSON, a string, or an ArrayBuffer, as `type` or the response decides." },
+        body: { description: "The decoded body: JSON, a string, or an ArrayBuffer, as the response decides, or a blob with `raw`." },
         url: { type: "string", description: "The final URL, after any redirects." },
       },
     },
@@ -240,7 +240,7 @@ export class FetchNode extends Node {
       headers: def.headers ?? null,
       method: def.method,
       body: def.body ?? null,
-      type: def.type ?? null,
+      raw: def.raw,
       full: def.full,
       timeout: def.timeout,
       stream: def.stream ?? null,
@@ -280,10 +280,10 @@ export class FetchNode extends Node {
         if (value) Object.assign(options, { [key]: value });
       }
       // Checked before the request goes out: a typo here should not cost a round trip.
-      const forcedKind = this.getOption(o.type, DECODE_KINDS, "fetch type");
+      const raw = this.toBoolean(o.raw);
       const forcedStream = this.getOption(o.stream, STREAM_KINDS, "fetch stream");
       const streamed = onMessage !== undefined || forcedStream !== undefined;
-      if (streamed && forcedKind) throw new Error("fetch type does not apply to a streamed body, which is never decoded whole: use stream");
+      if (streamed && raw) throw new Error("fetch raw does not apply to a streamed body, which is never read whole: use stream");
       const timeout = this.toNumber(o.timeout);
       if (timeout > 0) options.signal = AbortSignal.timeout(timeout);
 
@@ -343,7 +343,7 @@ export class FetchNode extends Node {
           }
         }
       } else if (!bodyless) {
-        body = await decode(response, forcedKind ?? sniffKind(url, response));
+        body = raw ? await response.blob() : await decode(response, sniffKind(url, response));
       }
 
       if (!full) return body;
