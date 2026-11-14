@@ -30,6 +30,11 @@ export {
 export { createHttpError, isHttpError } from "./errors.js";
 export type { HttpError, ErrorBindings, ErrorResponse } from "./errors.js";
 
+// ── Streams ──
+// How a body of bytes is split into the messages a stream of it carries: what
+// `$fetch`'s `stream` names, for a host that reads a body of its own.
+export { STREAM_KINDS, splitStream, type StreamKind } from "./streams.js";
+
 // ── Core nodes ──
 export { TimerNode } from "./nodes/Timer.js";
 export { FetchNode, pageCsrfToken } from "./nodes/Fetch.js";

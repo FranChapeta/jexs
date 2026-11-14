@@ -1,6 +1,7 @@
 import { Node, Context, NodeValue, childContext, trackStream } from "./Node.js";
 import { resolveFields, runSteps } from "../Resolver.js";
 import { createHttpError } from "../errors.js";
+import { STREAM_KINDS, jsonOrText, messagesOf, streamOf, type StreamKind } from "../streams.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
 
 const TEXT_EXT = new Set([
@@ -10,11 +11,9 @@ const TEXT_EXT = new Set([
 const JSON_EXT = new Set(["json", "gltf"]);
 
 type DecodeKind = "json" | "text" | "binary" | "blob";
-type StreamKind = "sse" | "ndjson" | "lines" | "text" | "binary";
 
 const METHODS: readonly string[] = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
 const DECODE_KINDS: readonly DecodeKind[] = ["json", "text", "binary", "blob"];
-const STREAM_KINDS: readonly StreamKind[] = ["sse", "ndjson", "lines", "text", "binary"];
 const NDJSON_TYPES = ["application/x-ndjson", "application/ndjson", "application/jsonl", "application/x-jsonl"];
 const CREDENTIALS: readonly RequestCredentials[] = ["omit", "same-origin", "include"];
 const MODES: readonly RequestMode[] = ["cors", "no-cors", "same-origin", "navigate"];
@@ -94,127 +93,6 @@ function sniffStream(response: Response): StreamKind {
   return "binary";
 }
 
-type BodyReader = ReadableStreamDefaultReader<Uint8Array>;
-
-/** The body's chunks as they arrive; leaving early cancels the rest of it. */
-async function* chunks(reader: BodyReader): AsyncGenerator<Uint8Array> {
-  let finished = false;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) {
-        finished = true;
-        return;
-      }
-      yield value;
-    }
-  } finally {
-    // Not awaited: the error that ended the loop is the one to report, and a
-    // cancel that fails only means the connection is already gone.
-    if (!finished) reader.cancel().catch(() => undefined);
-  }
-}
-
-/** The body decoded as UTF-8, a character split across chunks kept whole. */
-async function* texts(reader: BodyReader): AsyncGenerator<string> {
-  const decoder = new TextDecoder();
-  for await (const chunk of chunks(reader)) {
-    const text = decoder.decode(chunk, { stream: true });
-    if (text) yield text;
-  }
-  const rest = decoder.decode();
-  if (rest) yield rest;
-}
-
-/** The body's lines, without their LF, CRLF or CR, the last one also when unterminated. */
-async function* lines(reader: BodyReader): AsyncGenerator<string> {
-  let buffer = "";
-  for await (const text of texts(reader)) {
-    buffer += text;
-    for (;;) {
-      const lineBreak = /\r\n|\r|\n/.exec(buffer);
-      if (!lineBreak) break;
-      // A CR that ends the buffer may be the first half of a CRLF still on its way.
-      if (lineBreak[0] === "\r" && lineBreak.index === buffer.length - 1) break;
-      yield buffer.slice(0, lineBreak.index);
-      buffer = buffer.slice(lineBreak.index + lineBreak[0].length);
-    }
-  }
-  if (buffer) yield buffer.replace(/\r$/, "");
-}
-
-/** One parsed value per non-blank line. */
-async function* ndjson(reader: BodyReader): AsyncGenerator<unknown> {
-  for await (const line of lines(reader)) {
-    if (line.trim()) yield JSON.parse(line);
-  }
-}
-
-/**
- * Server-Sent Events, as the HTML spec frames them: each event's `data`, or with
- * `full` the whole `{ event, data, id }`. `data` lines join with `\n` and parse
- * as JSON when they can, an event without data is skipped, and `event` defaults
- * to `"message"`.
- */
-async function* sse(reader: BodyReader, full: boolean): AsyncGenerator<unknown> {
-  let event = "";
-  let data: string[] = [];
-  let id: string | undefined;
-  const message = (): unknown => {
-    const value = jsonOrText(data.join("\n"));
-    return full ? { event: event || "message", data: value, ...(id === undefined ? {} : { id }) } : value;
-  };
-  for await (const line of lines(reader)) {
-    if (line === "") {
-      if (data.length > 0) yield message();
-      event = "";
-      data = [];
-      id = undefined;
-      continue;
-    }
-    if (line.startsWith(":")) continue;
-    const colon = line.indexOf(":");
-    const field = colon < 0 ? line : line.slice(0, colon);
-    const value = colon < 0 ? "" : line.slice(colon + (line[colon + 1] === " " ? 2 : 1));
-    if (field === "data") data.push(value);
-    else if (field === "event") event = value;
-    else if (field === "id") id = value;
-  }
-  if (data.length > 0) yield message();
-}
-
-function jsonOrText(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
-}
-
-function messagesOf(reader: BodyReader, kind: StreamKind, full: boolean): AsyncGenerator<unknown> {
-  if (kind === "sse") return sse(reader, full);
-  if (kind === "ndjson") return ndjson(reader);
-  if (kind === "lines") return lines(reader);
-  if (kind === "text") return texts(reader);
-  return chunks(reader);
-}
-
-/**
- * The messages as a stream read on demand: each read pulls one message off the
- * body, so a slow reader slows the download instead of buffering it. Cancelling
- * cancels the body itself, which settles a read still waiting on the network and
- * aborts the request.
- */
-function streamOf(reader: BodyReader, messages: AsyncGenerator<unknown>): ReadableStream<unknown> {
-  return new ReadableStream<unknown>({
-    async pull(controller) {
-      const { done, value } = await messages.next();
-      if (done) controller.close();
-      else controller.enqueue(value);
-    },
-    cancel: reason => reader.cancel(reason),
-  }, { highWaterMark: 0 });
-}
 
 function decode(response: Response, kind: DecodeKind): Promise<unknown> {
   if (kind === "text") return response.text();

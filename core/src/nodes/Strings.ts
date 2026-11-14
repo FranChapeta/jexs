@@ -1,6 +1,7 @@
 import { Node, Context } from "./Node.js";
 import { resolve, resolveAll } from "../Resolver.js";
 import { operands, randomString, toBooleanValue, toStringValue } from "../helpers.js";
+import { bytesOf, isStream, textStream } from "../streams.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
 
 /**
@@ -144,6 +145,15 @@ export class StringNode extends Node {
           markdownDescription: "How to read the decoded bytes: a text encoding by its standard label (`\"utf-8\"`, `\"utf-16le\"`, `\"windows-1252\"`, `\"shift_jis\"`, ...), or `\"bytes\"` for the bytes as they are.",
         },
       },
+    },
+    fromBytes: {
+      output: "string",
+      markdownDescription: "Reads bytes as the UTF-8 text they are: a `Uint8Array` or `Buffer`, such as a binary file `$file` loaded or what `$fetch` gives with `type: \"binary\"`. Given a stream of bytes, such as a request's `request.body` or a `$fetch` with `stream: \"binary\"`, it resolves at once to a stream of the text, read from the bytes only as that stream is read: a character whose bytes arrive in two values is kept whole, which reading each value on its own would break. Gather a stream's text with `$reduce` and `$concat`, and parse it with `$parseJSON`.",
+      outputDescription: "The text; for a stream of bytes, a stream of it.",
+      examples: [
+        "{ \"$fromBytes\": { \"$file\": \"/data/notes.bin\" } }",
+        "{ \"$parseJSON\": { \"$reduce\": { \"$fromBytes\": { \"$var\": \"request.body\" } }, \"initial\": \"\", \"do\": { \"$concat\": [{ \"$var\": \"accumulator\" }, { \"$var\": \"item\" }] } } }",
+      ],
     },
     parseJSON: {
       // Typed for the same reason as `fromBase64`: this reads text that already
@@ -463,6 +473,15 @@ export class StringNode extends Node {
       return this.toBoolean(urlSafe)
         ? encoded.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
         : encoded;
+    });
+  }
+
+  fromBytes(def: Record<string, unknown>, c: Context) {
+    return resolve(def.$fromBytes, c, value => {
+      if (isStream(value)) return textStream(value);
+      const bytes = bytesOf(value);
+      if (!bytes) throw new Error(`$fromBytes takes bytes or a stream of them, got ${value === null ? "null" : typeof value}`);
+      return new TextDecoder().decode(bytes);
     });
   }
 
