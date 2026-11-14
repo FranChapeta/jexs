@@ -159,10 +159,11 @@ export class StringNode extends Node {
       // Typed for the same reason as `fromBase64`: this reads text that already
       // IS JSON rather than stringifying whatever arrives.
       type: "string",
-      markdownDescription: "Parses a JSON string. Text that is not valid JSON is an error, which `$catch` can handle.",
+      markdownDescription: "Parses JSON: a string, or the UTF-8 text that bytes, a blob or a file hold, so a file or a fetched body is parsed without reading it as text first. Text that is not valid JSON is an error, which `$catch` can handle.",
       outputDescription: "The parsed value, which can be any JSON type (object, array, number, string, boolean, or `null`).",
       examples: [
         "{ \"$parseJSON\": { \"$var\": \"raw\" } }",
+        "{ \"$parseJSON\": { \"$var\": \"request.body.settings\" } }",
       ],
     },
     stringify: {
@@ -522,12 +523,17 @@ export class StringNode extends Node {
   }
 
   parseJSON(d: Record<string, unknown>, c: Context) {
-    return resolve(d.$parseJSON, c, v => {
+    const parse = (text: string): unknown => {
       try {
-        return JSON.parse(this.toString(v));
+        return JSON.parse(text);
       } catch (e) {
         throw new Error(`$parseJSON: ${e instanceof Error ? e.message : String(e)}`);
       }
+    };
+    return resolve(d.$parseJSON, c, v => {
+      if (v instanceof Blob) return v.text().then(parse);
+      const bytes = bytesOf(v);
+      return parse(bytes ? new TextDecoder().decode(bytes) : this.toString(v));
     });
   }
 

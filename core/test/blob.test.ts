@@ -34,6 +34,16 @@ test("a blob's bytes are read whole, as text, or as a stream", async () => {
   assert.equal(await resolve({ $stringify: { $var: "file" } }, { file }), '{"name":"note.txt","type":"text/plain","size":12}', "as JSON it shows what it is, never its bytes");
 });
 
+test("$parseJSON parses the JSON a blob, a file or bytes hold, as it does a string", async () => {
+  const json = '{"title":"Señor café","n":[1,2]}';
+  const expected = { title: "Señor café", n: [1, 2] };
+  assert.deepEqual(await resolve({ $parseJSON: { $var: "source" } }, { source: new File([json], "a.json") }), expected);
+  assert.deepEqual(await resolve({ $parseJSON: { $var: "source" } }, { source: new Blob([json]) }), expected);
+  assert.deepEqual(await resolve({ $parseJSON: { $var: "source" } }, { source: new TextEncoder().encode(json) }), expected);
+  assert.deepEqual(await resolve({ $parseJSON: json }, {}), expected);
+  await assert.rejects(Promise.resolve().then(() => resolve({ $parseJSON: { $var: "source" } }, { source: new Blob(["{nope"]) })), /\$parseJSON: /);
+});
+
 test("$blobCheck gives a blob the type its bytes show, and refuses one its rules don't take", async () => {
   const mislabelled = new File([PNG], "dot.txt", { type: "text/plain" });
   const checked = await resolve({ $blobCheck: { $var: "file" }, types: ["image/*"] }, { file: mislabelled });
