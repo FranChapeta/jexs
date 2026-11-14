@@ -29,9 +29,13 @@ before(async () => {
       { $if: at("/string"), then: { $return: { $concat: ["<p>", "text</p>"] } } },
       { $if: at("/missing"), then: { $return: null } },
       { $if: at("/ip"), then: { $return: { $var: "request.ip" } } },
+      { $if: at("/file"), then: { $return: { $blob: "id,name\n1,Ada\n", type: "text/csv", name: "people.csv" } } },
+      { $if: at("/blob"), then: { $return: { response: { $blob: { $var: "bytes" } }, responseHeaders: { "Content-Disposition": 'attachment; filename="raw.bin"' } } } },
+      { $if: at("/blob-as-text"), then: { $return: { response: { $blob: "plain", type: "text/csv" }, responseType: "text" } } },
+      { $if: at("/file-in-json"), then: { $return: { response: { file: { $blob: "abc", type: "text/plain", name: "a.txt" } } } } },
       { $tag: "p", content: "page" },
     ],
-  }, { report: { response: "250 OK", accepted: ["a@b.c"] }, stored: { $email: "a@b.c", response: "x" } });
+  }, { report: { response: "250 OK", accepted: ["a@b.c"] }, stored: { $email: "a@b.c", response: "x" }, bytes: new Uint8Array([0, 1, 2, 255]) });
   base = `http://127.0.0.1:${port}`;
 });
 
@@ -75,6 +79,27 @@ test("HTML is sent as text/html, a string as text/plain, and nothing as a 404 pa
   const missing = await fetch(`${base}/missing`);
   assert.equal(missing.status, 404);
   assert.equal(missing.headers.get("content-type"), "text/html; charset=utf-8");
+});
+
+test("a blob or file is sent as the bytes it holds, with its type and its size", async () => {
+  const file = await fetch(`${base}/file`);
+  assert.equal(file.headers.get("content-type"), "text/csv");
+  assert.equal(file.headers.get("content-length"), "14");
+  assert.equal(file.headers.get("content-disposition"), null, "its name is not sent unless the steps say");
+  assert.equal(await file.text(), "id,name\n1,Ada\n");
+
+  const blob = await fetch(`${base}/blob`);
+  assert.equal(blob.headers.get("content-type"), "application/octet-stream", "one with no type is bytes of no particular type");
+  assert.equal(blob.headers.get("content-disposition"), 'attachment; filename="raw.bin"');
+  assert.deepEqual(new Uint8Array(await blob.arrayBuffer()), new Uint8Array([0, 1, 2, 255]));
+
+  const typed = await fetch(`${base}/blob-as-text`);
+  assert.equal(typed.headers.get("content-type"), "text/plain; charset=utf-8", "the response's type wins over the blob's");
+  assert.equal(await typed.text(), "plain");
+});
+
+test("a blob or file inside a value sent as JSON shows as its name, type and size", async () => {
+  assert.deepEqual(await (await fetch(`${base}/file-in-json`)).json(), { file: { name: "a.txt", type: "text/plain", size: 3 } });
 });
 
 test("a value with a response of its own is sent whole as a response object's body", async () => {
