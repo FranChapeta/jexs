@@ -210,6 +210,9 @@ const cases: Case[] = [
     expr: { $blobBytes: { $fetch: "/api/n", raw: true } } },
   { label: "string-slot rejects fetch full + raw (object either way) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { $foreach: [1], item: { $fetch: "/api/name", full: true, raw: true }, do: "y" } },
+  // An attachment may be a step that gives a blob or file, in place of `{ filename, content }`.
+  { label: "email attachment as a step giving a file (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $email: "a@example.com", subject: "Report", body: "Attached.", attachments: [{ $var: "report" }, { filename: "b.csv", content: { $blob: "a,b", type: "text/csv" } }] } },
 
   // `method` defaults to GET; only the methods that send a body take `body`, and HEAD resolves to null.
   { label: "fetch POST with a body (valid)", schemaRef: "$defs/exprFlat", expectValid: true,

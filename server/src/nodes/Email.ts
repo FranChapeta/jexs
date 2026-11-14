@@ -1,3 +1,4 @@
+import { Readable } from "node:stream";
 import nodemailer from "nodemailer";
 import type { Transporter, SendMailOptions } from "nodemailer";
 import type SMTPTransport from "nodemailer/lib/smtp-transport/index.js";
@@ -78,16 +79,23 @@ function attachmentContent(value: unknown, filename: string): string | Buffer {
 export function attachments(value: unknown): EmailAttachment[] | undefined {
   if (value === null || value === undefined) return undefined;
   const list = Array.isArray(value) ? value : [value];
-  const out = list.map((entry, i) => {
+  const out = list.map((given, i) => {
+    // A blob or file is an attachment by itself, or the content of one that says more of it.
+    const entry = given instanceof Blob ? { content: given } : given;
     if (!isObject(entry)) {
-      throw new Error(`Attachment ${i + 1} must be an object with "filename" and "content"`);
+      throw new Error(`Attachment ${i + 1} must be an object with "filename" and "content", or a blob or file`);
     }
-    const filename = entry.filename === undefined ? `attachment-${i + 1}` : String(entry.filename);
+    const blob = entry.content instanceof Blob ? entry.content : null;
+    const filename = entry.filename !== undefined ? String(entry.filename)
+      : blob instanceof File && blob.name ? blob.name
+      : `attachment-${i + 1}`;
     const item: EmailAttachment = {
       filename,
-      content: attachmentContent(entry.content, filename),
+      // Read as the message is sent, so a file on disk is never held whole.
+      content: blob ? Readable.from(blob.stream(), { objectMode: false }) : attachmentContent(entry.content, filename),
     };
-    if (entry.contentType !== undefined) item.contentType = String(entry.contentType);
+    const contentType = entry.contentType ?? (blob?.type || undefined);
+    if (contentType !== undefined) item.contentType = String(contentType);
     if (entry.cid !== undefined) item.cid = String(entry.cid);
     if (entry.encoding !== undefined) item.encoding = String(entry.encoding);
     return item;
@@ -384,16 +392,17 @@ export class EmailNode extends Node {
             properties: {
               // `filename` is NOT required: an attachment without one is named
               // `attachment-<n>`. `content` has no such fallback and throws.
-              filename: { type: "string", description: "Name the recipient sees." },
-              content: { required: true, description: "The bytes or text to attach. Load a file with `file` and pass the result." },
-              contentType: { type: "string", description: "MIME type; inferred from the filename when omitted." },
+              filename: { type: "string", description: "Name the recipient sees. A file's own name when the content is a file." },
+              content: { required: true, description: "The bytes or text to attach, or a blob or file. Load a file with `file` and pass the result." },
+              contentType: { type: "string", description: "MIME type. A blob's or file's own type when omitted, else inferred from the filename." },
               cid: { type: "string", description: "Content ID, to reference the attachment from the HTML body as `cid:<value>`." },
               encoding: { type: "string", description: "Encoding of a string `content` (e.g. `\"base64\"`)." },
             },
           },
-          markdownDescription: "Files to attach, each `{ filename, content }`. Content is bytes or text, never a path. Load it the way Jexs loads anything, `{ \"$file\": \"/reports/x.pdf\", \"$as\": \"pdf\" }`, then pass `{ \"$var\": \"pdf\" }`.",
+          markdownDescription: "Files to attach, each `{ filename, content }`. Content is bytes or text, never a path. Load it the way Jexs loads anything, `{ \"$file\": \"/reports/x.pdf\", \"$as\": \"pdf\" }`, then pass `{ \"$var\": \"pdf\" }`. A blob or file (from `$blob`, or a `$fetch` with `raw`) is attached with its own name and type, as the `content` of an entry or as the entry itself, and is read as the message is sent.",
           examples: [
             "[{ \"filename\": \"invoice.pdf\", \"content\": { \"$var\": \"pdf\" } }]",
+            "[{ \"$blob\": { \"$var\": \"csv\" }, \"type\": \"text/csv\", \"name\": \"export.csv\" }]",
           ],
         },
         headers: {

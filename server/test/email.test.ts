@@ -81,6 +81,28 @@ test("attachments: text, Buffer and ArrayBuffer content all survive", () => {
   assert.equal(list[3].cid, "doc");
 });
 
+test("attachments: a blob or file is attached with its own name and type, as the entry or as its content", async () => {
+  const file = new File(["id,name\n"], "people.csv", { type: "text/csv" });
+  const list = attachments([
+    file,
+    { content: file, filename: "renamed.csv", contentType: "text/plain" },
+    { content: new Blob([new Uint8Array([1, 2, 3])]) },
+  ]) as Array<{ filename: string; contentType?: string; content: AsyncIterable<Buffer> }>;
+  assert.deepEqual(list.map(a => [a.filename, a.contentType]), [
+    ["people.csv", "text/csv"],
+    ["renamed.csv", "text/plain"],
+    ["attachment-3", undefined],
+  ]);
+  // Its bytes are read as the message is sent.
+  const read = async (content: AsyncIterable<Buffer>) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of content) chunks.push(Buffer.from(chunk));
+    return Buffer.concat(chunks);
+  };
+  assert.equal((await read(list[0].content)).toString(), "id,name\n");
+  assert.deepEqual(await read(list[2].content), Buffer.from([1, 2, 3]));
+});
+
 test("attachments: a path where content belongs says what to do instead", () => {
   assert.throws(
     () => attachments([{ filename: "report.pdf", path: "/reports/summary.pdf" }]),
