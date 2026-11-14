@@ -138,6 +138,21 @@ test("a client that takes longer than requestTimeout to send its request is answ
   own.destroy();
 });
 
+test("a POST that names its method in its URL is answered as that method, and the name is not in the query the steps see", async () => {
+  const own = createResolver([...coreNodes(), new ServerNode()]);
+  try {
+    const port = await own({ $listen: 0, do: [{ response: { method: { $var: "request.method" }, query: { $var: "request.query" } } }] }, {});
+    const seen = async (method: string, query: string) => (await fetch(`http://127.0.0.1:${port}/photos/7${query}`, { method })).json();
+    assert.deepEqual(await seen("POST", "?_method=PUT&id=7"), { method: "PUT", query: { id: "7" } });
+    assert.deepEqual(await seen("POST", "?_method=delete"), { method: "DELETE", query: {} });
+    assert.deepEqual(await seen("POST", "?id=7"), { method: "POST", query: { id: "7" } }, "a POST that names none is a POST");
+    assert.deepEqual(await seen("POST", "?_method=TRACE"), { method: "POST", query: {} }, "only PUT, PATCH and DELETE are named");
+    assert.deepEqual(await seen("GET", "?_method=PUT"), { method: "GET", query: { _method: "PUT" } }, "only a POST stands for another method");
+  } finally {
+    own.destroy();
+  }
+});
+
 test("requestTimeout is a whole number of milliseconds", async () => {
   const own = createResolver([...coreNodes(), new ServerNode()]);
   await assert.rejects(Promise.resolve(own({ $listen: 0, requestTimeout: -1, do: [] }, {})), /requestTimeout/);

@@ -113,7 +113,7 @@ export class ElementNode extends Node {
         img:      tag({ src: str("Image URL."), alt: str("Alternative text."), width: num("Intrinsic width."), height: num("Intrinsic height."), loading: en(["lazy", "eager"], "Load timing."), srcset: str("Responsive source set."), sizes: str("Source sizes."), decoding: en(["sync", "async", "auto"], "Decoding hint.") }),
         input:    tag({ type: en(["text", "password", "email", "number", "tel", "url", "search", "checkbox", "radio", "date", "time", "datetime-local", "month", "week", "color", "range", "file", "hidden", "submit", "reset", "button"], "Input type."), name: str("Form field name."), value: { description: "Field value." }, placeholder: str("Placeholder text."), required: bool("Required field."), disabled: bool("Disabled."), readonly: bool("Read-only."), checked: bool("Checked (checkbox/radio)."), min: { description: "Minimum." }, max: { description: "Maximum." }, step: { description: "Step increment." }, pattern: str("Validation regex."), autocomplete: str("Autocomplete hint."), multiple: bool("Allow multiple."), accept: str("Accepted file types.") }),
         button:   tag({ type: en(["submit", "reset", "button"], "Button behavior."), name: str("Form field name."), value: str("Submitted value."), disabled: bool("Disabled."), form: str("Associated form id.") }),
-        form:     tag({ action: str("Submission URL."), method: en(["get", "post", "GET", "POST"], "HTTP method."), enctype: str("Encoding type."), target: str("Where to display the response."), novalidate: bool("Skip validation."), autocomplete: en(["on", "off"], "Autocomplete.") }),
+        form:     tag({ action: str("Submission URL."), method: en(["get", "post", "put", "patch", "delete", "GET", "POST", "PUT", "PATCH", "DELETE"], "HTTP method. A browser's form sends only GET and POST, so `put`, `patch` and `delete` are rendered as a POST whose `action` names the method (`?_method=PUT`), which a Jexs server routes as that method. A form with one of these and no `action` posts to the page's path, without its query string."), enctype: str("Encoding type."), target: str("Where to display the response."), novalidate: bool("Skip validation."), autocomplete: en(["on", "off"], "Autocomplete.") }),
         label:    tag({ for: str("id of the labeled control.") }),
         select:   tag({ name: str("Form field name."), multiple: bool("Allow multiple selection."), required: bool("Required."), disabled: bool("Disabled."), size: num("Visible rows.") }),
         option:   tag({ value: { description: "Option value." }, selected: bool("Selected by default."), disabled: bool("Disabled."), label: str("Display label.") }),
@@ -193,7 +193,8 @@ function renderElement(def: Record<string, unknown>, context: Context): unknown 
       // quirks mode (and Lighthouse flags it). Only the root html tag triggers
       // this; nested htmls (if anyone ever has them) get the same prefix harmlessly.
       const prefix = tag === "html" ? "<!DOCTYPE html>" : "";
-      const open = `${prefix}<${tag}${attrsString(attrs, values, context)}${events}>`;
+      const [names, given] = tag === "form" ? formMethod(attrs, values.slice(0, at)) : [attrs, values];
+      const open = `${prefix}<${tag}${attrsString(names, given, context)}${events}>`;
       if (isSelfClosing) return new Html(open);
       const close = (content: string) => new Html(`${open}${buildInjections(tag, def, context)}${content}</${tag}>`);
       const translator = translateAt >= 0 && values[translateAt] === "no" ? undefined : context[TRANSLATE];
@@ -325,6 +326,39 @@ function buildInjections(tag: string, def: Record<string, unknown>, context: Con
   }
 
   return result;
+}
+
+/** The methods a form can be written with that a browser cannot send: it submits anything but GET and POST as a GET. */
+const UNSENDABLE_METHODS = new Set(["PUT", "PATCH", "DELETE"]);
+
+/**
+ * A form's attributes and their values as rendered. One written with a method
+ * a browser cannot send goes out as a POST whose `action` names the method in
+ * its query (`/photos/7?_method=PUT`): the URL is in the request's head, so a
+ * server knows the method without reading the body. Any other form is as written.
+ */
+function formMethod(entries: [string, unknown][], values: unknown[]): [[string, unknown][], unknown[]] {
+  const methodAt = entries.findIndex(([key]) => key === "method");
+  const method = methodAt < 0 ? "" : String(values[methodAt]).toUpperCase();
+  if (!UNSENDABLE_METHODS.has(method)) return [entries, values];
+
+  const names = [...entries];
+  const given = [...values];
+  given[methodAt] = "post";
+  const actionAt = names.findIndex(([key]) => key === "action");
+  const written = actionAt < 0 ? null : given[actionAt];
+  const action = written === null || written === undefined || written === false ? "" : String(written);
+  // The query ends where the fragment starts.
+  const hashAt = action.indexOf("#");
+  const url = hashAt < 0 ? action : action.slice(0, hashAt);
+  const named = `${url}${url.includes("?") ? "&" : "?"}_method=${method}${hashAt < 0 ? "" : action.slice(hashAt)}`;
+  if (actionAt < 0) {
+    names.push(["action", named]);
+    given.push(named);
+  } else {
+    given[actionAt] = named;
+  }
+  return [names, given];
 }
 
 /** The attributes `entries` name, given their values (the first `entries.length` of `resolved`). */
