@@ -60,7 +60,7 @@ test("a wrong token is refused", async () => {
   try {
     const wrong = token.replace(/./, c => (c === "0" ? "1" : "0"));
     await assert.rejects(
-      async () => resolver({ $session: "load" }, request("POST", { sid }, { body: { _csrf: wrong } })),
+      async () => resolver({ $session: "load" }, request("POST", { sid }, { headers: { "x-csrf-token": wrong } })),
       /CSRF token mismatch/,
     );
   } finally {
@@ -68,16 +68,18 @@ test("a wrong token is refused", async () => {
   }
 });
 
-test("the right token in the body or the header loads the session", async () => {
+test("the right token in the header loads the session, and one in the body is not read", async () => {
   const { resolver, sid, token } = await started();
   try {
-    const inBody = request("POST", { sid }, { body: { _csrf: token } });
-    await resolver({ $session: "load" }, inBody);
-    assert.equal(inBody.session?.user, "ada");
-
-    const inHeader = request("DELETE", { sid }, { headers: { "x-csrf-token": token } });
-    await resolver({ $session: "load" }, inHeader);
-    assert.equal(inHeader.session?.user, "ada");
+    for (const method of ["POST", "DELETE"]) {
+      const inHeader = request(method, { sid }, { headers: { "x-csrf-token": token } });
+      await resolver({ $session: "load" }, inHeader);
+      assert.equal(inHeader.session?.user, "ada", method);
+    }
+    await assert.rejects(
+      async () => resolver({ $session: "load" }, request("POST", { sid }, { body: { _csrf: token } })),
+      /CSRF token mismatch/,
+    );
   } finally {
     resolver.destroy();
   }
@@ -86,7 +88,7 @@ test("the right token in the body or the header loads the session", async () => 
 test("a login moves the session to a new id and token, keeping its data, in one step", async () => {
   const { resolver, context, sid, token } = await started();
   try {
-    const login = request("POST", { sid }, { body: { _csrf: token } });
+    const login = request("POST", { sid }, { headers: { "x-csrf-token": token } });
     await resolver({ $session: { user_id: 7 }, regenerate: true }, login);
     const newSid = sidOf(login);
     assert.notEqual(newSid, sid);
@@ -106,7 +108,7 @@ test("a login moves the session to a new id and token, keeping its data, in one 
 test("ops after a rotation in the same POST are not checked again", async () => {
   const { resolver, context, sid, token } = await started();
   try {
-    const login = request("POST", { sid }, { body: { _csrf: token } });
+    const login = request("POST", { sid }, { headers: { "x-csrf-token": token } });
     await resolver([{ $session: {}, regenerate: true }, { $session: { user_id: 7 } }], login);
     const newSid = sidOf(login);
     assert.equal((await stored(context, newSid))?.user_id, 7);
@@ -131,7 +133,7 @@ test("a request that loaded its session writes to it without reading the cache a
   const { resolver, context, sid, token } = await started();
   try {
     const get = t.mock.method(CacheNode.cacheFor(context), "get");
-    const ctx = request("POST", { sid }, { body: { _csrf: token } });
+    const ctx = request("POST", { sid }, { headers: { "x-csrf-token": token } });
     await resolver([{ $session: "load" }, { $session: { a: 1 } }, { $session: { b: 2 } }], ctx);
     assert.equal(get.mock.callCount(), 1);
     const data = await stored(context, sid);
@@ -147,7 +149,7 @@ test("a request that loaded its session writes to it without reading the cache a
 test("session ops return the session's data, and destroy returns null", async () => {
   const { resolver, sid, token } = await started();
   try {
-    const ctx = request("POST", { sid }, { body: { _csrf: token } });
+    const ctx = request("POST", { sid }, { headers: { "x-csrf-token": token } });
     const loaded = await resolver({ $session: "load" }, ctx);
     assert.equal(loaded, ctx.session);
     assert.equal(ctx.session?.user, "ada");
@@ -249,6 +251,75 @@ test("steps that load the session late are still refused without a token", async
   }
 });
 
+// A browser marks where a request came from in a header no page can set, so
+// one it marks as the app's own needs no token.
+test("a POST the browser marks same-origin passes without a token; one from elsewhere, or unmarked, needs it", async () => {
+  const { resolver, context, sid } = await started();
+  try {
+    const from = (site?: string) => request("POST", { sid }, { headers: site ? { "sec-fetch-site": site } : {} });
+    for (const site of ["same-site", "cross-site", "none", undefined]) {
+      await assert.rejects(async () => resolver({ $session: { role: "admin" } }, from(site)), /CSRF token mismatch/, String(site));
+    }
+    await resolver({ $session: { role: "admin" } }, from("same-origin"));
+    assert.equal((await stored(context, sid))?.role, "admin");
+  } finally {
+    resolver.destroy();
+  }
+});
+
+// A browser that sends no such mark still names the page's origin on a POST.
+test("without the mark, an Origin whose host the request was sent to passes, and another's does not", async () => {
+  const { resolver, context, sid } = await started();
+  try {
+    const from = (headers: Record<string, string>, extra: Record<string, unknown> = {}) => request("POST", { sid }, { headers, ...extra });
+    const refused = [
+      from({ host: "app.test", origin: "https://evil.test" }),
+      from({ host: "app.test", origin: "null" }),
+      // The mark, when there is one, decides: an Origin beside it is not asked.
+      from({ host: "app.test", origin: "https://app.test", "sec-fetch-site": "cross-site" }),
+    ];
+    for (const ctx of refused) await assert.rejects(async () => resolver({ $session: { role: "admin" } }, ctx), /CSRF token mismatch/);
+    await resolver({ $session: { role: "admin" } }, from({ host: "app.test", origin: "https://app.test" }));
+    assert.equal((await stored(context, sid))?.role, "admin");
+    // Behind a proxy the request's own Host is the proxy's: the app's URL names the host its pages are on.
+    const proxied = from({ host: "10.0.0.5:3000", origin: "http://app.test" });
+    await assert.rejects(async () => resolver({ $session: { plan: "pro" } }, from({ host: "10.0.0.5:3000", origin: "http://app.test" })), /CSRF token mismatch/);
+    proxied.baseUrl = "http://app.test";
+    await resolver({ $session: { plan: "pro" } }, proxied);
+    assert.equal((await stored(context, sid))?.plan, "pro");
+  } finally {
+    resolver.destroy();
+  }
+});
+
+test("through a listener, a token in the body is not taken, and a browser's own headers pass without one", async () => {
+  const resolver = createResolver([...coreNodes(), new CacheNode(), new SessionNode(), new ServerNode()]);
+  try {
+    const port = await resolver({
+      $listen: 0,
+      do: [
+        { $if: { $eq: [{ $var: "request.method" }, "GET"] }, then: { $session: { user: "ada" } }, else: { $session: { seen: true } } },
+        { $concat: ["ok"] },
+      ],
+    }, {});
+    const url = `http://127.0.0.1:${port}/`;
+    const set = (await fetch(url)).headers.getSetCookie().join(";");
+    const sid = set.match(/sid=([^;]+)/)?.[1] ?? "";
+    const token = decodeURIComponent(set.match(/csrf=([^;]+)/)?.[1] ?? "");
+    assert.ok(sid && token, "a session with a token was started");
+    const post = (body: string, headers: Record<string, string> = {}) =>
+      fetch(url, { method: "POST", headers: { cookie: `sid=${sid}`, "content-type": "application/x-www-form-urlencoded", ...headers }, body });
+
+    assert.equal((await post("title=x")).status, 403);
+    assert.equal((await post(`_csrf=${encodeURIComponent(token)}&title=x`)).status, 403);
+    assert.equal(await (await post("title=x", { "x-csrf-token": token })).text(), "ok");
+    assert.equal(await (await post("title=x", { "sec-fetch-site": "same-origin" })).text(), "ok");
+    assert.equal(await (await post("title=x", { origin: `http://127.0.0.1:${port}` })).text(), "ok");
+  } finally {
+    resolver.destroy();
+  }
+});
+
 // Over https the cookies are Secure, and the session's is `__Host-sid`, which a
 // browser takes only from this exact host, so a sibling subdomain can't plant one.
 test("on an https app the session cookie is Secure and host-only", async () => {
@@ -303,7 +374,7 @@ test("the CSRF token is handed to page scripts in a readable cookie", async () =
     assert.match(secretOf(login), /^[0-9a-f]{64}$/);
     assert.notEqual(secretOf(login), token);
 
-    const logout = request("POST", { sid: sidOf(login) }, { body: { _csrf: secretOf(login) } });
+    const logout = request("POST", { sid: sidOf(login) }, { headers: { "x-csrf-token": secretOf(login) } });
     await resolver({ $session: "destroy" }, logout);
     assert.match(csrfCookie(logout) ?? "", /^csrf=;.*Max-Age=0/);
   } finally {
@@ -330,7 +401,7 @@ test("the token a page renders is masked anew on every response, and both forms 
 
     // Each masked copy, as a form sends it, and the token itself, as $fetch sends it from the cookie.
     for (const sent of [...rendered, secret]) {
-      const post = request("POST", { sid, csrf: secret }, { body: { _csrf: sent } });
+      const post = request("POST", { sid, csrf: secret }, { headers: { "x-csrf-token": sent } });
       await resolver({ $session: "load" }, post);
       assert.ok(post.session, sent);
     }
@@ -339,7 +410,7 @@ test("the token a page renders is masked anew on every response, and both forms 
     const other = request("GET", {});
     await resolver({ $session: {} }, other);
     await assert.rejects(
-      async () => resolver({ $session: "load" }, request("POST", { sid }, { body: { _csrf: tokenOf(other) } })),
+      async () => resolver({ $session: "load" }, request("POST", { sid }, { headers: { "x-csrf-token": tokenOf(other) } })),
       /CSRF token mismatch/,
     );
   } finally {

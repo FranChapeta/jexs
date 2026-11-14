@@ -37,8 +37,6 @@ export interface SessionState {
   stored?: StoredSession;
   /** The cache `stored` came from. */
   storedIn?: CacheAdapter;
-  /** The CSRF token the request sent, read before any step could change its body. */
-  sentCsrf: unknown;
   /** Whether the request passed the CSRF check or started its own session, so
    *  later ops don't check again (`regenerate: true` rotates the token it was
    *  sent with). */
@@ -74,7 +72,7 @@ export class SessionNode extends Node {
         "load",
         "destroy",
       ],
-      markdownDescription: "Manages request sessions stored in cache. Pass an object to set session values. Read values with `{ \"$var\": \"session.key\" }`: `session` is read-only, and only a `$session` op changes it, for the whole request whichever scope it runs in.\r\n`load` reads the session the request's cookie names and starts none: a session starts when values are first set, so a visitor with nothing stored (a crawler, say) is sent no cookie and gets a page a cache may keep.\r\nSession ID is stored in an HTTP-only cookie with a 24-hour TTL: `sid`, or `__Host-sid` once Secure. Steps never see it: `request.cookies` and the `cookie` header leave it out, so a page that shows the request cannot hand a visitor's session to anyone. Its cookies are Secure in production (`NODE_ENV=production`) and whenever the app's URL is https (`BASE_URL`, or a trusted proxy's `X-Forwarded-Proto`; see `$listen`'s `trustProxy`).\r\nOn a request other than GET, HEAD or OPTIONS that carries a session cookie, every operation first checks the session's CSRF token, sent as the `_csrf` body field or the `x-csrf-token` header, and fails with 403 without it. The client runtime sends it on its own, read from the `csrf` cookie the session sets: as the header on the page's `$fetch`, and as the field on its form posts. A page served without the client gets the field rendered into its non-GET forms instead, once there is a session, masked anew on every response so that a compressed page never repeats the token.\r\nWith no request, as in a CLI, the session belongs to the flow its first op runs in, for as long as that flow runs.",
+      markdownDescription: "Manages request sessions stored in cache. Pass an object to set session values. Read values with `{ \"$var\": \"session.key\" }`: `session` is read-only, and only a `$session` op changes it, for the whole request whichever scope it runs in.\r\n`load` reads the session the request's cookie names and starts none: a session starts when values are first set, so a visitor with nothing stored (a crawler, say) is sent no cookie and gets a page a cache may keep.\r\nSession ID is stored in an HTTP-only cookie with a 24-hour TTL: `sid`, or `__Host-sid` once Secure. Steps never see it: `request.cookies` and the `cookie` header leave it out, so a page that shows the request cannot hand a visitor's session to anyone. Its cookies are Secure in production (`NODE_ENV=production`) and whenever the app's URL is https (`BASE_URL`, or a trusted proxy's `X-Forwarded-Proto`; see `$listen`'s `trustProxy`).\r\nOn a request other than GET, HEAD or OPTIONS that carries a session cookie, every operation first checks that it came from the app's own pages, and fails with 403 otherwise. A browser says so itself, in headers no page can set, and the check reads nothing else of the request, never its body: `Sec-Fetch-Site: same-origin`, which a current browser sends, or from one that doesn't, an `Origin` whose host is the one the request was sent to. A request with neither, from a client that is no browser, must send the session's CSRF token as the `x-csrf-token` header, which the client runtime's `$fetch` does on its own, from the `csrf` cookie the session sets. A `_csrf` field in the body is not read.\r\nWith no request, as in a CLI, the session belongs to the flow its first op runs in, for as long as that flow runs.",
       outputDescription: "The session's data, which `load` and setting values also make readable as `session`; `{}` from `load` when there is no session, and `null` after `destroy`. The cookies are queued onto the response for you; you don't return them yourself.",
       examples: [
         "{ \"$session\": { \"user_id\": { \"$var\": \"user.id\" }, \"role\": { \"$var\": \"user.role\" } }, \"regenerate\": true }",
@@ -109,14 +107,10 @@ export class SessionNode extends Node {
 
 /**
  * Give `scope` a session of its own: the state its `$session` ops keep, and
- * `session`, read-only, for the data of the session they read or started. The
- * CSRF token its request sent, as the `_csrf` body field or the `x-csrf-token`
- * header, is read now, before a step can change the request's body.
+ * `session`, read-only, for the data of the session they read or started.
  */
 export function bindSession(scope: Context): SessionState {
-  const request = scope.request;
-  const sentCsrf = (isObject(request?.body) ? request.body._csrf : undefined) ?? request?.headers?.["x-csrf-token"];
-  const state: SessionState = { scope, sentCsrf, trusted: false, csrfMasks: [] };
+  const state: SessionState = { scope, trusted: false, csrfMasks: [] };
   scope[SESSION] = state;
   Object.defineProperty(scope, "session", { get: () => state.stored?.data, enumerable: true });
   return state;
@@ -205,19 +199,55 @@ function useSession(state: SessionState, stored: StoredSession): Readonly<Record
   return freezeData(stored.data);
 }
 
-/** A state-changing request must send the session's token back. */
+/**
+ * A state-changing request must come from the app's own pages, which its
+ * headers say: the check never reads its body. A request that doesn't say so,
+ * a client that is no browser, must send the session's token back as the
+ * `x-csrf-token` header instead.
+ */
 function checkCsrf(state: SessionState, stored: string): void {
-  if (!state.scope.request || state.trusted) return;
+  const request = state.scope.request;
+  if (!request || state.trusted) return;
   // A WebSocket upgrade can't send a token; the listener checks its origin.
   const method = methodOf(state);
   if (method === "WS" || SAFE_METHODS.includes(method)) return;
-  // The token itself, as the client runtime sends it from the `csrf` cookie, or
-  // masked, as a rendered form sends it.
-  const sent = state.sentCsrf;
-  if (stored === "" || typeof sent !== "string" || !(tokensEqual(stored, sent) || tokensEqual(stored, unmaskToken(sent)))) {
-    throw createHttpError(403, "CSRF token mismatch");
+  if (!fromOwnPage(state.scope)) {
+    // The token itself, as the client runtime sends it from the `csrf` cookie,
+    // or masked, as a page renders it.
+    const sent = request.headers?.["x-csrf-token"];
+    if (stored === "" || typeof sent !== "string" || !(tokensEqual(stored, sent) || tokensEqual(stored, unmaskToken(sent)))) {
+      throw createHttpError(403, "CSRF token mismatch");
+    }
   }
   state.trusted = true;
+}
+
+/**
+ * Whether a browser says the request came from one of the app's own pages, in
+ * headers no page can set or change. A current browser marks every request
+ * with where it came from, `Sec-Fetch-Site`, and only `same-origin` is the
+ * app's own. One that sends no such mark still names the page's origin on a
+ * state-changing request, `Origin`, which is the app's own when its host is
+ * the one the request was sent to.
+ */
+function fromOwnPage(scope: Context): boolean {
+  const headers = scope.request?.headers;
+  const site = headers?.["sec-fetch-site"];
+  if (site !== undefined) return site === "same-origin";
+  const origin = headers?.origin;
+  if (typeof origin !== "string") return false;
+  let host: string;
+  try {
+    host = new URL(origin).host;
+  } catch {
+    return false;
+  }
+  if (host === headers?.host) return true;
+  try {
+    return typeof scope.baseUrl === "string" && host === new URL(scope.baseUrl).host;
+  } catch {
+    return false;
+  }
 }
 
 /**
