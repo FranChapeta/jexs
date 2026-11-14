@@ -1,5 +1,6 @@
 import type { Validator } from "./nodes/Database.js";
 import type { SessionState } from "./nodes/Session.js";
+import type { RequestBody } from "./request/body.js";
 
 // What the server keeps on a request's context for its nodes. Symbol keys, so a
 // template can't read them with `$var` and request data or `$as` can't forge
@@ -25,6 +26,8 @@ export const UPGRADE = Symbol("jexs.upgrade");
 /** The connection a socket handler runs for, and the path it was opened on. */
 export const WS = Symbol("jexs.ws");
 export const WS_PATH = Symbol("jexs.wsPath");
+/** The request's body on its connection, unread until a step reads it: `request.body` as a stream, or `$requestBody` or a route whole. */
+export const REQUEST_BODY = Symbol("jexs.requestBody");
 
 // What a request's steps read, which templates reach with `$var`.
 declare module "@jexs/core" {
@@ -33,7 +36,8 @@ declare module "@jexs/core" {
     request?: {
       method?: string;
       path?: string;
-      body?: Record<string, unknown>;
+      /** The body: a stream of it until it is read whole, by `$requestBody` or a route, and then what was read. */
+      body?: unknown;
       /** The body as the text it came as, for checking a signature over it. */
       rawBody?: string;
       query?: Record<string, unknown>;
@@ -47,5 +51,6 @@ declare module "@jexs/core" {
     session?: Record<string, unknown>;
     [DATABASE_VALIDATORS]?: Validator;
     [SESSION]?: SessionState;
+    [REQUEST_BODY]?: RequestBody;
   }
 }

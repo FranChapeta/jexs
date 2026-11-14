@@ -122,20 +122,30 @@ test("request.ip is the client's address", async () => {
   assert.match(await (await fetch(`${base}/ip`)).text(), /127\.0\.0\.1/);
 });
 
-test("a client that takes longer than requestTimeout to send its request is answered 408", async () => {
+/** What a listener answers a client that sends headers promising a body that never comes. */
+async function replyToUnsentBody(steps: unknown[]): Promise<string> {
   const own = createResolver([...coreNodes(), new ServerNode()]);
-  const port = await own({ $listen: 0, requestTimeout: 200, do: [{ $concat: ["ok"] }] }, {});
-  const reply = await new Promise<string>(done => {
-    const socket = net.connect(port as number, "127.0.0.1", () => {
-      // Headers promising a body that never comes.
-      socket.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Type: text/plain\r\nContent-Length: 100\r\n\r\npart");
+  try {
+    const port = await own({ $listen: 0, requestTimeout: 200, do: steps }, {});
+    return await new Promise<string>(done => {
+      const socket = net.connect(port as number, "127.0.0.1", () => {
+        socket.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Type: text/plain\r\nContent-Length: 100\r\n\r\npart");
+      });
+      let data = "";
+      socket.on("data", chunk => (data += chunk));
+      socket.on("close", () => done(data));
     });
-    let data = "";
-    socket.on("data", chunk => (data += chunk));
-    socket.on("close", () => done(data));
-  });
-  assert.match(reply, /^HTTP\/1\.1 408/);
-  own.destroy();
+  } finally {
+    own.destroy();
+  }
+}
+
+test("a client that takes longer than requestTimeout to send a body the steps read is answered 408", async () => {
+  assert.match(await replyToUnsentBody([{ $requestBody: {} }]), /^HTTP\/1\.1 408/);
+});
+
+test("steps that don't read the body answer without waiting for it", async () => {
+  assert.match(await replyToUnsentBody([{ $concat: ["ok"] }]), /^HTTP\/1\.1 200/);
 });
 
 test("a POST that names its method in its URL is answered as that method, and the name is not in the query the steps see", async () => {

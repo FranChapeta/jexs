@@ -1,4 +1,5 @@
 import { Node, Context, NodeValue, isStep, resolve, runSteps, createHttpError, isObject } from "@jexs/core";
+import { readRequestBody } from "../request/body.js";
 import type { JexsNodeSchema } from "@jexs/core";
 import { requireSchemaNode, validate } from "./Schema.js";
 
@@ -76,7 +77,7 @@ export class RouterNode extends Node {
   static schema: JexsNodeSchema = {
     routes: {
       $ref: "#/$defs/_routesSlot",
-      markdownDescription: "Matches the incoming request path and method against a route tree, then executes the handler.\nSupports exact segments, `*` (single param with optional `paramName`/`paramRegex`),\n`**` (catch-all), and `queryParams`/`body` validation.\n\nA captured param is read from `request.params` (`{ \"$var\": \"request.params.id\" }`), beside `request.query` and `request.body`. `paramRegex` is anchored to the whole segment (for `**`, the whole rest of the path), so `\"new|edit\"` matches `new` but not `newsletter`.\n\nA handler is a `$file` step or a `do` of steps, never both, or an expression resolving to one of those. A `WS` handler completes a WebSocket upgrade by calling `socketAccept` as a `do` step.\n\nA route node written as a step is resolved when the matcher reaches it, after the params above it are captured, so `{ \"$if\": <cond>, \"then\": { \"$var\": \"adminRoutes\" } }` adds a subtree only when the condition holds; a failed condition leaves no node there. Hold such a subtree by reference, stored with `$setVars` or loaded with `$file`, either with `data: true`: `$if` resolves the branch it picks, so an inline subtree would run its handlers.",
+      markdownDescription: "Matches the incoming request path and method against a route tree, then executes the handler.\nSupports exact segments, `*` (single param with optional `paramName`/`paramRegex`),\n`**` (catch-all), and `queryParams`/`body` validation. When a handler is reached, after its `queryParams` is checked, the router reads the request's body whole, checks it against the handler's `body`, and makes it `request.body`, as `$requestBody` does.\n\nA captured param is read from `request.params` (`{ \"$var\": \"request.params.id\" }`), beside `request.query` and `request.body`. `paramRegex` is anchored to the whole segment (for `**`, the whole rest of the path), so `\"new|edit\"` matches `new` but not `newsletter`.\n\nA handler is a `$file` step or a `do` of steps, never both, or an expression resolving to one of those. A `WS` handler completes a WebSocket upgrade by calling `socketAccept` as a `do` step.\n\nA route node written as a step is resolved when the matcher reaches it, after the params above it are captured, so `{ \"$if\": <cond>, \"then\": { \"$var\": \"adminRoutes\" } }` adds a subtree only when the condition holds; a failed condition leaves no node there. Hold such a subtree by reference, stored with `$setVars` or loaded with `$file`, either with `data: true`: `$if` resolves the branch it picks, so an inline subtree would run its handlers.",
       outputDescription: "The matched handler's result, as it stands: a rendered `$file` page, or what its `do` yields. As the value a `$listen` request's steps end with, it is the response. Throws a 404 HTTP error when no route matches, so use a catch-all route (`**`) or wrap calls in `$catch` to handle not-found.",
       examples: [
         "{ \"$routes\": { \"children\": { \"users\": { \"methods\": { \"GET\": { \"$file\": \"pages/users.json\" } } } } } }",
@@ -283,7 +284,16 @@ async function matchNode(match: Match, node: RouteNode, index: number): Promise<
  * Execute route handler
  */
 async function executeHandler(handler: RouteHandler, context: Context): Promise<unknown> {
-  checkRequest(handler, context);
+  // The request checks a handler declares: its query and body schemas. Read
+  // from the handler that runs, so an expression handler's come from whatever
+  // it resolved to. They validate through the resolver's SchemaNode, so they
+  // can `$ref` registered schemas, `table/<name>` included. The query is
+  // checked before the body is read. The body is then read whole, checked,
+  // and made `request.body`, as `$requestBody` does it.
+  if (handler.queryParams) {
+    validateAgainstSchema(context, handler.queryParams, context.request?.query as Record<string, unknown> ?? {}, "query");
+  }
+  await readRequestBody(context, "route", { schema: handler.body });
 
   if (handler.do !== undefined) {
     return (await runSteps(handler.do, context)) ?? null;
@@ -291,22 +301,6 @@ async function executeHandler(handler: RouteHandler, context: Context): Promise<
   // A `$file` step, then, since `isHandlerShape` admits nothing else. Resolved through
   // the resolver so FileNode loads it and ElementNode renders it.
   return resolve(handler, context);
-}
-
-/**
- * The request checks a handler declares: its query/body schemas. Read from the
- * handler that runs, so an expression handler's come from whatever it resolved
- * to. They validate through the resolver's SchemaNode, so they can `$ref`
- * registered schemas, `table/<name>` included.
- */
-function checkRequest(handler: RouteHandler, context: Context): void {
-  if (handler.queryParams) {
-    validateAgainstSchema(context, handler.queryParams, context.request?.query as Record<string, unknown> ?? {}, "query");
-  }
-
-  if (handler.body) {
-    validateAgainstSchema(context, handler.body, context.request?.body as Record<string, unknown> ?? {}, "body");
-  }
 }
 
 /**

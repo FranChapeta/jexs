@@ -10,7 +10,8 @@ import { pipeline, type Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
 import { CLIENT_SCRIPT, Context, Html, Node, NodeValue, OPEN_STREAMS, SW_SCRIPT, boundaryContext, createHttpError, isHttpError, isObject, isStep, loggerFor, resolve, resolveAll, resolveFields, runSteps } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
-import { COOKIES, DEFERRED, SESSION, SESSION_COOKIES, UPGRADE, type Deferred } from "../context.js";
+import { COOKIES, DEFERRED, REQUEST_BODY, SESSION, SESSION_COOKIES, UPGRADE, type Deferred } from "../context.js";
+import { RequestBody, readRequestBody } from "../request/body.js";
 import { safeRelative } from "./File.js";
 import { SAFE_METHODS, SESSION_COOKIE_NAMES, bindSession, type SessionState } from "./Session.js";
 import { serviceWorkerScript } from "../sw.js";
@@ -230,11 +231,16 @@ function serveStaticDir(listener: Listener, urlPrefix: string, localDir: string)
  * request (a page an editor wrote, say) cannot leak a visitor's session. The
  * rest (`path`, `query`, `body`, `params` and what steps add) is the steps' to
  * change.
+ *
+ * `body` is a stream of the body, left on the connection until the stream is
+ * read, and then whatever read it whole (`$requestBody`, a route) made of it.
+ * A request without a body to read (a WebSocket upgrade) has `{}`.
  */
 function requestContext(
   listener: Listener,
   req: http.IncomingMessage,
-  { method, path, body, rawBody, query }: { method: string; path: string; body: unknown; rawBody: string; query: Record<string, unknown> },
+  { method, path, query }: { method: string; path: string; query: Record<string, unknown> },
+  body: RequestBody | null,
   symbols: Record<symbol, unknown>,
 ): Context {
   const fixed = (value: unknown) => ({ value, enumerable: true });
@@ -243,11 +249,16 @@ function requestContext(
   const headers: http.IncomingHttpHeaders = { ...req.headers };
   if (cookieHeader === undefined) delete headers.cookie;
   else headers.cookie = cookieHeader;
+  // The body's stream is made when a step first asks for `request.body`, and
+  // reads nothing until it is read; what a step or a reader sets takes its place.
+  let read: { value: unknown } | null = null;
   const request = Object.defineProperties({}, {
     method: fixed(method),
     path: open(path),
-    body: open(body),
-    rawBody: open(rawBody),
+    body: body
+      ? { get: () => read ? read.value : body.stream(), set: (value: unknown) => { read = { value }; }, enumerable: true, configurable: true }
+      : open({}),
+    rawBody: open(""),
     query: open(query),
     headers: fixed(Object.freeze(headers)),
     cookies: fixed(Object.freeze(cookies)),
@@ -285,8 +296,8 @@ async function handleUpgrade(
     const url = requestUrlOf(req);
     // The same context a request gets, so the steps that route one route the other.
     const context = requestContext(listener, req, {
-      method: "WS", path: requestPathOf(url), body: {}, rawBody: "", query: Object.fromEntries(url.searchParams),
-    }, { [COOKIES]: [], [UPGRADE]: upgrade });
+      method: "WS", path: requestPathOf(url), query: Object.fromEntries(url.searchParams),
+    }, null, { [COOKIES]: [], [UPGRADE]: upgrade });
 
     await runSteps(listener.steps, context);
     if (!upgrade.accepted) socket.destroy();
@@ -301,25 +312,25 @@ async function handleRequest(
   res: http.ServerResponse,
   listener: Listener,
 ): Promise<void> {
+  let body: RequestBody | undefined;
   try {
-    // Refused before the body is read. A form's `_method` override only turns a
-    // POST into another unsafe method, so the raw method decides.
-    if (isCrossSite(req, req.method || "GET", listener)) {
+    // The request is routed and checked by its head alone: the method, the
+    // path, the headers. Its body stays on the connection until a step asks.
+    // The cross-site check goes by the method as sent: one a POST names can
+    // only be another that is checked the same.
+    let method = req.method || "GET";
+    if (isCrossSite(req, method, listener)) {
       sendResponse(res, { response: "Cross-site request refused", responseStatus: 403 });
       return;
     }
     const url = requestUrlOf(req);
-    const { body, rawBody } = await parseBody(req, listener);
-
     // A browser's form sends only GET and POST, so a POST may name the method
-    // it stands for as `_method`: in its URL (`?_method=PUT`), where `$tag`
-    // puts it for a form written with PUT, PATCH or DELETE, or as a field of
-    // its body. The URL's is no part of the query the steps see.
-    let method = req.method || "GET";
+    // it stands for in its URL (`?_method=PUT`), where `$tag` puts it for a
+    // form written with PUT, PATCH or DELETE. It is no part of the query the
+    // steps see.
     if (method === "POST") {
-      const named = url.searchParams.get("_method") ?? (isObject(body) ? body._method : undefined);
-      const override = String(named ?? "").toUpperCase();
-      if (["PUT", "DELETE", "PATCH"].includes(override)) method = override;
+      const named = (url.searchParams.get("_method") ?? "").toUpperCase();
+      if (["PUT", "PATCH", "DELETE"].includes(named)) method = named;
       url.searchParams.delete("_method");
     }
     const requestPath = requestPathOf(url);
@@ -359,10 +370,12 @@ async function handleRequest(
     // A request's streams live as long as it does. Registered before the steps
     // run, so a client that leaves while they still run ends them too.
     res.once("close", () => cancelUnread(openStreams));
-    const context = requestContext(listener, req, { method, path: requestPath, body, rawBody, query }, {
+    body = new RequestBody(req, listener.maxBodySize);
+    const context = requestContext(listener, req, { method, path: requestPath, query }, body, {
       [COOKIES]: setCookies,
       [DEFERRED]: deferred,
       [OPEN_STREAMS]: openStreams,
+      [REQUEST_BODY]: body,
     });
 
     // The steps yield the response: what a `$return` gives, or the last step's value.
@@ -402,6 +415,9 @@ async function handleRequest(
     }
     loggerFor(listener.startupContext).error("[server] Request error:", error);
     sendResponse(res, { response: "Internal Server Error", responseStatus: 500 });
+  } finally {
+    // What no step read of the body is left unread.
+    body?.finish(res);
   }
 }
 
@@ -466,50 +482,6 @@ function replyFor(value: unknown): Reply {
     body: redirect || stream ? "" : type === "json" ? toJson(body ?? null) : body == null ? "" : String(body),
     stream: redirect ? null : stream,
   };
-}
-
-/** A request's body as parsed, by its content type, and as the text it came as. */
-async function parseBody(req: http.IncomingMessage, listener: Listener): Promise<{ body: unknown; rawBody: string }> {
-  return new Promise((resolveBody, reject) => {
-    const chunks: Buffer[] = [];
-    let totalSize = 0;
-
-    req.on("data", (chunk: Buffer) => {
-      totalSize += chunk.length;
-      if (totalSize > listener.maxBodySize) {
-        req.destroy();
-        reject(createHttpError(413, "Request body too large"));
-        return;
-      }
-      chunks.push(chunk);
-    });
-
-    req.on("end", () => {
-      if (chunks.length === 0) {
-        resolveBody({ body: {}, rawBody: "" });
-        return;
-      }
-
-      const rawBody = Buffer.concat(chunks).toString();
-      const contentType = req.headers["content-type"] || "";
-
-      if (contentType.includes("application/json")) {
-        try {
-          resolveBody({ body: JSON.parse(rawBody), rawBody });
-        } catch {
-          reject(createHttpError(400, "Malformed JSON body"));
-        }
-      } else if (contentType.includes("application/x-www-form-urlencoded")) {
-        resolveBody({ body: Object.fromEntries(new URLSearchParams(rawBody)), rawBody });
-      } else {
-        resolveBody({ body: rawBody, rawBody });
-      }
-    });
-
-    req.on("error", () => {
-      resolveBody({ body: {}, rawBody: "" });
-    });
-  });
 }
 
 /**
@@ -1101,7 +1073,7 @@ export class ServerNode extends Node {
       type: "number",
       output: "number",
       outputDescription: "The port it listens on: the one given, or the free port the OS picked for `0`.",
-      markdownDescription: "Starts an HTTP listener on the given port (default 3000; `0` picks any free port). Pass per-request steps in `\"do\"`.\nSet `\"client\": true` (or a path string) to auto-serve the `@jexs/client` browser bundle\nand inject the script tag into rendered `<head>` elements.\nSet `\"sw\"` (with `\"client\"`) to run a service worker: what it precaches, how it answers requests (`routes`), and the steps it resolves per event (`events`).\n\n**Multiple ports.** Bind more ports by adding more `{ \"$listen\": ..., \"do\": [...] }` steps. Each is an independent listener with its own `do` pipeline, `client`, `sw`, `maxBodySize` and `maxMessageSize`.\n\n**Cross-site requests.** A POST, PUT, PATCH or DELETE, or a WebSocket upgrade, that a browser sends from another site's page is refused with 403 before any step runs, since it would carry the user's cookies. Requests from outside a browser (webhooks, scripts) are not affected. Allow other origins with `trustedOrigins`.\n\n**Per-request `do` execution.** The steps run in order in a fresh scope of their own, as any step list does: `$as` and `$setVars` write into it for later steps, and a step resolving to `{ \"$return\": X }` ends the list early with `X`.\n\n**Shared data.** Each request reads the variables of the scope `$listen` ran in, and cannot rebind them: its writes, `$bubble` included, stay in the request. The objects and arrays those variables hold are shared by every request, though, so write data no request should change with `\"readonly\": true` on its `$setVars`, which makes it read-only.\n\n**The request.** The steps read it as `request`: `method` (for a POST that names another as `_method`, in its URL or as a field of its body, that one: PUT, PATCH or DELETE, which a browser's form cannot send itself, so `$tag` writes `?_method=PUT` into the `action` of a form written with one of them; the name is left out of `query`), `path` (as the router matches it: runs of `/` are one, with no trailing `/`), `query`, `headers`, `cookies` (the session's HttpOnly cookie left out, of the `cookie` header too), `ip` (the client's address, from `X-Forwarded-For` with `trustProxy`), `body` (JSON or form fields, parsed by its content type, else the text) and `rawBody` (the body as the text it came as, for checking a webhook's signature with `$hmac`), beside `baseUrl`, the URL the app is reached at. A WebSocket upgrade runs the same steps, with `method` `\"WS\"`, for `$socketAccept` to take it. No step can bind `request` or `session` to another value, or change `method`, `ip`, `headers` or `cookies`, which the session's checks and database validators rely on; the rest of `request` (`path`, `query`, `body`, `params`, and keys of its own) is the steps' to change.\n\n**The response.** What the steps yield, `$return`'s value or the last step's, is the response. HTML (what `$tag` and `$html` return) is sent as `text/html`, a string as `text/plain`, nothing at all as a 404, and any other value as JSON. For full control yield a response object, one with a `response`:\n- `response`: the body (string, any JSON value for `responseType: \"json\"`, or a `ReadableStream`, such as `$fetch` with `stream` resolves to). For `responseType: \"redirect\"` it is the `Location` URL.\n- `responseStatus`: HTTP status code (default `200`, or `302` for a redirect).\n- `responseType`: `\"html\"` | `\"json\"` | `\"text\"` | `\"sse\"` (`text/event-stream`) | `\"ndjson\"` (`application/x-ndjson`) | `\"redirect\"` | a literal MIME string (e.g. `\"image/png\"`). When omitted it is inferred: markup → `html`, a string → `text`, a stream → `application/octet-stream`, otherwise `json`.\n- `responseHeaders`: extra response headers.\n\nIts other keys are not sent. To send a value that has a `response` of its own (a row with a `response` column, say) as data, yield it as a response object's `response`.\n\n**Streaming.** A `ReadableStream` body is sent as it is read, each value as it arrives: bytes as they are, and other values framed for the type, a `data:` event of JSON each for `sse`, a JSON line each for `ndjson`, and otherwise a string as it is and anything else as JSON. Strings go out with nothing between them, so a `$fetch` with `stream: \"lines\"` is relayed as `binary`, or as `ndjson` to keep each line apart. So `{ \"response\": { \"$fetch\": \"https://api.example.com/v1/chat\", \"method\": \"POST\", \"body\": ..., \"stream\": \"sse\" }, \"responseType\": \"sse\" }` relays an upstream event stream, its API key kept on the server, and a page reads it with `$fetch` and `onMessage`. An `sse` response is sent uncached and unbuffered by proxies, with a comment every 15 seconds to keep it open while quiet. A client that disconnects cancels the stream, which aborts the upstream request, and a stream that fails cuts the connection, so the client's `$fetch` fails rather than seeing a complete response. A response fed by later steps is a `$stream`: the steps return it while steps running on with `$then` write to it with `$streamWrite` and end it with `$streamClose`.\n\nA request's streams live as long as it does: when it ends, any stream it made that nothing is reading (a `$fetch` stream left in a variable, a `$stream` never sent) is cancelled, so its upstream request aborts and a `$streamWrite` waiting on it throws. A stream being read, by steps still running after the response has gone out, is left to them. A stream response that writes nothing for `streamIdleTimeout` (five minutes by default; the `sse` comments do not count) is cut, and a stream inside a value sent as JSON is an error rather than `{}`.",
+      markdownDescription: "Starts an HTTP listener on the given port (default 3000; `0` picks any free port). Pass per-request steps in `\"do\"`.\nSet `\"client\": true` (or a path string) to auto-serve the `@jexs/client` browser bundle\nand inject the script tag into rendered `<head>` elements.\nSet `\"sw\"` (with `\"client\"`) to run a service worker: what it precaches, how it answers requests (`routes`), and the steps it resolves per event (`events`).\n\n**Multiple ports.** Bind more ports by adding more `{ \"$listen\": ..., \"do\": [...] }` steps. Each is an independent listener with its own `do` pipeline, `client`, `sw`, `maxBodySize` and `maxMessageSize`.\n\n**Cross-site requests.** A POST, PUT, PATCH or DELETE, or a WebSocket upgrade, that a browser sends from another site's page is refused with 403 before any step runs, since it would carry the user's cookies. Requests from outside a browser (webhooks, scripts) are not affected. Allow other origins with `trustedOrigins`.\n\n**Per-request `do` execution.** The steps run in order in a fresh scope of their own, as any step list does: `$as` and `$setVars` write into it for later steps, and a step resolving to `{ \"$return\": X }` ends the list early with `X`.\n\n**Shared data.** Each request reads the variables of the scope `$listen` ran in, and cannot rebind them: its writes, `$bubble` included, stay in the request. The objects and arrays those variables hold are shared by every request, though, so write data no request should change with `\"readonly\": true` on its `$setVars`, which makes it read-only.\n\n**The request.** The steps read it as `request`: `method` (for a POST whose URL names another as `_method`, that one: PUT, PATCH or DELETE, which a browser's form cannot send itself, so `$tag` writes `?_method=PUT` into the `action` of a form written with one of them; the name is left out of `query`), `path` (as the router matches it: runs of `/` are one, with no trailing `/`), `query`, `headers`, `cookies` (the session's HttpOnly cookie left out, of the `cookie` header too), `ip` (the client's address, from `X-Forwarded-For` with `trustProxy`), `body` (once read whole, JSON or a urlencoded form's fields, parsed by its content type, else its text; before that a stream of it) and `rawBody` (the body as the text it came as, for checking a webhook's signature with `$hmac`), beside `baseUrl`, the URL the app is reached at. The request is routed and checked by its head, and its body is left on the connection until a step reads it: one no step reads is never parsed, and what was sent of it is discarded once the request is answered. So put what decides who may send a body (the session, a route) ahead of the steps that read it. A body is read once, one of two ways. Whole: `$requestBody` reads it, checks it and makes it `request.body`, and `$routes` does the same for the handler it reaches, so steps after either read `request.body` as what was sent. Or as a stream, which is what `request.body` is until then, for `$foreach`, `$reduce` or `$find` to read as it arrives: the body's bytes, which `$fromBytes` reads as text. Nothing read that way is checked: the steps reading the stream check what they take. A WebSocket upgrade runs the same steps, with `method` `\"WS\"`, for `$socketAccept` to take it. No step can bind `request` or `session` to another value, or change `method`, `ip`, `headers` or `cookies`, which the session's checks and database validators rely on; the rest of `request` (`path`, `query`, `body`, `params`, and keys of its own) is the steps' to change.\n\n**The response.** What the steps yield, `$return`'s value or the last step's, is the response. HTML (what `$tag` and `$html` return) is sent as `text/html`, a string as `text/plain`, nothing at all as a 404, and any other value as JSON. For full control yield a response object, one with a `response`:\n- `response`: the body (string, any JSON value for `responseType: \"json\"`, or a `ReadableStream`, such as `$fetch` with `stream` resolves to). For `responseType: \"redirect\"` it is the `Location` URL.\n- `responseStatus`: HTTP status code (default `200`, or `302` for a redirect).\n- `responseType`: `\"html\"` | `\"json\"` | `\"text\"` | `\"sse\"` (`text/event-stream`) | `\"ndjson\"` (`application/x-ndjson`) | `\"redirect\"` | a literal MIME string (e.g. `\"image/png\"`). When omitted it is inferred: markup → `html`, a string → `text`, a stream → `application/octet-stream`, otherwise `json`.\n- `responseHeaders`: extra response headers.\n\nIts other keys are not sent. To send a value that has a `response` of its own (a row with a `response` column, say) as data, yield it as a response object's `response`.\n\n**Streaming.** A `ReadableStream` body is sent as it is read, each value as it arrives: bytes as they are, and other values framed for the type, a `data:` event of JSON each for `sse`, a JSON line each for `ndjson`, and otherwise a string as it is and anything else as JSON. Strings go out with nothing between them, so a `$fetch` with `stream: \"lines\"` is relayed as `binary`, or as `ndjson` to keep each line apart. So `{ \"response\": { \"$fetch\": \"https://api.example.com/v1/chat\", \"method\": \"POST\", \"body\": ..., \"stream\": \"sse\" }, \"responseType\": \"sse\" }` relays an upstream event stream, its API key kept on the server, and a page reads it with `$fetch` and `onMessage`. An `sse` response is sent uncached and unbuffered by proxies, with a comment every 15 seconds to keep it open while quiet. A client that disconnects cancels the stream, which aborts the upstream request, and a stream that fails cuts the connection, so the client's `$fetch` fails rather than seeing a complete response. A response fed by later steps is a `$stream`: the steps return it while steps running on with `$then` write to it with `$streamWrite` and end it with `$streamClose`.\n\nA request's streams live as long as it does: when it ends, any stream it made that nothing is reading (a `$fetch` stream left in a variable, a `$stream` never sent) is cancelled, so its upstream request aborts and a `$streamWrite` waiting on it throws. A stream being read, by steps still running after the response has gone out, is left to them. A stream response that writes nothing for `streamIdleTimeout` (five minutes by default; the `sse` comments do not count) is cut, and a stream inside a value sent as JSON is an error rather than `{}`.",
       examples: [
         "{ \"$listen\": 3000, \"client\": true, \"do\": [{ \"$session\": \"load\" }, { \"$routes\": { \"$var\": \"routes\" } }] }",
         "{ \"response\": { \"id\": 7 }, \"responseStatus\": 201 }",
@@ -1117,7 +1089,7 @@ export class ServerNode extends Node {
         },
         maxBodySize: {
           type: "number",
-          description: "Maximum request body size in bytes (default 1048576, 1 MB). A larger body is refused with 413.",
+          description: "Maximum request body size in bytes (default 1048576, 1 MB). A larger body is refused with 413. A body read as a stream is not limited.",
         },
         requestTimeout: {
           type: "number",
@@ -1207,6 +1179,14 @@ export class ServerNode extends Node {
           },
         },
       },
+    },
+    requestBody: {
+      $ref: "#/$defs/_jsonSchema",
+      markdownDescription: "Reads the request's body whole, checks it, makes it `request.body` and resolves to it. The value is the JSON Schema it is checked against, written out as it is (`{}` or `true` to take any body): a failure is a 400 that lists what failed. A route does the same for the handler it reaches, with the handler's `body`, so a step in a route's `do` reads `request.body` without this. Use it in `$listen`'s steps where there is no router, after the checks that decide who may send a body.\nThe body is parsed by its content type: JSON, a urlencoded form's fields, else its text, within `$listen`'s `maxBodySize`, with `request.rawBody` its text as it came. A request without a body gives `{}`. A body is read once: read already, by a route or an earlier `$requestBody`, it is checked as it stands, and one being read as a stream is an error.",
+      outputDescription: "The body as read: JSON, a urlencoded form's fields, or its text; `{}` for a request without one.",
+      examples: [
+        "{ \"$requestBody\": { \"type\": \"object\", \"required\": [\"title\"], \"properties\": { \"title\": { \"type\": \"string\", \"maxLength\": 80 } } } }",
+      ],
     },
   };
 
@@ -1384,5 +1364,10 @@ export class ServerNode extends Node {
 
       return port;
     });
+  }
+
+  requestBody(def: Record<string, unknown>, context: Context): NodeValue {
+    // The schema is taken as written, like a route's `body`: its own `$ref` and `$defs` are no steps.
+    return readRequestBody(context, "$requestBody", { schema: def.$requestBody });
   }
 }

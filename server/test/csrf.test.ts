@@ -292,7 +292,7 @@ test("without the mark, an Origin whose host the request was sent to passes, and
   }
 });
 
-test("through a listener, a token in the body is not taken, and a browser's own headers pass without one", async () => {
+test("through a listener, the session's check never reads the body: a token there is not taken, and a body that would not parse is no error", async () => {
   const resolver = createResolver([...coreNodes(), new CacheNode(), new SessionNode(), new ServerNode()]);
   try {
     const port = await resolver({
@@ -313,8 +313,10 @@ test("through a listener, a token in the body is not taken, and a browser's own 
     assert.equal((await post("title=x")).status, 403);
     assert.equal((await post(`_csrf=${encodeURIComponent(token)}&title=x`)).status, 403);
     assert.equal(await (await post("title=x", { "x-csrf-token": token })).text(), "ok");
-    assert.equal(await (await post("title=x", { "sec-fetch-site": "same-origin" })).text(), "ok");
-    assert.equal(await (await post("title=x", { origin: `http://127.0.0.1:${port}` })).text(), "ok");
+    const json = { "content-type": "application/json" };
+    assert.equal(await (await post("{not json", { ...json, "sec-fetch-site": "same-origin" })).text(), "ok");
+    assert.equal(await (await post("{not json", { ...json, origin: `http://127.0.0.1:${port}` })).text(), "ok");
+    assert.equal((await post("{not json", json)).status, 403);
   } finally {
     resolver.destroy();
   }

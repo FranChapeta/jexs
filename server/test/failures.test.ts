@@ -42,7 +42,7 @@ test("in production, the default cache must be connected", async () => {
 test("a malformed JSON body is a 400", async () => {
   const own = createResolver([...coreNodes(), ...serverNodes({ root: "." })]);
   try {
-    const port = await own({ $listen: 0, do: [{ $var: "request.body" }] }, {});
+    const port = await own({ $listen: 0, do: [{ $requestBody: {} }] }, {});
     const post = (body: string) => fetch(`http://127.0.0.1:${port}/`, { method: "POST", headers: { "content-type": "application/json" }, body });
     assert.equal((await post('{"ok":true}')).status, 200);
     const bad = await post("{nope");
@@ -58,7 +58,7 @@ test("a malformed JSON body is a 400", async () => {
 test("a request carries its body as the text it came as, beside the parsed one", async () => {
   const own = createResolver([...coreNodes(), ...serverNodes({ root: "." })]);
   try {
-    const port = await own({ $listen: 0, do: [{ response: { raw: { $var: "request.rawBody" }, id: { $var: "request.body.id" } } }] }, {});
+    const port = await own({ $listen: 0, do: [{ $requestBody: {} }, { response: { raw: { $var: "request.rawBody" }, id: { $var: "request.body.id" } } }] }, {});
     const sent = '{ "id": 7,  "b": 1 }';
     const res = await fetch(`http://127.0.0.1:${port}/`, { method: "POST", headers: { "content-type": "application/json" }, body: sent });
     assert.deepEqual(await res.json(), { raw: sent, id: 7 });
