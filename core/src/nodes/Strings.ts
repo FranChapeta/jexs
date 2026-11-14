@@ -148,7 +148,7 @@ export class StringNode extends Node {
     },
     fromBytes: {
       output: "string",
-      markdownDescription: "Reads bytes as the UTF-8 text they are: a `Uint8Array` or `Buffer`, such as a binary file `$file` loaded or what `$fetch` gives with `type: \"binary\"`. Given a stream of bytes, such as a request's `request.body` or a `$fetch` with `stream: \"binary\"`, it resolves at once to a stream of the text, read from the bytes only as that stream is read: a character whose bytes arrive in two values is kept whole, which reading each value on its own would break. Gather a stream's text with `$reduce` and `$concat`, and parse it with `$parseJSON`.",
+      markdownDescription: "Reads bytes as the UTF-8 text they are: a `Uint8Array` or `Buffer`, such as a binary file `$file` loaded or what `$fetch` gives with `type: \"binary\"`. A blob or file is read as its bytes are. Given a stream of bytes, such as a request's `request.body` or a `$fetch` with `stream: \"binary\"`, it resolves at once to a stream of the text, read from the bytes only as that stream is read: a character whose bytes arrive in two values is kept whole, which reading each value on its own would break. Gather a stream's text with `$reduce` and `$concat`, and parse it with `$parseJSON`.",
       outputDescription: "The text; for a stream of bytes, a stream of it.",
       examples: [
         "{ \"$fromBytes\": { \"$file\": \"/data/notes.bin\" } }",
@@ -479,8 +479,9 @@ export class StringNode extends Node {
   fromBytes(def: Record<string, unknown>, c: Context) {
     return resolve(def.$fromBytes, c, value => {
       if (isStream(value)) return textStream(value);
+      if (value instanceof Blob) return value.text();
       const bytes = bytesOf(value);
-      if (!bytes) throw new Error(`$fromBytes takes bytes or a stream of them, got ${value === null ? "null" : typeof value}`);
+      if (!bytes) throw new Error(`$fromBytes takes bytes, a blob or a stream of bytes, got ${value === null ? "null" : typeof value}`);
       return new TextDecoder().decode(bytes);
     });
   }
@@ -532,7 +533,9 @@ export class StringNode extends Node {
 
   stringify(def: Record<string, unknown>, c: Context) {
     return resolveAll([def.$stringify, def.indent ?? 0], c, ([value, indent]) =>
-      JSON.stringify(value, null, Number(indent) || undefined),
+      // A blob or file is shown as what it is, never as its bytes.
+      JSON.stringify(value, (_key, v: unknown) =>
+        v instanceof Blob ? { name: v instanceof File ? v.name : undefined, type: v.type, size: v.size } : v, Number(indent) || undefined),
     );
   }
 

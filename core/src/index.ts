@@ -35,6 +35,10 @@ export type { HttpError, ErrorBindings, ErrorResponse } from "./errors.js";
 // `$fetch`'s `stream` names, for a host that reads a body of its own.
 export { STREAM_KINDS, splitStream, type StreamKind } from "./streams.js";
 
+// ── Media types ──
+// A file's type as its first bytes show it, for a host that takes files of its own.
+export { SNIFF_BYTES, acceptType, typeList } from "./media-type.js";
+
 // ── Core nodes ──
 export { TimerNode } from "./nodes/Timer.js";
 export { FetchNode, pageCsrfToken } from "./nodes/Fetch.js";
@@ -60,6 +64,7 @@ import { DateNode } from "./nodes/Date.js";
 import { ErrorNode } from "./nodes/Error.js";
 import { FetchNode } from "./nodes/Fetch.js";
 import { StreamNode } from "./nodes/Stream.js";
+import { BlobNode } from "./nodes/Blob.js";
 
 /**
  * Core nodes — pure logic plus global-fetch HTTP; no DOM or Node.js APIs. Safe
@@ -86,6 +91,7 @@ export function coreNodes(): Node[] {
     new ErrorNode(),
     new FetchNode(),
     new StreamNode(),
+    new BlobNode(),
   ];
 }
 
