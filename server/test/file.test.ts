@@ -142,3 +142,48 @@ test("a $file loaded under a $runVar's allow keeps to it", async () => {
   assert.equal(String(await Promise.resolve(resolve({ $runVar: "page", allow: ["file", "tag", "upper"] }, ctx))), "<p>HI</p>");
   await assert.rejects(Promise.resolve(resolve({ $runVar: "page", allow: ["file", "tag"] }, ctx)), /"\$upper" is not allowed here/);
 });
+
+test("append adds to the end of a file, making it if there is none: text and bytes as they are, anything else as a line of JSON", async () => {
+  assert.equal(await run({ $file: "/log.txt", append: "a" }), null);
+  await run({ $file: "/log.txt", append: "b\n" });
+  await run({ $file: "/log.txt", append: { $var: "nothing" } });
+  assert.equal(await fs.readFile(abs("log.txt"), "utf8"), "ab\nnull\n");
+  await run({ $file: "/records.jsonl", append: { id: 1 } });
+  await run({ $file: "/records.jsonl", append: { id: 2 } });
+  assert.equal(await fs.readFile(abs("records.jsonl"), "utf8"), '{"id":1}\n{"id":2}\n');
+  await Promise.resolve(resolve({ $file: "/bytes.bin", append: { $var: "bytes" } }, { bytes: new Uint8Array([1, 2]) }));
+  await Promise.resolve(resolve({ $file: "/bytes.bin", append: { $var: "bytes" } }, { bytes: new Uint8Array([3]) }));
+  assert.deepEqual([...await fs.readFile(abs("bytes.bin"))], [1, 2, 3]);
+});
+
+/** A stream of the given values, one per read; an `Error` among them fails it there. */
+function streamOf(values: unknown[]): ReadableStream<unknown> {
+  const left = [...values];
+  return new ReadableStream({
+    pull(controller) {
+      const next = left.shift();
+      if (next instanceof Error) controller.error(next);
+      else if (left.length === 0 && next === undefined) controller.close();
+      else controller.enqueue(next);
+    },
+  });
+}
+const write = (step: Record<string, unknown>, source: ReadableStream<unknown>) => Promise.resolve(resolve(step, { source }));
+
+test("write and append take a stream, writing its bytes and text as they arrive", async () => {
+  await write({ $file: "/stream.txt", write: { $var: "source" } }, streamOf([Buffer.from("one,"), "two,", new Uint8Array([0x33])]));
+  assert.equal(await fs.readFile(abs("stream.txt"), "utf8"), "one,two,3");
+  await write({ $file: "/stream.txt", append: { $var: "source" } }, streamOf([",four"]));
+  assert.equal(await fs.readFile(abs("stream.txt"), "utf8"), "one,two,3,four");
+  await write({ $file: "/empty.txt", write: { $var: "source" } }, streamOf([]));
+  assert.equal(await fs.readFile(abs("empty.txt"), "utf8"), "");
+});
+
+test("a stream that fails partway, or holds what is no file's content, leaves the file as it was", async () => {
+  await fs.writeFile(abs("kept.txt"), "old");
+  await assert.rejects(write({ $file: "/kept.txt", write: { $var: "source" } }, streamOf(["new", new Error("cut off")])), /cut off/);
+  await assert.rejects(write({ $file: "/kept.txt", append: { $var: "source" } }, streamOf(["more", new Error("cut off")])), /cut off/);
+  await assert.rejects(write({ $file: "/kept.txt", write: { $var: "source" } }, streamOf(["new", { field: "title" }])), /holds bytes or text, not object/);
+  assert.equal(await fs.readFile(abs("kept.txt"), "utf8"), "old");
+  assert.deepEqual((await fs.readdir(root)).filter(name => name.endsWith(".part")), []);
+});

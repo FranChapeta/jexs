@@ -1,5 +1,9 @@
 import fs from "fs/promises";
 import path from "path";
+import { randomUUID } from "crypto";
+import { createWriteStream } from "fs";
+import { Readable } from "stream";
+import { pipeline } from "stream/promises";
 import { Node, Context, NodeValue, Html, resolve, resolveAll, runSteps, childContext, isObject } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
@@ -71,7 +75,7 @@ export class FileNode extends Node {
     file: {
       type: "string",
       output: "any",
-      markdownDescription: "Loads a JSON file and resolves it as a Jexs expression. Paths resolve like a filesystem: relative to the file doing the loading (`\"nav.json\"`, `\"../shared/x.json\"`), while a leading `/` anchors at the resolver root (`\"/data/site.json\"`).\nArrays are executed as step sequences; objects are resolved as a single expression.\nPass `\"data\": true` to skip resolution and get the raw parsed JSON (use for data files, route trees, and anywhere you want the resolver to leave the file alone).\nPass `\"raw\": true` for the raw string content with no JSON parse.\nPass `\"params\"` to merge scoped variables into the file's resolution context, or `\"write\"` to write data to the file.",
+      markdownDescription: "Loads a JSON file and resolves it as a Jexs expression. Paths resolve like a filesystem: relative to the file doing the loading (`\"nav.json\"`, `\"../shared/x.json\"`), while a leading `/` anchors at the resolver root (`\"/data/site.json\"`).\nArrays are executed as step sequences; objects are resolved as a single expression.\nPass `\"data\": true` to skip resolution and get the raw parsed JSON (use for data files, route trees, and anywhere you want the resolver to leave the file alone).\nPass `\"raw\": true` for the raw string content with no JSON parse.\nPass `\"params\"` to merge scoped variables into the file's resolution context, or `\"write\"` or `\"append\"` to write data to the file.",
       outputDescription: "Default: the file resolved as a Jexs expression (a JSON array runs as steps → its last value; a JSON object resolves to its value). With `data: true`, the raw parsed JSON; with `raw: true`, the file as a string; non-JSON text files return their string and binaries a Buffer. A file that can't be read, or a `.json` file that isn't valid JSON, is an error; `fileExists` asks first without one.",
       examples: [
         "{ \"$file\": \"pages/home.json\", \"params\": { \"title\": \"Home\" } }",
@@ -95,7 +99,11 @@ export class FileNode extends Node {
       variants: {
         write: {
           output: "null",
-          markdownDescription: "Writes data to the file (strings verbatim, otherwise JSON). A failure is an error.",
+          markdownDescription: "Writes data to the file, by what the data is: a string as it is, bytes (a `Buffer`, such as a binary file `$file` loaded) as they are, a stream as its values arrive, and anything else as JSON. A failure is an error.\nA stream is written as it is read, so memory stays flat however much it carries: one of bytes or text, such as a `$fetch` with `stream: \"binary\"`, or a `$stream`. A stream of anything else is an error, and one that fails partway leaves the destination as it was.",
+        },
+        append: {
+          output: "null",
+          markdownDescription: "Adds data to the end of the file, making it if there is none: a string or bytes as they are, a stream of bytes or text as it arrives (like `write`), and anything else as one line of JSON, so a file of appended records reads as JSON Lines. A failure is an error. A stream that fails partway leaves the file as it was before.",
         },
         copy: {
           type: "string",
@@ -210,7 +218,8 @@ export class FileNode extends Node {
   }
 
   file(def: Record<string, unknown>, context: Context): NodeValue {
-    if ("write" in def) return writeFile(def, context, this.rootAbs);
+    if ("write" in def) return writeFile(def, context, this.rootAbs, "write");
+    if ("append" in def) return writeFile(def, context, this.rootAbs, "append");
     if ("copy" in def) return transferFile(def, context, this.rootAbs, "copy");
     if ("move" in def) return transferFile(def, context, this.rootAbs, "move");
     return loadFile(def, context, this.rootAbs);
@@ -369,12 +378,65 @@ function writeFile(
   def: Record<string, unknown>,
   context: Context,
   rootAbs: string,
+  mode: "write" | "append",
 ): unknown {
-  return resolveAll([def.$file, def.write], context, async ([filePathValue, data]) => {
+  return resolveAll([def.$file, def[mode]], context, async ([filePathValue, data]) => {
     const filePath = resolvePath(filePathValue, rootAbs, getFileDir(context));
-    await fs.writeFile(filePath, typeof data === "string" || data instanceof Html ? String(data) : JSON.stringify(data, null, 2));
+    if (data instanceof ReadableStream) {
+      await writeArriving(filePath, streamChunks(data), mode === "append");
+    } else if (data instanceof Uint8Array || typeof data === "string" || data instanceof Html) {
+      const content = data instanceof Uint8Array ? data : String(data);
+      await (mode === "append" ? fs.appendFile(filePath, content) : fs.writeFile(filePath, content));
+    } else if (mode === "append") {
+      await fs.appendFile(filePath, JSON.stringify(data ?? null) + "\n");
+    } else {
+      await fs.writeFile(filePath, JSON.stringify(data, null, 2));
+    }
     return null;
   });
+}
+
+/**
+ * Write what `source` gives to `to` as it arrives, or with `append` add it to
+ * the end of what is there. A write goes to a file beside `to` that takes its
+ * place once it is all in, so if the source fails partway `to` is as it was,
+ * and an append is cut back to where it began.
+ */
+async function writeArriving(to: string, source: AsyncIterable<Uint8Array | string>, append: boolean): Promise<void> {
+  const target = append ? to : `${to}.${randomUUID()}.part`;
+  const before = append ? await fs.stat(to).then(s => s.size, () => null) : null;
+  try {
+    await pipeline(Readable.from(source, { objectMode: false }), createWriteStream(target, { flags: append ? "a" : "w" }));
+    if (!append) await fs.rename(target, to);
+  } catch (error) {
+    await (before === null ? fs.rm(target, { force: true }) : fs.truncate(to, before));
+    throw error;
+  }
+}
+
+/**
+ * A stream's values as what a file holds: bytes as they are, and text as it is.
+ * A stream of anything else (a form's parts, parsed values) is no file's
+ * content, and fails the write. Leaving early cancels the stream.
+ */
+async function* streamChunks(stream: ReadableStream<unknown>): AsyncGenerator<Uint8Array | string> {
+  const reader = stream.getReader();
+  let finished = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        finished = true;
+        return;
+      }
+      if (value instanceof Uint8Array || typeof value === "string") yield value;
+      else if (value instanceof ArrayBuffer) yield new Uint8Array(value);
+      else if (value instanceof Html) yield String(value);
+      else throw new Error(`$file: a stream written to a file holds bytes or text, not ${value === null ? "null" : Array.isArray(value) ? "an array" : typeof value}`);
+    }
+  } finally {
+    if (!finished) reader.cancel().catch(() => undefined);
+  }
 }
 
 /**
