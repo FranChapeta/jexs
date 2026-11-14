@@ -179,6 +179,19 @@ test("write and append take a stream, writing its bytes and text as they arrive"
   assert.equal(await fs.readFile(abs("empty.txt"), "utf8"), "");
 });
 
+test("write and append take a blob or file, writing the bytes it holds", async () => {
+  await write({ $file: "/blob.txt", write: { $var: "source" } }, new File(["one,"], "any-name.txt", { type: "text/plain" }));
+  await write({ $file: "/blob.txt", append: { $var: "source" } }, new Blob([new Uint8Array([0x32])]));
+  assert.equal(await fs.readFile(abs("blob.txt"), "utf8"), "one,2");
+});
+
+test("a stream is read once: writing one that was read already is an error that says so", async () => {
+  const source = streamOf(["once"]);
+  await write({ $file: "/once.txt", write: { $var: "source" } }, source);
+  await assert.rejects(write({ $file: "/again.txt", write: { $var: "source" } }, source), /read already/);
+  await assert.rejects(fs.stat(abs("again.txt")));
+});
+
 test("a stream that fails partway, or holds what is no file's content, leaves the file as it was", async () => {
   await fs.writeFile(abs("kept.txt"), "old");
   await assert.rejects(write({ $file: "/kept.txt", write: { $var: "source" } }, streamOf(["new", new Error("cut off")])), /cut off/);

@@ -99,11 +99,11 @@ export class FileNode extends Node {
       variants: {
         write: {
           output: "null",
-          markdownDescription: "Writes data to the file, by what the data is: a string as it is, bytes (a `Buffer`, such as a binary file `$file` loaded) as they are, a stream as its values arrive, and anything else as JSON. A failure is an error.\nA stream is written as it is read, so memory stays flat however much it carries: one of bytes or text, such as a `$fetch` with `stream: \"binary\"`, or a `$stream`. A stream of anything else is an error, and one that fails partway leaves the destination as it was.",
+          markdownDescription: "Writes data to the file, by what the data is: a string as it is, bytes (a `Buffer`, such as a binary file `$file` loaded) as they are, a blob or file (from `$blob`, or a `$fetch` with `type: \"blob\"`) as the bytes it holds, a stream as its values arrive, and anything else as JSON. A failure is an error.\nA stream is written as it is read, so memory stays flat however much it carries: one of bytes or text, such as a `$fetch` with `stream: \"binary\"`, or a `$stream`. A stream of anything else is an error, and one that fails partway leaves the destination as it was. A stream is read once, so writing one that was read already is an error.",
         },
         append: {
           output: "null",
-          markdownDescription: "Adds data to the end of the file, making it if there is none: a string or bytes as they are, a stream of bytes or text as it arrives (like `write`), and anything else as one line of JSON, so a file of appended records reads as JSON Lines. A failure is an error. A stream that fails partway leaves the file as it was before.",
+          markdownDescription: "Adds data to the end of the file, making it if there is none: a string or bytes as they are, a blob or file, or a stream of bytes or text as it arrives (like `write`), and anything else as one line of JSON, so a file of appended records reads as JSON Lines. A failure is an error. A stream that fails partway leaves the file as it was before.",
         },
         copy: {
           type: "string",
@@ -382,8 +382,11 @@ function writeFile(
 ): unknown {
   return resolveAll([def.$file, def[mode]], context, async ([filePathValue, data]) => {
     const filePath = resolvePath(filePathValue, rootAbs, getFileDir(context));
-    if (data instanceof ReadableStream) {
-      await writeArriving(filePath, streamChunks(data), mode === "append");
+    if (data instanceof ReadableStream && data.locked) {
+      throw new Error("$file: this stream was read already. A stream is read once, so copy the file that write made");
+    }
+    if (data instanceof Blob || data instanceof ReadableStream) {
+      await writeArriving(filePath, streamChunks(data instanceof Blob ? data.stream() : data), mode === "append");
     } else if (data instanceof Uint8Array || typeof data === "string" || data instanceof Html) {
       const content = data instanceof Uint8Array ? data : String(data);
       await (mode === "append" ? fs.appendFile(filePath, content) : fs.writeFile(filePath, content));
