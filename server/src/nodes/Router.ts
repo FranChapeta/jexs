@@ -18,6 +18,8 @@ interface RouteHandler {
   do?: unknown;
   queryParams?: Record<string, unknown>;
   body?: Record<string, unknown>;
+  /** Leave the body a stream for `do` to read. */
+  stream?: boolean;
 }
 
 /**
@@ -77,7 +79,7 @@ export class RouterNode extends Node {
   static schema: JexsNodeSchema = {
     routes: {
       $ref: "#/$defs/_routesSlot",
-      markdownDescription: "Matches the incoming request path and method against a route tree, then executes the handler.\nSupports exact segments, `*` (single param with optional `paramName`/`paramRegex`),\n`**` (catch-all), and `queryParams`/`body` validation. When a handler is reached, after its `queryParams` is checked, the router reads the request's body whole, checks it against the handler's `body`, and makes it `request.body`, as `$requestBody` does.\n\nA captured param is read from `request.params` (`{ \"$var\": \"request.params.id\" }`), beside `request.query` and `request.body`. `paramRegex` is anchored to the whole segment (for `**`, the whole rest of the path), so `\"new|edit\"` matches `new` but not `newsletter`.\n\nA handler is a `$file` step or a `do` of steps, never both, or an expression resolving to one of those. A `WS` handler completes a WebSocket upgrade by calling `socketAccept` as a `do` step.\n\nA route node written as a step is resolved when the matcher reaches it, after the params above it are captured, so `{ \"$if\": <cond>, \"then\": { \"$var\": \"adminRoutes\" } }` adds a subtree only when the condition holds; a failed condition leaves no node there. Hold such a subtree by reference, stored with `$setVars` or loaded with `$file`, either with `data: true`: `$if` resolves the branch it picks, so an inline subtree would run its handlers.",
+      markdownDescription: "Matches the incoming request path and method against a route tree, then executes the handler.\nSupports exact segments, `*` (single param with optional `paramName`/`paramRegex`),\n`**` (catch-all), and `queryParams`/`body` validation. When a handler is reached, after its `queryParams` is checked, the router reads the request's body whole, checks it against the handler's `body`, and makes it `request.body`, as `$requestBody` does.\n\nA handler with `stream: true` has the body left for its `do` to read as it arrives instead: `request.body` is a stream of its bytes, which `body` does not check and `$streamSplit` splits into lines, JSON values or events.\n\nA captured param is read from `request.params` (`{ \"$var\": \"request.params.id\" }`), beside `request.query` and `request.body`. `paramRegex` is anchored to the whole segment (for `**`, the whole rest of the path), so `\"new|edit\"` matches `new` but not `newsletter`.\n\nA handler is a `$file` step or a `do` of steps, never both, or an expression resolving to one of those. A `WS` handler completes a WebSocket upgrade by calling `socketAccept` as a `do` step.\n\nA route node written as a step is resolved when the matcher reaches it, after the params above it are captured, so `{ \"$if\": <cond>, \"then\": { \"$var\": \"adminRoutes\" } }` adds a subtree only when the condition holds; a failed condition leaves no node there. Hold such a subtree by reference, stored with `$setVars` or loaded with `$file`, either with `data: true`: `$if` resolves the branch it picks, so an inline subtree would run its handlers.",
       outputDescription: "The matched handler's result, as it stands: a rendered `$file` page, or what its `do` yields. As the value a `$listen` request's steps end with, it is the response. Throws a 404 HTTP error when no route matches, so use a catch-all route (`**`) or wrap calls in `$catch` to handle not-found.",
       examples: [
         "{ \"$routes\": { \"children\": { \"users\": { \"methods\": { \"GET\": { \"$file\": \"pages/users.json\" } } } } } }",
@@ -120,6 +122,8 @@ export class RouterNode extends Node {
         // inside them (NOT exprFlat: these are static author-time schemas).
         queryParams: { $ref: "#/$defs/_jsonSchema" },
         body:        { $ref: "#/$defs/_jsonSchema" },
+        // Whether the body is left a stream.
+        stream:      { type: "boolean", description: "Leave the body a stream for `do` to read as it arrives, rather than reading it whole first." },
       },
       // One node to an object: a handler is a template, a step list or a bare
       // expression, never two. A step list already covers both, file last:
@@ -291,7 +295,7 @@ async function executeHandler(handler: RouteHandler, context: Context): Promise<
   // checked before the body is read. The body is then read whole, checked,
   // and made `request.body`, as `$requestBody` does it.
   if (handler.queryParams) assertValid(context, handler.queryParams, context.request?.query ?? {}, "query");
-  await readRequestBody(context, "route", { schema: handler.body });
+  await readRequestBody(context, "route", { schema: handler.body, stream: handler.stream === true });
 
   if (handler.do !== undefined) {
     return (await runSteps(handler.do, context)) ?? null;

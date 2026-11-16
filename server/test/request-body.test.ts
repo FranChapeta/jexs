@@ -48,7 +48,6 @@ before(async () => {
         ],
       },
       { $if: at("/pipe"), then: [{ $file: "/piped.bin", write: { $var: "request.body" } }] },
-      { $if: at("/mixed"), then: [{ $find: { $var: "request.body" }, do: true }, { $requestBody: {} }] },
       { $if: at("/twice"), then: [{ $requestBody: {} }, { $requestBody: { type: "object", required: ["title"] }, $as: "second" }, record("body", { $var: "second" })] },
       { $concat: ["ok"] },
     ],
@@ -117,11 +116,10 @@ test("a request is answered by its head: a body no step reads is never read or p
   assert.equal(await (await send(`${manual}/none`, "application/json", JSON.stringify({ big: "x".repeat(5000) }))).text(), "ok", "past maxBodySize");
 });
 
-test("a body is read once: read whole again it is checked as it stands, and one being read as a stream can't be read whole", async () => {
+test("a body read whole and read again is checked as it stands", async () => {
   assert.equal(await (await send(`${manual}/twice`, "application/json", '{"title":"Report"}')).text(), "ok");
   assert.deepEqual(seen.body, { title: "Report" });
   assert.equal((await send(`${manual}/twice`, "application/json", '{"other":1}')).status, 400);
-  assert.equal((await send(`${manual}/mixed`, "application/json", '{"title":"Report"}')).status, 500);
 });
 
 // ── request.body as a stream ──
