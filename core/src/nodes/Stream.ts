@@ -1,8 +1,11 @@
 import { Node, Context, NodeValue, trackStream } from "./Node.js";
 import { resolve, resolveAll } from "../Resolver.js";
 import { operands } from "../helpers.js";
-import { closeStream, makeStream, writeStream } from "../streams.js";
+import { bytesOf, closeStream, isStream, makeStream, splitStream, streamOf, writeStream, type StreamKind } from "../streams.js";
 import type { JexsNodeSchema } from "../schema.js";
+
+/** What `$streamSplit` splits bytes into: `$fetch`'s stream kinds, but for `binary`, which is the bytes as they are. */
+const SPLIT_KINDS: readonly StreamKind[] = ["text", "lines", "ndjson", "sse"];
 
 export class StreamNode extends Node {
   static schema: JexsNodeSchema = {
@@ -42,6 +45,30 @@ export class StreamNode extends Node {
         },
       },
     },
+    streamSplit: {
+      $ref: "#/$defs/_stream",
+      output: { $ref: "#/$defs/_stream" },
+      markdownDescription: "Splits a stream of bytes into the messages they carry, read from it only as the new stream is read: a request's `request.body`, a `$fetch` with `stream: \"binary\"`, a file's `$blobStream`. A message cut across two chunks is kept whole, which reading each chunk on its own would break. A value that is not bytes fails the stream. Cancelling the new stream cancels the one it reads.",
+      outputDescription: "A stream of the messages.",
+      examples: [
+        "{ \"$foreach\": { \"$streamSplit\": { \"$var\": \"request.body\" }, \"kind\": \"ndjson\" }, \"item\": \"row\", \"do\": [{ \"$queryInsert\": \"events\", \"data\": { \"$var\": \"row\" } }] }",
+        "{ \"$streamSplit\": { \"$blobStream\": { \"$file\": \"/logs/today.log\", \"raw\": true } }, \"kind\": \"lines\" }",
+      ],
+      siblings: {
+        kind: {
+          type: "string",
+          enum: SPLIT_KINDS,
+          required: true,
+          markdownDescription: "What the bytes are split into, as `$fetch`'s `stream` splits a response.",
+          variants: {
+            text: { markdownDescription: "UTF-8 text as it arrives, a string per chunk: a character split across two chunks is kept whole." },
+            lines: { markdownDescription: "One string per line, without its line break." },
+            ndjson: { markdownDescription: "One parsed JSON value per non-blank line." },
+            sse: { markdownDescription: "Server-Sent Events: each event's `data`, parsed as JSON when it parses." },
+          },
+        },
+      },
+    },
   };
 
   static schemaDefs = {
@@ -74,6 +101,26 @@ export class StreamNode extends Node {
       // it could not find still means the writing failed.
       closeStream("streamClose", target, def.error === undefined ? undefined : this.toString(error) || "the stream failed");
       return null;
+    });
+  }
+
+  streamSplit(def: Record<string, unknown>, context: Context): NodeValue {
+    return resolveAll([def.$streamSplit, def.kind ?? null], context, ([source, kindValue]) => {
+      if (!isStream(source)) throw new Error(`$streamSplit takes a stream of bytes, got ${source === null ? "null" : typeof source}`);
+      const kind = this.getOption(kindValue, SPLIT_KINDS, "streamSplit kind");
+      if (!kind) throw new Error(`$streamSplit needs a kind: one of ${SPLIT_KINDS.join(", ")}`);
+      const reader = source.getReader();
+      // Each value checked to be bytes, so a stream of anything else fails saying so.
+      const bytes = (async function* (): AsyncGenerator<Uint8Array> {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) return;
+          const chunk = bytesOf(value);
+          if (!chunk) throw new Error(`$streamSplit takes a stream of bytes, and this one holds ${value === null ? "null" : typeof value}`);
+          yield chunk;
+        }
+      })();
+      return splitStream(streamOf(bytes, reason => reader.cancel(reason)), kind);
     });
   }
 }

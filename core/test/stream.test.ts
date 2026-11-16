@@ -21,6 +21,32 @@ async function readAll(stream: ReadableStream<unknown>): Promise<unknown[]> {
   }
 }
 
+/** A stream of the given values, one per read. */
+function sourceOf(values: unknown[]): ReadableStream<unknown> {
+  const left = [...values];
+  return new ReadableStream({ pull(c) { if (left.length > 0) c.enqueue(left.shift()); else c.close(); } });
+}
+const bytes = (text: string) => new TextEncoder().encode(text);
+
+test("streamSplit: splits a stream of bytes into lines, JSON values, text or events, a message cut across chunks kept whole", async () => {
+  const split = async (kind: string, chunks: string[]) =>
+    readAll(asStream(await resolve({ $streamSplit: { $var: "source" }, kind }, { source: sourceOf(chunks.map(bytes)) })));
+  assert.deepEqual(await split("lines", ["one\r\ntw", "o\nthree"]), ["one", "two", "three"]);
+  assert.deepEqual(await split("ndjson", ['{"n":1}\n\n{"n"', ":2}\n"]), [{ n: 1 }, { n: 2 }]);
+  assert.deepEqual((await split("text", ["Se", "ñor"])).join(""), "Señor");
+  assert.deepEqual(await split("sse", ["data: {\"a\":1}\n\nda", "ta: two\n\n"]), [{ a: 1 }, "two"]);
+  assert.deepEqual(await split("lines", []), []);
+});
+
+test("streamSplit: takes only a stream of bytes, and a kind it knows", async () => {
+  const fails = (step: unknown, vars: Record<string, unknown>) => Promise.resolve().then(() => resolve(step, vars));
+  await assert.rejects(fails({ $streamSplit: "text", kind: "lines" }, {}), /takes a stream of bytes, got string/);
+  await assert.rejects(fails({ $streamSplit: { $var: "s" }, kind: "binary" }, { s: sourceOf([]) }), /Invalid streamSplit kind "binary"/);
+  await assert.rejects(fails({ $streamSplit: { $var: "s" } }, { s: sourceOf([]) }), /needs a kind/);
+  const strings = asStream(await resolve({ $streamSplit: { $var: "s" }, kind: "lines" }, { s: sourceOf(["not bytes"]) }));
+  await assert.rejects(readAll(strings), /holds string/);
+});
+
 test("stream: reads its starting values, resolved, then ends once closed", async () => {
   const ctx: Record<string, unknown> = { b: "b!" };
   ctx.out = await resolve({ $stream: ["a", { $var: "b" }, { $var: "missing" }] }, ctx);
