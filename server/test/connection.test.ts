@@ -163,7 +163,7 @@ test("the tls field refuses a bare string that is not a boolean spelling", () =>
   assert.throws(() => parseTls(CA_PEM), /material goes under a key/);
   assert.throws(() => parseTls("ca.pem"), /is not a TLS setting/);
   // A path gets pointed at the load-it-first fix instead.
-  assert.throws(() => parseTls("ca.pem"), /"raw": true/);
+  assert.throws(() => parseTls("ca.pem"), /"\$fromBytes"/);
 });
 
 // Reading a file inside the field would resolve against the cwd while `{ file }`
@@ -172,7 +172,7 @@ test("certificate keys take PEM content, never a path", () => {
   // Trimmed at the ends (env vars pick up stray whitespace); the newlines that
   // separate a concatenated chain are interior, so they stay.
   assert.deepEqual(parseTls({ ca: CA_PEM }), { ca: CA_PEM.trim() });
-  assert.throws(() => parseTls({ ca: "certs/ca.pem" }), /"raw": true/);
+  assert.throws(() => parseTls({ ca: "certs/ca.pem" }), /"\$fromBytes"/);
   assert.throws(() => parseTls({ cert: "x.crt" }), /TLS cert must be PEM content/);
   assert.throws(() => parseTls({ key: "x.key" }), /TLS key must be PEM content/);
 });

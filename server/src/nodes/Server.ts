@@ -8,7 +8,7 @@ import zlib from "node:zlib";
 import { createHash } from "node:crypto";
 import { pipeline, type Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
-import { CLIENT_SCRIPT, Context, Html, Node, NodeValue, OPEN_STREAMS, SW_SCRIPT, boundaryContext, createHttpError, isHttpError, isObject, isStep, loggerFor, resolve, resolveAll, resolveFields, runSteps } from "@jexs/core";
+import { CLIENT_SCRIPT, Context, Html, Node, NodeValue, OPEN_STREAMS, SW_SCRIPT, boundaryContext, createHttpError, isHttpError, isObject, isStep, loggerFor, resolve, resolveAll, resolveFields, runSteps, typeOfName } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 import { COOKIES, DEFERRED, REQUEST_BODY, SESSION, SESSION_COOKIES, UPGRADE, type Deferred } from "../context.js";
 import { RequestBody, readRequestBody } from "../request/body.js";
@@ -34,32 +34,12 @@ import { isProduction } from "../env.js";
  * auto-injects the script tag into <head> elements.
  */
 
-// Static file content types — built once, not per static-file request.
-const MIME_TYPES: Record<string, string> = {
-  ".css": "text/css",
-  ".js": "application/javascript",
-  ".json": "application/json",
-  ".map": "application/json",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".svg": "image/svg+xml",
-  ".ico": "image/x-icon",
-  ".woff": "font/woff",
-  ".woff2": "font/woff2",
-  ".glb": "model/gltf-binary",
-  ".gltf": "model/gltf+json",
-  ".bin": "application/octet-stream",
-};
-
 // What may be served straight off disk. A Set built once, because the check
 // runs on every request, not just the ones that turn out to be static.
 //
-// Deliberately its own list rather than MIME_TYPES' keys: the two differ, and
-// deriving either from the other would change what is reachable. `.json` has a
-// content type for responses but is not servable from disk, and `.map` is
-// servable without needing its own entry to be listed here.
+// Deliberately its own list rather than the extensions `typeOfName` knows:
+// deriving one from the other would change what is reachable. `.json` has a
+// type but is not servable from disk.
 const STATIC_EXTENSIONS = new Set([
   ".css",
   ".js",
@@ -632,7 +612,7 @@ async function sendStaticFile(
   // chunked, which costs framing and denies the client a total to count against.
   res.writeHead(200, {
     ...headers,
-    "Content-Type": getMimeType(ext),
+    "Content-Type": typeOfName(ext) ?? "application/octet-stream",
     "Content-Length": String(content.length),
   });
   res.end(content);
@@ -748,10 +728,6 @@ function isFresh(
 // Weak comparison: the W/ prefix takes no part in the match (RFC 9110).
 function withoutWeakPrefix(tag: string): string {
   return tag.startsWith("W/") ? tag.slice(2) : tag;
-}
-
-function getMimeType(ext: string): string {
-  return MIME_TYPES[ext] || "application/octet-stream";
 }
 
 /**

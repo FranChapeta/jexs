@@ -1,10 +1,10 @@
 import fs from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
-import { createWriteStream } from "fs";
+import { createWriteStream, openAsBlob } from "fs";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
-import { Node, Context, NodeValue, Html, resolve, resolveAll, runSteps, childContext, isObject } from "@jexs/core";
+import { Node, Context, NodeValue, Html, resolve, resolveAll, runSteps, childContext, isObject, typeOfName } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
 
 function toBoolean(value: unknown): boolean {
@@ -75,15 +75,15 @@ export class FileNode extends Node {
     file: {
       type: "string",
       output: "any",
-      markdownDescription: "Loads a JSON file and resolves it as a Jexs expression. Paths resolve like a filesystem: relative to the file doing the loading (`\"nav.json\"`, `\"../shared/x.json\"`), while a leading `/` anchors at the resolver root (`\"/data/site.json\"`).\nArrays are executed as step sequences; objects are resolved as a single expression.\nPass `\"data\": true` to skip resolution and get the raw parsed JSON (use for data files, route trees, and anywhere you want the resolver to leave the file alone).\nPass `\"raw\": true` for the raw string content with no JSON parse.\nPass `\"params\"` to merge scoped variables into the file's resolution context, or `\"write\"` or `\"append\"` to write data to the file.",
-      outputDescription: "Default: the file resolved as a Jexs expression (a JSON array runs as steps → its last value; a JSON object resolves to its value). With `data: true`, the raw parsed JSON; with `raw: true`, the file as a string; non-JSON text files return their string and binaries a Buffer. A file that can't be read, or a `.json` file that isn't valid JSON, is an error; `fileExists` asks first without one.",
+      markdownDescription: "Loads a JSON file and resolves it as a Jexs expression. Paths resolve like a filesystem: relative to the file doing the loading (`\"nav.json\"`, `\"../shared/x.json\"`), while a leading `/` anchors at the resolver root (`\"/data/site.json\"`).\nArrays are executed as step sequences; objects are resolved as a single expression.\nPass `\"data\": true` to skip resolution and get the raw parsed JSON (use for data files, route trees, and anywhere you want the resolver to leave the file alone).\nPass `\"raw\": true` for the file itself, unread: a file value with its `name`, `size` and `type` (by its extension), whose bytes are read only when used. Read it with `$fromBytes` (its text), `$parseJSON` or `$blobBytes`, or pass it on as it is, as a response, an `$email` attachment or a `$fetch` `body`.\nPass `\"params\"` to merge scoped variables into the file's resolution context, or `\"write\"` or `\"append\"` to write data to the file.",
+      outputDescription: "Default: the file resolved as a Jexs expression (a JSON array runs as steps → its last value; a JSON object resolves to its value). With `data: true`, the raw parsed JSON; with `raw: true`, the file itself, unread; non-JSON text files return their string and binaries a Buffer. A file that can't be read, or a `.json` file that isn't valid JSON, is an error; `fileExists` asks first without one.",
       examples: [
         "{ \"$file\": \"pages/home.json\", \"params\": { \"title\": \"Home\" } }",
       ],
       siblings: {
         raw: {
           type: "boolean",
-          description: "Return raw string content without parsing.",
+          description: "Give the file itself, unread, as a file value: its `name`, `size` and `type`, its bytes read only when used.",
         },
         data: {
           type: "boolean",
@@ -131,6 +131,7 @@ export class FileNode extends Node {
         type: "object",
         properties: {
           size: { type: "number", description: "In bytes." },
+          type: { type: "string", description: "Its media type by its extension, as file managers and web servers give it, else `application/octet-stream`. Nothing is read to find it, so a file saved under the wrong extension reports that one. None for a directory." },
           modified: { type: "string", description: "ISO date-time." },
           created: { type: "string", description: "ISO date-time." },
           isFile: { type: "boolean" },
@@ -232,9 +233,11 @@ export class FileNode extends Node {
 
   fileStat(def: Record<string, unknown>, context: Context): NodeValue {
     return resolve(def.$fileStat, context, async filePathValue => {
-      const info = await fs.stat(resolvePath(filePathValue, this.rootAbs, getFileDir(context)));
+      const filePath = resolvePath(filePathValue, this.rootAbs, getFileDir(context));
+      const info = await fs.stat(filePath);
       return {
         size: info.size,
+        type: info.isFile() ? typeOfFile(filePath) : undefined,
         modified: info.mtime.toISOString(),
         created: info.birthtime.toISOString(),
         isFile: info.isFile(),
@@ -323,6 +326,11 @@ function classifyExt(filePath: string): "json" | "text" | "binary" {
   return "binary";
 }
 
+/** A file's media type, as file managers and web servers give it: by its extension, else bytes of no particular type. */
+function typeOfFile(filePath: string): string {
+  return typeOfName(filePath) ?? "application/octet-stream";
+}
+
 function loadFile(
   def: Record<string, unknown>,
   context: Context,
@@ -332,16 +340,16 @@ function loadFile(
     const raw = toBoolean(rawRaw);
     const data = toBoolean(dataRaw);
     const filePath = resolvePath(filePathValue, rootAbs, getFileDir(context));
+    if (raw) {
+      // Stat first: it says what is wrong with a path, where `openAsBlob` only says it failed.
+      if (!(await fs.stat(filePath)).isFile()) throw new Error(`$file: ${filePath} is not a file`);
+      return new File([await openAsBlob(filePath)], path.basename(filePath), { type: typeOfFile(filePath) });
+    }
     const kind = classifyExt(filePath);
-    const wantBuffer = kind === "binary" && !raw;
 
     // A read failure carries the path in fs's own message (ENOENT: ..., open '<path>').
-    const content = wantBuffer
-      ? await fs.readFile(filePath)
-      : await fs.readFile(filePath, "utf-8");
-
-    if (wantBuffer) return content;
-    if (raw) return content;
+    if (kind === "binary") return fs.readFile(filePath);
+    const content = await fs.readFile(filePath, "utf-8");
     if (kind === "text") return content;
 
     let parsed: unknown;

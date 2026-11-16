@@ -69,6 +69,30 @@ const SAME_BYTES: Record<string, Set<string>> = {
 };
 const SNIFFED = new Set([...SIGNATURES.map(([type]) => type), ...Object.values(SAME_BYTES).flatMap(types => [...types])]);
 
+/** Media types by file extension, for a file whose first bytes show none. */
+const EXTENSION_TYPES: Record<string, string> = {
+  txt: "text/plain", log: "text/plain", html: "text/html", htm: "text/html", css: "text/css", csv: "text/csv",
+  md: "text/markdown", xml: "application/xml", js: "application/javascript", mjs: "application/javascript",
+  json: "application/json", map: "application/json", yaml: "application/yaml", yml: "application/yaml",
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", avif: "image/avif",
+  svg: "image/svg+xml", ico: "image/x-icon", bmp: "image/bmp", tif: "image/tiff", tiff: "image/tiff",
+  pdf: "application/pdf", zip: "application/zip", gz: "application/gzip", wasm: "application/wasm",
+  mp3: "audio/mpeg", wav: "audio/wav", ogg: "audio/ogg", flac: "audio/flac", m4a: "audio/mp4",
+  mp4: "video/mp4", webm: "video/webm", mov: "video/quicktime",
+  woff: "font/woff", woff2: "font/woff2", ttf: "font/ttf", otf: "font/otf",
+  glb: "model/gltf-binary", gltf: "model/gltf+json", bin: "application/octet-stream",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  epub: "application/epub+zip",
+};
+
+/** The media type a file's name says it is, by its extension (`"report.pdf"`, `".pdf"`); undefined for one not known. */
+export function typeOfName(name: string): string | undefined {
+  const dot = name.lastIndexOf(".");
+  return dot < 0 ? undefined : EXTENSION_TYPES[name.slice(dot + 1).toLowerCase()];
+}
+
 /** Types that can hold scripts, which a wildcard such as `image/*` doesn't take: only naming them does. */
 const SCRIPTABLE = new Set(["image/svg+xml"]);
 

@@ -38,7 +38,7 @@ export { STREAM_KINDS, splitStream, streamOf, type StreamKind } from "./streams.
 // ── Blobs and files ──
 // What a blob or file may be, and its type as its first bytes show it, for a
 // host that takes files of its own.
-export { SNIFF_BYTES, acceptType, blobRule, positiveInteger, type BlobRule } from "./media-type.js";
+export { SNIFF_BYTES, acceptType, blobRule, positiveInteger, typeOfName, type BlobRule } from "./media-type.js";
 
 // ── Core nodes ──
 export { TimerNode } from "./nodes/Timer.js";

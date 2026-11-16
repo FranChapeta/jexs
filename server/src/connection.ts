@@ -30,7 +30,7 @@ const SECURE_VERSIONS = new Set(["TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"]);
 /**
  * Certificate material for the `tls` FIELD: PEM text, never a path.
  * Templates load the PEM the one way Jexs loads anything:
- *   [ { "$file": "/certs/ca.pem", "raw": true, "$as": "ca" },
+ *   [ { "$fromBytes": { "$file": "/certs/ca.pem" }, "$as": "ca" },
  *     { "$database": "connect", "url": "...", "tls": { "ca": { "$var": "ca" } } } ]
  */
 function pemContent(value: unknown, field: string): string {
@@ -38,7 +38,7 @@ function pemContent(value: unknown, field: string): string {
   if (s.includes("-----BEGIN")) return s;
   throw new Error(
     `TLS ${field} must be PEM content, not a path — load it first, e.g. ` +
-    `{ "$file": "/path/to/${field}.pem", "raw": true, "$as": "${field}" } then { "${field}": { "$var": "${field}" } }`,
+    `{ "$fromBytes": { "$file": "/path/to/${field}.pem" }, "$as": "${field}" } then { "${field}": { "$var": "${field}" } }`,
   );
 }
 
@@ -102,7 +102,7 @@ export function parseTls(value: unknown): boolean | TlsConfig | undefined {
     if (TLS_OFF.has(lower)) return false;
     const hint = s.includes("-----BEGIN")
       ? "certificate material goes under a key, e.g. { \"ca\": ... }"
-      : "load a certificate with { \"$file\": \"/certs/ca.pem\", \"raw\": true, \"$as\": \"ca\" } and pass { \"ca\": { \"$var\": \"ca\" } }";
+      : "load a certificate with { \"$fromBytes\": { \"$file\": \"/certs/ca.pem\" }, \"$as\": \"ca\" } and pass { \"ca\": { \"$var\": \"ca\" } }";
     throw new Error(
       `"${s.slice(0, 40)}" is not a TLS setting — use an object, or one of ${TLS_STRINGS.join(", ")}; ${hint}`,
     );

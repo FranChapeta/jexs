@@ -55,6 +55,39 @@ test("fileStat sees a directory as one", async () => {
   const info = await run({ $fileStat: "/adir" }) as Record<string, unknown>;
   assert.equal(info.isDirectory, true);
   assert.equal(info.isFile, false);
+  assert.equal(info.type, undefined, "a directory has no media type");
+});
+
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+
+test("fileStat gives a file's type by its extension, reading nothing", async () => {
+  await fs.writeFile(abs("picture.png"), PNG);
+  await fs.writeFile(abs("picture.bin"), PNG);
+  await fs.writeFile(abs("notes.CSV"), "a,b\n");
+  await fs.writeFile(abs("unknown.xyz"), "?");
+  const type = async (p: string) => (await run({ $fileStat: p }) as Record<string, unknown>).type;
+  assert.equal(await type("/picture.png"), "image/png");
+  assert.equal(await type("/picture.bin"), "application/octet-stream", "what its name says, whatever its bytes are");
+  assert.equal(await type("/notes.CSV"), "text/csv", "whatever the extension's case");
+  assert.equal(await type("/unknown.xyz"), "application/octet-stream");
+});
+
+test("raw gives the file itself, unread, with its name, size and type, for the ops that read one", async () => {
+  await fs.writeFile(abs("photo.png"), PNG);
+  await fs.writeFile(abs("settings.conf"), '{"theme":"dark"}');
+  const photo = await run({ $file: "/photo.png", raw: true });
+  assert.ok(photo instanceof File);
+  assert.equal(photo.name, "photo.png");
+  assert.equal(photo.type, "image/png");
+  assert.equal(photo.size, PNG.length);
+  assert.equal(await run({ $fromBytes: { $file: "/settings.conf", raw: true } }), '{"theme":"dark"}');
+  assert.deepEqual(await run({ $parseJSON: { $file: "/settings.conf", raw: true } }), { theme: "dark" });
+  // Passed on as it is: written elsewhere without being read into a value.
+  await run({ $file: "/photo-copy.png", write: { $file: "/photo.png", raw: true } });
+  assert.deepEqual(await fs.readFile(abs("photo-copy.png")), PNG);
+  await assert.rejects(run({ $file: "/nope.dat", raw: true }), /ENOENT/);
+  await fs.mkdir(abs("not-a-file"));
+  await assert.rejects(run({ $file: "/not-a-file", raw: true }), /is not a file/);
 });
 
 test("fileDelete removes the file", async () => {

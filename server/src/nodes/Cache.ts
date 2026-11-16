@@ -86,7 +86,7 @@ export class CacheNode extends Node {
             tls: {
               type: ["boolean", "string", "object"],
               enum: TLS_STRINGS,
-              markdownDescription: "TLS for the connection. `true` encrypts AND verifies against the system trust store — the strictest setting, which fails on a private CA. An object takes `ca`, `cert`, `key`, `passphrase`, `servername`, `rejectUnauthorized`, `minVersion` and `ciphers`. The string forms (`\"true\"`, `\"1\"`, `\"require\"`, `\"false\"`, `\"0\"`, `\"disable\"`) are for a value arriving from `env` as text. Implied by a `rediss://` url.\n\nCertificates are PEM **content**, not paths: load the file first with `{ \"$file\": \"/certs/redis-ca.pem\", \"raw\": true, \"$as\": \"ca\" }` and pass `{ \"$var\": \"ca\" }`.",
+              markdownDescription: "TLS for the connection. `true` encrypts AND verifies against the system trust store — the strictest setting, which fails on a private CA. An object takes `ca`, `cert`, `key`, `passphrase`, `servername`, `rejectUnauthorized`, `minVersion` and `ciphers`. The string forms (`\"true\"`, `\"1\"`, `\"require\"`, `\"false\"`, `\"0\"`, `\"disable\"`) are for a value arriving from `env` as text. Implied by a `rediss://` url.\n\nCertificates are PEM **content**, not paths: load the file first with `{ \"$fromBytes\": { \"$file\": \"/certs/redis-ca.pem\" }, \"$as\": \"ca\" }` and pass `{ \"$var\": \"ca\" }`.",
               examples: [
                 "true",
                 "{ \"ca\": { \"$var\": \"ca\" }, \"servername\": \"cache.internal\" }",
