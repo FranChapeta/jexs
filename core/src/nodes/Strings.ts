@@ -148,7 +148,7 @@ export class StringNode extends Node {
     },
     fromBytes: {
       output: "string",
-      markdownDescription: "Reads bytes as the UTF-8 text they are: a `Uint8Array` or `Buffer`, such as a binary file `$file` loaded or what `$fetch` gives with `type: \"binary\"`. A blob or file is read as its bytes are. Given a stream of bytes, such as a request's `request.body` or a `$fetch` with `stream: \"binary\"`, it resolves at once to a stream of the text, read from the bytes only as that stream is read: a character whose bytes arrive in two values is kept whole, which reading each value on its own would break. Gather a stream's text with `$reduce` and `$concat`, and parse it with `$parseJSON`.",
+      markdownDescription: "Reads bytes as the UTF-8 text they are: a `Uint8Array` or `Buffer`, such as a binary file `$file` loaded or what `$fetch` gives with `type: \"binary\"`. A blob or file is read as its bytes are. Given a stream of bytes, such as a request's `request.body` or a `$fetch` with `stream` and `raw`, it resolves at once to a stream of the text, read from the bytes only as that stream is read: a character whose bytes arrive in two values is kept whole, which reading each value on its own would break. Gather a stream's text with `$reduce` and `$concat`, and parse it with `$parseJSON`.",
       outputDescription: "The text; for a stream of bytes, a stream of it.",
       examples: [
         "{ \"$fromBytes\": { \"$file\": \"/data/notes.bin\" } }",

@@ -235,14 +235,14 @@ const streamSteps = {
     {
       $foreach: ["/sse", "/sse"],
       item: "path",
-      do: { $foreach: { $fetch: upstream({ $var: "path" }), stream: "sse" }, do: { $streamWrite: [{ $var: "out" }, { $var: "item" }] } },
+      do: { $foreach: { $fetch: upstream({ $var: "path" }), stream: true }, do: { $streamWrite: [{ $var: "out" }, { $var: "item" }] } },
       $then: { $streamClose: { $var: "out" } },
     },
     { response: { $var: "out" }, responseType: "sse" },
   ],
   // A `$fetch` stream left in a variable when the request ends.
   left: [
-    { $fetch: upstream("/hold"), stream: "sse", $as: "held" },
+    { $fetch: upstream("/hold"), stream: true, $as: "held" },
     { $concat: ["left"] },
   ],
   // A `$stream` never sent, its background writer waiting for room.
@@ -271,9 +271,9 @@ before(async () => {
       { $if: at("/hold"), then: { $return: { response: { $source: ["first"], end: "hold", name: "hold" }, responseType: "sse" } } },
       { $if: at("/empty"), then: { $return: { response: { $source: ["unsent"], end: "hold", name: "empty" }, responseStatus: 204 } } },
       { $if: at("/fail"), then: { $return: { response: { $source: ["one"], end: "fail" }, responseType: "sse" } } },
-      { $if: at("/relay"), then: { $return: { response: { $fetch: upstream("/sse"), stream: "sse" }, responseType: "sse" } } },
-      { $if: at("/relay-bytes"), then: { $return: { response: { $fetch: upstream("/sse"), stream: "binary" }, responseType: "sse" } } },
-      { $if: at("/relay-hold"), then: { $return: { response: { $fetch: upstream("/hold"), stream: "sse" }, responseType: "sse" } } },
+      { $if: at("/relay"), then: { $return: { response: { $fetch: upstream("/sse"), stream: true }, responseType: "sse" } } },
+      { $if: at("/relay-bytes"), then: { $return: { response: { $fetch: upstream("/sse"), stream: true, raw: true }, responseType: "sse" } } },
+      { $if: at("/relay-hold"), then: { $return: { response: { $fetch: upstream("/hold"), stream: true }, responseType: "sse" } } },
       { $if: at("/rounds"), then: { $return: { $runVar: "steps.rounds" } } },
       { $if: at("/left"), then: { $return: { $runVar: "steps.left" } } },
       { $if: at("/orphan"), then: { $return: { $runVar: "steps.orphan" } } },

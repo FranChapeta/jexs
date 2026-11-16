@@ -99,7 +99,7 @@ export class FileNode extends Node {
       variants: {
         write: {
           output: "null",
-          markdownDescription: "Writes data to the file, by what the data is: a string as it is, bytes (a `Buffer`, such as a binary file `$file` loaded) as they are, a blob or file (from `$blob`, or a `$fetch` with `raw: true`) as the bytes it holds, a stream as its values arrive, and anything else as JSON. A failure is an error.\nA stream is written as it is read, so memory stays flat however much it carries: one of bytes or text, such as a request's `request.body`, a `$fetch` with `stream: \"binary\"`, or a `$stream`. A stream of anything else is an error, and one that fails partway leaves the destination as it was. A stream is read once, so writing one that was read already is an error.",
+          markdownDescription: "Writes data to the file, by what the data is: a string as it is, bytes (a `Buffer`, such as a binary file `$file` loaded) as they are, a blob or file (from `$blob`, or a `$fetch` with `raw: true`) as the bytes it holds, a stream as its values arrive, and anything else as JSON. A failure is an error.\nA stream is written as it is read, so memory stays flat however much it carries: one of bytes or text, such as a request's `request.body`, a `$fetch` with `stream` and `raw`, or a `$stream`. A stream of anything else is an error, and one that fails partway leaves the destination as it was. A stream is read once, so writing one that was read already is an error.",
         },
         append: {
           output: "null",

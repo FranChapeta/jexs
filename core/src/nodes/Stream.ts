@@ -4,7 +4,7 @@ import { operands } from "../helpers.js";
 import { bytesOf, closeStream, isStream, makeStream, splitStream, streamOf, writeStream, type StreamKind } from "../streams.js";
 import type { JexsNodeSchema } from "../schema.js";
 
-/** What `$streamSplit` splits bytes into: `$fetch`'s stream kinds, but for `binary`, which is the bytes as they are. */
+/** What `$streamSplit` splits bytes into: what a `$fetch` stream splits into by Content-Type, and lines. */
 const SPLIT_KINDS: readonly StreamKind[] = ["text", "lines", "ndjson", "sse"];
 
 export class StreamNode extends Node {
@@ -48,7 +48,7 @@ export class StreamNode extends Node {
     streamSplit: {
       $ref: "#/$defs/_stream",
       output: { $ref: "#/$defs/_stream" },
-      markdownDescription: "Splits a stream of bytes into the messages they carry, read from it only as the new stream is read: a request's `request.body`, a `$fetch` with `stream: \"binary\"`, a file's `$blobStream`. A message cut across two chunks is kept whole, which reading each chunk on its own would break. A value that is not bytes fails the stream. Cancelling the new stream cancels the one it reads.",
+      markdownDescription: "Splits a stream of bytes into the messages they carry, read from it only as the new stream is read: a request's `request.body`, a `$fetch` with `stream` and `raw`, a file's `$blobStream`. A message cut across two chunks is kept whole, which reading each chunk on its own would break. A value that is not bytes fails the stream. Cancelling the new stream cancels the one it reads.",
       outputDescription: "A stream of the messages.",
       examples: [
         "{ \"$foreach\": { \"$streamSplit\": { \"$var\": \"request.body\" }, \"kind\": \"ndjson\" }, \"item\": \"row\", \"do\": [{ \"$queryInsert\": \"events\", \"data\": { \"$var\": \"row\" } }] }",
@@ -59,7 +59,7 @@ export class StreamNode extends Node {
           type: "string",
           enum: SPLIT_KINDS,
           required: true,
-          markdownDescription: "What the bytes are split into, as `$fetch`'s `stream` splits a response.",
+          markdownDescription: "What the bytes are split into: what a `$fetch` stream splits a response into by its Content-Type, or lines.",
           variants: {
             text: { markdownDescription: "UTF-8 text as it arrives, a string per chunk: a character split across two chunks is kept whole." },
             lines: { markdownDescription: "One string per line, without its line break." },

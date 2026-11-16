@@ -131,7 +131,6 @@ export async function* decodeText(chunks: AsyncIterable<Uint8Array>): AsyncGener
 
 /** How a body of bytes is split into the messages a stream of it carries. */
 export type StreamKind = "sse" | "ndjson" | "lines" | "text" | "binary";
-export const STREAM_KINDS: readonly StreamKind[] = ["sse", "ndjson", "lines", "text", "binary"];
 
 /** What reads a body of bytes: a `$fetch` response's, a request's. */
 export type BodyReader = ReadableStreamDefaultReader<Uint8Array>;

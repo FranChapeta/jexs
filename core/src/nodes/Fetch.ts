@@ -1,7 +1,7 @@
 import { Node, Context, NodeValue, childContext, trackStream } from "./Node.js";
 import { resolveFields, runSteps } from "../Resolver.js";
 import { createHttpError } from "../errors.js";
-import { STREAM_KINDS, jsonOrText, messagesOf, streamOf, type StreamKind } from "../streams.js";
+import { jsonOrText, messagesOf, streamOf, type StreamKind } from "../streams.js";
 import type { JexsNodeSchema, JexsPropertySchema } from "../schema.js";
 
 const TEXT_EXT = new Set([
@@ -124,7 +124,7 @@ export class FetchNode extends Node {
     fetch: {
       type: "string",
       output: "any",
-      markdownDescription: "Makes an HTTP request to the URL in `fetch`. Defaults to GET; pass `method` and `body` for writes, and `headers` for auth or content negotiation.\n\nThe response body is decoded by the first of these that applies:\n1. URL extension: `.json`/`.gltf` → JSON, text-like extensions → string,\n   known binary extensions (`.glb`, `.bin`, `.png`, etc.) → ArrayBuffer.\n2. Response Content-Type: `application/json` (or a `+json` suffix) → JSON, `text/*` → string,\n   everything else → ArrayBuffer.\n\nWith `raw` it is not decoded: the body is given as a blob, as the server sent it. Read it with `$parseJSON`, `$fromBytes` or `$blobBytes`, which is how to read a body the server labelled wrongly, or pass it on as it is, to a `$file` `write` or another `$fetch`'s `body`.\n\nAn HTML response is a string like any other text, so content and the browser's markup ops (`$setProp` `innerHTML`, `$insertHtml`) show it as text. To insert a fragment your own server rendered as markup, trust it with `$html`: `{ \"$html\": { \"$fetch\": \"/fragment\" } }`.\n\nA non-2xx status throws an HTTP error carrying that status. An enclosing `$catch` gets the usual `error` (`{ status, message }`) plus `response`, the failing response in the same shape `full` returns, so `{ \"$var\": \"response.body.message\" }` reads the server's error body; a request that never completed (a timeout, a refused connection) reaches `$catch` without one. Pass `full` to get the headers and status alongside the body.\n\nTo stream the response instead, pass `onMessage`, whose steps run per message as the body arrives (each Server-Sent Event of a streaming LLM API, say), or `stream` alone, which resolves to the messages as a `ReadableStream`: a Jexs server sends one on as it reads it, so `{ \"response\": { \"$fetch\": ..., \"stream\": \"sse\" }, \"responseType\": \"sse\" }` relays an upstream stream to the page.\n\nIn a page served by a Jexs server, a POST, PUT, PATCH or DELETE to the page's own origin carries the session's CSRF token (`x-csrf-token`, from the `csrf` cookie) on its own.",
+      markdownDescription: "Makes an HTTP request to the URL in `fetch`. Defaults to GET; pass `method` and `body` for writes, and `headers` for auth or content negotiation.\n\nThe response body is decoded by the first of these that applies:\n1. URL extension: `.json`/`.gltf` → JSON, text-like extensions → string,\n   known binary extensions (`.glb`, `.bin`, `.png`, etc.) → ArrayBuffer.\n2. Response Content-Type: `application/json` (or a `+json` suffix) → JSON, `text/*` → string,\n   everything else → ArrayBuffer.\n\nWith `raw` it is not decoded: the body is given as a blob, as the server sent it. Read it with `$parseJSON`, `$fromBytes` or `$blobBytes`, which is how to read a body the server labelled wrongly, or pass it on as it is, to a `$file` `write` or another `$fetch`'s `body`.\n\nAn HTML response is a string like any other text, so content and the browser's markup ops (`$setProp` `innerHTML`, `$insertHtml`) show it as text. To insert a fragment your own server rendered as markup, trust it with `$html`: `{ \"$html\": { \"$fetch\": \"/fragment\" } }`.\n\nA non-2xx status throws an HTTP error carrying that status. An enclosing `$catch` gets the usual `error` (`{ status, message }`) plus `response`, the failing response in the same shape `full` returns, so `{ \"$var\": \"response.body.message\" }` reads the server's error body; a request that never completed (a timeout, a refused connection) reaches `$catch` without one. Pass `full` to get the headers and status alongside the body.\n\nTo stream the response instead, pass `onMessage`, whose steps run per message as the body arrives (each Server-Sent Event of a streaming LLM API, say), or `stream: true` alone, which resolves to the messages as a `ReadableStream`: a Jexs server sends one on as it reads it, so `{ \"response\": { \"$fetch\": ..., \"stream\": true }, \"responseType\": \"sse\" }` relays an upstream stream to the page.\n\nIn a page served by a Jexs server, a POST, PUT, PATCH or DELETE to the page's own origin carries the session's CSRF token (`x-csrf-token`, from the `csrf` cookie) on its own.",
       outputDescription: "The decoded response body: a parsed value for JSON, a string for text, an ArrayBuffer for binary. With `raw`, a blob. With `stream` and no `onMessage`, a `ReadableStream` of the messages. A `204`/`205` response, any HEAD request and a body streamed to `onMessage` resolve to `null`.",
       examples: [
         "{ \"$fetch\": \"/api/users\", \"method\": \"POST\", \"body\": { \"name\": { \"$var\": \"name\" } } }\n{ \"$fetch\": \"/api/me\", \"headers\": { \"Authorization\": { \"$concat\": [\"Bearer \", { \"$var\": \"token\" }] } } }\n{ \"$fetch\": \"/api/flaky\", \"timeout\": 5000, \"$catch\": [{ \"$concat\": [\"failed: \", { \"$var\": \"error.status\" }] }] }\n{ \"$fetch\": \"/models/Duck.glb\", \"$as\": \"buf\" }\n{ \"$fetch\": \"https://api.anthropic.com/v1/messages\", \"method\": \"POST\", \"headers\": { \"x-api-key\": { \"$var\": \"env.ANTHROPIC_API_KEY\" }, \"anthropic-version\": \"2023-06-01\" }, \"body\": { \"model\": \"claude-opus-5-5\", \"max_tokens\": 1024, \"stream\": true, \"messages\": [{ \"role\": \"user\", \"content\": { \"$var\": \"prompt\" } }] }, \"onMessage\": [{ \"$if\": { \"$eq\": [{ \"$var\": \"message.type\" }, \"content_block_delta\"] }, \"then\": { \"$socketSend\": { \"$var\": \"message.delta.text\" } } }] }",
@@ -154,25 +154,18 @@ export class FetchNode extends Node {
         },
         onMessage: {
           steps: true,
-          markdownDescription: "Stream the response: run these steps once per message as it arrives, with `message` in scope, instead of waiting for the whole body. Each run finishes before the next message is read, so they run in order. How the body splits into messages is `stream`'s, or else the response Content-Type's: `text/event-stream` as Server-Sent Events (each event's `data`, or with `full` the whole event), `application/x-ndjson` (also `application/ndjson`, `application/jsonl`) as one JSON value per line, other text and JSON as text chunks, anything else as byte chunks.\n\nThe step resolves to `null` once the body ends (with `full`, the response with a `null` body); gather what the messages carry with `$setVars` as they come. A non-2xx status throws before any message runs, as without `onMessage`. An error in the steps stops the reading, cancels the rest of the body and reaches this step's `$catch`.",
+          markdownDescription: "Stream the response: run these steps once per message as it arrives, with `message` in scope, instead of waiting for the whole body. Each run finishes before the next message is read, so they run in order. The body splits into messages as `stream` splits it: by the response's Content-Type, or with `raw` into byte chunks.\n\nThe step resolves to `null` once the body ends (with `full`, the response with a `null` body); gather what the messages carry with `$setVars` as they come. A non-2xx status throws before any message runs, as without `onMessage`. An error in the steps stops the reading, cancels the rest of the body and reaches this step's `$catch`.",
           examples: [
             "{ \"$fetch\": \"/api/events\", \"onMessage\": [{ \"$push\": [{ \"$var\": \"events\" }, { \"$var\": \"message\" }] }] }",
           ],
         },
         stream: {
-          type: "string",
-          enum: STREAM_KINDS,
-          markdownDescription: "Streams the response instead of reading it whole. On its own, the step resolves to a `ReadableStream` of the body's messages as soon as the status is in; the body downloads only as fast as the stream is read, and cancelling the stream aborts the request. Beside `onMessage`, it sets how the messages that run it are split.\n\nThe value says how the body splits into messages (each kind below). `onMessage` without it infers that from the Content-Type, so set it for a server that sends the wrong one, or for `lines`, which no Content-Type names.\n\nTo relay the stream, send it as a response's `response`: a Jexs server writes each message as it arrives, and `binary` passes the upstream bytes through untouched. A stream that is never sent, read or cancelled keeps its request open: on a Jexs server until the request that made it ends, which cancels it, and elsewhere until `timeout` or until it is garbage-collected.",
+          type: "boolean",
+          markdownDescription: "Streams the response instead of reading it whole: the step resolves to a `ReadableStream` of the body's messages as soon as the status is in, the body downloads only as fast as the stream is read, and cancelling the stream aborts the request.\n\nThe body splits into messages as the server's Content-Type says: `text/event-stream` as Server-Sent Events (each event's `data`, parsed as JSON when it parses, or with `full` the whole `{ event, data, id }`), `application/x-ndjson` (also `application/ndjson`, `application/jsonl`) as one JSON value per line, other text and JSON as UTF-8 text in chunks as they arrive, and anything else as byte chunks. With `raw`, it is byte chunks whatever the server says: give that to `$streamSplit` for a server that labels its stream wrongly, or to split it into `lines`, which no Content-Type names.\n\nTo relay the stream, send it as a response's `response`: a Jexs server writes each message as it arrives, and with `raw` passes the upstream bytes through untouched. A stream that is never sent, read or cancelled keeps its request open: on a Jexs server until the request that made it ends, which cancels it, and elsewhere until `timeout` or until it is garbage-collected.",
           examples: [
-            "{ \"response\": { \"$fetch\": \"https://api.example.com/events\", \"stream\": \"sse\" }, \"responseType\": \"sse\" }",
+            "{ \"response\": { \"$fetch\": \"https://api.example.com/events\", \"stream\": true }, \"responseType\": \"sse\" }",
+            "{ \"$streamSplit\": { \"$fetch\": \"https://example.com/export.log\", \"stream\": true, \"raw\": true }, \"kind\": \"lines\" }",
           ],
-          variants: {
-            sse: { markdownDescription: "Server-Sent Events: a message per event, its `data`, or with `full` the whole `{ event, data, id }`. `data` lines are joined with a newline and parsed as JSON when they parse, `event` is `\"message\"` when the server names none, `id` is present when it sends one, and comments and events without data are skipped." },
-            ndjson: { markdownDescription: "One JSON value per non-blank line." },
-            lines: { markdownDescription: "One string per line, without its line break." },
-            text: { markdownDescription: "The body as UTF-8 text, a string per chunk as the network delivers it: chunk boundaries fall anywhere, a character split across two is kept whole." },
-            binary: { markdownDescription: "A `Uint8Array` per chunk as the network delivers it." },
-          },
         },
         credentials: {
           type: "string",
@@ -209,7 +202,7 @@ export class FetchNode extends Node {
         raw: {
           type: "boolean",
           output: "object",
-          markdownDescription: "Gives the body as a blob, undecoded, with the media type the server sent as its `type`. The whole body is downloaded to make it; for one too large to hold, use `stream`. With `full`, the blob is the response's `body`.",
+          markdownDescription: "Gives the body as a blob, undecoded, with the media type the server sent as its `type`. The whole body is downloaded to make it; for one too large to hold, use `stream`, with which `raw` gives the body's bytes as they arrive instead. With `full`, the blob is the response's `body`.",
           outputDescription: "The body as a blob.",
           examples: [
             "{ \"$file\": \"/downloads/report.pdf\", \"write\": { \"$fetch\": { \"$var\": \"url\" }, \"raw\": true } }",
@@ -281,9 +274,10 @@ export class FetchNode extends Node {
       }
       // Checked before the request goes out: a typo here should not cost a round trip.
       const raw = this.toBoolean(o.raw);
-      const forcedStream = this.getOption(o.stream, STREAM_KINDS, "fetch stream");
-      const streamed = onMessage !== undefined || forcedStream !== undefined;
-      if (streamed && raw) throw new Error("fetch raw does not apply to a streamed body, which is never read whole: use stream");
+      if (o.stream !== null && typeof o.stream !== "boolean") {
+        throw new Error(`fetch stream is true or false, not ${JSON.stringify(o.stream)}: the Content-Type says how the body splits, and { "$streamSplit": { "$fetch": ..., "stream": true, "raw": true }, "kind": ... } splits it otherwise`);
+      }
+      const streamed = onMessage !== undefined || o.stream === true;
       const timeout = this.toNumber(o.timeout);
       if (timeout > 0) options.signal = AbortSignal.timeout(timeout);
 
@@ -329,7 +323,7 @@ export class FetchNode extends Node {
       if (streamed) {
         if (!bodyless && response.body) {
           const reader = response.body.getReader();
-          const messages = messagesOf(reader, forcedStream ?? sniffStream(response), full);
+          const messages = messagesOf(reader, raw ? "binary" : sniffStream(response), full);
           if (onMessage === undefined) {
             const stream = streamOf(messages, reason => reader.cancel(reason));
             trackStream(context, stream);
