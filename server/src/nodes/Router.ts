@@ -18,7 +18,9 @@ interface RouteHandler {
   do?: unknown;
   queryParams?: Record<string, unknown>;
   body?: Record<string, unknown>;
-  /** Leave the body a stream for `do` to read. */
+  /** The file fields of a multipart form the handler takes, each with its rules. */
+  upload?: unknown;
+  /** Leave the body a stream for `do` to read, checked as it is read. */
   stream?: boolean;
 }
 
@@ -79,7 +81,7 @@ export class RouterNode extends Node {
   static schema: JexsNodeSchema = {
     routes: {
       $ref: "#/$defs/_routesSlot",
-      markdownDescription: "Matches the incoming request path and method against a route tree, then executes the handler.\nSupports exact segments, `*` (single param with optional `paramName`/`paramRegex`),\n`**` (catch-all), and `queryParams`/`body` validation. When a handler is reached, after its `queryParams` is checked, the router reads the request's body whole, checks it against the handler's `body`, and makes it `request.body`, as `$requestBody` does.\n\nA handler with `stream: true` has the body left for its `do` to read as it arrives instead: `request.body` is a stream of its bytes, which `body` does not check and `$streamSplit` splits into lines, JSON values or events.\n\nA captured param is read from `request.params` (`{ \"$var\": \"request.params.id\" }`), beside `request.query` and `request.body`. `paramRegex` is anchored to the whole segment (for `**`, the whole rest of the path), so `\"new|edit\"` matches `new` but not `newsletter`.\n\nA handler is a `$file` step or a `do` of steps, never both, or an expression resolving to one of those. A `WS` handler completes a WebSocket upgrade by calling `socketAccept` as a `do` step.\n\nA route node written as a step is resolved when the matcher reaches it, after the params above it are captured, so `{ \"$if\": <cond>, \"then\": { \"$var\": \"adminRoutes\" } }` adds a subtree only when the condition holds; a failed condition leaves no node there. Hold such a subtree by reference, stored with `$setVars` or loaded with `$file`, either with `data: true`: `$if` resolves the branch it picks, so an inline subtree would run its handlers.",
+      markdownDescription: "Matches the incoming request path and method against a route tree, then executes the handler.\nSupports exact segments, `*` (single param with optional `paramName`/`paramRegex`),\n`**` (catch-all), and `queryParams`/`body` validation. When a handler is reached, after its `queryParams` is checked, the router reads the request's body whole, checks it against the handler's `body` as it is read, and makes it `request.body`, as `$requestBody` does with the same `upload` beside it. A handler that takes the files of a multipart form names their fields as `upload`, each with its rules (`{ \"photo\": { \"types\": [\"image/*\"] } }`). Each file is then in `request.body` under its field, kept in a file of the request's own until the request is done: a `$file` `write` of it in `do` keeps it for good. A form that sends a file in a field `upload` doesn't name, or to a handler without one, is refused with 400. A body that is itself a file is taken by a `file` rule in `body` (`{ \"file\": { \"types\": [\"image/*\"] } }`), and is then `request.body`; without one it is refused with 415.\n\nA handler with `stream: true` has the body left for its `do` to read as it arrives instead: `request.body` is a stream, checked against the same `body` and `upload` as it is read. A form is a stream of its parts in the order they were sent, a text field as `{ field, value }` and a file as `{ field, name, type, stream }`, so `$foreach` takes each file as it comes, nothing kept in between, and a `$file` `write` of its `stream` sends it straight to its destination. A body that is itself a file is a stream of its bytes, taken by `body`'s `file` rule. Any other body is a stream of its bytes, unchecked, which `$streamSplit` splits into lines, JSON values or events.\n\nA form with files is checked as it arrives. The form is read once, as one run of fields in the order they were sent, a file being a field like any other, and each is checked on its own as it comes against what `body` says of it (its type and limits, and whether `body` takes a field of that name at all): a text field before the file after it is read, and a file before it is kept, or with `stream` before it is given. So no file is read, let alone kept, after a field that fails. What `body` asks of the form as a whole (`required`, and the like) is checked once it has all arrived, the fields after the last file with it, before `do` runs. With `stream` that check comes when the stream has given its last part, and fails the read after it, so it does not undo what the steps did with the parts before: put the fields a file depends on before it in the form.\n\nFor that check the files are part of the body: each field `upload` names is a property of it, holding the file that came as `{ name, type, size }`, or a list of them where its rule's `max` is more than 1. So `body` can require a file (`\"required\": [\"photo\"]`), a `body` closed with `additionalProperties: false` takes the fields `upload` names, and `body` can say more of a file under its field (`\"photo\": { \"properties\": { \"name\": { \"pattern\": \"\\\\.png$\" } } }`), which is checked before that file is kept. `size` is what has arrived when the check runs, the whole file's only in the last one, so limit a file's size with its rule's `maxSize`.\n\nA captured param is read from `request.params` (`{ \"$var\": \"request.params.id\" }`), beside `request.query` and `request.body`. `paramRegex` is anchored to the whole segment (for `**`, the whole rest of the path), so `\"new|edit\"` matches `new` but not `newsletter`.\n\nA handler is a `$file` step or a `do` of steps, never both, or an expression resolving to one of those. A `WS` handler completes a WebSocket upgrade by calling `socketAccept` as a `do` step.\n\nA route node written as a step is resolved when the matcher reaches it, after the params above it are captured, so `{ \"$if\": <cond>, \"then\": { \"$var\": \"adminRoutes\" } }` adds a subtree only when the condition holds; a failed condition leaves no node there. Hold such a subtree by reference, stored with `$setVars` or loaded with `$file`, either with `data: true`: `$if` resolves the branch it picks, so an inline subtree would run its handlers.",
       outputDescription: "The matched handler's result, as it stands: a rendered `$file` page, or what its `do` yields. As the value a `$listen` request's steps end with, it is the response. Throws a 404 HTTP error when no route matches, so use a catch-all route (`**`) or wrap calls in `$catch` to handle not-found.",
       examples: [
         "{ \"$routes\": { \"children\": { \"users\": { \"methods\": { \"GET\": { \"$file\": \"pages/users.json\" } } } } } }",
@@ -122,7 +124,8 @@ export class RouterNode extends Node {
         // inside them (NOT exprFlat: these are static author-time schemas).
         queryParams: { $ref: "#/$defs/_jsonSchema" },
         body:        { $ref: "#/$defs/_jsonSchema" },
-        // Whether the body is left a stream.
+        // The file fields a multipart form may send, as `$requestBody` takes them, and whether the body is left a stream.
+        upload:      { $ref: "#/$defs/_upload" },
         stream:      { type: "boolean", description: "Leave the body a stream for `do` to read as it arrives, rather than reading it whole first." },
       },
       // One node to an object: a handler is a template, a step list or a bare
@@ -288,14 +291,15 @@ async function matchNode(match: Match, node: RouteNode, index: number): Promise<
  * Execute route handler
  */
 async function executeHandler(handler: RouteHandler, context: Context): Promise<unknown> {
-  // The request checks a handler declares: its query and body schemas. Read
-  // from the handler that runs, so an expression handler's come from whatever
-  // it resolved to. They validate through the resolver's SchemaNode, so they
-  // can `$ref` registered schemas, `table/<name>` included. The query is
-  // checked before the body is read. The body is then read whole, checked,
-  // and made `request.body`, as `$requestBody` does it.
+  // The request checks a handler declares: its query/body schemas and the files
+  // it takes. Read from the handler that runs, so an expression handler's come
+  // from whatever it resolved to. The schemas validate through the resolver's
+  // SchemaNode, so they can `$ref` registered schemas, `table/<name>` included.
+  // The query is checked before the body is read, so a request it refuses has
+  // none of its files stored. The body is then read whole, checked as it is
+  // read, and made `request.body`, as `$requestBody` does it.
   if (handler.queryParams) assertValid(context, handler.queryParams, context.request?.query ?? {}, "query");
-  await readRequestBody(context, "route", { schema: handler.body, stream: handler.stream === true });
+  await readRequestBody(context, "route", { schema: handler.body, upload: handler.upload, stream: handler.stream === true });
 
   if (handler.do !== undefined) {
     return (await runSteps(handler.do, context)) ?? null;

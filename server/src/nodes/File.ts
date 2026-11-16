@@ -6,6 +6,7 @@ import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { Node, Context, NodeValue, Html, resolve, resolveAll, runSteps, childContext, isObject, typeOfName } from "@jexs/core";
 import type { JexsNodeSchema } from "@jexs/core";
+import { fromRequest } from "../request/parts.js";
 
 function toBoolean(value: unknown): boolean {
   if (typeof value === "boolean") return value;
@@ -99,11 +100,11 @@ export class FileNode extends Node {
       variants: {
         write: {
           output: "null",
-          markdownDescription: "Writes data to the file, by what the data is: a string as it is, bytes (a `Buffer`, such as a binary file `$file` loaded) as they are, a blob or file (from `$blob`, or a `$fetch` with `raw: true`) as the bytes it holds, a stream as its values arrive, and anything else as JSON. A failure is an error.\nA stream is written as it is read, so memory stays flat however much it carries: one of bytes or text, such as a request's `request.body`, a `$fetch` with `stream` and `raw`, or a `$stream`. A stream of anything else is an error, and one that fails partway leaves the destination as it was. A stream is read once, so writing one that was read already is an error.",
+          markdownDescription: "Writes data to the file, by what the data is: a string as it is, bytes (a `Buffer`, such as a binary file `$file` loaded) as they are, a blob or file (from `$blob`, a file upload, a `$fetch` with `raw: true`) as the bytes it holds, a stream as its values arrive, and anything else as JSON. A failure is an error.\nWriting a file a request sent is how the request keeps it: one a body read whole holds (`{ \"$file\": \"/public/uploads/a.png\", \"write\": { \"$var\": \"request.body.photo\" } }`), or the `stream` of one a body read as a stream gives, which is written as it arrives, the destination left as it was if it is refused partway, and is read once: copy the file the write made. Its destination must lie inside the resolver root, since its name is the client's to choose: build the name rather than trust it.\nA stream is written as it is read, so memory stays flat however much it carries: one of bytes or text, such as a request's `request.body`, a `$fetch` with `stream` and `raw`, or a `$stream`. A stream of anything else is an error, and one that fails partway leaves the destination as it was. A stream is read once, so writing one that was read already is an error.",
         },
         append: {
           output: "null",
-          markdownDescription: "Adds data to the end of the file, making it if there is none: a string or bytes as they are, a blob or file, or a stream of bytes or text as it arrives (like `write`), and anything else as one line of JSON, so a file of appended records reads as JSON Lines. A failure is an error. A stream that fails partway leaves the file as it was before.",
+          markdownDescription: "Adds data to the end of the file, making it if there is none: a string or bytes as they are, a blob or file, or a stream of bytes or text as it arrives (like `write`), and anything else as one line of JSON, so a file of appended records reads as JSON Lines. A failure is an error. A file refused partway, or a stream that fails, leaves the file as it was before.\nAppending is how a file arrives in parts over several requests (a resumable upload): each request's body appended to what came before. As with `write`, an upload's destination must lie inside the resolver root.",
         },
         copy: {
           type: "string",
@@ -390,6 +391,10 @@ function writeFile(
 ): unknown {
   return resolveAll([def.$file, def[mode]], context, async ([filePathValue, data]) => {
     const filePath = resolvePath(filePathValue, rootAbs, getFileDir(context));
+    // An upload's name is the client's to choose, so a path built from it must not climb out of the root.
+    if (isObject(data) && fromRequest.has(data) && !filePath.startsWith(rootAbs + path.sep)) {
+      throw new Error(`$file: an upload can only be written inside the resolver root, not to ${filePath}`);
+    }
     if (data instanceof ReadableStream && data.locked) {
       throw new Error("$file: this stream was read already. A stream is read once, so copy the file that write made");
     }
@@ -413,7 +418,7 @@ function writeFile(
  * place once it is all in, so if the source fails partway `to` is as it was,
  * and an append is cut back to where it began.
  */
-async function writeArriving(to: string, source: AsyncIterable<Uint8Array | string>, append: boolean): Promise<void> {
+export async function writeArriving(to: string, source: AsyncIterable<Uint8Array | string>, append: boolean): Promise<void> {
   const target = append ? to : `${to}.${randomUUID()}.part`;
   const before = append ? await fs.stat(to).then(s => s.size, () => null) : null;
   try {
