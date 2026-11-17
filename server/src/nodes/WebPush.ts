@@ -1,10 +1,11 @@
 import { createECDH, hkdfSync } from "node:crypto";
 import { Node, Context, NodeValue, resolveAll, isObject, createHttpError } from "@jexs/core";
-import webpush from "web-push";
+import { sendNotification, WebPushError } from "web-push";
+import type { PushSubscription, RequestOptions, Urgency } from "web-push";
 import type { JexsNodeSchema } from "@jexs/core";
 import { appSecret } from "./Crypto.js";
 
-const URGENCIES: readonly webpush.Urgency[] = ["very-low", "low", "normal", "high"];
+const URGENCIES: readonly Urgency[] = ["very-low", "low", "normal", "high"];
 
 /** The order of P-256's group: a private key is a number from 1 to this, exclusive. */
 const P256_ORDER = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;
@@ -32,7 +33,7 @@ function vapidKeys(context: Context): VapidKeys {
 }
 
 /** The JSON a browser's `PushSubscription` serializes to. */
-function isPushSubscription(value: unknown): value is webpush.PushSubscription {
+function isPushSubscription(value: unknown): value is PushSubscription {
   return isObject(value) && typeof value.endpoint === "string"
     && isObject(value.keys) && typeof value.keys.p256dh === "string" && typeof value.keys.auth === "string";
 }
@@ -143,7 +144,7 @@ export class WebPushNode extends Node {
 
         // The keys travel with this send: `setVapidDetails` would set them for
         // every resolver in the process, so concurrent sends could swap keys.
-        const options: webpush.RequestOptions = { vapidDetails: { subject, publicKey, privateKey } };
+        const options: RequestOptions = { vapidDetails: { subject, publicKey, privateKey } };
         if (def.ttl)   options.TTL   = Number(ttlRaw);
         if (urgencyRaw !== null) {
           const urgency = URGENCIES.find(u => u === urgencyRaw);
@@ -153,12 +154,12 @@ export class WebPushNode extends Node {
         if (def.topic) options.topic = String(topicRaw);
 
         try {
-          await webpush.sendNotification(subscriptionRaw, JSON.stringify(payload), options);
+          await sendNotification(subscriptionRaw, JSON.stringify(payload), options);
           return null;
         } catch (error) {
           // The push service's own status, so a `$catch` can tell a dead
           // subscription (404/410) from a passing failure.
-          const status = error instanceof webpush.WebPushError ? error.statusCode : 502;
+          const status = error instanceof WebPushError ? error.statusCode : 502;
           throw createHttpError(status, `$webpush failed: ${error instanceof Error ? error.message : String(error)}`);
         }
       },
