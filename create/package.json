@@ -1,6 +1,6 @@
 {
   "name": "@jexs/create",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "license": "MIT",
   "description": "Scaffold a new Jexs project",
   "keywords": [
@@ -35,7 +35,7 @@
     "build": "tsc -b"
   },
   "devDependencies": {
-    "@jexs/server": "^1.1.0",
+    "@jexs/server": "^2.0.0",
     "@types/node": "^24.0.0",
     "ajv": "^8.20.0"
   }

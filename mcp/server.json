@@ -9,12 +9,12 @@
     "subfolder": "mcp"
   },
   "websiteUrl": "https://jexs.dev",
-  "version": "0.10.1",
+  "version": "0.11.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@jexs/mcp",
-      "version": "0.10.1",
+      "version": "0.11.0",
       "transport": {
         "type": "stdio"
       }

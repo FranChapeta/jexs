@@ -1,6 +1,6 @@
 {
   "name": "@jexs/electron",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "license": "MIT",
   "description": "Electron runtime for Jexs — window/dialog/app nodes plus a JSON-driven main-process runner (jexs-electron)",
   "keywords": [
@@ -45,9 +45,9 @@
     "build": "tsc -b"
   },
   "peerDependencies": {
-    "@jexs/client": "^1.0.0",
-    "@jexs/core": "^1.2.0",
-    "@jexs/server": "^1.0.0",
+    "@jexs/client": "^2.0.0",
+    "@jexs/core": "^2.0.0",
+    "@jexs/server": "^2.0.0",
     "electron": ">=28"
   },
   "devDependencies": {
