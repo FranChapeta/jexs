@@ -305,7 +305,8 @@ export function toNumberValue(value: unknown): number {
 /**
  * Coerce to boolean. Differs from JS truthiness where a template author would
  * expect it to: `"0"` and `"false"` are falsy (they arrive from query strings and
- * attributes), an empty array or object is falsy, and a DOM node is truthy.
+ * attributes), and an empty array or plain object is falsy. Any other object (a
+ * stream, a Date, a blob, a DOM node) is a value, not data, and is truthy.
  */
 export function toBooleanValue(value: unknown): boolean {
   if (typeof value === "boolean") return value;
@@ -315,8 +316,8 @@ export function toBooleanValue(value: unknown): boolean {
   }
   if (Array.isArray(value)) return value.length > 0;
   if (isObject(value)) {
-    if ("nodeType" in value) return true; // DOM nodes are truthy
-    return hasAnyKey(value);
+    const proto = Object.getPrototypeOf(value);
+    return (proto !== Object.prototype && proto !== null) || hasAnyKey(value);
   }
   return value !== null && value !== undefined;
 }
