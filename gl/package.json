@@ -33,7 +33,8 @@
   },
   "files": [
     "dist",
-    "!dist/schema.json"
+    "!dist/schema.json",
+    "!dist/**/*.map"
   ],
   "peerDependencies": {
     "@jexs/core": "^2.0.0",
