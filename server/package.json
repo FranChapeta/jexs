@@ -49,6 +49,9 @@
     "!dist/schema.json",
     "!dist/**/*.map"
   ],
+  "scripts": {
+    "prepublishOnly": "tsc -b"
+  },
   "peerDependencies": {
     "@jexs/core": "^2.0.0",
     "@jexs/physics": "^0.7.0",

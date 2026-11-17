@@ -32,7 +32,8 @@
     "!dist/**/*.map"
   ],
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsc -b",
+    "prepublishOnly": "tsc -b"
   },
   "devDependencies": {
     "@jexs/server": "^2.0.0",

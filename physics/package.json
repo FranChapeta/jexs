@@ -19,6 +19,9 @@
     ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts" }
   },
   "files": ["dist", "!dist/schema.json", "!dist/**/*.map"],
+  "scripts": {
+    "prepublishOnly": "tsc -b"
+  },
   "peerDependencies": {
     "@jexs/core": "^2.0.0"
   }
