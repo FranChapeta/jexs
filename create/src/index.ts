@@ -469,7 +469,7 @@ async function main(): Promise<void> {
   if (!useServer) devDeps["@jexs/server"] = JEXS_VERSIONS["@jexs/server"];
   if (useServer && !useElectron) devDeps.concurrently = "^10.0.0";
   if (useTailwind) { devDeps.tailwindcss = "^4.0.0"; devDeps["@tailwindcss/cli"] = "^4.0.0"; }
-  if (useElectron) { devDeps.electron = "^44.0.0"; devDeps["electron-builder"] = "^26.0.0"; }
+  if (useElectron) { devDeps.electron = "^45.0.0"; devDeps["electron-builder"] = "^26.0.0"; }
 
   const scripts: Record<string, string> = {};
   if (useElectron) {
