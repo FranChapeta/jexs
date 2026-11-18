@@ -327,6 +327,30 @@ export function inOrder(count: number, run: (i: number) => unknown, take: (v: un
 }
 
 /**
+ * Run `run(i)` for each `i` below `count`, at most `limit` at a time, starting
+ * the next as one settles, and resolve to the results in index order whatever
+ * order they finish in. The first rejection rejects it, and no run starts after
+ * it; the runs already under way are left to settle.
+ */
+export function inParallel(count: number, limit: number, run: (i: number) => unknown): Promise<unknown[]> {
+  const results = new Array<unknown>(count);
+  let next = 0;
+  let failed = false;
+  const worker = async (): Promise<void> => {
+    while (!failed && next < count) {
+      const i = next++;
+      try {
+        results[i] = await run(i);
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
+    }
+  };
+  return Promise.all(Array.from({ length: Math.min(limit, count) }, worker)).then(() => results);
+}
+
+/**
  * Resolve every field of a step def in parallel, sync-first, and pass `then` a
  * new record of the results. For a node that wants all of its step's inputs at
  * once (the def itself, or an option bag it built from the def's fields).

@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createResolver, coreNodes } from "../src/index.js";
+import { Node, createResolver, coreNodes, resolve as resolveValue } from "../src/index.js";
+import type { Context, JexsNodeSchema } from "../src/index.js";
 
 // The resolver the steps below run in; contexts are adopted at its entry points.
 const resolve = createResolver(coreNodes());
@@ -161,6 +162,83 @@ test("do as steps: async steps run in order within an item", async () => {
   assert.deepEqual(out, [3, 6]);
 });
 
+/** A resolver with `$work`, which waits `ms` and gives back `value`, noting how many run at once and which started. */
+function workResolver() {
+  const seen = { running: 0, peak: 0, started: [] as unknown[] };
+  const node = new (class extends Node {
+    static schema: JexsNodeSchema = { work: { type: "object" } };
+    work(def: Record<string, unknown>, context: Context) {
+      return resolveValue(def.$work, context, raw => {
+        const { value, ms, fail } = raw as { value: unknown; ms: number; fail?: boolean };
+        seen.started.push(value);
+        seen.running++;
+        seen.peak = Math.max(seen.peak, seen.running);
+        return new Promise((ok, no) => setTimeout(() => {
+          seen.running--;
+          if (fail) no(new Error(`failed ${String(value)}`)); else ok(value);
+        }, ms));
+      });
+    }
+  })();
+  return { run: createResolver([...coreNodes(), node]), seen };
+}
+
+const workOn = { $work: { value: { $var: "item.v" }, ms: { $var: "item.ms" }, fail: { $var: "item.fail" } } };
+
+test("map parallel: the results keep the items' order whatever order they finish in", async () => {
+  const { run } = workResolver();
+  const items = [{ v: "a", ms: 30 }, { v: "b", ms: 5 }, { v: "c", ms: 15 }];
+  assert.deepEqual(await run({ $map: { $var: "items" }, parallel: true, do: workOn }, { items }), ["a", "b", "c"]);
+  assert.deepEqual(await run({ $map: { $var: "items" }, parallel: 2, do: workOn }, { items }), ["a", "b", "c"]);
+});
+
+test("filter parallel: the kept items keep their order whatever order their tests finish in", async () => {
+  const { run } = workResolver();
+  const items = [{ v: true, ms: 30, name: "a" }, { v: false, ms: 1, name: "b" }, { v: true, ms: 5, name: "c" }, { v: true, ms: 15, name: "d" }];
+  const kept = await run({ $filter: { $var: "items" }, parallel: 2, do: workOn }, { items });
+  assert.deepEqual((kept as { name: string }[]).map(k => k.name), ["a", "c", "d"]);
+});
+
+test("map, foreach and filter parallel: a number caps how many run at once, true runs them all", async () => {
+  const items = Array.from({ length: 7 }, (_, i) => ({ v: i, ms: 5 + (i % 3) * 5 }));
+  for (const op of ["$map", "$foreach", "$filter"]) {
+    const capped = workResolver();
+    await capped.run({ [op]: { $var: "items" }, parallel: 3, do: workOn }, { items });
+    assert.equal(capped.seen.peak, 3, `${op} parallel: 3`);
+    const all = workResolver();
+    await all.run({ [op]: { $var: "items" }, parallel: true, do: workOn }, { items });
+    assert.equal(all.seen.peak, 7, `${op} parallel: true`);
+    const sequential = workResolver();
+    await sequential.run({ [op]: { $var: "items" }, do: workOn }, { items });
+    assert.equal(sequential.seen.peak, 1, `${op} without parallel`);
+  }
+});
+
+test("foreach parallel: the value is the last item's result, not the last to finish", async () => {
+  const { run } = workResolver();
+  const items = [{ v: "a", ms: 5 }, { v: "b", ms: 5 }, { v: "c", ms: 1 }, { v: "d", ms: 30 }];
+  assert.equal(await run({ $foreach: { $var: "items" }, parallel: 2, do: workOn }, { items }), "d");
+});
+
+test("map parallel: the first error fails it, and no item starts after it", async () => {
+  const { run, seen } = workResolver();
+  const items = [{ v: "a", ms: 5, fail: true }, { v: "b", ms: 20 }, { v: "c", ms: 1 }, { v: "d", ms: 1 }];
+  await assert.rejects(async () => run({ $map: { $var: "items" }, parallel: 2, do: workOn }, { items }), /failed a/);
+  await new Promise(r => setTimeout(r, 40));
+  assert.deepEqual(seen.started, ["a", "b"]);
+});
+
+test("map, foreach and filter parallel: an empty array, and a value that is not true or a whole number", async () => {
+  assert.deepEqual(await resolve({ $map: [], parallel: 2, do: { $var: "item" } }, {}), []);
+  assert.deepEqual(await resolve({ $filter: [], parallel: 2, do: { $var: "item" } }, {}), []);
+  for (const parallel of [0, -1, 1.5, "2"]) {
+    for (const op of ["$map", "$foreach", "$filter"]) {
+      await assert.rejects(async () => resolve({ [op]: [1], parallel, do: { $var: "item" } }, {}), /parallel takes true or a whole number/);
+    }
+  }
+  assert.deepEqual(resolve({ $map: [1, 2], parallel: false, do: { $var: "item" } }, {}), [1, 2]);
+});
+
 /** A stream of `values`, each read only when asked for, counting the reads and noting a cancel. */
 function source(values: unknown[]): { stream: ReadableStream<unknown>; reads: () => number; cancelled: () => boolean } {
   let reads = 0;
@@ -203,8 +281,55 @@ test("foreach over a stream: each value's steps finish before the next is read, 
   assert.equal(await resolve({ $foreach: { $var: "empty" }, do: { $var: "item" } }, { empty: source([]).stream }), null);
 });
 
-test("foreach over a stream: parallel does not apply", async () => {
-  await assert.rejects(async () => resolve({ $foreach: { $var: "src" }, parallel: true, do: { $var: "item" } }, { src: source([1]).stream }), /parallel/);
+test("foreach, map and filter over a stream: parallel takes a number, as true would read it without limit", async () => {
+  for (const op of ["$foreach", "$map", "$filter"]) {
+    await assert.rejects(async () => resolve({ [op]: { $var: "src" }, parallel: true, do: { $var: "item" } }, { src: source([1]).stream }), /takes a number in parallel over a stream/);
+  }
+});
+
+test("map over a stream with parallel: results in the source's order, at most n at once, read at most n ahead", async () => {
+  const { run, seen } = workResolver();
+  const src = source(Array.from({ length: 6 }, (_, i) => ({ v: i, ms: (6 - i) * 5 })));
+  const out = await run({ $map: { $var: "src" }, parallel: 3, do: workOn }, { src: src.stream });
+  assert.ok(out instanceof ReadableStream);
+  const reader = out.getReader();
+  assert.deepEqual(await reader.read(), { done: false, value: 0 });
+  assert.equal(src.reads(), 3, "three read ahead, and no more until the next is asked for");
+  const rest: unknown[] = [];
+  for (let r = await reader.read(); !r.done; r = await reader.read()) rest.push(r.value);
+  assert.deepEqual(rest, [1, 2, 3, 4, 5]);
+  assert.equal(seen.peak, 3);
+});
+
+test("filter over a stream with parallel: the kept values in the source's order", async () => {
+  const { run } = workResolver();
+  const items = [{ v: true, ms: 30, name: "a" }, { v: false, ms: 1, name: "b" }, { v: true, ms: 5, name: "c" }, { v: true, ms: 15, name: "d" }];
+  const out = await run({ $filter: { $var: "src" }, parallel: 2, do: workOn }, { src: source(items).stream });
+  assert.deepEqual((await readAll(out) as { name: string }[]).map(k => k.name), ["a", "c", "d"]);
+});
+
+test("foreach over a stream with parallel: at most n at once, and the value is the last value's result", async () => {
+  const { run, seen } = workResolver();
+  const items = [{ v: "a", ms: 1 }, { v: "b", ms: 1 }, { v: "c", ms: 1 }, { v: "d", ms: 5 }, { v: "e", ms: 30 }, { v: "f", ms: 1 }];
+  const src = source(items);
+  assert.equal(await run({ $foreach: { $var: "src" }, parallel: 3, do: workOn }, { src: src.stream }), "f");
+  assert.equal(seen.peak, 3);
+  assert.equal(src.cancelled(), false);
+});
+
+test("an error in a parallel run over a stream fails the op and cancels the source", async () => {
+  const values = () => [{ v: "a", ms: 20 }, { v: "b", ms: 1, fail: true }, { v: "c", ms: 1 }, { v: "d", ms: 1 }, { v: "e", ms: 1 }];
+
+  const each = workResolver();
+  const eachSrc = source(values());
+  await assert.rejects(async () => each.run({ $foreach: { $var: "src" }, parallel: 2, do: workOn }, { src: eachSrc.stream }), /failed b/);
+  assert.equal(eachSrc.cancelled(), true, "foreach");
+
+  const mapped = workResolver();
+  const mapSrc = source(values());
+  const out = await mapped.run({ $map: { $var: "src" }, parallel: 2, do: workOn }, { src: mapSrc.stream });
+  await assert.rejects(async () => readAll(out), /failed b/);
+  assert.equal(mapSrc.cancelled(), true, "map");
 });
 
 test("map and filter over a stream are lazy: a stream back, the source read as it is read", async () => {
