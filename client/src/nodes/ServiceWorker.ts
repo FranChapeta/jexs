@@ -33,7 +33,7 @@ export class ServiceWorkerNode extends Node {
       output: "null",
       markdownDescription: "Shows a notification, usually from a `push` handler. The value is the title; the rest are siblings.",
       examples: [
-        "{ \"$swNotify\": { \"$var\": \"data.title\" }, \"body\": { \"$var\": \"data.body\" }, \"icon\": \"/icon.png\", \"data\": { \"url\": { \"$var\": \"data.url\" } } }",
+        "{ \"$swNotify\": { \"$var\": \"push.title\" }, \"body\": { \"$var\": \"push.body\" }, \"icon\": \"/icon.png\", \"data\": { \"url\": { \"$var\": \"push.data.url\" } } }",
       ],
       siblings: {
         body: {

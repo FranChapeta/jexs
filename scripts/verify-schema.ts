@@ -750,7 +750,7 @@ const cases: Case[] = [
       skipWaiting: true,
       claim: true,
       events: {
-        push: [{ "$swNotify": { $var: "data.title" }, actions: [{ action: "open", title: "Open" }] }],
+        push: [{ "$swNotify": { $var: "push.title" }, actions: [{ action: "open", title: "Open" }] }],
         notificationclick: { "$swOpen": { $var: "notification.data.url" } },
       },
     } } },

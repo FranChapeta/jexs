@@ -55,7 +55,7 @@ A service worker is a config: what to precache, how to answer requests, and the 
     "skipWaiting": true,
     "claim": true,
     "events": {
-      "push": { "$swNotify": { "$var": "data.title" }, "body": { "$var": "data.body" }, "data": { "url": { "$var": "data.url" } } },
+      "push": { "$swNotify": { "$var": "push.title" }, "body": { "$var": "push.body" }, "data": { "url": { "$var": "push.data.url" } } },
       "notificationclick": { "$swOpen": { "$var": "notification.data.url" } }
     }
   }
@@ -89,7 +89,7 @@ Every handler sees `version`, the worker's version (the hash the server generate
 
 | Event | Context |
 |---|---|
-| `push` | `data`: the payload as JSON, or text, or `null` |
+| `push` | `push`: the payload as JSON, or text, or `null` |
 | `notificationclick`, `notificationclose` | `notification`: `{ title, body, tag, icon, badge, image, actions, timestamp, requireInteraction, silent, data }`, and `action` (the button clicked) |
 | `message` | `message`: the message a page sent; `source`: that page as `{ id, url, type }`, or `null` |
 | `sync` | `tag`, and `lastChance`: true on the browser's final retry |

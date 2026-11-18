@@ -315,7 +315,7 @@ test("stale-while-revalidate serves the cache and refreshes it", async () => {
 
 test("push data is JSON when it parses, text otherwise, null when absent", async () => {
   windows = [{ url: abs("/"), focused: false, navigatedTo: null, inbox: [], controlled: true }];
-  startServiceWorker({ events: { push: { "$swPost": { "$var": "data" } } } });
+  startServiceWorker({ events: { push: { "$swPost": { "$var": "push" } } } });
   await dispatch(new PushEvent({ text: () => '{"title":"Hi"}' })).done();
   await dispatch(new PushEvent({ text: () => "plain" })).done();
   await dispatch(new PushEvent(null)).done();
@@ -374,7 +374,7 @@ test("swNotify passes its siblings as notification options", async () => {
   startServiceWorker({
     events: {
       push: {
-        "$swNotify": { "$var": "data.title" },
+        "$swNotify": { "$var": "push.title" },
         "body": "b",
         "requireInteraction": true,
         "actions": [{ "action": "open", "title": "Open" }, { "title": "no id" }],

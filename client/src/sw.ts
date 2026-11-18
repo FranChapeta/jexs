@@ -242,7 +242,7 @@ async function answer(route: CompiledRoute, event: FetchEvent, name: string): Pr
 function eventContext(type: string, event: ExtendableEvent): Record<string, unknown> {
   switch (type) {
     case "push":
-      return event instanceof PushEvent ? { data: pushData(event.data) } : {};
+      return event instanceof PushEvent ? { push: pushData(event.data) } : {};
     case "notificationclick":
     case "notificationclose":
       if (!(event instanceof NotificationEvent)) return {};

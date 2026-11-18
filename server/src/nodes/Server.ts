@@ -1207,7 +1207,7 @@ export class ServerNode extends Node {
         properties: {
           install: { $ref: "#/$defs/steps", description: "A new version installs, after `precache`. A failure fails the install." },
           activate: { $ref: "#/$defs/steps", description: "A new version takes over, after old caches are deleted and `claim` runs." },
-          push: { $ref: "#/$defs/steps", description: "A push message arrives. `data` is its payload: JSON, text, or `null`." },
+          push: { $ref: "#/$defs/steps", description: "A push message arrives. `push` is its payload: JSON, text, or `null`." },
           pushsubscriptionchange: { $ref: "#/$defs/steps", description: "The browser changed or dropped the push subscription. `oldSubscription` and `newSubscription` are each `{ endpoint, keys }` or `null`; tell your server here." },
           notificationclick: { $ref: "#/$defs/steps", description: "A notification (or one of its `actions`) is clicked. `notification` is `{ title, body, tag, icon, badge, image, actions, timestamp, requireInteraction, silent, data }`, `action` the button's id." },
           notificationclose: { $ref: "#/$defs/steps", description: "A notification is dismissed. `notification` is `{ title, body, tag, icon, badge, image, actions, timestamp, requireInteraction, silent, data }`." },
