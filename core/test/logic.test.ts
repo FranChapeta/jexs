@@ -23,8 +23,18 @@ test("empty: false for non-empty string/array/object and non-collections", () =>
   assert.equal(resolve({ $empty: false }, {}), false);
 });
 
+test("empty and coalesce: a stream, a Date or a blob is a value, never empty", async () => {
+  const ctx: Record<string, unknown> = { d: new Date(0), b: new Blob([]), o: Object.create(null) };
+  await resolve({ $stream: [], $as: "s" }, ctx);
+  for (const name of ["s", "d", "b"]) {
+    assert.equal(resolve({ $empty: { $var: name } }, ctx), false, name);
+    assert.equal(resolve({ $coalesce: [{ $var: name }, "fallback"] }, ctx), ctx[name], name);
+  }
+  assert.equal(resolve({ $empty: { $var: "o" } }, ctx), true);
+});
+
 // coalesce returns the first non-empty VALUE (not a boolean), sharing the empty
-// rule above: null/undefined/""/[]/{} are skipped, 0 and false are kept.
+// rule above: null/undefined/""/[]/plain {} are skipped, 0 and false are kept.
 
 test("coalesce: returns the first non-empty value", () => {
   assert.equal(resolve({ $coalesce: [{ $var: "missing" }, "any"] }, {}), "any");

@@ -78,7 +78,7 @@ export class LogicNode extends Node {
       type: "array",
       output: "any",
       markdownDescription: "Resolves values left to right, returning the first non-empty one: the value itself, not a boolean. Short-circuits, so later expressions are never resolved once a value is found. Use it to supply a fallback without repeating an expression across `$if`/`then`.",
-      outputDescription: "The first value that is not empty (`null`, `undefined`, `\"\"`, `[]`, `{}` are skipped; `0` and `false` are kept, the same rule as `empty`). If every value is empty, the LAST one is returned; an empty array yields `undefined`.",
+      outputDescription: "The first value that is not empty (`null`, `undefined`, `\"\"`, `[]`, a plain `{}` are skipped; `0` and `false` are kept, the same rule as `empty`). If every value is empty, the LAST one is returned; an empty array yields `undefined`.",
       examples: [
         "{ \"$coalesce\": [{ \"$var\": \"props.button.properties.size.type\" }, \"any\"] }",
       ],
@@ -213,7 +213,7 @@ export class LogicNode extends Node {
     empty: {
       output: "boolean",
       markdownDescription: "Tests whether the resolved value is empty. For the opposite, wrap it in `not`.",
-      outputDescription: "`true` for `null`, `undefined`, `\"\"`, `[]`, or `{}`; otherwise `false`.",
+      outputDescription: "`true` for `null`, `undefined`, `\"\"`, `[]`, or a plain `{}`; otherwise `false`, so a stream, a Date or a blob is never empty.",
       examples: [
         "{ \"$empty\": { \"$var\": \"items\" } }",
         "{ \"$not\": { \"$empty\": { \"$var\": \"items\" } } }",
@@ -395,11 +395,15 @@ function typeName(value: unknown): string {
 }
 
 // Shared emptiness rule for empty / coalesce: null, undefined, "",
-// [], {} are empty; 0 and false (and other non-collections) are not.
+// [] and a plain {} are empty; 0, false and any other object (a stream,
+// a Date, a blob) are not.
 function isEmptyValue(value: unknown): boolean {
   if (value === null || value === undefined) return true;
   if (typeof value === "string") return value === "";
   if (Array.isArray(value)) return value.length === 0;
-  if (isObject(value)) return !hasAnyKey(value);
+  if (isObject(value)) {
+    const proto = Object.getPrototypeOf(value);
+    return (proto === Object.prototype || proto === null) && !hasAnyKey(value);
+  }
   return false;
 }
