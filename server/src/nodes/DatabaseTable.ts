@@ -20,8 +20,8 @@ const strings = { type: "array", items: { type: "string" } };
 /**
  * A column: a JSON Schema property (`type`, `maxLength`, `enum`, `pattern`,
  * `format`, `default`, ...) that validates the column's values, beside the SQL
- * settings that build it. Ajv ignores the SQL keys. `default` is JSON Schema's;
- * the column's SQL default is `sqlDefault`.
+ * settings that build it. Ajv ignores the SQL keys. `default` is JSON Schema's
+ * annotation and fills nothing; the column's SQL default is `sqlDefault`.
  */
 export interface ColumnSchema {
   type?: string | string[];
@@ -164,7 +164,7 @@ export class DatabaseTableNode extends Node {
       description: "A column: JSON Schema for its values, beside the SQL settings that build it.",
       properties: {
         type:          { anyOf: [{ enum: JSON_TYPES }, { type: "array", items: { enum: JSON_TYPES } }], description: "JSON Schema's type for the column's values. A `boolean` column takes and gives `true`/`false`, whatever the database stores for them." },
-        default:       { description: "JSON Schema's default, the value a row is given. The column's SQL default is `sqlDefault`." },
+        default:       { description: "JSON Schema's default: an annotation only, which neither fills a row nor builds the column. For a value the database fills in, use `sqlDefault`." },
         sqlType:       { enum: SQL_TYPES, description: "The SQL type; without it, mapped from the JSON Schema `type`." },
         sqlDefault:    { type: ["string", "number", "boolean", "null"], description: "The column's SQL default. `CURRENT_TIMESTAMP` is passed through as SQL." },
         maxLength:     { type: "integer", description: "JSON Schema's longest string, checked on every write, and the length of a `varchar` column (default 255)." },
