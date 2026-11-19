@@ -51,10 +51,3 @@ export {
   makeContactsBuffer, readContacts, CONTACT_STRIDE,
   type WorldOffload, type PhysicsJobBufs,
 } from "./sharedPhysics.js";
-
-// ── Vector ──
-export {
-  VectorNode,
-  type Vec, toVec,
-  add, sub, scale, distance, lerp, toward, normalize, direction, cross, dot,
-} from "./nodes/Vector.js";

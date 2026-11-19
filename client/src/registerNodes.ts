@@ -52,11 +52,10 @@ function missingPackage(pkg: string, needed: string): (err: unknown) => never {
  *  one EntityNode, and with it one set of stores. */
 function loadPhysics(r: Resolver): Promise<void> {
   return import("@jexs/physics").catch(
-    missingPackage("@jexs/physics", "entity, vector, physics, collision, joint and mesh ops"),
-  ).then(({ EntityNode, VectorNode, PhysicsNode, CollisionNode, JointNode, MeshNode }) => {
+    missingPackage("@jexs/physics", "entity, physics, collision, joint and mesh ops"),
+  ).then(({ EntityNode, PhysicsNode, CollisionNode, JointNode, MeshNode }) => {
     if (r.nodeFor("entityInit")) return;
     r.registerNode(new EntityNode());
-    r.registerNode(new VectorNode());
     // Off-thread physics when shared:true: the node gets the env worker
     // constructor. The worker bundle (./physicsWorker) is only FETCHED when the
     // first shared world registers — the URL here is resolved, not loaded.
@@ -67,14 +66,12 @@ function loadPhysics(r: Resolver): Promise<void> {
   });
 }
 
-/** Worker-safe groups: physics + entity/vector math. Safe to register in a
+/** Worker-safe groups: physics + entity math. Safe to register in a
  *  worker (no DOM/GPU/storage). */
 export function registerComputeLazy(resolver: Resolver): void {
   resolver.registerLazy(
     ["entityInit", "entityAdd", "entityRemove", "entityMove", "entityUpdate",
      "entityClear", "entityList", "entityNearest", "entityGet",
-     "vectorDistance", "vectorLerp", "vectorToward", "vectorNormalize", "vectorScale",
-     "vectorAdd", "vectorSub", "vectorDirection", "vectorCross", "vectorDot",
      "physicsInit", "physicsPause", "physicsResume", "physicsDestroy", "physicsApply", "physicsStep",
      "physicsRaycast",
      "collisionOn", "collisionOff",

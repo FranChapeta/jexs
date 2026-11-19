@@ -30,6 +30,7 @@ npm install @jexs/core
 | `ObjectNode` | `keys`, `values`, `entries`, `pick`, `omit`, `merge`, `groupBy`, `fromEntries`, ... | Object ops |
 | `MathNode` | `add`, `avg`, `min`, `max`, `clamp`, `randomNumber`, `parseInt`, ... | Numeric ops |
 | `ColorNode` | `toRgb`, `toHex`, `lighten`, `darken`, `mix`, `contrast`, ... | Color ops |
+| `VectorNode` | `vectorAdd`, `vectorDot`, `vectorNormalize`, `vectorDistance`, `vectorLerp`, `vectorCross`, ... | Vector math, in any dimension: points in space or embeddings |
 | `DateNode` | `dateNow`, `dateFormat`, `dateAdd`, `dateDiff`, ... | Dates |
 | `TimerNode` | `interval`, `sleep` | Timing |
 | `FetchNode` | `fetch` | HTTP requests |

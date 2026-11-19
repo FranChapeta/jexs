@@ -55,9 +55,9 @@ import {
   _frustum,
 } from "../gl/math.js";
 import { initEquirectSky, drawEquirectSky } from "../gl/skybox.js";
-import { raycastStore, toVec, EntityNode, STORE_SIBLING, type MeshEntry, type Bounds } from "@jexs/physics";
+import { raycastStore, EntityNode, STORE_SIBLING, type MeshEntry, type Bounds } from "@jexs/physics";
 import type { GpuMesh } from "../gl/types.js";
-import type { JexsNodeSchema, JexsPropertySchema } from "@jexs/core";
+import { SPACE_DIMS, toVec, type JexsNodeSchema, type JexsPropertySchema } from "@jexs/core";
 
 // ─── Module-level scratch buffers ────────────────────────────────────────────
 
@@ -89,13 +89,13 @@ export let _glDebug = false;
 
 type P = JexsPropertySchema;
 /** A 3D position or direction, as the `$v-*` ops take and return one; z is 0 if left out. */
-const vec = (description: string): P => ({ $ref: "#/$defs/_vec", description });
+const vec = (description: string): P => ({ $ref: "#/$defs/_point", description });
 /** An rgb color, as `$toRgb`, `$lighten` and `$mix` return one. */
 const rgb = (description: string): P => ({ $ref: "#/$defs/_color", description });
 
-/** A resolved `_vec` as the renderer's `[x, y, z]`, z 0 for a 2D one. */
+/** A resolved `_point` as the renderer's `[x, y, z]`, z 0 for a 2D one. */
 function vec3(v: unknown): [number, number, number] {
-  const [x, y, z] = toVec(v);
+  const [x, y, z] = toVec(v, SPACE_DIMS);
   return [x, y, z ?? 0];
 }
 
@@ -518,11 +518,11 @@ export class GlNode extends Node {
       siblings: {
         store: STORE_SIBLING,
         from: {
-          $ref: "#/$defs/_vec",
+          $ref: "#/$defs/_point",
           description: "Origin vector `[x, y, z?]`.",
         },
         dir: {
-          $ref: "#/$defs/_vec",
+          $ref: "#/$defs/_point",
           description: "Direction vector `[x, y, z?]`.",
         },
         mask: {
@@ -1562,7 +1562,7 @@ export class GlNode extends Node {
     return resolveFields(def, context, r => {
       const inst = GlNode.instFor(context, r.store);
       if (r["from"] == null || r["dir"] == null) return [];
-      const from = toVec(r["from"]), dir = toVec(r["dir"]);
+      const from = toVec(r["from"], SPACE_DIMS), dir = toVec(r["dir"], SPACE_DIMS);
       const maskArr = r["mask"] !== undefined ? r["mask"] as string[] : null;
       const maskSet = maskArr ? new Set(maskArr) : null;
       return raycastStore(inst.store, from[0], from[1], from[2] ?? 0, dir[0], dir[1], dir[2] ?? 0, maskSet);

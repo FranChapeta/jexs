@@ -34,7 +34,7 @@ The ops that write markup (`setProp` with `innerHTML` or `outerHTML`, and `inser
 | `PushNode` | `pushSubscribe`, `pushUnsubscribe` | Web Push subscription |
 | `WebRTCNode` | `rtc`, `rtcConnect`, `rtcSignal`, `rtcSend`, `rtcBroadcast`, `rtcClose`, `rtcStatus` | WebRTC peers, in named meshes |
 | from `@jexs/gl` | `glInit`, `glCamera`, `glTexture`, ... | WebGL rendering |
-| from `@jexs/physics` | `entityAdd`, `physicsInit`, `vectorAdd`, `collisionOn`, `jointAdd`, `parseGLB`, ... | Entities, physics, collision and vector math |
+| from `@jexs/physics` | `entityAdd`, `physicsInit`, `collisionOn`, `jointAdd`, `parseGLB`, ... | Entities, physics and collision |
 
 `ServiceWorkerNode` (`swNotify`, `swOpen`, `swPost`, ...) is not in this set: it runs in the service worker, which has its own resolver (see below).
 

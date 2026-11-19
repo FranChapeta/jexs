@@ -43,6 +43,7 @@ export { SNIFF_BYTES, acceptType, blobRule, positiveInteger, typeOfName, type Bl
 // ── Core nodes ──
 export { TimerNode } from "./nodes/Timer.js";
 export { FetchNode, pageCsrfToken } from "./nodes/Fetch.js";
+export { VectorNode, SPACE_DIMS, toVec, type Vec, type VecDims } from "./nodes/Vector.js";
 
 // Dynamic forwarder — construct with (keys, forwardFn) and registerNode() it to
 // proxy those keys to a remote resolver (e.g. Electron main over IPC). Not a
@@ -66,6 +67,7 @@ import { ErrorNode } from "./nodes/Error.js";
 import { FetchNode } from "./nodes/Fetch.js";
 import { StreamNode } from "./nodes/Stream.js";
 import { BlobNode } from "./nodes/Blob.js";
+import { VectorNode } from "./nodes/Vector.js";
 
 /**
  * Core nodes — pure logic plus global-fetch HTTP; no DOM or Node.js APIs. Safe
@@ -93,6 +95,7 @@ export function coreNodes(): Node[] {
     new FetchNode(),
     new StreamNode(),
     new BlobNode(),
+    new VectorNode(),
   ];
 }
 

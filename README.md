@@ -107,7 +107,7 @@ A few rules govern how every expression is resolved. Worth internalizing — the
 | Package | Purpose | Environment | npm |
 |---|---|---|---|
 | [`@jexs/core`](core) | Resolver engine + pure logic nodes (var, if, foreach, math, strings, arrays, dates) | any | [![npm](https://img.shields.io/npm/v/@jexs/core.svg)](https://www.npmjs.com/package/@jexs/core) |
-| [`@jexs/physics`](physics) | `EntityStore`, collision, raycasting, vectors, GLB/GLTF loading | any | [![npm](https://img.shields.io/npm/v/@jexs/physics.svg)](https://www.npmjs.com/package/@jexs/physics) |
+| [`@jexs/physics`](physics) | `EntityStore`, collision, raycasting, GLB/GLTF loading | any | [![npm](https://img.shields.io/npm/v/@jexs/physics.svg)](https://www.npmjs.com/package/@jexs/physics) |
 | [`@jexs/client`](client) | Browser DOM nodes, fetch, audio, WebSocket, lazy-loaded entrypoint | browser | [![npm](https://img.shields.io/npm/v/@jexs/client.svg)](https://www.npmjs.com/package/@jexs/client) |
 | [`@jexs/gl`](gl) | WebGL rendering — lighting, shadows, SSAO, particles, text, post-processing | browser | [![npm](https://img.shields.io/npm/v/@jexs/gl.svg)](https://www.npmjs.com/package/@jexs/gl) |
 | [`@jexs/server`](server) | HTTP, routing, DB (SQLite / MySQL / PostgreSQL), sessions, OAuth, email, web-push | Node.js | [![npm](https://img.shields.io/npm/v/@jexs/server.svg)](https://www.npmjs.com/package/@jexs/server) |

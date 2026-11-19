@@ -1,6 +1,6 @@
 # @jexs/physics
 
-Entity store, physics simulation, collision detection, raycasting, vectors, and GLB/GLTF mesh loading for **Jexs**.
+Entity store, physics simulation, collision detection, raycasting, and GLB/GLTF mesh loading for **Jexs**. The vector ops (`vectorAdd`, `vectorDot`, ...) are in `@jexs/core`.
 
 Environment-agnostic — runs in browser or Node.js. Used by [@jexs/gl](https://github.com/FranChapeta/jexs/tree/master/gl) for rendering and by [@jexs/client](https://github.com/FranChapeta/jexs/tree/master/client) for in-browser physics.
 
@@ -24,7 +24,6 @@ npm install @jexs/physics @jexs/core
 | `PhysicsNode` | `physicsInit`, `physicsStep`, `physicsPause`, `physicsResume`, `physicsApply`, `physicsRaycast`, `physicsDestroy` | Fixed-timestep simulation |
 | `CollisionNode` | `collisionOn`, `collisionOff` | Register collision handlers |
 | `JointNode` | `jointAdd`, `jointRemove` | Constraints between entities |
-| `VectorNode` | `vectorDistance`, `vectorLerp`, `vectorToward`, `vectorNormalize`, `vectorScale`, `vectorAdd`, `vectorSub`, `vectorDirection`, `vectorCross`, `vectorDot` | Vector math |
 | `MeshNode` | `parseGLB`, `parseGLTF`, `meshRegister` | Load 3D meshes; auto-builds a BVH |
 
 **Utilities** — `physicsStep`, `applyImpulse`, `wakeBody`, `raycastStore`, `rayAABB`, `buildBvh`, `queryAabb`, `raycastBvh`, `rayTriangle`, `computeBounds`.

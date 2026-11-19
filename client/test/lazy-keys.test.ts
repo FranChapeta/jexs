@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createResolver, type Node } from "@jexs/core";
-import { EntityNode, VectorNode, PhysicsNode, CollisionNode, JointNode, MeshNode } from "@jexs/physics";
+import { EntityNode, PhysicsNode, CollisionNode, JointNode, MeshNode } from "@jexs/physics";
 import { GlNode } from "@jexs/gl";
 import { registerComputeLazy, registerDomLazy } from "../src/registerNodes.js";
 import { WsNode } from "../src/nodes/Ws.js";
@@ -22,7 +22,7 @@ function assertLazy(register: (r: ReturnType<typeof createResolver>) => void, cl
 }
 
 test("every op of a worker-safe lazy node is a lazy key", () => {
-  assertLazy(registerComputeLazy, [EntityNode, VectorNode, PhysicsNode, CollisionNode, JointNode, MeshNode]);
+  assertLazy(registerComputeLazy, [EntityNode, PhysicsNode, CollisionNode, JointNode, MeshNode]);
 });
 
 test("every op of a DOM lazy node is a lazy key", () => {

@@ -347,8 +347,9 @@ describe("list_nodes", () => {
 
   test("filters to one package", async () => {
     const { text } = await callTool("list_nodes", { package: "@jexs/physics" });
-    assert.match(text, /VectorNode/);
+    assert.match(text, /EntityNode/);
     assert.doesNotMatch(text, /ArrayNode \(@jexs\/core\)/);
+    assert.doesNotMatch(text, /VectorNode/);
   });
 });
 

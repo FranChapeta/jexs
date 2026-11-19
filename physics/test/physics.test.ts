@@ -1,25 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createResolver, coreNodes, childContext, type Context } from "@jexs/core";
-import { EntityNode, PhysicsNode, CollisionNode, JointNode, VectorNode, EntityStore, offloadWorld, type PhysicsConfig } from "../src/index.js";
+import { EntityNode, PhysicsNode, CollisionNode, JointNode, EntityStore, offloadWorld, type PhysicsConfig } from "../src/index.js";
 
 const physicsResolver = () =>
-  createResolver([...coreNodes(), new EntityNode(), new PhysicsNode(), new CollisionNode(), new JointNode(), new VectorNode()]);
+  createResolver([...coreNodes(), new EntityNode(), new PhysicsNode(), new CollisionNode(), new JointNode()]);
 
-// Vectors are arrays, as entity translations are; a 2D vector meets a 3D one
-// at z = 0, and the result is 3D when either is.
-test("vector ops take and return arrays", async () => {
+test("a raycast takes a point in space, not a vector of another length", async () => {
   const r = physicsResolver();
   try {
-    assert.deepEqual(await r({ "$vectorAdd": [[1, 2], [3, 4, 5]] }, {}), [4, 6, 5]);
-    assert.deepEqual(await r({ "$vectorSub": [[1, 2], [3, 4]] }, {}), [-2, -2]);
-    assert.deepEqual(await r({ "$vectorScale": [[1, 2, 3], 2] }, {}), [2, 4, 6]);
-    assert.deepEqual(await r({ "$vectorNormalize": [3, 4] }, {}), [0.6, 0.8]);
-    assert.deepEqual(await r({ "$vectorCross": [[1, 0], [0, 1]] }, {}), [0, 0, 1]);
-    assert.deepEqual(await r({ "$vectorToward": [[0, 0], [10, 0], 4] }, {}), [4, 0]);
-    assert.equal(await r({ "$vectorDistance": [[0, 0], [3, 4]] }, {}), 5);
-    assert.equal(await r({ "$vectorDot": [[1, 2, 3], [4, 5, 6]] }, {}), 32);
-    await assert.rejects(async () => r({ "$vectorNormalize": { x: 3, y: 4 } }, {}), /Expected \[x, y\] or \[x, y, z\]/);
+    const context: Context = {};
+    await r({ "$entityInit": "#game" }, context);
+    await assert.rejects(async () => r({ "$physicsRaycast": true, from: [0, 0, 0, 0], dir: [1, 0] }, context), /Expected a vector of 2 or 3 numbers, got one of 4/);
   } finally {
     r.destroy();
   }

@@ -39,8 +39,8 @@ type P = JexsPropertySchema;
 
 /** A numeric vector sibling; the arity lives in the description. */
 const vec = (description: string): P => ({ type: "array", items: { type: "number" }, description });
-/** A position or direction, as the `$v-*` ops take and return one. */
-const point = (description: string): P => ({ $ref: "#/$defs/_vec", description });
+/** A position or direction in space. */
+const point = (description: string): P => ({ $ref: "#/$defs/_point", description });
 
 /** The sibling every op that acts on an entity store takes to name it. */
 export const STORE_SIBLING: P = {
@@ -185,6 +185,15 @@ function entityToObject(store: EntityStore, slot: number): Record<string, unknow
 }
 
 export class EntityNode extends Node {
+  static schemaDefs = {
+    // A `_vec` of 2 or 3 components, so a vector op's result fits one; its
+    // length is checked when the op that takes it runs.
+    _point: {
+      anyOf: [{ $ref: "#/$defs/_vec", minItems: 2, maxItems: 3 }],
+      description: "A point in space, `[x, y]`, or `[x, y, z]` in 3D. A 2D point meets a 3D one at `z = 0`.",
+    },
+  };
+
   static schema: JexsNodeSchema = {
     entityInit: {
       type: "string",

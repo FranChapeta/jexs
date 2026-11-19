@@ -20,7 +20,7 @@ import {
   type EntityMeta,
 } from "../EntityStore.js";
 import { raycastStore } from "../Raycast.js";
-import { toVec } from "./Vector.js";
+import { SPACE_DIMS, toVec } from "@jexs/core";
 import { EntityNode, STORE_SIBLING } from "./EntityNode.js";
 import { offloadWorld, readContacts, type WorldOffload } from "../sharedPhysics.js";
 import type { WorkerLike } from "@jexs/core";
@@ -673,7 +673,7 @@ export class PhysicsNode extends Node {
         id: { type: "string", description: "The entity's id." },
         slot: { type: "number", description: "The entity's slot in the store." },
         distance: { type: "number", description: "How far along the ray it was hit." },
-        point: { $ref: "#/$defs/_vec", description: "Where the ray hit it, `[x, y, z]`." },
+        point: { $ref: "#/$defs/_point", description: "Where the ray hit it, `[x, y, z]`." },
       },
     },
   };
@@ -755,7 +755,7 @@ export class PhysicsNode extends Node {
       ],
       siblings: {
         impulse: {
-          $ref: "#/$defs/_vec",
+          $ref: "#/$defs/_point",
           description: "Impulse vector `[x, y, z]`. Omit `z` for 2D worlds.",
         },
       },
@@ -770,12 +770,12 @@ export class PhysicsNode extends Node {
       ],
       siblings: {
         from: {
-          $ref: "#/$defs/_vec",
+          $ref: "#/$defs/_point",
           required: true,
           description: "Ray origin `[x, y, z]`. `z` defaults to 0.",
         },
         dir: {
-          $ref: "#/$defs/_vec",
+          $ref: "#/$defs/_point",
           required: true,
           description: "Ray direction `[x, y, z]`. `z` defaults to 0.",
         },
@@ -902,7 +902,7 @@ export class PhysicsNode extends Node {
     return resolveAll([def["from"], def["dir"], def["mask"] ?? null, def.store], context, ([fromRaw, dirRaw, maskRaw, name]) => {
       const store = EntityNode.storeFor(context, name);
       if (fromRaw == null || dirRaw == null) return [];
-      const from = toVec(fromRaw), dir = toVec(dirRaw);
+      const from = toVec(fromRaw, SPACE_DIMS), dir = toVec(dirRaw, SPACE_DIMS);
       const maskSet = maskRaw ? new Set(maskRaw as string[]) : null;
       return raycastStore(
         store,
@@ -1058,11 +1058,11 @@ export class JointNode extends Node {
           description: "ID of second entity.",
         },
         anchorA: {
-          $ref: "#/$defs/_vec",
+          $ref: "#/$defs/_point",
           description: "Attachment point on A as an `[x, y]` offset from its position (default `[0, 0]`). Joints are 2D, so a `z` is ignored.",
         },
         anchorB: {
-          $ref: "#/$defs/_vec",
+          $ref: "#/$defs/_point",
           description: "Attachment point on B as an `[x, y]` offset from its position (default `[0, 0]`). Joints are 2D, so a `z` is ignored.",
         },
       },
