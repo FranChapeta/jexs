@@ -33,6 +33,7 @@
     "build": "tsc -b core physics client gl server electron create --force && npm run build:schema",
     "build:clean": "tsc -b core physics client gl server electron create --clean",
     "build:schema": "node server/dist/cli.js schema && tsx scripts/verify-schema.ts",
+    "bench": "tsx scripts/bench-dispatch.ts",
     "test": "node --import tsx --test core/test/*.test.ts physics/test/*.test.ts client/test/*.test.ts server/test/*.test.ts electron/test/*.test.ts create/test/*.test.ts mcp/test/*.test.mjs"
   }
 }

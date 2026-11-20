@@ -264,26 +264,32 @@ function bubbleTarget(context: Context, name: string): Context {
  */
 function writeContextValue(context: Context, varName: string, value: unknown): void {
   const parts = splitPath(varName);
-  const reserved = parts.find(isPrototypeKey);
-  if (reserved !== undefined) throw new Error(`Cannot write "${varName}": "${reserved}" names the prototype, not a variable or its data`);
-  // Set `parts[depth]` on `target`, the object at the parts before it. A frozen
-  // object along the path is read-only data (`$setVars` with `readonly`), and a
-  // name or field held read-only (a request's `request`, `session` and
-  // `request.method`) can't be set anew, in its scope or any under it: both
-  // said plainly, before the strict-mode TypeError would be.
-  const assign = (target: object, depth: number, fresh: unknown) => {
-    if (Object.isFrozen(target)) throw new Error(`Cannot write "${varName}": "${parts.slice(0, depth).join(".")}" is read-only data. Copy it into a variable to change it.`);
-    if (!Reflect.set(target, parts[depth], fresh)) throw new Error(`Cannot write "${varName}": "${parts.slice(0, depth + 1).join(".")}" is read-only`);
-  };
+  for (const part of parts) {
+    if (isPrototypeKey(part)) throw new Error(`Cannot write "${varName}": "${part}" names the prototype, not a variable or its data`);
+  }
   let target: Record<string, unknown> = context;
-  for (let i = 0; i < parts.length - 1; i++) {
-    if (target[parts[i]] && typeof target[parts[i]] === "object") {
-      target = target[parts[i]] as Record<string, unknown>;
+  const last = parts.length - 1;
+  for (let i = 0; i < last; i++) {
+    const next = target[parts[i]];
+    if (next && typeof next === "object") {
+      target = next as Record<string, unknown>;
     } else {
       const fresh = {};
-      assign(target, i, fresh);
+      assignPart(target, parts, i, fresh, varName);
       target = fresh;
     }
   }
-  assign(target, parts.length - 1, value);
+  assignPart(target, parts, last, value, varName);
+}
+
+/**
+ * Set `parts[depth]` on `target`, the object at the parts before it. A frozen
+ * object along the path is read-only data (`$setVars` with `readonly`), and a
+ * name or field held read-only (a request's `request`, `session` and
+ * `request.method`) can't be set anew, in its scope or any under it: both said
+ * plainly, before the strict-mode TypeError would be.
+ */
+function assignPart(target: object, parts: readonly string[], depth: number, value: unknown, varName: string): void {
+  if (Object.isFrozen(target)) throw new Error(`Cannot write "${varName}": "${parts.slice(0, depth).join(".")}" is read-only data. Copy it into a variable to change it.`);
+  if (!Reflect.set(target, parts[depth], value)) throw new Error(`Cannot write "${varName}": "${parts.slice(0, depth + 1).join(".")}" is read-only`);
 }

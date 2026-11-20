@@ -65,8 +65,14 @@ export interface Resolver extends ResolverFn {
  * extra fields are internal and not part of the supported API.
  */
 interface ResolverImpl extends Resolver {
-  keyMap: Map<string, Node>;
-  /** Lazy module loading: key → loader, loaded once then removed. */
+  /**
+   * Each op's handler under its key as a step spells it (`"$concat"`), so
+   * dispatch looks up the template's own key. Building the bare name per step
+   * would make a fresh string, which every lookup then has to hash anew. The
+   * bare names are for the public API (`keys`, `nodeFor`, `registerLazy`).
+   */
+  keyMap: Map<string, StepHandler>;
+  /** Lazy module loading: op key (`"$concat"`) → loader, loaded once then removed. */
   lazyMap: Map<string, Loader>;
   pendingLoads: Map<Loader, Promise<void>>;
   keyListeners: Set<(added: readonly string[]) => void>;
@@ -82,6 +88,18 @@ interface ResolverImpl extends Resolver {
 }
 
 type Loader = (resolver: Resolver) => void | Promise<void>;
+
+/** The node a step's op key dispatches to, and the op's bare name, which the node is handed. */
+interface StepHandler {
+  node: Node;
+  op: string;
+  /**
+   * The method `Node.resolve` would call for the op, taken once at registration,
+   * so a step skips looking it up. Unset for a node with a `resolve` of its own
+   * (ProxyNode), which is handed every step through it.
+   */
+  method: Function | undefined;
+}
 
 /**
  * Where a context records the resolver it is running in.
@@ -150,6 +168,9 @@ export const GLOBAL_KEYS: ReadonlySet<string> = new Set(["as", "return", "catch"
  *  global step keys. Every other key is a sibling or data, never dispatched. */
 export const KEY_PREFIX = "$";
 
+/** `GLOBAL_KEYS` as a step spells them, for matching a template's keys as they are. */
+const GLOBAL_STEP_KEYS: ReadonlySet<string> = new Set([...GLOBAL_KEYS].map(key => KEY_PREFIX + key));
+
 /** The resolver-owned name in `key` (`"$concat"` → `"concat"`), or null for any other key. */
 export function ownedKey(key: string): string | null {
   return isOwnedKey(key) ? key.slice(1) : null;
@@ -172,12 +193,13 @@ export function isStep(value: unknown): value is Record<string, unknown> {
  */
 function makeKeysView(self: ResolverImpl): ResolverKeys {
   const union = (): Set<string> => {
-    const out = new Set<string>(self.keyMap.keys());
-    for (const key of self.lazyMap.keys()) out.add(key);
+    const out = new Set<string>();
+    for (const key of self.keyMap.keys()) out.add(key.slice(KEY_PREFIX.length));
+    for (const key of self.lazyMap.keys()) out.add(key.slice(KEY_PREFIX.length));
     return out;
   };
   return {
-    has: (key) => self.keyMap.has(key) || self.lazyMap.has(key),
+    has: (op) => self.keyMap.has(KEY_PREFIX + op) || self.lazyMap.has(KEY_PREFIX + op),
     get size() { return union().size; },
     toArray: () => [...union()],
     [Symbol.iterator]: () => union().values(),
@@ -195,19 +217,22 @@ function announceKeys(self: ResolverImpl, added: string[]): void {
 function addNode(self: ResolverImpl, node: Node): void {
   self.nodes.add(node);
   const added: string[] = [];
-  for (const key of node.handlerKeys ?? []) {
+  for (const op of node.handlerKeys ?? []) {
+    const key = KEY_PREFIX + op;
     if (!self.keyMap.has(key)) {
-      self.keyMap.set(key, node);
-      added.push(key);
+      const method: unknown = node.resolve === Node.prototype.resolve ? Object.getPrototypeOf(node)[op] : undefined;
+      self.keyMap.set(key, { node, op, method: typeof method === "function" ? method : undefined });
+      added.push(op);
     }
   }
   announceKeys(self, added);
 }
 
-function addLazy(self: ResolverImpl, keys: string[], loader: Loader): void {
+function addLazy(self: ResolverImpl, ops: string[], loader: Loader): void {
   const added: string[] = [];
-  for (const key of keys) {
-    if (!self.lazyMap.has(key) && !self.keyMap.has(key)) added.push(key);
+  for (const op of ops) {
+    const key = KEY_PREFIX + op;
+    if (!self.lazyMap.has(key) && !self.keyMap.has(key)) added.push(op);
     self.lazyMap.set(key, loader);
   }
   announceKeys(self, added);
@@ -239,6 +264,11 @@ export function loggerFor(context: Context): Logger {
  * resolved first, and the result is handed on only once the write is done.
  */
 function storeAs(step: Record<string, unknown>, value: unknown, context: Context): unknown {
+  // Most names are written out and bubble nowhere, so there is nothing to resolve.
+  if (typeof step.$as === "string" && step.$as !== "" && step.$bubble === undefined) {
+    Node.setContextValue(context, step.$as, value);
+    return value;
+  }
   return resolveAll([step.$as, step.$bubble ?? false], context, ([name, bubble]) => {
     if (typeof name !== "string" || name === "") {
       throw new Error(`\`$as\` needs a variable name, got ${JSON.stringify(name)}`);
@@ -436,11 +466,25 @@ function walk(self: ResolverImpl, value: unknown, context: Context): unknown {
   if (proto !== Object.prototype && proto !== null) return value;
 
   // Dispatch on the step's one `$` op key. Nothing else is ever dispatched,
-  // so an object without one is plain data, whatever its keys are called.
+  // so an object without one is plain data, whatever its keys are called. The
+  // global keys ride along with the op and mean nothing on their own, except
+  // `$return`, which is the value a sequence yields rather than a step.
   const obj = value as Record<string, unknown>;
   const keys = Object.keys(obj);
-  const op = stepOp(obj, keys);
-  if (op === null) return resolveKeys(self, obj, keys, {}, context);
+  let op: string | null = null;
+  let global: string | null = null;
+  for (const key of keys) {
+    if (!isOwnedKey(key)) continue;
+    if (GLOBAL_STEP_KEYS.has(key)) { if (key !== "$return") global = key; continue; }
+    if (op !== null) {
+      throw new Error(`A step dispatches on one op, but this one names both "${op}" and "${key}".`);
+    }
+    op = key;
+  }
+  if (op === null) {
+    if (global !== null) throw new Error(`A step needs an op: "${global}" does nothing on its own, in ${JSON.stringify(obj)}.`);
+    return resolveKeys(self, obj, keys, {}, context);
+  }
 
   // A step runs through its node, with its global keys applied around it.
   //
@@ -472,30 +516,8 @@ function walk(self: ResolverImpl, value: unknown, context: Context): unknown {
   } else {
     r = withCatch(() => callNode(self, obj, op, context), obj, context);
   }
-  return obj.$as === undefined ? r : andThen(r, v => storeAs(obj, v, context));
-}
-
-/**
- * The op a step dispatches on, or null for plain data. A step names exactly one
- * op; the global keys ride along with it and mean nothing on their own, except
- * `$return`, which is the value a sequence yields rather than a step.
- */
-function stepOp(obj: Record<string, unknown>, keys: readonly string[]): string | null {
-  let op: string | null = null;
-  let global: string | null = null;
-  for (const key of keys) {
-    if (!isOwnedKey(key)) continue;
-    const name = key.slice(1);
-    if (GLOBAL_KEYS.has(name)) { if (name !== "return") global = key; continue; }
-    if (op !== null) {
-      throw new Error(`A step dispatches on one op, but this one names both "$${op}" and "${key}".`);
-    }
-    op = name;
-  }
-  if (op === null && global !== null) {
-    throw new Error(`A step needs an op: "${global}" does nothing on its own, in ${JSON.stringify(obj)}.`);
-  }
-  return op;
+  if (obj.$as === undefined) return r;
+  return r instanceof Promise ? r.then(v => storeAs(obj, v, context)) : storeAs(obj, r, context);
 }
 
 /** Run `fn`, sending a synchronous throw or an async rejection to `step`'s `$catch`. */
@@ -509,14 +531,16 @@ function withCatch(fn: () => unknown, step: unknown, context: Context): unknown 
   return r instanceof Promise ? r.catch(err => handleError(err, step, context)) : r;
 }
 
-/** Hand a step to the node registered for its op, loading a lazy module first. */
-function callNode(self: ResolverImpl, step: Record<string, unknown>, op: string, context: Context): unknown {
+/** Hand a step to the node registered for its op key (`"$concat"`), loading a lazy module first. */
+function callNode(self: ResolverImpl, step: Record<string, unknown>, key: string, context: Context): unknown {
+  const handler = self.keyMap.get(key);
   const allowed = context[ALLOWED_OPS] as ReadonlySet<string> | undefined;
-  if (allowed && !allowed.has(op)) throw new Error(`"$${op}" is not allowed here: these steps run under a \`$runVar\` whose \`allow\` leaves it out.`);
-  const node = self.keyMap.get(op);
-  if (node) return node.resolve(step, context, op);
-  const loader = self.lazyMap.get(op);
-  if (!loader) throw new Error(`Unknown op "$${op}".`);
+  if (allowed && !allowed.has(handler === undefined ? key.slice(KEY_PREFIX.length) : handler.op)) {
+    throw new Error(`"${key}" is not allowed here: these steps run under a \`$runVar\` whose \`allow\` leaves it out.`);
+  }
+  if (handler) return runHandler(handler, step, context);
+  const loader = self.lazyMap.get(key);
+  if (!loader) throw new Error(`Unknown op "${key}".`);
   let pending = self.pendingLoads.get(loader);
   if (!pending) {
     pending = Promise.resolve(loader(self)).catch((err: unknown) => {
@@ -526,11 +550,15 @@ function callNode(self: ResolverImpl, step: Record<string, unknown>, op: string,
     self.pendingLoads.set(loader, pending);
   }
   return pending.then(() => {
-    for (const [key, fn] of self.lazyMap) { if (fn === loader) self.lazyMap.delete(key); }
-    const loaded = self.keyMap.get(op);
-    if (!loaded) throw new Error(`Unknown op "$${op}": its module loaded without registering it.`);
-    return loaded.resolve(step, context, op);
+    for (const [lazyKey, fn] of self.lazyMap) { if (fn === loader) self.lazyMap.delete(lazyKey); }
+    const loaded = self.keyMap.get(key);
+    if (!loaded) throw new Error(`Unknown op "${key}": its module loaded without registering it.`);
+    return runHandler(loaded, step, context);
   });
+}
+
+function runHandler(handler: StepHandler, step: Record<string, unknown>, context: Context): unknown {
+  return handler.method ? handler.method.call(handler.node, step, context) : handler.node.resolve(step, context, handler.op);
 }
 
 /**
@@ -650,7 +678,7 @@ export function createResolver(nodes: Node[], options?: ResolverOptions): Resolv
   const self = ((template: unknown, context: Context) =>
     runSteps(template, adopt(self, context))) as ResolverImpl;
 
-  self.keyMap = new Map<string, Node>();
+  self.keyMap = new Map<string, StepHandler>();
   self.lazyMap = new Map<string, Loader>();
   self.pendingLoads = new Map<Loader, Promise<void>>();
   self.keyListeners = new Set();
@@ -669,7 +697,7 @@ export function createResolver(nodes: Node[], options?: ResolverOptions): Resolv
   };
   self.registerNode = (node) => addNode(self, node);
   self.registerLazy = (keys, loader) => addLazy(self, keys, loader);
-  self.nodeFor = (key) => self.keyMap.get(key);
+  self.nodeFor = (op) => self.keyMap.get(KEY_PREFIX + op)?.node;
   // Idempotent, and it does NOT touch any other resolver: one resolver's teardown
   // leaving another's timers and connections running is the whole point.
   self.destroy = () => {
