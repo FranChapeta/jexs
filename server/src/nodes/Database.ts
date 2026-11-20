@@ -1,7 +1,7 @@
 import Knex, { Knex as KnexType } from "knex";
 import fs from "node:fs";
 import path from "node:path";
-import { Node, Context, NodeValue, boundaryContext, childContext, freezeData, loggerFor, resolve, resolveAll, resolveFields, resolverFor, runSteps } from "@jexs/core";
+import { Node, Context, NodeValue, boundaryContext, childContext, freezeData, isObject, loggerFor, resolve, resolveAll, resolveFields, resolverFor, runSteps } from "@jexs/core";
 import type { JexsNodeSchema, JexsPropertySchema } from "@jexs/core";
 import {
   mergeTls, parseDbUrl, parseTls, TLS_STRINGS,
@@ -193,6 +193,17 @@ export class DatabaseNode extends Node {
             filename: {
               type: "string",
               markdownDescription: "SQLite file path, spelling the endpoint out instead of passing a `url`. It names the driver on its own, so no `type` is needed alongside it.",
+              siblings: {
+                extensions: {
+                  type: "array",
+                  items: { type: "string" },
+                  markdownDescription: "SQLite extensions to load into the connection, such as `sqlite-vec` for vector search. Each is an npm package that exports `load(db)`, as `sqlite-vec` does, installed in the app (`npm install sqlite-vec`), or the path of a loadable library (`./vec0.so`). As in an import, one that starts with `.` or is absolute is a path, and any other names a package. They load when the connection opens, so a missing or broken one fails `connect` rather than the first query.\n\nMySQL and PostgreSQL install extensions in the database itself (`CREATE EXTENSION vector` through `raw`). An extension runs native code in the server, so load only ones you trust.",
+                  examples: [
+                    "[\"sqlite-vec\"]",
+                    "[\"./extensions/vec0\"]",
+                  ],
+                },
+              },
             },
           },
         },
@@ -430,14 +441,23 @@ function transactionsIn(context: Context): Map<string, KnexType.Transaction> {
 
 /**
  * Open `name`, replacing any connection already under it. The new one opens
- * first, so a config that fails leaves the old connection as it was.
+ * first, so a config that fails leaves the old connection as it was. With
+ * extensions it opens a database connection at once, so one that fails to load
+ * fails here rather than at the first query.
  */
-function openConnection(self: DatabaseNode, name: string, config: DatabaseConfig): void {
-  const knex = createConnection(config);
-  const old = self.connections.get(name);
-  // `config` goes no further than this call: knex has what it needs to dial.
-  self.connections.set(name, { knex, info: describe(config) });
-  if (old) void Promise.resolve(old.knex.destroy()).catch(() => { /* best-effort */ });
+function openConnection(self: DatabaseNode, name: string, config: DatabaseConfig, extensions: readonly ExtensionLoader[]): void | Promise<void> {
+  const knex = createConnection(config, extensions);
+  const register = (): void => {
+    const old = self.connections.get(name);
+    // `config` goes no further than this call: knex has what it needs to dial.
+    self.connections.set(name, { knex, info: describe(config) });
+    if (old) void Promise.resolve(old.knex.destroy()).catch(() => { /* best-effort */ });
+  };
+  if (extensions.length === 0) return register();
+  return Promise.resolve(knex.raw("select 1")).then(register, async error => {
+    await knex.destroy();
+    throw error;
+  });
 }
 
 /** Type, target and TLS state for a connection, or null if it is unknown. */
@@ -469,6 +489,71 @@ class MissingDriverError extends Error {
     );
     this.name = "MissingDriverError";
   }
+}
+
+/** A better-sqlite3 connection, as far as loading an extension needs it. */
+interface SqliteDb {
+  loadExtension(file: string): void;
+  close(): void;
+}
+
+/** Loads one extension into a new connection. */
+type ExtensionLoader = (db: SqliteDb) => void;
+
+function isSqliteDb(conn: unknown): conn is SqliteDb {
+  return typeof conn === "object" && conn !== null
+    && "loadExtension" in conn && typeof conn.loadExtension === "function"
+    && "close" in conn && typeof conn.close === "function";
+}
+
+/** The `extensions` sibling, checked: a list of strings, on a SQLite connection only. */
+function extensionList(raw: unknown, type: DatabaseType): string[] {
+  if (raw == null) return [];
+  if (!Array.isArray(raw) || !raw.every(e => typeof e === "string" && e !== "")) {
+    throw new Error(`"extensions" takes a list of package names or library paths, got ${JSON.stringify(raw)}`);
+  }
+  if (raw.length > 0 && type !== "sqlite") {
+    throw new Error(`"extensions" are for SQLite: a ${type} database installs its own, with \`CREATE EXTENSION\` through \`raw\``);
+  }
+  return raw;
+}
+
+/**
+ * A loader per extension: a path, as in an import (starting with `.`, or
+ * absolute), loads that library; anything else imports the package and calls
+ * its `load(db)`. Imported here, before the connection opens, so a package
+ * that is missing fails `connect` with an install hint.
+ */
+async function extensionLoaders(extensions: readonly string[]): Promise<ExtensionLoader[]> {
+  return Promise.all(extensions.map(async (spec): Promise<ExtensionLoader> => {
+    let load: (db: SqliteDb) => unknown;
+    if (spec.startsWith(".") || path.isAbsolute(spec)) {
+      const file = path.resolve(spec);
+      load = db => db.loadExtension(file);
+    } else {
+      let mod: unknown;
+      try {
+        mod = await import(spec);
+      } catch (error) {
+        if (isObject(error) && error.code === "ERR_MODULE_NOT_FOUND") {
+          throw new Error(`The SQLite extension "${spec}" is not installed. Run: npm install ${spec}`, { cause: error });
+        }
+        throw error;
+      }
+      if (typeof mod !== "object" || mod === null || !("load" in mod) || typeof mod.load !== "function") {
+        throw new Error(`The package "${spec}" has no load(db) function to load it into SQLite: give the path of its library instead`);
+      }
+      const fn = mod.load;
+      load = db => fn(db);
+    }
+    return db => {
+      try {
+        load(db);
+      } catch (error) {
+        throw new Error(`The SQLite extension "${spec}" did not load: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+      }
+    };
+  }));
 }
 
 /** A value a driver can bind to a `?` placeholder. */
@@ -560,12 +645,12 @@ function driverOptions(): string {
  * one exception, set where upstream began supporting the whole of our `engines`
  * Node range.
  */
-function createConnection(config: DatabaseConfig): KnexType {
+function createConnection(config: DatabaseConfig, extensions: readonly ExtensionLoader[]): KnexType {
   if (config.type !== "sqlite" && !config.database) {
     throw new Error(`A ${config.type} connection needs a database: give \`db\`, or name it in the url's path`);
   }
   try {
-    return knexFor(config);
+    return knexFor(config, extensions);
   } catch (error) {
     const pkg = DRIVER_PACKAGE[config.type];
     const message = (error as Error).message ?? "";
@@ -576,7 +661,7 @@ function createConnection(config: DatabaseConfig): KnexType {
   }
 }
 
-function knexFor(config: DatabaseConfig): KnexType {
+function knexFor(config: DatabaseConfig, extensions: readonly ExtensionLoader[]): KnexType {
   switch (config.type) {
     case "sqlite":
       return Knex({
@@ -585,6 +670,23 @@ function knexFor(config: DatabaseConfig): KnexType {
           filename: config.filename || path.join(process.cwd(), "data.db"),
         },
         useNullAsDefault: true,
+        // Extensions load per database connection, so into each one the pool opens.
+        // The pool never closes a connection whose afterCreate fails, so it is
+        // closed here, or it would hold the file open.
+        ...(extensions.length > 0 ? {
+          pool: {
+            afterCreate(conn: unknown, done: (error: unknown, conn: unknown) => void) {
+              if (!isSqliteDb(conn)) return done(new Error("This SQLite driver cannot load extensions"), conn);
+              try {
+                for (const load of extensions) load(conn);
+                done(null, conn);
+              } catch (error) {
+                conn.close();
+                done(error, conn);
+              }
+            },
+          },
+        } : {}),
       });
 
     case "mysql":
@@ -684,13 +786,18 @@ function doConnect(self: DatabaseNode, def: Record<string, unknown>, context: Co
       if (ssl !== undefined) config.ssl = ssl;
     }
 
-    openConnection(self, name, config);
-
-    if (!self.defaultConnectionName) {
-      self.defaultConnectionName = name;
+    const extensions = extensionList(r.extensions, type);
+    const opened = (): ConnectionInfo | null => {
+      if (!self.defaultConnectionName) self.defaultConnectionName = name;
+      return infoOf(self, name);
+    };
+    if (extensions.length === 0) {
+      openConnection(self, name, config, []);
+      return opened();
     }
-
-    return infoOf(self, name);
+    return extensionLoaders(extensions)
+      .then(loaders => openConnection(self, name, config, loaders))
+      .then(opened);
   });
 }
 

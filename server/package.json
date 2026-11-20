@@ -59,6 +59,7 @@
     "better-sqlite3": ">=12.10.1",
     "mysql2": ">=3.0.0",
     "pg": ">=8.0.0",
+    "sqlite-vec": ">=0.1.0",
     "tailwindcss": ">=4.1.0"
   },
   "peerDependenciesMeta": {
@@ -75,6 +76,9 @@
       "optional": true
     },
     "pg": {
+      "optional": true
+    },
+    "sqlite-vec": {
       "optional": true
     },
     "tailwindcss": {
