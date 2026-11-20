@@ -1,0 +1,200 @@
+{
+  "anthropic": {
+    "chat": [
+      {
+        "$as": "url",
+        "$concat": [{ "$coalesce": [{ "$var": "baseUrl" }, "https://api.anthropic.com"] }, "/v1/messages"]
+      },
+      {
+        "$setVars": {
+          "headers": {
+            "x-api-key": { "$var": "apiKey" },
+            "anthropic-version": "2023-06-01",
+            "anthropic-beta": {
+              "$if": { "$not": { "$empty": { "$var": "betas" } } },
+              "then": { "$join": { "$var": "betas" }, "separator": "," }
+            }
+          }
+        }
+      },
+      {
+        "$as": "body",
+        "$merge": [
+          {
+            "model": { "$var": "model" },
+            "max_tokens": { "$coalesce": [{ "$var": "maxTokens" }, { "$if": { "$var": "stream" }, "then": 64000, "else": 16000 }] },
+            "system": { "$var": "system" },
+            "messages": { "$var": "messages" },
+            "stream": { "$if": { "$var": "stream" }, "then": true },
+            "tools": {
+              "$if": { "$not": { "$empty": { "$var": "tools" } } },
+              "then": {
+                "$map": { "$var": "tools" },
+                "item": "tool",
+                "do": {
+                  "name": { "$var": "tool.name" },
+                  "description": { "$var": "tool.description" },
+                  "input_schema": { "$coalesce": [{ "$var": "tool.inputSchema" }, { "type": "object" }] },
+                  "eager_input_streaming": { "$if": { "$var": "stream" }, "then": true }
+                }
+              }
+            }
+          },
+          { "$coalesce": [{ "$var": "options" }, {}] }
+        ]
+      },
+      {
+        "$if": { "$not": { "$var": "stream" } },
+        "then": { "$as": "reply", "$fetch": { "$var": "url" }, "method": "POST", "headers": { "$var": "headers" }, "body": { "$var": "body" } },
+        "else": [
+          { "$setVars": { "reply": { "content": [], "invalid": [] } } },
+          {
+            "$fetch": { "$var": "url" },
+            "method": "POST",
+            "headers": { "$var": "headers" },
+            "body": { "$var": "body" },
+            "onMessage": [
+              { "$as": "block", "$var": { "$concat": ["reply.content.", { "$var": "message.index" }] } },
+              {
+                "$switch": { "$var": "message.type" },
+                "cases": {
+                  "message_start": { "$as": "reply.usage", "$var": "message.message.usage" },
+                  "content_block_start": { "$push": [{ "$var": "reply.content" }, { "$var": "message.content_block" }] },
+                  "content_block_delta": {
+                    "$switch": { "$var": "message.delta.type" },
+                    "cases": {
+                      "text_delta": [
+                        { "$as": "block.text", "$concat": [{ "$coalesce": [{ "$var": "block.text" }, ""] }, { "$var": "message.delta.text" }] },
+                        { "$if": { "$var": "onText" }, "then": { "$runVar": "onText", "params": { "text": { "$var": "message.delta.text" } } } }
+                      ],
+                      "thinking_delta": { "$as": "block.thinking", "$concat": [{ "$coalesce": [{ "$var": "block.thinking" }, ""] }, { "$var": "message.delta.thinking" }] },
+                      "signature_delta": { "$as": "block.signature", "$var": "message.delta.signature" },
+                      "input_json_delta": { "$as": "block.json", "$concat": [{ "$coalesce": [{ "$var": "block.json" }, ""] }, { "$var": "message.delta.partial_json" }] }
+                    }
+                  },
+                  "content_block_stop": {
+                    "$if": { "$eq": [{ "$var": "block.type" }, "tool_use"] },
+                    "then": [
+                      {
+                        "$as": "block.input",
+                        "$parseJSON": { "$coalesce": [{ "$var": "block.json" }, "{}"] },
+                        "$catch": [{ "$push": [{ "$var": "reply.invalid" }, { "$var": "block.id" }] }, {}]
+                      },
+                      {
+                        "$as": { "$concat": ["reply.content.", { "$var": "message.index" }] },
+                        "$omit": [{ "$var": "block" }, ["json"]]
+                      }
+                    ]
+                  },
+                  "message_delta": [
+                    { "$as": "reply.stop_reason", "$var": "message.delta.stop_reason" },
+                    { "$as": "reply.usage.output_tokens", "$var": "message.usage.output_tokens" }
+                  ],
+                  "error": { "$error": 502, "message": { "$var": "message.error.message" } }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "text": {
+          "$join": { "$pluck": [{ "$filter": { "$var": "reply.content" }, "do": { "$eq": [{ "$var": "item.type" }, "text"] } }, "text"] },
+          "separator": ""
+        },
+        "toolCalls": {
+          "$map": { "$filter": { "$var": "reply.content" }, "do": { "$eq": [{ "$var": "item.type" }, "tool_use"] } },
+          "do": {
+            "id": { "$var": "item.id" },
+            "name": { "$var": "item.name" },
+            "input": {
+              "$if": { "$not": { "$includes": [{ "$coalesce": [{ "$var": "reply.invalid" }, []] }, { "$var": "item.id" }] } },
+              "then": { "$var": "item.input" }
+            }
+          }
+        },
+        "stop": { "$if": { "$eq": [{ "$var": "reply.stop_reason" }, "tool_use"] }, "then": "tool", "else": "end" },
+        "reason": { "$var": "reply.stop_reason" },
+        "usage": { "$var": "reply.usage" },
+        "message": { "role": "assistant", "content": { "$var": "reply.content" } }
+      }
+    ],
+    "toolResults": {
+      "role": "user",
+      "content": {
+        "$map": { "$var": "results" },
+        "do": {
+          "type": "tool_result",
+          "tool_use_id": { "$var": "item.id" },
+          "content": { "$var": "item.content" },
+          "is_error": { "$var": "item.isError" }
+        }
+      }
+    }
+  },
+  "openai": {
+    "chat": [
+      {
+        "$as": "url",
+        "$concat": [{ "$coalesce": [{ "$var": "baseUrl" }, "https://api.openai.com/v1"] }, "/chat/completions"]
+      },
+      {
+        "$as": "reply",
+        "$fetch": { "$var": "url" },
+        "method": "POST",
+        "headers": {
+          "Authorization": { "$if": { "$var": "apiKey" }, "then": { "$concat": ["Bearer ", { "$var": "apiKey" }] } }
+        },
+        "body": {
+          "$merge": [
+            {
+              "model": { "$var": "model" },
+              "max_tokens": { "$var": "maxTokens" },
+              "messages": {
+                "$if": { "$var": "system" },
+                "then": { "$unshift": [{ "$var": "messages" }, { "role": "system", "content": { "$var": "system" } }], "clone": true },
+                "else": { "$var": "messages" }
+              },
+              "tools": {
+                "$if": { "$not": { "$empty": { "$var": "tools" } } },
+                "then": {
+                  "$map": { "$var": "tools" },
+                  "item": "tool",
+                  "do": {
+                    "type": "function",
+                    "function": {
+                      "name": { "$var": "tool.name" },
+                      "description": { "$var": "tool.description" },
+                      "parameters": { "$coalesce": [{ "$var": "tool.inputSchema" }, { "type": "object" }] }
+                    }
+                  }
+                }
+              }
+            },
+            { "$coalesce": [{ "$var": "options" }, {}] }
+          ]
+        }
+      },
+      { "$as": "choice", "$var": "reply.choices.0" },
+      {
+        "text": { "$coalesce": [{ "$var": "choice.message.content" }, ""] },
+        "toolCalls": {
+          "$map": { "$coalesce": [{ "$var": "choice.message.tool_calls" }, []] },
+          "do": {
+            "id": { "$var": "item.id" },
+            "name": { "$var": "item.function.name" },
+            "input": { "$parseJSON": { "$var": "item.function.arguments" }, "$catch": [] }
+          }
+        },
+        "stop": { "$if": { "$eq": [{ "$var": "choice.finish_reason" }, "tool_calls"] }, "then": "tool", "else": "end" },
+        "reason": { "$var": "choice.finish_reason" },
+        "usage": { "$var": "reply.usage" },
+        "message": { "$var": "choice.message" }
+      }
+    ],
+    "toolResults": {
+      "$map": { "$var": "results" },
+      "do": { "role": "tool", "tool_call_id": { "$var": "item.id" }, "content": { "$var": "item.content" } }
+    }
+  }
+}

@@ -1,0 +1,92 @@
+[
+  { "$as": "providers", "$file": "providers.json", "data": true },
+  {
+    "$if": { "$not": { "$var": { "$concat": ["providers.", { "$var": "provider" }] } } },
+    "then": { "$error": 400, "message": { "$concat": ["Unknown provider: ", { "$var": "provider" }] } }
+  },
+  { "$as": "history", "$slice": [{ "$coalesce": [{ "$var": "messages" }, []] }, 0] },
+  { "$as": "tools", "$coalesce": [{ "$var": "tools" }, []] },
+  { "$setVars": { "reply": {} } },
+  {
+    "$while": { "$neq": [{ "$var": "reply.stop" }, "end"] },
+    "max": { "$coalesce": [{ "$var": "maxRounds" }, 10] },
+    "do": [
+      {
+        "$as": "reply",
+        "$runVar": { "$concat": ["providers.", { "$var": "provider" }, ".chat"] },
+        "params": { "messages": { "$var": "history" } }
+      },
+      { "$push": [{ "$var": "history" }, { "$var": "reply.message" }] },
+      {
+        "$if": { "$eq": [{ "$var": "reply.stop" }, "tool"] },
+        "then": [
+          {
+            "$as": "results",
+            "$map": { "$var": "reply.toolCalls" },
+            "item": "call",
+            "index": "callIndex",
+            "parallel": true,
+            "do": [
+              { "$as": "tool", "$find": { "$var": "tools" }, "do": { "$eq": [{ "$var": "item.name" }, { "$var": "call.name" }] } },
+              {
+                "$if": { "$not": { "$var": "tool" } },
+                "then": { "$return": { "id": { "$var": "call.id" }, "content": { "$concat": ["Unknown tool: ", { "$var": "call.name" }] }, "isError": true } }
+              },
+              {
+                "$if": { "$not": { "$isType": [{ "$var": "call.input" }, "object"] } },
+                "then": { "$return": { "id": { "$var": "call.id" }, "content": "Invalid input: it is not a JSON object", "isError": true } }
+              },
+              {
+                "$as": "check",
+                "$schema": "validate",
+                "schema": { "$coalesce": [{ "$var": "tool.inputSchema" }, {}] },
+                "data": { "$var": "call.input" }
+              },
+              {
+                "$if": { "$not": { "$var": "check.valid" } },
+                "then": {
+                  "$return": {
+                    "id": { "$var": "call.id" },
+                    "content": {
+                      "$concat": [
+                        "Invalid input: ",
+                        { "$join": { "$map": { "$var": "check.errors" }, "do": { "$concat": [{ "$var": "item.path" }, " ", { "$var": "item.message" }] } }, "separator": "; " }
+                      ]
+                    },
+                    "isError": true
+                  }
+                }
+              },
+              {
+                "$as": "output",
+                "$runVar": "tool.do",
+                "params": { "$var": "call.input" },
+                "allow": { "$var": "tool.allow" },
+                "$catch": { "$return": { "id": { "$var": "call.id" }, "content": { "$concat": ["Error: ", { "$var": "error.message" }] }, "isError": true } }
+              },
+              {
+                "id": { "$var": "call.id" },
+                "content": {
+                  "$substring": [
+                    { "$if": { "$isType": [{ "$var": "output" }, "string"] }, "then": { "$var": "output" }, "else": { "$stringify": { "$var": "output" } } },
+                    0,
+                    { "$coalesce": [{ "$var": "maxToolOutput" }, 20000] }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "$as": "history",
+            "$flatten": [
+              { "$var": "history" },
+              { "$runVar": { "$concat": ["providers.", { "$var": "provider" }, ".toolResults"] }, "params": { "results": { "$var": "results" } } }
+            ],
+            "depth": 1
+          }
+        ]
+      }
+    ]
+  },
+  { "text": { "$var": "reply.text" }, "reason": { "$var": "reply.reason" }, "messages": { "$var": "history" } }
+]

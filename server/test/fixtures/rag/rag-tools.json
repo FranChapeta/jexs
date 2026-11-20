@@ -1,0 +1,16 @@
+[
+  {
+    "name": "search",
+    "description": "Searches the knowledge base for passages about a topic. Use it when the passages you were given do not answer the question.",
+    "inputSchema": {
+      "type": "object",
+      "properties": { "query": { "type": "string", "description": "What to search for." } },
+      "required": ["query"],
+      "additionalProperties": false
+    },
+    "do": [
+      { "$as": "found", "$file": "retrieve.json" },
+      { "$join": { "$map": { "$var": "found" }, "do": { "$var": "item.text" } }, "separator": "\n\n" }
+    ]
+  }
+]

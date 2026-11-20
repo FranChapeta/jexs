@@ -1,0 +1,58 @@
+[
+  { "$as": "size", "$coalesce": [{ "$var": "chunkSize" }, 1000] },
+  { "$as": "sentences", "$segment": { "$var": "text" }, "granularity": "sentence" },
+  {
+    "$as": "chunks",
+    "$reduce": { "$var": "sentences" },
+    "item": "sentence",
+    "initial": [],
+    "do": [
+      { "$as": "current", "$last": { "$var": "accumulator" } },
+      {
+        "$if": {
+          "$and": [
+            { "$var": "current" },
+            { "$lte": [{ "$length": { "$concat": [{ "$var": "current" }, { "$var": "sentence" }] } }, { "$var": "size" }] }
+          ]
+        },
+        "then": [
+          { "$pop": { "$var": "accumulator" } },
+          { "$push": [{ "$var": "accumulator" }, { "$concat": [{ "$var": "current" }, { "$var": "sentence" }] }] }
+        ],
+        "else": [
+          {
+            "$as": "overlapped",
+            "$concat": [
+              { "$coalesce": [{ "$var": { "$concat": ["sentences.", { "$subtract": [{ "$var": "index" }, 1] }] } }, ""] },
+              { "$var": "sentence" }
+            ]
+          },
+          {
+            "$push": [
+              { "$var": "accumulator" },
+              {
+                "$if": { "$lte": [{ "$length": { "$var": "overlapped" } }, { "$var": "size" }] },
+                "then": { "$var": "overlapped" },
+                "else": { "$var": "sentence" }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  { "$as": "chunks", "$filter": { "$map": { "$var": "chunks" }, "do": { "$trim": { "$var": "item" } } }, "do": { "$var": "item" } },
+  {
+    "$as": "embeddings",
+    "$file": "embed.json",
+    "params": { "$merge": [{ "$coalesce": [{ "$var": "embedding" }, {}] }, { "input": { "$var": "chunks" } }] }
+  },
+  {
+    "$map": { "$var": "chunks" },
+    "do": {
+      "text": { "$var": "item" },
+      "embedding": { "$var": { "$concat": ["embeddings.", { "$var": "index" }] } },
+      "meta": { "$var": "meta" }
+    }
+  }
+]

@@ -1,0 +1,31 @@
+[
+  { "$if": { "$empty": { "$var": "records" } }, "then": { "$return": 0 } },
+  {
+    "$database": "raw",
+    "connection": { "$var": "connection" },
+    "sql": {
+      "$concat": [
+        "create virtual table if not exists ", { "$var": "table" },
+        " using vec0(embedding float[", { "$count": { "$var": "records.0.embedding" } }, "] distance_metric=cosine, +text text, +meta text)"
+      ]
+    }
+  },
+  {
+    "$database": "transaction",
+    "connection": { "$var": "connection" },
+    "do": {
+      "$foreach": { "$var": "records" },
+      "do": {
+        "$database": "raw",
+        "connection": { "$var": "connection" },
+        "sql": { "$concat": ["insert into ", { "$var": "table" }, "(embedding, text, meta) values (?, ?, ?)"] },
+        "bindings": [
+          { "$stringify": { "$var": "item.embedding" } },
+          { "$var": "item.text" },
+          { "$stringify": { "$coalesce": [{ "$var": "item.meta" }, {}] } }
+        ]
+      }
+    }
+  },
+  { "$count": { "$var": "records" } }
+]

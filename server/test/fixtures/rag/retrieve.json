@@ -1,0 +1,31 @@
+[
+  {
+    "$as": "vector",
+    "$first": {
+      "$file": "embed.json",
+      "params": { "$merge": [{ "$coalesce": [{ "$var": "embedding" }, {}] }, { "input": [{ "$var": "query" }] }] }
+    }
+  },
+  {
+    "$as": "candidates",
+    "$filter": { "$var": "records" },
+    "item": "record",
+    "do": {
+      "$not": {
+        "$find": { "$entries": { "$coalesce": [{ "$var": "where" }, {}] } },
+        "do": { "$neq": [{ "$var": { "$concat": ["record.meta.", { "$var": "item.key" }] } }, { "$var": "item.value" }] }
+      }
+    }
+  },
+  {
+    "$as": "scored",
+    "$map": { "$var": "candidates" },
+    "item": "record",
+    "do": {
+      "text": { "$var": "record.text" },
+      "meta": { "$var": "record.meta" },
+      "score": { "$vectorDot": [{ "$var": "record.embedding" }, { "$var": "vector" }], "dims": { "$count": { "$var": "vector" } } }
+    }
+  },
+  { "$slice": [{ "$sortBy": [{ "$var": "scored" }, "score"], "order": "desc" }, 0, { "$coalesce": [{ "$var": "k" }, 4] }] }
+]

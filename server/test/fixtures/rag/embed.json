@@ -1,0 +1,36 @@
+[
+  { "$if": { "$empty": { "$var": "input" } }, "then": { "$return": [] } },
+  { "$as": "size", "$coalesce": [{ "$var": "batchSize" }, 96] },
+  {
+    "$as": "batches",
+    "$map": { "$range": [0, { "$subtract": [{ "$ceil": { "$divide": [{ "$count": { "$var": "input" } }, { "$var": "size" }] } }, 1] }] },
+    "do": {
+      "$slice": [
+        { "$var": "input" },
+        { "$multiply": [{ "$var": "item" }, { "$var": "size" }] },
+        { "$multiply": [{ "$add": [{ "$var": "item" }, 1] }, { "$var": "size" }] }
+      ]
+    }
+  },
+  {
+    "$as": "replies",
+    "$map": { "$var": "batches" },
+    "item": "batch",
+    "parallel": { "$coalesce": [{ "$var": "parallel" }, 4] },
+    "do": {
+      "$fetch": { "$concat": [{ "$coalesce": [{ "$var": "baseUrl" }, "https://api.openai.com/v1"] }, "/embeddings"] },
+      "method": "POST",
+      "headers": {
+        "Authorization": { "$if": { "$var": "apiKey" }, "then": { "$concat": ["Bearer ", { "$var": "apiKey" }] } }
+      },
+      "body": { "model": { "$var": "model" }, "input": { "$var": "batch" } }
+    }
+  },
+  {
+    "$map": {
+      "$flatten": { "$map": { "$var": "replies" }, "do": { "$pluck": [{ "$sortBy": [{ "$var": "item.data" }, "index"] }, "embedding"] } },
+      "depth": 1
+    },
+    "do": { "$vectorNormalize": { "$var": "item" } }
+  }
+]

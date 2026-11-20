@@ -1,0 +1,24 @@
+[
+  {
+    "$as": "vector",
+    "$first": {
+      "$file": "embed.json",
+      "params": { "$merge": [{ "$coalesce": [{ "$var": "embedding" }, {}] }, { "input": [{ "$var": "query" }] }] }
+    }
+  },
+  {
+    "$as": "rows",
+    "$database": "raw",
+    "connection": { "$var": "connection" },
+    "sql": { "$concat": ["select text, meta, distance from ", { "$var": "table" }, " where embedding match ? and k = ? order by distance"] },
+    "bindings": [{ "$stringify": { "$var": "vector" } }, { "$coalesce": [{ "$var": "k" }, 4] }]
+  },
+  {
+    "$map": { "$var": "rows" },
+    "do": {
+      "text": { "$var": "item.text" },
+      "meta": { "$parseJSON": { "$var": "item.meta" } },
+      "score": { "$subtract": [1, { "$var": "item.distance" }] }
+    }
+  }
+]
