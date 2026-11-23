@@ -2,10 +2,11 @@ import { Node, Context, NodeValue, trackStream } from "./Node.js";
 import { resolve, resolveAll } from "../Resolver.js";
 import { operands } from "../helpers.js";
 import { bytesOf, closeStream, isStream, makeStream, splitStream, streamOf, writeStream, type StreamKind } from "../streams.js";
+import { ENDIANS, TYPE_NAMES, decodeNumbers } from "./Bytes.js";
 import type { JexsNodeSchema } from "../schema.js";
 
-/** What `$streamSplit` splits bytes into: what a `$fetch` stream splits into by Content-Type, and lines. */
-const SPLIT_KINDS: readonly StreamKind[] = ["text", "lines", "ndjson", "sse"];
+/** What `$streamSplit` splits bytes into: what a `$fetch` stream splits into by Content-Type, lines, and numbers. */
+const SPLIT_KINDS = ["text", "lines", "ndjson", "sse", "numbers"] as const satisfies readonly (StreamKind | "numbers")[];
 
 export class StreamNode extends Node {
   static schema: JexsNodeSchema = {
@@ -53,18 +54,40 @@ export class StreamNode extends Node {
       examples: [
         "{ \"$foreach\": { \"$streamSplit\": { \"$var\": \"request.body\" }, \"kind\": \"ndjson\" }, \"item\": \"row\", \"do\": [{ \"$queryInsert\": \"events\", \"data\": { \"$var\": \"row\" } }] }",
         "{ \"$streamSplit\": { \"$blobStream\": { \"$file\": \"/logs/today.log\", \"raw\": true } }, \"kind\": \"lines\" }",
+        "{ \"$foreach\": { \"$streamSplit\": { \"$blobStream\": { \"$file\": \"/data/index.f32\", \"raw\": true } }, \"kind\": \"numbers\", \"type\": \"float32\", \"count\": 1536 }, \"item\": \"embedding\", \"do\": { \"$vectorDot\": [{ \"$var\": \"embedding\" }, { \"$var\": \"query\" }] } }",
       ],
       siblings: {
         kind: {
           type: "string",
           enum: SPLIT_KINDS,
           required: true,
-          markdownDescription: "What the bytes are split into: what a `$fetch` stream splits a response into by its Content-Type, or lines.",
+          markdownDescription: "What the bytes are split into: what a `$fetch` stream splits a response into by its Content-Type, lines, or numbers.",
           variants: {
             text: { markdownDescription: "UTF-8 text as it arrives, a string per chunk: a character split across two chunks is kept whole." },
             lines: { markdownDescription: "One string per line, without its line break." },
             ndjson: { markdownDescription: "One parsed JSON value per non-blank line." },
             sse: { markdownDescription: "Server-Sent Events: each event's `data`, parsed as JSON when it parses." },
+            numbers: {
+              markdownDescription: "Arrays of the numbers the bytes hold, each of the number `type`, as `$fromBytes` reads them whole: with `count`, one array of that many per message, such as one embedding of a stored index; without, the numbers each chunk completes. A number split across two chunks is kept whole, and a stream that ends partway through a number or a record fails.",
+              siblings: {
+                type: {
+                  type: "string",
+                  enum: [...TYPE_NAMES],
+                  required: true,
+                  description: "The number type the bytes hold: `\"int8\"`, `\"uint8\"`, `\"int16\"`, `\"uint16\"`, `\"int32\"`, `\"uint32\"`, `\"float32\"` or `\"float64\"`.",
+                },
+                endian: {
+                  type: "string",
+                  enum: [...ENDIANS],
+                  default: "little",
+                  description: "The byte order of numbers wider than one byte: `\"little\"` or `\"big\"`.",
+                },
+                count: {
+                  type: "number",
+                  description: "How many numbers make one message, a record. Without it, a message holds the numbers each chunk completes.",
+                },
+              },
+            },
           },
         },
       },
@@ -105,22 +128,43 @@ export class StreamNode extends Node {
   }
 
   streamSplit(def: Record<string, unknown>, context: Context): NodeValue {
-    return resolveAll([def.$streamSplit, def.kind ?? null], context, ([source, kindValue]) => {
+    const options = [def.$streamSplit, def.kind ?? null, def.type ?? null, def.endian ?? null, def.count ?? null];
+    return resolveAll(options, context, ([source, kindValue, typeValue, endianValue, count]) => {
       if (!isStream(source)) throw new Error(`$streamSplit takes a stream of bytes, got ${source === null ? "null" : typeof source}`);
       const kind = this.getOption(kindValue, SPLIT_KINDS, "streamSplit kind");
       if (!kind) throw new Error(`$streamSplit needs a kind: one of ${SPLIT_KINDS.join(", ")}`);
-      const reader = source.getReader();
-      // Each value checked to be bytes, so a stream of anything else fails saying so.
-      const bytes = (async function* (): AsyncGenerator<Uint8Array> {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) return;
-          const chunk = bytesOf(value);
-          if (!chunk) throw new Error(`$streamSplit takes a stream of bytes, and this one holds ${value === null ? "null" : typeof value}`);
-          yield chunk;
+      if (kind !== "numbers") {
+        const [chunks, cancel] = byteChunks(source);
+        return splitStream(streamOf(chunks, cancel), kind);
+      }
+      // Checked before the stream is read, so a wrong option leaves it unread.
+      const type = this.getOption(typeValue, TYPE_NAMES, "streamSplit type");
+      if (!type) throw new Error(`$streamSplit with kind "numbers" needs a type: one of ${TYPE_NAMES.join(", ")}`);
+      let records: number | undefined;
+      if (count !== null) {
+        if (typeof count !== "number" || !Number.isInteger(count) || count < 1) {
+          throw new Error(`$streamSplit count takes how many numbers make a record, a whole number above 0, got ${JSON.stringify(count)}`);
         }
-      })();
-      return splitStream(streamOf(bytes, reason => reader.cancel(reason)), kind);
+        records = count;
+      }
+      const little = this.getOption(endianValue, ENDIANS, "streamSplit endian") !== "big";
+      const [chunks, cancel] = byteChunks(source);
+      return streamOf(decodeNumbers(chunks, type, little, records), cancel);
     });
   }
+}
+
+/** A stream's values, each checked to be bytes, so a stream of anything else fails saying so; and how to cancel it. */
+function byteChunks(source: ReadableStream<unknown>): [AsyncGenerator<Uint8Array>, (reason: unknown) => Promise<void>] {
+  const reader = source.getReader();
+  const chunks = (async function* (): AsyncGenerator<Uint8Array> {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      const chunk = bytesOf(value);
+      if (!chunk) throw new Error(`$streamSplit takes a stream of bytes, and this one holds ${value === null ? "null" : typeof value}`);
+      yield chunk;
+    }
+  })();
+  return [chunks, reason => reader.cancel(reason)];
 }

@@ -25,11 +25,12 @@ test("a blob's bytes are read whole, as text, or as a stream", async () => {
   assert.deepEqual(await resolve({ $blobBytes: { $var: "file" } }, { file }), new TextEncoder().encode("Señor café"));
   assert.equal(await resolve({ $fromBytes: { $var: "file" } }, { file }), "Señor café");
   const gathered = await resolve({
-    $reduce: { $fromBytes: { $blobStream: { $var: "file" } } },
+    $reduce: { $streamSplit: { $blobStream: { $var: "file" } }, kind: "text" },
     initial: "",
     do: { $concat: [{ $var: "accumulator" }, { $var: "item" }] },
   }, { file });
   assert.equal(gathered, "Señor café");
+  assert.equal(await resolve({ $fromBytes: { $blobStream: { $var: "file" } } }, { file }), "Señor café");
   await assert.rejects(Promise.resolve().then(() => resolve({ $blobBytes: "text" }, {})), /takes a blob or file/);
   assert.equal(await resolve({ $stringify: { $var: "file" } }, { file }), '{"name":"note.txt","type":"text/plain","size":12}', "as JSON it shows what it is, never its bytes");
 });

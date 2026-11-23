@@ -67,6 +67,7 @@ import { ErrorNode } from "./nodes/Error.js";
 import { FetchNode } from "./nodes/Fetch.js";
 import { StreamNode } from "./nodes/Stream.js";
 import { BlobNode } from "./nodes/Blob.js";
+import { BytesNode } from "./nodes/Bytes.js";
 import { VectorNode } from "./nodes/Vector.js";
 
 /**
@@ -95,6 +96,7 @@ export function coreNodes(): Node[] {
     new FetchNode(),
     new StreamNode(),
     new BlobNode(),
+    new BytesNode(),
     new VectorNode(),
   ];
 }

@@ -18,7 +18,6 @@ const seen: Record<string, unknown> = {};
 
 const record = (key: string, value: unknown) => ({ $setVars: { [`seen.${key}`]: value }, $bubble: true });
 const at = (p: string) => ({ $eq: [{ $var: "request.path" }, p] });
-const acc = { $var: "accumulator" };
 
 before(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "jexs-body-root-"));
@@ -40,10 +39,10 @@ before(async () => {
       },
       { $if: at("/any"), then: [{ $requestBody: {}, $as: "body" }, record("body", { $var: "body" }), record("raw", { $var: "request.rawBody" })] },
       {
-        // request.body as it is: a stream of bytes, read as text and parsed.
+        // request.body as it is: a stream of bytes, read whole as text and parsed.
         $if: at("/bytes"),
         then: [
-          { $parseJSON: { $reduce: { $fromBytes: { $var: "request.body" } }, initial: "", do: { $concat: [acc, { $var: "item" }] } }, $as: "parsed" },
+          { $parseJSON: { $fromBytes: { $var: "request.body" } }, $as: "parsed" },
           record("parsed", { $var: "parsed" }),
         ],
       },
@@ -124,7 +123,7 @@ test("a body read whole and read again is checked as it stands", async () => {
 
 // ── request.body as a stream ──
 
-test("until it is read whole, request.body is a stream of the body's bytes, which $fromBytes reads as text", async () => {
+test("until it is read whole, request.body is a stream of the body's bytes, which $fromBytes reads whole as text", async () => {
   // Sent in pieces that split a character in two, which reading each piece on its own would break.
   const bytes = Buffer.from('{"title":"Señor café"}');
   const cut = bytes.indexOf(0xc3) + 1;

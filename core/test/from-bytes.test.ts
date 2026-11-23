@@ -10,7 +10,8 @@ function streamOf(values: unknown[]): ReadableStream<unknown> {
   const left = [...values];
   return new ReadableStream({ pull(c) { if (left.length > 0) c.enqueue(left.shift()); else c.close(); } });
 }
-const gather = { $reduce: { $fromBytes: { $var: "source" } }, initial: "", do: { $concat: [{ $var: "accumulator" }, { $var: "item" }] } };
+const gather = { $fromBytes: { $var: "source" } };
+const split = { $reduce: { $streamSplit: { $var: "source" }, kind: "text" }, initial: "", do: { $concat: [{ $var: "accumulator" }, { $var: "item" }] } };
 
 test("$fromBytes reads bytes as the UTF-8 text they are", async () => {
   const bytes = encoder.encode("Señor café");
@@ -19,11 +20,17 @@ test("$fromBytes reads bytes as the UTF-8 text they are", async () => {
   assert.equal(await resolve({ $fromBytes: { $var: "bytes" } }, { bytes: Buffer.from("plain") }), "plain");
 });
 
-test("$fromBytes reads a stream of bytes as a stream of text, a character split across two values kept whole", async () => {
+test("$fromBytes reads a stream of bytes whole, a character split across two values kept whole", async () => {
   const bytes = encoder.encode("Señor café");
   const cut = bytes.indexOf(0xc3) + 1;
   assert.equal(await resolve(gather, { source: streamOf([bytes.subarray(0, cut), bytes.subarray(cut)]) }), "Señor café");
   assert.equal(await resolve(gather, { source: streamOf([]) }), "");
+});
+
+test("$streamSplit reads a stream's text as it arrives, the way $fromBytes reads it whole", async () => {
+  const bytes = encoder.encode("Señor café");
+  const cut = bytes.indexOf(0xc3) + 1;
+  assert.equal(await resolve(split, { source: streamOf([bytes.subarray(0, cut), bytes.subarray(cut)]) }), "Señor café");
 });
 
 test("$fromBytes takes nothing but bytes: any other value, or a stream that holds one, is an error", async () => {

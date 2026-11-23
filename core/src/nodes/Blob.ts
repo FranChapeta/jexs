@@ -2,14 +2,14 @@ import { Node, Context, NodeValue } from "./Node.js";
 import { resolve, resolveAll } from "../Resolver.js";
 import { createHttpError } from "../errors.js";
 import { SNIFF_BYTES, acceptType, blobRule } from "../media-type.js";
-import { bytesOf } from "../streams.js";
+import { bytesOf, isStream, readEach } from "../streams.js";
 import type { JexsNodeSchema } from "../schema.js";
 
 export class BlobNode extends Node {
   static schema: JexsNodeSchema = {
     blob: {
       output: { $ref: "#/$defs/_blob" },
-      markdownDescription: "Makes a blob, a run of bytes with a media type, from bytes or text (as UTF-8). With `name` it is a file: a blob that has a name. A blob or file is what a file upload is in `request.body`, and what `$fetch` gives with `raw: true`; its `name`, `type` and `size` are read with `$var`. It is never written as data, only held in a variable and given to what takes one: a `$file` `write`, a `$fetch` `body`, a response.",
+      markdownDescription: "Makes a blob, a run of bytes with a media type, from bytes or text (as UTF-8). Given a stream of bytes or text, such as a request's `request.body` or a `$toBytes` over a stream, it reads the stream to its end and holds all of it, so `$blobCheck`, `$blobBytes` or a `$file` `write` can take what the stream carried. With `name` it is a file: a blob that has a name. A blob or file is what a file upload is in `request.body`, and what `$fetch` gives with `raw: true`; its `name`, `type` and `size` are read with `$var`. It is never written as data, only held in a variable and given to what takes one: a `$file` `write`, a `$fetch` `body`, a response.",
       outputDescription: "The blob; a file when `name` is given.",
       examples: [
         "{ \"$blob\": \"id,name\\n1,Ada\\n\", \"type\": \"text/csv\", \"name\": \"people.csv\" }",
@@ -33,7 +33,7 @@ export class BlobNode extends Node {
       markdownDescription: "A blob's or file's bytes as a stream, read from it only as the stream is read, so one too large to hold is read piece by piece with `$foreach`, `$map` or `$reduce`.",
       outputDescription: "A stream of `Uint8Array` chunks.",
       examples: [
-        "{ \"$foreach\": { \"$fromBytes\": { \"$blobStream\": { \"$var\": \"request.body.log\" } } }, \"do\": { \"$log\": { \"$var\": \"item\" } } }",
+        "{ \"$foreach\": { \"$streamSplit\": { \"$blobStream\": { \"$var\": \"request.body.log\" } }, \"kind\": \"lines\" }, \"do\": { \"$log\": { \"$var\": \"item\" } } }",
       ],
     },
     blobCheck: {
@@ -61,12 +61,13 @@ export class BlobNode extends Node {
 
   blob(def: Record<string, unknown>, context: Context): NodeValue {
     return resolveAll([def.$blob, def.type ?? null, def.name ?? null], context, ([content, type, name]) => {
-      const part = typeof content === "string" || content instanceof Blob ? content : bytesOf(content);
-      if (part === undefined) throw new Error("$blob takes bytes or text");
-      // Copied, so the blob's bytes are its own and of a plain buffer.
-      const parts = [part instanceof Uint8Array ? new Uint8Array(part) : part];
-      const options = { type: type === null ? "" : this.toString(type) };
-      return name === null ? new Blob(parts, options) : new File(parts, this.toString(name), options);
+      const make = (parts: BlobPart[]): Blob => {
+        const options = { type: type === null ? "" : this.toString(type) };
+        return name === null ? new Blob(parts, options) : new File(parts, this.toString(name), options);
+      };
+      if (!isStream(content)) return make([partOf(content)]);
+      const parts: BlobPart[] = [];
+      return readEach(content, value => void parts.push(partOf(value))).then(() => make(parts));
     });
   }
 
@@ -90,6 +91,14 @@ export class BlobNode extends Node {
       return blob instanceof File ? new File([blob], blob.name, { type }) : new Blob([blob], { type });
     });
   }
+}
+
+/** A value as a part of a blob: text, a blob, or bytes, copied so the blob's bytes are its own and of a plain buffer. */
+function partOf(value: unknown): BlobPart {
+  if (typeof value === "string" || value instanceof Blob) return value;
+  const bytes = bytesOf(value);
+  if (!bytes) throw new Error(`$blob takes bytes or text, or a stream of them, got ${value === null ? "null" : typeof value}`);
+  return new Uint8Array(bytes);
 }
 
 function blobOf(op: string, value: unknown): Blob {

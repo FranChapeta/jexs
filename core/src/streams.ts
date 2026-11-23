@@ -278,29 +278,6 @@ export function splitStream(source: ReadableStream<Uint8Array>, kind: StreamKind
   return streamOf(messagesOf(reader, kind, false), reason => reader.cancel(reason));
 }
 
-/**
- * A stream of bytes as a stream of the text they are, read from `source` only
- * as it is read itself. A value of `source` that is not bytes fails the stream,
- * and cancelling the stream cancels `source`.
- */
-export function textStream(source: ReadableStream<unknown>): ReadableStream<string> {
-  const reader = readerOf(source);
-  async function* chunks(): AsyncGenerator<Uint8Array> {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) return;
-      const bytes = bytesOf(value);
-      if (!bytes) {
-        const error = new Error(`A stream of bytes held ${value === null ? "null" : typeof value}`);
-        reader.cancel(error).catch(() => undefined);
-        throw error;
-      }
-      yield bytes;
-    }
-  }
-  return streamOf(decodeText(chunks()), reason => reader.cancel(reason));
-}
-
 /** What a `mapStream` window holds in place of a result once `source` has ended. */
 const ENDED = Symbol("ended");
 
