@@ -11,7 +11,7 @@
     "$database": "raw",
     "connection": { "$var": "connection" },
     "sql": { "$concat": ["select text, meta, distance from ", { "$var": "table" }, " where embedding match ? and k = ? order by distance"] },
-    "bindings": [{ "$stringify": { "$var": "vector" } }, { "$coalesce": [{ "$var": "k" }, 4] }]
+    "bindings": [{ "$toBytes": { "$var": "vector" }, "type": "float32" }, { "$coalesce": [{ "$var": "k" }, 4] }]
   },
   {
     "$map": { "$var": "rows" },

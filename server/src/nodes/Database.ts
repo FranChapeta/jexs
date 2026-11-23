@@ -585,13 +585,18 @@ function toBindings(value: unknown): KnexType.RawBinding[] | undefined {
   }
   const bindings: KnexType.RawBinding[] = [];
   value.forEach((item, i) => {
-    if (!isBinding(item)) {
+    // Bytes from `$toBytes` or `$fromBase64` are a Uint8Array, and a binary
+    // `$fetch` gives an ArrayBuffer; the drivers bind a Buffer, which wraps
+    // either without copying.
+    if (item instanceof Uint8Array && !Buffer.isBuffer(item)) bindings.push(Buffer.from(item.buffer, item.byteOffset, item.byteLength));
+    else if (item instanceof ArrayBuffer) bindings.push(Buffer.from(item));
+    else if (isBinding(item)) bindings.push(item);
+    else {
       throw new Error(
         `"bindings" item ${i} is ${item === undefined ? "undefined" : typeof item} — ` +
-        `bindings must be strings, numbers, booleans, bigints, null, Dates or Buffers`,
+        `bindings must be strings, numbers, booleans, bigints, null, Dates or bytes`,
       );
     }
-    bindings.push(item);
   });
   return bindings;
 }

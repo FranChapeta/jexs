@@ -295,6 +295,22 @@ test("raw works with bindings omitted, present, or wrong", async () => {
   );
 });
 
+test("raw binds bytes as a blob, a Uint8Array or ArrayBuffer as well as a Buffer", async () => {
+  await connect({ $database: "connect", connection: "blobs", url: "sqlite::memory:" });
+  const run = (step: Record<string, unknown>) =>
+    connect({ ...step, $database: "raw", connection: "blobs" });
+
+  await run({ sql: "create table v (embedding blob)" });
+  await run({ sql: "insert into v values (?)", bindings: [{ $toBytes: [0.5, -2, 3], type: "float32" }] });
+  await run({ sql: "insert into v values (?)", bindings: [new Uint8Array([0, 0, 0x80, 0x3f]).buffer] });
+  const rows = await Promise.resolve(resolve({
+    $map: { $database: "raw", connection: "blobs", sql: "select embedding from v order by rowid" },
+    do: { $fromBytes: { $var: "item.embedding" }, type: "float32" },
+  }, {}));
+  assert.deepEqual(rows, [[0.5, -2, 3], [1]]);
+  assert.deepEqual(await run({ sql: "select length(embedding) as n from v" }), [{ n: 12 }, { n: 4 }]);
+});
+
 // "not connected" alone leaves out the half that is usually the real problem
 // now that the drivers are optional peers.
 test("using an unopened connection names it and lists the drivers", async () => {

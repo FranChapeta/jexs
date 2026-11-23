@@ -20,7 +20,7 @@
         "connection": { "$var": "connection" },
         "sql": { "$concat": ["insert into ", { "$var": "table" }, "(embedding, text, meta) values (?, ?, ?)"] },
         "bindings": [
-          { "$stringify": { "$var": "item.embedding" } },
+          { "$toBytes": { "$var": "item.embedding" }, "type": "float32" },
           { "$var": "item.text" },
           { "$stringify": { "$coalesce": [{ "$var": "item.meta" }, {}] } }
         ]
