@@ -1,6 +1,6 @@
 {
   "name": "@jexs/client",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "license": "MIT",
   "description": "Browser runtime for Jexs — DOM, fetch, audio, WebSocket, push, and WebRTC nodes",
   "keywords": [
@@ -43,9 +43,9 @@
     "prepublishOnly": "tsc -b"
   },
   "peerDependencies": {
-    "@jexs/core": "^2.0.0",
-    "@jexs/physics": "^0.7.0",
-    "@jexs/gl": "^0.7.0"
+    "@jexs/core": "^2.1.0",
+    "@jexs/physics": "^0.8.0",
+    "@jexs/gl": "^0.8.0"
   },
   "peerDependenciesMeta": {
     "@jexs/physics": {

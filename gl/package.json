@@ -1,6 +1,6 @@
 {
   "name": "@jexs/gl",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "license": "MIT",
   "description": "WebGL renderer for Jexs — lighting, shadows, SSAO, particles, text, tweening, post-processing",
   "keywords": [
@@ -40,8 +40,8 @@
     "prepublishOnly": "tsc -b"
   },
   "peerDependencies": {
-    "@jexs/core": "^2.0.0",
-    "@jexs/physics": "^0.7.0"
+    "@jexs/core": "^2.1.0",
+    "@jexs/physics": "^0.8.0"
   },
   "dependencies": {
     "meshoptimizer": "^1.1.1"

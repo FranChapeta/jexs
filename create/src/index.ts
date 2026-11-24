@@ -84,12 +84,12 @@ const NODE_ENGINE = ">=24";
  * package's version changes, its entry here changes with it.
  */
 const JEXS_VERSIONS = {
-  "@jexs/core": "^2.0.0",
-  "@jexs/server": "^2.0.0",
-  "@jexs/client": "^2.0.0",
+  "@jexs/core": "^2.1.0",
+  "@jexs/server": "^2.1.0",
+  "@jexs/client": "^2.1.0",
   "@jexs/electron": "^0.8.0",
-  "@jexs/physics": "^0.7.0",
-  "@jexs/gl": "^0.7.0",
+  "@jexs/physics": "^0.8.0",
+  "@jexs/gl": "^0.8.0",
   "@jexs/mcp": "^0.11.0",
 } as const;
 

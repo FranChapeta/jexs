@@ -1,6 +1,6 @@
 {
   "name": "@jexs/server",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "license": "MIT",
   "description": "Node.js server runtime for Jexs — HTTP, routing, SQLite/MySQL/PostgreSQL, sessions, OAuth, email, web-push, WebSocket",
   "keywords": [
@@ -54,7 +54,7 @@
   },
   "peerDependencies": {
     "@jexs/core": "^2.0.0",
-    "@jexs/physics": "^0.7.0",
+    "@jexs/physics": "^0.8.0",
     "@tailwindcss/node": ">=4.1.0",
     "better-sqlite3": ">=12.10.1",
     "mysql2": ">=3.0.0",
