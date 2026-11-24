@@ -80,6 +80,14 @@ export class ElementNode extends Node {
           },
           preventDefault: { $ref: "#/$defs/boolOrExpr", description: "Call `preventDefault()` on the event. An expression is resolved once, when the element renders; to decide per event, call `$preventDefault` in the steps." },
           stopPropagation: { $ref: "#/$defs/boolOrExpr", description: "Call `stopPropagation()` on the event. An expression is resolved once, when the element renders; to decide per event, call `$stopPropagation` in the steps." },
+          throttle: {
+            anyOf: [{ $ref: "#/$defs/numOrExpr" }, { const: "frame" }],
+            markdownDescription: "Run at most once per this many milliseconds: the first event runs at once, the ones after it within the time are held, and the last of them runs when it is up, so a drag still ends where the pointer let go. `\"frame\"` runs once per animation frame, with the frame's last event, which suits a handler that moves something on screen. Against button spam, a drag or a scroll. Not with `debounce`.\n\nA held run happens after the event has been dispatched, so `$preventDefault` and `$stopPropagation` in the steps act too late on it: use the `preventDefault` and `stopPropagation` options, which act on every event, held or not.",
+          },
+          debounce: {
+            $ref: "#/$defs/numOrExpr",
+            markdownDescription: "Run once, this many milliseconds after the last event: each event within the time starts it again, so the steps run when the events stop, with the last of them. For a search box as it is typed in, or the end of a resize. Not with `throttle`.\n\nThe run happens after the event has been dispatched, so `$preventDefault` and `$stopPropagation` in the steps act too late: use the `preventDefault` and `stopPropagation` options.",
+          },
           // Raw defs get no global keys injected; a handler honors this one.
           $catch: { $ref: "#/$defs/steps", description: "Steps run with `error` bound if `do` fails. Without this a failure is only logged." },
         },
@@ -246,8 +254,28 @@ interface EventHandler {
   target?: string;
   preventDefault?: boolean;
   stopPropagation?: boolean;
+  /** At most one run per this many ms, or per frame (`"frame"`). */
+  throttle?: number | "frame";
+  /** One run, this many ms after the last event. */
+  debounce?: number;
   /** Steps run with `error` bound if `do` fails, as on any step. */
   $catch?: unknown;
+}
+
+/** A handler's options: settings for how it runs, resolved when the element
+ *  renders, unlike `do` and `$catch`, which hold steps. */
+const HANDLER_OPTIONS = ["target", "preventDefault", "stopPropagation", "throttle", "debounce"] as const;
+
+/** A `throttle` or `debounce` in ms, or undefined for none (absent or 0).
+ *  `throttle` also takes `"frame"`. */
+function pacingOf(type: string, name: "throttle" | "debounce", value: unknown): number | "frame" | undefined {
+  if (value === null || value === undefined || value === 0) return undefined;
+  if (name === "throttle" && value === "frame") return value;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    const expected = name === "throttle" ? "a number of milliseconds or \"frame\"" : "a number of milliseconds";
+    throw new Error(`$tag: the "${type}" handler's ${name} must be ${expected}, got ${JSON.stringify(value)}`);
+  }
+  return value;
 }
 
 /** One entry of an `events` map: a handler object (with `do`), or bare steps. */
@@ -266,12 +294,12 @@ function handlersOf(events: unknown): readonly EventEntry[] {
 
 /** Whether an entry has an option that is a step, to be resolved. */
 function hasStepOption({ options: h }: EventEntry): boolean {
-  return h !== null && (isStep(h.target) || isStep(h.preventDefault) || isStep(h.stopPropagation));
+  return h !== null && HANDLER_OPTIONS.some(key => isStep(h[key]));
 }
 
-/** Push each entry's `target`, `preventDefault` and `stopPropagation` onto `out`, three apiece: never the handler itself, which holds steps. */
+/** Push each entry's options onto `out`, in HANDLER_OPTIONS order: never the handler itself, which holds steps. */
 function pushOptions(out: unknown[], handlers: readonly EventEntry[]): void {
-  for (const { options: h } of handlers) out.push(h?.target, h?.preventDefault, h?.stopPropagation);
+  for (const { options: h } of handlers) for (const key of HANDLER_OPTIONS) out.push(h?.[key]);
 }
 
 /**
@@ -283,17 +311,23 @@ function eventsAttr(handlers: readonly EventEntry[], values: unknown[] | null, a
   if (handlers.length === 0) return "";
   const eventsArr = handlers.map(({ type, handler, options: h }, i): EventHandler => {
     if (!h) return { type, do: handler };
-    const o = at + i * 3;
-    const target = values ? values[o] : h.target;
-    const preventDefault = values ? values[o + 1] : h.preventDefault;
-    const stopPropagation = values ? values[o + 2] : h.stopPropagation;
+    const o = at + i * HANDLER_OPTIONS.length;
+    const option = (k: number) => values ? values[o + k] : h[HANDLER_OPTIONS[k]];
+    const target = option(0);
     const evt: EventHandler = { type, do: h.do };
     if (target != null) {
       if (typeof target !== "string") throw new Error(`$tag: the "${type}" handler's target must be a CSS selector, got ${JSON.stringify(target)}`);
       evt.target = target;
     }
-    if (toBooleanValue(preventDefault)) evt.preventDefault = true;
-    if (toBooleanValue(stopPropagation)) evt.stopPropagation = true;
+    if (toBooleanValue(option(1))) evt.preventDefault = true;
+    if (toBooleanValue(option(2))) evt.stopPropagation = true;
+    const throttle = pacingOf(type, "throttle", option(3));
+    const debounce = pacingOf(type, "debounce", option(4));
+    if (throttle !== undefined && debounce !== undefined) {
+      throw new Error(`$tag: the "${type}" handler takes throttle or debounce, not both`);
+    }
+    if (throttle !== undefined) evt.throttle = throttle;
+    if (typeof debounce === "number") evt.debounce = debounce;
     if (h.$catch !== undefined) evt.$catch = h.$catch;
     return evt;
   });

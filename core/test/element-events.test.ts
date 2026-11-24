@@ -78,6 +78,28 @@ test("a target that is not a selector is an error", () => {
     /\$tag: the "click" handler's target must be a CSS selector, got 3/);
 });
 
+test("throttle and debounce reach the browser, resolved when the element renders", () => {
+  const [move, input, frame] = eventsOf(String(resolve({ $tag: "div", events: {
+    pointermove: { throttle: { $var: "rate" }, do: [] },
+    input: { debounce: 300, do: [] },
+    scroll: { throttle: "frame", do: [] },
+  } }, { rate: 50 })));
+  assert.equal(move.throttle, 50);
+  assert.equal(input.debounce, 300);
+  assert.equal(frame.throttle, "frame");
+  const [plain] = eventsOf(String(resolve({ $tag: "div", events: { click: { throttle: 0, do: [] } } }, {})));
+  assert.equal("throttle" in plain, false, "0 paces nothing");
+});
+
+test("a throttle or debounce that is not a time, or both at once, is an error", () => {
+  assert.throws(() => resolve({ $tag: "div", events: { click: { throttle: "fast", do: [] } } }, {}),
+    /the "click" handler's throttle must be a number of milliseconds or "frame", got "fast"/);
+  assert.throws(() => resolve({ $tag: "div", events: { input: { debounce: "frame", do: [] } } }, {}),
+    /the "input" handler's debounce must be a number of milliseconds, got "frame"/);
+  assert.throws(() => resolve({ $tag: "div", events: { click: { throttle: 10, debounce: 10, do: [] } } }, {}),
+    /throttle or debounce, not both/);
+});
+
 // `params` are variables for the handlers inside, carried as JSON; any other
 // attribute given an object carries it as JSON too.
 test("params render as data-jexs-params, and an object attribute as JSON", () => {

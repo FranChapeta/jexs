@@ -482,3 +482,140 @@ test("hydrating an element twice binds its handlers once", async () => {
   assert.equal(context.clicks, 1);
   connected = [];
 });
+
+// Pacing: a clock and timers moved by hand.
+
+let clock = 0;
+function useClock(): void {
+  clock = 0;
+  mock.method(performance, "now", () => clock);
+  mock.timers.enable({ apis: ["setTimeout"] });
+}
+function advance(ms: number): void {
+  clock += ms;
+  mock.timers.tick(ms);
+}
+function stopClock(): void {
+  mock.timers.reset();
+  mock.restoreAll();
+}
+
+/** An element whose `type` handler, with `options`, logs each run's event detail and target. */
+function paced(options: Record<string, unknown>): { el: FakeElement; context: Record<string, unknown>; fire: (detail: unknown) => Event } {
+  const context: Record<string, unknown> = { log: [] as unknown[] };
+  createResolver(coreNodes(), { context });
+  const el = new FakeElement();
+  el.setAttribute("data-jexs-events", JSON.stringify([{
+    type: "drag", ...options,
+    do: [{ $push: [{ $var: "log" }, { detail: { $var: "event.detail" }, target: { $var: "target" } }] }],
+  }]));
+  Object.assign(el, { querySelectorAll: () => [] });
+  hydrate(el as unknown as Element, context);
+  return {
+    el, context,
+    fire: (detail) => {
+      const e = new CustomEvent("drag", { detail, cancelable: true });
+      el.dispatchEvent(e);
+      return e;
+    },
+  };
+}
+const details = (context: Record<string, unknown>) => (context.log as { detail: unknown }[]).map(r => r.detail);
+
+test("throttle runs the first event at once and the last of those it held when the time is up", async () => {
+  useClock();
+  try {
+    const { el, context, fire } = paced({ throttle: 100, preventDefault: true });
+    fire(1);
+    await settle();
+    assert.deepEqual(details(context), [1]);
+
+    advance(40);
+    const held = [fire(2), fire(3)];
+    await settle();
+    assert.deepEqual(details(context), [1], "held within the time");
+    assert.ok(held.every(e => e.defaultPrevented), "preventDefault acts on a held event too");
+
+    advance(60);
+    await settle();
+    assert.deepEqual(details(context), [1, 3], "the last held one runs when the time is up");
+    assert.equal((context.log as { target: unknown }[])[1].target, el, "with the element it fired on");
+
+    advance(200);
+    fire(4);
+    await settle();
+    assert.deepEqual(details(context), [1, 3, 4], "after a quiet spell an event runs at once again");
+  } finally {
+    stopClock();
+  }
+});
+
+test("debounce runs once, after the events stop, with the last of them", async () => {
+  useClock();
+  try {
+    const { context, fire } = paced({ debounce: 100 });
+    fire(1);
+    advance(50);
+    fire(2);
+    advance(80);
+    fire(3);
+    advance(99);
+    await settle();
+    assert.deepEqual(details(context), [], "each event pushes the run back");
+    advance(1);
+    await settle();
+    assert.deepEqual(details(context), [3]);
+  } finally {
+    stopClock();
+  }
+});
+
+test("a held run is skipped once its element has left the page", async () => {
+  useClock();
+  try {
+    const { el, context, fire } = paced({ debounce: 100 });
+    fire(1);
+    el.isConnected = false;
+    advance(100);
+    await settle();
+    assert.deepEqual(details(context), []);
+
+    const trailing = paced({ throttle: 100 });
+    trailing.fire(1);
+    trailing.fire(2);
+    trailing.el.isConnected = false;
+    advance(100);
+    await settle();
+    assert.deepEqual(details(trailing.context), [1], "the run at once happened, the held one is skipped");
+  } finally {
+    stopClock();
+  }
+});
+
+test("throttle frame runs once per animation frame, with its last event", async () => {
+  const g = globalThis as unknown as Record<string, unknown>;
+  const queued: (() => void)[] = [];
+  g.requestAnimationFrame = (fn: () => void) => queued.push(fn);
+  try {
+    const { context, fire } = paced({ throttle: "frame" });
+    fire(1);
+    fire(2);
+    fire(3);
+    assert.equal(queued.length, 1, "one frame asked for");
+    queued.shift()!();
+    await settle();
+    assert.deepEqual(details(context), [3]);
+  } finally {
+    delete g.requestAnimationFrame;
+  }
+});
+
+test("a handler with a throttle or debounce it cannot pace by is skipped", () => {
+  const errors = mock.method(console, "error", () => {});
+  try {
+    for (const options of [{ throttle: "fast" }, { debounce: -1 }, { throttle: 10, debounce: 10 }]) paced(options);
+    assert.equal(errors.mock.callCount(), 3);
+  } finally {
+    mock.restoreAll();
+  }
+});

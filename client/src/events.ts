@@ -8,6 +8,10 @@ interface EventDef {
   target?: string;
   preventDefault?: boolean;
   stopPropagation?: boolean;
+  /** At most one run per this many ms, or per animation frame. */
+  throttle?: number | "frame";
+  /** One run, this many ms after the last event. */
+  debounce?: number;
   $catch?: unknown;
 }
 
@@ -15,6 +19,83 @@ interface EventDef {
 function isEventDef(value: unknown): value is EventDef {
   return isObject(value) && typeof value.type === "string" && value.do !== undefined
     && (value.target === undefined || typeof value.target === "string");
+}
+
+/** A `throttle` (`frame` true) or `debounce` the client can pace by. */
+function isPacing(value: unknown, frame: boolean): boolean {
+  return value === undefined || (frame && value === "frame")
+    || (typeof value === "number" && Number.isFinite(value) && value >= 0);
+}
+
+/** Running a handler's steps for one event, on the element it is for. */
+type Fire = (e: Event, target: Element, match: Element | null) => void;
+
+/**
+ * `fire`, paced as the handler asks. Each pacing holds only the latest event,
+ * so the events it drops cost nothing but the call.
+ *
+ * - `throttle: ms`: the first event runs at once, those within `ms` after a
+ *   run are held, and the last of them runs when the time is up.
+ * - `throttle: "frame"`: one run per animation frame, with its last event.
+ * - `debounce: ms`: one run, `ms` after the last event. One timer serves the
+ *   whole burst: it checks, when it fires, whether a later event pushed the
+ *   run back, rather than being cleared and set again on every event.
+ *
+ * A held run is skipped when its element has left the page by then, as a
+ * search box closed before its debounce is up has nothing left to search for,
+ * and the held event is let go once it runs, so it keeps nothing alive.
+ */
+function paced(fire: Fire, throttle: number | "frame" | undefined, debounce: number | undefined): Fire {
+  let e: Event | null = null, target: Element | null = null, match: Element | null = null;
+  const fireHeld = () => {
+    const ev = e, t = target, m = match;
+    e = target = match = null;
+    if (ev && t?.isConnected) fire(ev, t, m);
+  };
+  const hold = (ev: Event, t: Element, m: Element | null) => { e = ev; target = t; match = m; };
+
+  if (throttle === "frame") {
+    let scheduled = false;
+    return (ev, t, m) => {
+      hold(ev, t, m);
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(() => { scheduled = false; fireHeld(); });
+    };
+  }
+  if (throttle) {
+    let ranAt = -Infinity;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    return (ev, t, m) => {
+      if (timer) return hold(ev, t, m);
+      const wait = throttle - (performance.now() - ranAt);
+      if (wait <= 0) {
+        ranAt = performance.now();
+        return fire(ev, t, m);
+      }
+      hold(ev, t, m);
+      timer = setTimeout(() => { timer = null; ranAt = performance.now(); fireHeld(); }, wait);
+    };
+  }
+  if (debounce) {
+    let lastAt = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const check = () => {
+      const left = debounce - (performance.now() - lastAt);
+      if (left > 0) {
+        timer = setTimeout(check, left);
+        return;
+      }
+      timer = null;
+      fireHeld();
+    };
+    return (ev, t, m) => {
+      hold(ev, t, m);
+      lastAt = performance.now();
+      timer ??= setTimeout(check, debounce);
+    };
+  }
+  return fire;
 }
 
 /** Event name for the element being hydrated, once: no DOM event has it, so an
@@ -303,6 +384,10 @@ function targetPosition(e: Event, match: Element): Record<string, unknown> {
  * selector: then it is the matching element the event happened in (one handler
  * on a list serves every row, rows added later included), with its `index` and
  * pointer `side` beside it, and the handler runs only on a match.
+ *
+ * A handler with `throttle` or `debounce` runs only for some of its events
+ * (see `paced`). `preventDefault` and `stopPropagation` still act on every one,
+ * as it is dispatched, since a held run comes too late to.
  */
 export function hydrate(root: Element | Document, context: Context): void {
   const elements = Array.from(root.querySelectorAll<HTMLElement>("[data-jexs-events]"));
@@ -353,6 +438,21 @@ export function hydrate(root: Element | Document, context: Context): void {
             console.error(targetOnBridged(evt.type), el);
             continue;
           }
+          if (!isPacing(evt.throttle, true) || !isPacing(evt.debounce, false) || (evt.throttle && evt.debounce)) {
+            console.error(`[Jexs] "${evt.type}" handler takes throttle (milliseconds or "frame") or debounce (milliseconds), not both, on`, el, evt);
+            continue;
+          }
+          // The scope is built when the steps run, from the event as it fired:
+          // a paced handler drops most events, and those cost nothing more.
+          const fire = paced((e, target, match) => {
+            // A bridged event carries what it reports as its detail. Asked as
+            // it runs, since its type may have been bridged after this bound.
+            const value = e instanceof CustomEvent && BRIDGED_EVENTS.has(evt.type)
+              ? e.detail
+              : (target as HTMLInputElement).value ?? null;
+            const scope = childContext(context, { ...paramsAround(target), ...(match && targetPosition(e, match)), event: e, target, value });
+            void runStepsDetached(evt.do, scope, { step: evt, logAs: `[Jexs] "${evt.type}" handler failed:` });
+          }, evt.throttle, evt.debounce);
           el.addEventListener(evt.type, (e: Event) => {
             // With a `target` selector, the handler is for the matching element
             // the event happened in, and runs only when there is one.
@@ -369,14 +469,8 @@ export function hydrate(root: Element | Document, context: Context): void {
             if (evt.type === "dragstart" && e instanceof DragEvent && e.dataTransfer?.types.length === 0) {
               e.dataTransfer.setData("text/plain", "");
             }
-            const target = match ?? (e.currentTarget ?? e.target) as HTMLElement;
-            // A bridged event carries what it reports as its detail. Asked as
-            // it runs, since its type may have been bridged after this bound.
-            const value = e instanceof CustomEvent && BRIDGED_EVENTS.has(evt.type)
-              ? e.detail
-              : (target as HTMLInputElement).value ?? null;
-            const scope = childContext(context, { ...paramsAround(target), ...(match && targetPosition(e, match)), event: e, target, value });
-            void runStepsDetached(evt.do, scope, { step: evt, logAs: `[Jexs] "${evt.type}" handler failed:` });
+            // Taken now: once the event is dispatched its currentTarget is null.
+            fire(e, match ?? (e.currentTarget ?? e.target) as Element, match);
           });
           // A handler without a target lets the type reach the element, bridged now or later.
           if (selector === undefined) types.set(evt.type, Math.max(types.get(evt.type) ?? RECEIVES, RECEIVES));

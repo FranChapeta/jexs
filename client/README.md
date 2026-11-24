@@ -125,6 +125,14 @@ An element's `params` are variables for its handlers and those of the elements i
 
 When the row moves, `{ "$setAttr": [row, "data-jexs-params", { "index": 2 }] }` gives its handlers the new value.
 
+A handler for an event that fires often can run for only some of its events. `throttle: 100` runs the first event at once, then at most once every 100 ms, ending with the last event, so a drag still ends where the pointer let go. `throttle: "frame"` runs once per animation frame. `debounce: 300` runs once, 300 ms after the events stop, as a search box wants:
+
+```json
+{ "$tag": "input", "events": { "input": { "debounce": 300, "do": [{ "$fetch": { "$concat": ["/search?q=", { "$var": "value" }] }, "$as": "results" }] } } }
+```
+
+A held run happens after the event was dispatched, so `$preventDefault` in its steps is too late. The `preventDefault` and `stopPropagation` options act on every event, held or not.
+
 Booting builds the app's resolver and context, hydrates the page, and registers the service worker the server named. The app is also `window.jexs = { resolver, context, hydrate }`: `context` for inspecting or seeding its state, `hydrate` for binding the handlers in content injected later.
 
 On a page served by a Jexs server with sessions, a POST, PUT, PATCH or DELETE to the page's own origin, by `$fetch` like the one above or by a form, carries the session's CSRF token on its own, read from the `csrf` cookie. Nothing in the template needs to send it.
