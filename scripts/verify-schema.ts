@@ -64,7 +64,7 @@ const cases: Case[] = [
     expr: { $if: { $var: "x" }, then: 1, else: 2, $as: "result" } },
   { label: "catch via exprFlat", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $if: { $var: "x" }, then: "ok", $catch: [{ $var: "err" }] } },
-  { label: "parallel as expression (implicit boolean-or-expr)", schemaRef: "$defs/exprFlat", expectValid: true,
+  { label: "parallel as expression (boolean, number or expr)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $foreach: [1, 2], do: "x", parallel: { $var: "concurrent" } } },
   { label: "tag with mixed-content array of strings and elements (via exprFlat)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $tag: "p", content: ["plain text", { $tag: "b", content: ["bold"] }, "more text"] } },
@@ -248,6 +248,8 @@ const cases: Case[] = [
   { label: "string-slot accepts dateStartOf with an expression format (number or string) (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $foreach: [1], item: { $dateStartOf: 0, format: { $var: "f" } }, do: "y" } },
   { label: "boolean-slot rejects dateEndOf with an expression format (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $toBase64: "x", urlSafe: { $dateEndOf: 0, format: { $var: "f" } } } },
+  { label: "boolean-or-number slot accepts dateEndOf with an expression format (PASS)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $foreach: [1], do: "y", parallel: { $dateEndOf: 0, format: { $var: "f" } } } },
 
   // jointAdd: each constraint type reads its own siblings; `type` defaults to distance.
