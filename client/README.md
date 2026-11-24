@@ -151,6 +151,21 @@ boot({ nodes: [new WidgetNode()], root: document.querySelector("#widget")!, glob
 
 `serviceWorker: false` skips registering the service worker the server named.
 
+A browser node package can give the page events of its own that happen off its elements, from a device, a sensor or a browser API, the way `sw-message` arrives. `bridgeEvent(type, start)` makes `type` a bridged event: an element with a handler for it receives it, and its handlers read the event's detail as `value`. `start` runs with `send`, which dispatches the event to every such element on the page and gives how many it reached, so a source can tell when nothing handles it any more. It runs once the first element handles the type, and again once one does after every earlier one has left, so a source that stopped can start again; one that keeps running keeps track of whether it already is. It runs after the hydrate that bound that element is done, so an event it sends at once reaches every element that hydrate bound:
+
+```ts
+import { bridgeEvent } from "@jexs/client";
+
+let listening = false;
+bridgeEvent("screenorientation", (send) => {
+  if (listening) return;
+  listening = true;
+  screen.orientation.addEventListener("change", () => send({ type: screen.orientation.type }));
+});
+```
+
+A type can be bridged at any time, from a node loaded on first use too: the elements already bound to a handler for it receive it from then on. An element taken off the page stops receiving; put back from your own code, it receives again once `app.hydrate(el)` runs on it, as the client's own insertions do. To load a bridge's code only when it is needed, bridge the type early and import the code from `start`.
+
 Each firing of a handler runs in a scope of its own on top of the page's context, holding `event`, `target` (the element the handler is on, or with a `target` selector the matching element the event happened in, plus its `index` and pointer `side`), `value`, and the `params` of the nearest element around it that has them. A value from an earlier event never lingers into the next, and two handlers awaiting at once each keep their own. A handler reads page state as it is at that moment, including what another handler changed while it was awaiting; a write meant as page state, for later handlers to read, takes `$bubble`, which writes it in the page's context (or in a scope between, if one has the variable as its own):
 
 ```json

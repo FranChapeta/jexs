@@ -20,34 +20,174 @@ function isEventDef(value: unknown): value is EventDef {
 /** Event name for the element being hydrated, once: no DOM event has it, so an
  *  element's own `load` (an image, a frame, a script) stays a DOM event. */
 const MOUNT = "mount";
-/** Event name for messages the service worker posts (`$swPost`); `value` is the message. */
-const SW_MESSAGE = "sw-message";
-const SW_MESSAGE_ATTR = "data-jexs-sw-message";
-let swMessagesBridged = false;
+/** Sends a bridged event to the elements handling it, `detail` as their
+ *  handlers' `value`, and gives how many it reached: a source can tell from
+ *  it that nothing handles its event any more. */
+export type BridgeSend = (detail: unknown) => number;
 
-/** The elements whose handlers are bound. Kept off the DOM, so a copy made from
- *  their markup (`outerHTML`, `innerHTML`) is a new element and binds its own,
- *  while a moved element keeps the listeners it has. */
-const bound = new WeakSet<Element>();
+/** Starts listening at a bridged event's source, given what sends the event
+ *  and its type: once an element first handles the type, and again once one
+ *  does after a send found none left. */
+export type BridgeStart = (send: BridgeSend, type: string) => void;
 
 /**
- * Mark `el` to receive service worker messages as `sw-message` DOM events.
+ * A bridged event: one that happens somewhere other than on an element (a
+ * service worker message), which its bridge dispatches to the elements
+ * handling it. It holds what starts listening at the source, and those
+ * elements.
  *
- * Messages arrive on `navigator.serviceWorker`, not on an element. Rather than a
- * listener there per element, which would keep every element alive for the life
- * of the page, one listener re-dispatches each message to the connected elements
- * carrying the mark. The handler then lives on its element and goes with it, and
- * a detached element stops receiving at once.
+ * The elements are held weakly, rather than by a listener at the source per
+ * element, which would keep every element alive for the life of the page. So a
+ * send goes through only the elements handling the event, never the page. One
+ * found off the page is dropped, so a removed element stops receiving at once;
+ * one put back is added again when it is hydrated, as the client's own
+ * insertions are.
  */
-function receiveServiceWorkerMessages(el: HTMLElement): void {
-  el.setAttribute(SW_MESSAGE_ATTR, "");
-  if (swMessagesBridged || !("serviceWorker" in navigator)) return;
-  swMessagesBridged = true;
-  navigator.serviceWorker.addEventListener("message", (e: MessageEvent) => {
-    document.querySelectorAll(`[${SW_MESSAGE_ATTR}]`).forEach((target) => {
-      target.dispatchEvent(new CustomEvent(SW_MESSAGE, { detail: e.data }));
-    });
+interface Bridge {
+  start?: BridgeStart;
+  elements: Set<WeakRef<Element>>;
+  /** How many elements there were when those off the page were last dropped. */
+  pruned: number;
+  /** How many sends are under way: one whose handler sends the event again
+   *  starts another inside it. */
+  sending: number;
+}
+
+/** The bridged event types. */
+const BRIDGED_EVENTS = new Map<string, Bridge>();
+
+/**
+ * Make `type` a bridged event: an element bound to a handler for it receives
+ * it, and the handler reads the event's detail as `value`. `start`, when given,
+ * runs with `send` to send the event, to start listening at the source once
+ * something handles it: once the first element does, and again once one does
+ * after a send found none left. So a source that stops when nothing hears it
+ * any more is started again, and one that never stops keeps to itself that it
+ * is listening already. Bridging a type again with the same `start` changes
+ * nothing; with another, it is an error.
+ *
+ * `start` runs a microtask after the element that calls for it is bound, so
+ * the hydrate that bound it has bound the rest of its elements too, and an
+ * event `start` sends at once reaches them all.
+ *
+ * A send that finds none left is one from the source, not one a handler of the
+ * event makes while another send of it is under way: that one leaves the
+ * elements off the page to the send around it, so a source stopping on the 0 it
+ * gives would not be started again.
+ *
+ * The elements on the page already bound to a handler for `type` receive it
+ * now, so a node loaded on first use can bridge its events as it loads.
+ */
+export function bridgeEvent(type: string, start?: BridgeStart): void {
+  if (type === MOUNT) throw new Error(`"${MOUNT}" runs when an element is hydrated, so it cannot be bridged`);
+  const existing = BRIDGED_EVENTS.get(type);
+  if (existing) {
+    if (existing.start !== start) throw new Error(`"${type}" is a bridged event already, started another way`);
+    return;
+  }
+  const bridge: Bridge = { start, elements: new Set(), pruned: 0, sending: 0 };
+  BRIDGED_EVENTS.set(type, bridge);
+  if (!hydrated) return;
+  document.querySelectorAll("[data-jexs-events]").forEach((el) => {
+    const state = boundTypes(el)?.get(type);
+    if (state === RECEIVES) addBridged(el, type, bridge);
+    else if (state === DELEGATED) console.error(targetOnBridged(type), el);
   });
+}
+
+/** Why a handler for the bridged event `type` cannot have a `target` selector. */
+function targetOnBridged(type: string): string {
+  return `[Jexs] "${type}" is a bridged event, sent to the element handling it rather than from within it, so its handler takes no target selector, on`;
+}
+
+/**
+ * Have `el`, bound to a handler for the bridged event `type`, receive it; an
+ * element already receiving it is left as it is. The first to, the first ever
+ * or the first after a send dropped the rest, starts the source, once the
+ * current task's synchronous work (the hydrate binding it) is done. When the
+ * elements have doubled since those off the page were last dropped, they are
+ * dropped first, so elements made and thrown away between sends cannot pile up;
+ * not during a send, which counts on the elements it has yet to reach staying.
+ */
+function addBridged(el: Element, type: string, bridge: Bridge): void {
+  const types = boundTypes(el);
+  if (!types || types.get(type) === RECEIVING) return;
+  const { elements } = bridge;
+  if (bridge.sending === 0 && elements.size >= Math.max(2 * bridge.pruned, 16)) {
+    for (const ref of elements) dropIfGone(ref, type, elements);
+    bridge.pruned = elements.size;
+  }
+  const { start } = bridge;
+  if (start && elements.size === 0) queueMicrotask(() => start(detail => sendBridged(bridge, type, detail), type));
+  types.set(type, RECEIVING);
+  elements.add(new WeakRef(el));
+}
+
+/** Drop `ref` from `elements` when its element is off the page, or collected.
+ *  One off the page can receive `type` again, once it is hydrated back. */
+function dropIfGone(ref: WeakRef<Element>, type: string, elements: Set<WeakRef<Element>>): void {
+  const el = ref.deref();
+  if (el?.isConnected) return;
+  elements.delete(ref);
+  if (el) boundTypes(el)?.set(type, RECEIVES);
+}
+
+/**
+ * Dispatch `bridge`'s event to the elements on the page handling it, with
+ * `detail` as their handlers' `value`, and give how many it reached.
+ *
+ * It goes to the elements there were when it began, which it counts, so one a
+ * handler hydrates meanwhile, added after them, waits for the next. That holds
+ * as long as none of those not reached yet is deleted, so only the outermost
+ * send deletes, and only the element it is on, when that is off the page.
+ */
+function sendBridged(bridge: Bridge, type: string, detail: unknown): number {
+  const { elements } = bridge;
+  const outermost = bridge.sending++ === 0;
+  let left = elements.size;
+  let reached = 0;
+  // Counted down however the loop ends: a count left up would make no send the
+  // outermost again, and the elements off the page would never be dropped.
+  try {
+    for (const ref of elements) {
+      if (left-- === 0) break;
+      const el = ref.deref();
+      if (el?.isConnected) {
+        el.dispatchEvent(new CustomEvent(type, { detail }));
+        reached++;
+      } else if (outermost) {
+        dropIfGone(ref, type, elements);
+      }
+    }
+  } finally {
+    bridge.sending--;
+  }
+  return reached;
+}
+
+/**
+ * Set on an element when `hydrate` binds its handlers: each event type it
+ * listens for, with where it stands should the type be bridged, one of the
+ * three below. An element that has it is hydrated already. A property rather
+ * than an attribute, so a copy made from the element's markup (`outerHTML`,
+ * `innerHTML`) is a new element and binds its own, while a moved element keeps
+ * the listeners it has; a symbol, so nothing else's property is mistaken for it.
+ */
+const BOUND = Symbol("jexs.bound");
+/** Its handlers for the type all have a `target` selector, which a bridged event cannot reach. */
+const DELEGATED = 0;
+/** It can receive the type, and does not yet: not bridged, or dropped off the page. */
+const RECEIVES = 1;
+/** It is among the elements the type's bridge sends to. */
+const RECEIVING = 2;
+/** Whether `hydrate` has bound anything, so a type bridged before has no
+ *  element to look for. */
+let hydrated = false;
+
+/** The event types `el` listens for, each with where it stands, if its handlers are bound. */
+function boundTypes(el: Element): Map<string, number> | undefined {
+  const types: unknown = Reflect.get(el, BOUND);
+  return types instanceof Map ? types : undefined;
 }
 
 /** The attribute an element's `params` render as. */
@@ -169,8 +309,19 @@ export function hydrate(root: Element | Document, context: Context): void {
   if ("hasAttribute" in root && root.hasAttribute("data-jexs-events")) elements.unshift(root as HTMLElement);
   for (const el of elements) {
     const raw = el.getAttribute("data-jexs-events");
-    if (!raw || bound.has(el)) continue;
-    bound.add(el);
+    if (!raw) continue;
+    // Bound already, so put back on the page: its bridged events reach it again.
+    const known = boundTypes(el);
+    if (known) {
+      for (const [type, state] of known) {
+        const bridge = BRIDGED_EVENTS.get(type);
+        if (state === RECEIVES && bridge) addBridged(el, type, bridge);
+      }
+      continue;
+    }
+    const types = new Map<string, number>();
+    Reflect.set(el, BOUND, types);
+    hydrated = true;
 
     try {
       const events: unknown = JSON.parse(raw);
@@ -191,11 +342,15 @@ export function hydrate(root: Element | Document, context: Context): void {
           const scope = childContext(context, { ...paramsAround(el), event: null, target: el, value: (el as HTMLInputElement).value ?? null });
           void runStepsDetached(evt.do, scope, { step: evt, logAs: `[Jexs] "mount" handler failed:` });
         } else {
-          if (evt.type === SW_MESSAGE) receiveServiceWorkerMessages(el);
           const selector = evt.target;
           // A selector the browser can't parse would throw on every firing.
           if (selector !== undefined && !isSelector(el, selector)) {
             console.error(`[Jexs] "${evt.type}" handler's target ${JSON.stringify(selector)} is not a CSS selector, on`, el);
+            continue;
+          }
+          const bridge = BRIDGED_EVENTS.get(evt.type);
+          if (bridge && selector !== undefined) {
+            console.error(targetOnBridged(evt.type), el);
             continue;
           }
           el.addEventListener(evt.type, (e: Event) => {
@@ -215,12 +370,20 @@ export function hydrate(root: Element | Document, context: Context): void {
               e.dataTransfer.setData("text/plain", "");
             }
             const target = match ?? (e.currentTarget ?? e.target) as HTMLElement;
-            const value = evt.type === SW_MESSAGE && e instanceof CustomEvent
+            // A bridged event carries what it reports as its detail. Asked as
+            // it runs, since its type may have been bridged after this bound.
+            const value = e instanceof CustomEvent && BRIDGED_EVENTS.has(evt.type)
               ? e.detail
               : (target as HTMLInputElement).value ?? null;
             const scope = childContext(context, { ...paramsAround(target), ...(match && targetPosition(e, match)), event: e, target, value });
             void runStepsDetached(evt.do, scope, { step: evt, logAs: `[Jexs] "${evt.type}" handler failed:` });
           });
+          // A handler without a target lets the type reach the element, bridged now or later.
+          if (selector === undefined) types.set(evt.type, Math.max(types.get(evt.type) ?? RECEIVES, RECEIVES));
+          else if (!types.has(evt.type)) types.set(evt.type, DELEGATED);
+          // Bound, so a bridged event can be sent to it: once however many
+          // handlers it has, as one send runs them all.
+          if (bridge) addBridged(el, evt.type, bridge);
         }
       }
     } catch (err) {

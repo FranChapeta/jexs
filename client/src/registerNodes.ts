@@ -1,5 +1,6 @@
 import type { Resolver } from "@jexs/core";
 import { makeModuleWorker } from "./makeWorker.js";
+import { bridgeEvent, type BridgeSend } from "./events.js";
 
 /**
  * Rethrow a failed optional-package import with something the author can act on.
@@ -115,4 +116,24 @@ export function registerDomLazy(resolver: Resolver): void {
         r.registerNode(new GlNode());
       }),
   );
+}
+
+let swMessagesReceived = false;
+
+/** Start receiving service worker messages, as `sw-message` events, the message
+ *  as `value`: they arrive on `navigator.serviceWorker`, not on an element. */
+function receiveServiceWorkerMessages(send: BridgeSend): void {
+  if (swMessagesReceived || !("serviceWorker" in navigator)) return;
+  swMessagesReceived = true;
+  navigator.serviceWorker.addEventListener("message", (e: MessageEvent) => send(e.data));
+}
+
+/**
+ * The page's own bridged events, declared before it hydrates. Each one's source
+ * starts once an element handles it, so a page that handles none pays for none.
+ * Bridging a type again with the same start changes nothing, so a second app on
+ * the page can call this too. A worker must not: it has no elements to send to.
+ */
+export function registerBridges(): void {
+  bridgeEvent("sw-message", receiveServiceWorkerMessages);
 }

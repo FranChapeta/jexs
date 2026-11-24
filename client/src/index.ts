@@ -5,7 +5,7 @@ import {
 import { DomNode } from "./nodes/Dom.js";
 import { AudioNode } from "./nodes/Audio.js";
 import { StorageNode } from "./nodes/Storage.js";
-import { registerComputeLazy, registerDomLazy } from "./registerNodes.js";
+import { registerBridges, registerComputeLazy, registerDomLazy } from "./registerNodes.js";
 import { makeModuleWorker } from "./makeWorker.js";
 import { hydrate } from "./events.js";
 import { addCsrfField } from "./csrf.js";
@@ -64,6 +64,8 @@ export function clientNodes(): Node[] {
 }
 
 export { hydrate };
+// For a browser node package whose events happen off the page's elements.
+export { bridgeEvent, type BridgeSend, type BridgeStart } from "./events.js";
 // Every node class, for wiring a resolver by hand rather than through `boot()`,
 // which registers the eager three itself and loads the rest on first use. A
 // bundle drops the ones it does not import, so the page pays nothing for these.
@@ -126,6 +128,9 @@ export function boot({ nodes = [], root = document, global = true, serviceWorker
   // (the same blocks), so there are no duplicated node lists.
   registerComputeLazy(resolver);
   registerDomLazy(resolver);
+  // The page's own bridged events (service worker messages), declared before
+  // it hydrates.
+  registerBridges();
 
   // Captured on the document, so every form's submission gets the token.
   document.addEventListener("formdata", addCsrfField, true);
