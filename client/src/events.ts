@@ -113,9 +113,9 @@ export type BridgeStart = (send: BridgeSend, type: string) => void;
 
 /**
  * A bridged event: one that happens somewhere other than on an element (a
- * service worker message), which its bridge dispatches to the elements
- * handling it. It holds what starts listening at the source, and those
- * elements.
+ * service worker message, a controller), which its bridge dispatches to the
+ * elements handling it. It holds what starts listening at the source, and
+ * those elements.
  *
  * The elements are held weakly, rather than by a listener at the source per
  * element, which would keep every element alive for the life of the page. So a

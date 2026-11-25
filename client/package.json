@@ -2,7 +2,7 @@
   "name": "@jexs/client",
   "version": "2.1.0",
   "license": "MIT",
-  "description": "Browser runtime for Jexs — DOM, fetch, audio, WebSocket, push, and WebRTC nodes",
+  "description": "Browser runtime for Jexs — DOM, fetch, audio, WebSocket, push, WebRTC, and gamepad nodes",
   "keywords": [
     "jexs",
     "json",
@@ -12,6 +12,7 @@
     "declarative",
     "ui",
     "websocket",
+    "gamepad",
     "fetch"
   ],
   "repository": {

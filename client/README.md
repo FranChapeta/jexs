@@ -1,6 +1,6 @@
 # @jexs/client
 
-Browser runtime for **Jexs** — DOM rendering, audio, WebSocket, web-push, WebRTC, and a service-worker entrypoint.
+Browser runtime for **Jexs** — DOM rendering, audio, WebSocket, web-push, WebRTC, controllers, and a service-worker entrypoint.
 
 The package is an ESM library. No prebuilt bundle ships: `jexs bundle`, from [@jexs/server](https://github.com/FranChapeta/jexs/tree/master/server), builds a project's bundle from it and the project's browser node packages, into `dist/browser`, which a `client` listener serves.
 
@@ -33,6 +33,7 @@ The ops that write markup (`setProp` with `innerHTML` or `outerHTML`, and `inser
 | `WsNode` | `wsConnect`, `wsSend`, `wsClose`, `wsStatus` | WebSocket client, reconnecting on its own |
 | `PushNode` | `pushSubscribe`, `pushUnsubscribe` | Web Push subscription |
 | `WebRTCNode` | `rtc`, `rtcConnect`, `rtcSignal`, `rtcSend`, `rtcBroadcast`, `rtcClose`, `rtcStatus` | WebRTC peers, in named meshes |
+| `GamepadNode` | `gamepad`, `gamepadRumble` | Controller state and vibration (see [Controllers](#controllers)) |
 | from `@jexs/gl` | `glInit`, `glCamera`, `glTexture`, ... | WebGL rendering |
 | from `@jexs/physics` | `entityAdd`, `physicsInit`, `collisionOn`, `jointAdd`, `parseGLB`, ... | Entities, physics and collision |
 
@@ -137,6 +138,53 @@ Booting builds the app's resolver and context, hydrates the page, and registers 
 
 On a page served by a Jexs server with sessions, a POST, PUT, PATCH or DELETE to the page's own origin, by `$fetch` like the one above or by a form, carries the session's CSRF token on its own, read from the `csrf` cookie. Nothing in the template needs to send it.
 
+## Controllers
+
+A controller works like the keyboard. A press is an event on an element, as `keydown` is, and its `value` says which pad and which button:
+
+| Event | `value` |
+|---|---|
+| `gamepadbuttondown`, `gamepadbuttonup` | `{ gamepad, button, value }`: the pad's index, the button's index, and how far it is pressed (0 to 1, for the triggers) |
+| `gamepadconnected`, `gamepaddisconnected` | `{ gamepad, id, mapping }` |
+
+```json
+{ "$tag": "body", "events": { "gamepadbuttondown": { "do": [
+  { "$if": { "$eq": [{ "$var": "value.button" }, 0] }, "then": { "$physicsApply": "player", "impulse": [0, -450] } }
+] } } }
+```
+
+For movement and held buttons, read the pad every frame with `$gamepad`. It is the browser's own `Gamepad`: `buttons` by index, each `{ pressed, touched, value }`, and `axes` by index, each from -1 to 1 with down and right positive. A pad that isn't connected reads `undefined`.
+
+```json
+{ "$glInit": "#game", "onFrame": [
+  { "$gamepad": 0, "$as": "pad" },
+  { "$entityUpdate": "player", "moveX": { "$multiply": [{ "$coalesce": [{ "$var": "pad.axes.0" }, 0] }, 250] } }
+] }
+```
+
+On a pad with the standard layout (`mapping` is `"standard"`), the indices are:
+
+| Buttons | | Axes | |
+|---|---|---|---|
+| 0, 1, 2, 3 | Bottom, right, left, top face buttons | 0, 1 | Left stick X, Y |
+| 4, 5 | Left, right bumper | 2, 3 | Right stick X, Y |
+| 6, 7 | Left, right trigger (analog `value`) | | |
+| 8, 9 | Select, start | | |
+| 10, 11 | Left, right stick press | | |
+| 12, 13, 14, 15 | D-pad up, down, left, right | | |
+| 16 | Home | | |
+
+The pad is read by path (`pad.buttons.0.pressed`). `$keys`, `$entries`, `$merge` and `$stringify` see none of its fields, since a browser keeps them on the object's prototype. To send input to a server, ask for `changes: true`: the buttons and axes that changed since that pad's last such read, as plain data, and `{}` (false to `$if`) when nothing did.
+
+```json
+[{ "$gamepad": 0, "changes": true, "throttle": 33, "$as": "changed" },
+ { "$if": { "$var": "changed" }, "then": { "$wsSend": { "seq": { "$var": "seq" }, "input": { "$var": "changed" } } } }]
+```
+
+`throttle` reports at most once every that many milliseconds, whatever the frame rate, with everything that changed since the last report merged. A button pressed and released between two reports has not changed, so send presses that must arrive from `gamepadbuttondown`. Each pad's last report is kept in one place, so read a pad's changes from one step: two would each see part of them.
+
+`{ "$gamepadRumble": 0, "duration": 300, "strong": 1, "weak": 0.5 }` vibrates a pad that can. Browsers show a page no controller until a button is pressed on it while the page is open.
+
 ## Usage from JS
 
 Importing `@jexs/client` starts nothing on its own. Boot the app with any nodes of your own; they are registered before the page hydrates, so a `mount` handler can use them:
@@ -159,7 +207,7 @@ boot({ nodes: [new WidgetNode()], root: document.querySelector("#widget")!, glob
 
 `serviceWorker: false` skips registering the service worker the server named.
 
-A browser node package can give the page events of its own that happen off its elements, from a device, a sensor or a browser API, the way `sw-message` arrives. `bridgeEvent(type, start)` makes `type` a bridged event: an element with a handler for it receives it, and its handlers read the event's detail as `value`. `start` runs with `send`, which dispatches the event to every such element on the page and gives how many it reached, so a source can tell when nothing handles it any more. It runs once the first element handles the type, and again once one does after every earlier one has left, so a source that stopped can start again; one that keeps running keeps track of whether it already is. It runs after the hydrate that bound that element is done, so an event it sends at once reaches every element that hydrate bound:
+A browser node package can give the page events of its own that happen off its elements, from a device, a sensor or a browser API, the way `sw-message` and the gamepad events arrive. `bridgeEvent(type, start)` makes `type` a bridged event: an element with a handler for it receives it, and its handlers read the event's detail as `value`. `start` runs with `send`, which dispatches the event to every such element on the page and gives how many it reached, so a source can tell when nothing handles it any more. It runs once the first element handles the type, and again once one does after every earlier one has left, so a source that stopped can start again; one that keeps running keeps track of whether it already is. It runs after the hydrate that bound that element is done, so an event it sends at once reaches every element that hydrate bound:
 
 ```ts
 import { bridgeEvent } from "@jexs/client";
@@ -172,7 +220,7 @@ bridgeEvent("screenorientation", (send) => {
 });
 ```
 
-A type can be bridged at any time, from a node loaded on first use too: the elements already bound to a handler for it receive it from then on. An element taken off the page stops receiving; put back from your own code, it receives again once `app.hydrate(el)` runs on it, as the client's own insertions do. To load a bridge's code only when it is needed, bridge the type early and import the code from `start`.
+A type can be bridged at any time, from a node loaded on first use too: the elements already bound to a handler for it receive it from then on. An element taken off the page stops receiving; put back from your own code, it receives again once `app.hydrate(el)` runs on it, as the client's own insertions do. To load a bridge's code only when it is needed, bridge the type early and import the code from `start`, as the client does for the gamepad events.
 
 Each firing of a handler runs in a scope of its own on top of the page's context, holding `event`, `target` (the element the handler is on, or with a `target` selector the matching element the event happened in, plus its `index` and pointer `side`), `value`, and the `params` of the nearest element around it that has them. A value from an earlier event never lingers into the next, and two handlers awaiting at once each keep their own. A handler reads page state as it is at that moment, including what another handler changed while it was awaiting; a write meant as page state, for later handlers to read, takes `$bubble`, which writes it in the page's context (or in a scope between, if one has the variable as its own):
 

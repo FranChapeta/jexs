@@ -73,6 +73,7 @@ export { DomNode, AudioNode, StorageNode };
 export { WsNode } from "./nodes/Ws.js";
 export { PushNode } from "./nodes/Push.js";
 export { WebRTCNode } from "./nodes/WebRTC.js";
+export { GamepadNode } from "./nodes/Gamepad.js";
 export { ServiceWorkerNode } from "./nodes/ServiceWorker.js";
 
 /** A booted app: its resolver, the context its handlers share, and the
@@ -128,8 +129,8 @@ export function boot({ nodes = [], root = document, global = true, serviceWorker
   // (the same blocks), so there are no duplicated node lists.
   registerComputeLazy(resolver);
   registerDomLazy(resolver);
-  // The page's own bridged events (service worker messages), declared before
-  // it hydrates.
+  // The page's own bridged events (service worker messages, controllers),
+  // declared before it hydrates.
   registerBridges();
 
   // Captured on the document, so every form's submission gets the token.

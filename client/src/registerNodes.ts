@@ -1,6 +1,6 @@
 import type { Resolver } from "@jexs/core";
 import { makeModuleWorker } from "./makeWorker.js";
-import { bridgeEvent, type BridgeSend } from "./events.js";
+import { bridgeEvent, type BridgeSend, type BridgeStart } from "./events.js";
 
 /**
  * Rethrow a failed optional-package import with something the author can act on.
@@ -82,7 +82,7 @@ export function registerComputeLazy(resolver: Resolver): void {
   );
 }
 
-/** DOM/main-thread-only groups: ws, push, rtc, gl. A worker must not call this
+/** DOM/main-thread-only groups: ws, push, rtc, gamepad, gl. A worker must not call this
  *  (no `document`/canvas/`localStorage` there). */
 export function registerDomLazy(resolver: Resolver): void {
   resolver.registerLazy(
@@ -103,6 +103,13 @@ export function registerDomLazy(resolver: Resolver): void {
     ["rtc", "rtcConnect", "rtcSignal", "rtcSend", "rtcBroadcast", "rtcClose", "rtcStatus"],
     (r) => import("./nodes/WebRTC.js").then(({ WebRTCNode }) => {
       r.registerNode(new WebRTCNode());
+    }),
+  );
+
+  resolver.registerLazy(
+    ["gamepad", "gamepadRumble"],
+    (r) => import("./nodes/Gamepad.js").then(({ GamepadNode }) => {
+      r.registerNode(new GamepadNode());
     }),
   );
 
@@ -128,12 +135,25 @@ function receiveServiceWorkerMessages(send: BridgeSend): void {
   navigator.serviceWorker.addEventListener("message", (e: MessageEvent) => send(e.data));
 }
 
+const GAMEPAD_EVENTS = ["gamepadconnected", "gamepaddisconnected", "gamepadbuttondown", "gamepadbuttonup"];
+
+// One function for every call, since bridgeEvent refuses a type bridged again
+// with a different start.
+const startGamepadEvents: BridgeStart = (send, type) => {
+  import("./nodes/Gamepad.js").then(
+    ({ receiveGamepadEvents }) => receiveGamepadEvents(send, type),
+    (err: unknown) => console.error("[Jexs] the gamepad events failed to load:", err),
+  );
+};
+
 /**
  * The page's own bridged events, declared before it hydrates. Each one's source
- * starts once an element handles it, so a page that handles none pays for none.
- * Bridging a type again with the same start changes nothing, so a second app on
- * the page can call this too. A worker must not: it has no elements to send to.
+ * starts once an element handles it, and the gamepad events load their bridge
+ * only then, so a page that handles none pays for none. Bridging a type again
+ * with the same start changes nothing, so a second app on the page can call this
+ * too. A worker must not: it has no elements to send to.
  */
 export function registerBridges(): void {
   bridgeEvent("sw-message", receiveServiceWorkerMessages);
+  for (const type of GAMEPAD_EVENTS) bridgeEvent(type, startGamepadEvents);
 }
