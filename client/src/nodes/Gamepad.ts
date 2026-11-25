@@ -277,12 +277,17 @@ function poll(): void {
   pollSoon();
 }
 
+/** A connection event's detail, for `pad`. */
+function connectionOf(pad: Gamepad): Record<string, unknown> {
+  return { gamepad: pad.index, id: pad.id, mapping: pad.mapping };
+}
+
 /** Start tracking a pad, its buttons all released, so the press that made the
  *  browser announce it is a `gamepadbuttondown`, and announce it. */
 function connect(pad: Gamepad): void {
   if (pressedPads.has(pad.index)) return;
   pressedPads.set(pad.index, new Array<boolean>(pad.buttons.length).fill(false));
-  senders.get("gamepadconnected")?.({ gamepad: pad.index, id: pad.id, mapping: pad.mapping });
+  senders.get("gamepadconnected")?.(connectionOf(pad));
   pollSoon();
 }
 
@@ -292,6 +297,11 @@ function connect(pad: Gamepad): void {
 export function receiveGamepadEvents(send: BridgeSend, type: string): void {
   if (typeof navigator === "undefined" || typeof navigator.getGamepads !== "function") return;
   senders.set(type, send);
+  // The events' bridges start in whatever order their code loads, so another
+  // one may already have found the pads, announcing them to no one.
+  if (type === "gamepadconnected") {
+    for (const pad of navigator.getGamepads()) if (pad && pressedPads.has(pad.index)) send(connectionOf(pad));
+  }
   if (type === "gamepadbuttondown") downReach = Infinity;
   else if (type === "gamepadbuttonup") upReach = Infinity;
   pollSoon();
