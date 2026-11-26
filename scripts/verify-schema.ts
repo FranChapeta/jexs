@@ -332,6 +332,14 @@ const cases: Case[] = [
   { label: "tag div with an anchor's href (valid, tag is not exclusive)", schemaRef: "$defs/exprFlat", expectValid: true,
     expr: { $tag: "div", href: "/x" } },
 
+  // permission: value-mode variants without an enum document the known names and leave the rest open.
+  { label: "permission with a known name (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $permission: "microphone" } },
+  { label: "permission with a name it doesn't list (valid, the names are open)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $permission: "local-fonts" } },
+  { label: "permission with a number (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $permission: 3 } },
+
   // cacheConnect: every driver inherits the method's string output, endpoint variants included.
   { label: "number-slot rejects cacheConnect redis + url (string-output) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { $sleep: { "$cacheConnect": "redis", url: "redis://x" } } },

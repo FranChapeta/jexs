@@ -82,7 +82,7 @@ export function registerComputeLazy(resolver: Resolver): void {
   );
 }
 
-/** DOM/main-thread-only groups: ws, push, rtc, gamepad, gl. A worker must not call this
+/** DOM/main-thread-only groups: ws, push, rtc, gamepad, permission, gl. A worker must not call this
  *  (no `document`/canvas/`localStorage` there). */
 export function registerDomLazy(resolver: Resolver): void {
   resolver.registerLazy(
@@ -110,6 +110,13 @@ export function registerDomLazy(resolver: Resolver): void {
     ["gamepad", "gamepadRumble"],
     (r) => import("./nodes/Gamepad.js").then(({ GamepadNode }) => {
       r.registerNode(new GamepadNode());
+    }),
+  );
+
+  resolver.registerLazy(
+    ["permission"],
+    (r) => import("./nodes/Permission.js").then(({ PermissionNode }) => {
+      r.registerNode(new PermissionNode());
     }),
   );
 

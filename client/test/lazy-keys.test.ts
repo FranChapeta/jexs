@@ -8,6 +8,7 @@ import { WsNode } from "../src/nodes/Ws.js";
 import { PushNode } from "../src/nodes/Push.js";
 import { WebRTCNode } from "../src/nodes/WebRTC.js";
 import { GamepadNode } from "../src/nodes/Gamepad.js";
+import { PermissionNode } from "../src/nodes/Permission.js";
 
 type NodeClass = { name: string; schema: Record<string, unknown> } & (abstract new (...args: never[]) => Node);
 
@@ -27,5 +28,5 @@ test("every op of a worker-safe lazy node is a lazy key", () => {
 });
 
 test("every op of a DOM lazy node is a lazy key", () => {
-  assertLazy(registerDomLazy, [WsNode, PushNode, WebRTCNode, GamepadNode, GlNode]);
+  assertLazy(registerDomLazy, [WsNode, PushNode, WebRTCNode, GamepadNode, PermissionNode, GlNode]);
 });

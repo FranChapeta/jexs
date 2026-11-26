@@ -34,6 +34,7 @@ The ops that write markup (`setProp` with `innerHTML` or `outerHTML`, and `inser
 | `PushNode` | `pushSubscribe`, `pushUnsubscribe` | Web Push subscription |
 | `WebRTCNode` | `rtc`, `rtcConnect`, `rtcSignal`, `rtcSend`, `rtcBroadcast`, `rtcClose`, `rtcStatus` | WebRTC peers, in named meshes |
 | `GamepadNode` | `gamepad`, `gamepadRumble` | Controller state and vibration (see [Controllers](#controllers)) |
+| `PermissionNode` | `permission` | Permission states, and their changes (see [Permissions](#permissions)) |
 | from `@jexs/gl` | `glInit`, `glCamera`, `glTexture`, ... | WebGL rendering |
 | from `@jexs/physics` | `entityAdd`, `physicsInit`, `collisionOn`, `jointAdd`, `parseGLB`, ... | Entities, physics and collision |
 
@@ -184,6 +185,31 @@ The pad is read by path (`pad.buttons.0.pressed`). `$keys`, `$entries`, `$merge`
 `throttle` reports at most once every that many milliseconds, whatever the frame rate, with everything that changed since the last report merged. A button pressed and released between two reports has not changed, so send presses that must arrive from `gamepadbuttondown`. Each pad's last report is kept in one place, so read a pad's changes from one step: two would each see part of them.
 
 `{ "$gamepadRumble": 0, "duration": 300, "strong": 1, "weak": 0.5 }` vibrates a pad that can. Browsers show a page no controller until a button is pressed on it while the page is open.
+
+## Permissions
+
+The ops that need a permission ask for it the first time they run, as `$pushSubscribe` does. `$permission` never asks: it reads where a permission stands, for a notice when it is blocked or a page that reacts when it is revoked.
+
+```json
+[{ "$permission": "microphone", "$as": "mic", "$bubble": true },
+ { "$if": { "$eq": [{ "$var": "mic.state" }, "denied"] }, "then": { "$setProp": ["#mic-blocked", "hidden", false] } }]
+```
+
+Its value is a name from the browser's Permissions API: `"microphone"`, `"camera"`, `"notifications"`, `"push"`, `"midi"`, `"geolocation"`, `"persistent-storage"`, or another the browser knows. A name it doesn't know throws. The result is the browser's `PermissionStatus`, the same one for a name every time, and its `state` (`"granted"`, `"denied"` or `"prompt"`) is live by path, so a stored status always reads the state as it is now.
+
+Every name a step has read is reported when it changes, as a `permissionchange` event on the elements handling it:
+
+| Event | `value` |
+|---|---|
+| `permissionchange` | `{ name, state }` |
+
+```json
+{ "$tag": "body", "events": { "permissionchange": { "do": [
+  { "$if": { "$eq": [{ "$var": "value.state" }, "denied"] }, "then": { "$setProp": ["#mic-blocked", "hidden", false] } }
+] } } }
+```
+
+Firefox and Safari may read `"prompt"` for a grant that lasts only the session, so `"denied"` is the one sure answer: to know whether something is allowed, use it.
 
 ## Usage from JS
 
