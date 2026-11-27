@@ -82,7 +82,7 @@ export function registerComputeLazy(resolver: Resolver): void {
   );
 }
 
-/** DOM/main-thread-only groups: ws, push, rtc, gamepad, permission, gl. A worker must not call this
+/** DOM/main-thread-only groups: ws, push, rtc, gamepad, permission, devices, gl. A worker must not call this
  *  (no `document`/canvas/`localStorage` there). */
 export function registerDomLazy(resolver: Resolver): void {
   resolver.registerLazy(
@@ -121,6 +121,13 @@ export function registerDomLazy(resolver: Resolver): void {
   );
 
   resolver.registerLazy(
+    ["devices"],
+    (r) => import("./nodes/Devices.js").then(({ DevicesNode }) => {
+      r.registerNode(new DevicesNode());
+    }),
+  );
+
+  resolver.registerLazy(
     ["glInit", "glDestroy", "glHit", "glCamera", "glTexture", "glAnimate",
      "glText", "glFont", "glShader", "glBlur", "glTransition", "glTween", "glSsao",
      "glRegisterMesh", "glAtlas", "glFrame", "glTilemap", "glTilemapSet",
@@ -153,14 +160,22 @@ const startGamepadEvents: BridgeStart = (send, type) => {
   );
 };
 
+const startDeviceChanges: BridgeStart = (send) => {
+  import("./nodes/Devices.js").then(
+    ({ receiveDeviceChanges }) => receiveDeviceChanges(send),
+    (err: unknown) => console.error("[Jexs] devicechange failed to load:", err),
+  );
+};
+
 /**
  * The page's own bridged events, declared before it hydrates. Each one's source
- * starts once an element handles it, and the gamepad events load their bridge
- * only then, so a page that handles none pays for none. Bridging a type again
+ * starts once an element handles it, and the gamepad events and `devicechange`
+ * load their bridge only then, so a page that handles none pays for none. Bridging a type again
  * with the same start changes nothing, so a second app on the page can call this
  * too. A worker must not: it has no elements to send to.
  */
 export function registerBridges(): void {
   bridgeEvent("sw-message", receiveServiceWorkerMessages);
   for (const type of GAMEPAD_EVENTS) bridgeEvent(type, startGamepadEvents);
+  bridgeEvent("devicechange", startDeviceChanges);
 }

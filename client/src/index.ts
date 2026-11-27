@@ -75,6 +75,7 @@ export { PushNode } from "./nodes/Push.js";
 export { WebRTCNode } from "./nodes/WebRTC.js";
 export { GamepadNode } from "./nodes/Gamepad.js";
 export { PermissionNode } from "./nodes/Permission.js";
+export { DevicesNode } from "./nodes/Devices.js";
 export { ServiceWorkerNode } from "./nodes/ServiceWorker.js";
 
 /** A booted app: its resolver, the context its handlers share, and the

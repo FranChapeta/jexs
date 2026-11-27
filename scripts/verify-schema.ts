@@ -339,6 +339,15 @@ const cases: Case[] = [
     expr: { $permission: "local-fonts" } },
   { label: "permission with a number (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
     expr: { $permission: 3 } },
+  // devices: an enum mixing true with strings takes each of them, and refuses false and other strings.
+  { label: "devices with true (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $devices: true } },
+  { label: "devices with a kind (valid)", schemaRef: "$defs/exprFlat", expectValid: true,
+    expr: { $devices: "audioinput" } },
+  { label: "devices with false (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $devices: false } },
+  { label: "devices with a kind it doesn't list (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,
+    expr: { $devices: "speakers" } },
 
   // cacheConnect: every driver inherits the method's string output, endpoint variants included.
   { label: "number-slot rejects cacheConnect redis + url (string-output) (FAIL)", schemaRef: "$defs/exprFlat", expectValid: false,

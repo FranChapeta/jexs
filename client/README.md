@@ -35,6 +35,7 @@ The ops that write markup (`setProp` with `innerHTML` or `outerHTML`, and `inser
 | `WebRTCNode` | `rtc`, `rtcConnect`, `rtcSignal`, `rtcSend`, `rtcBroadcast`, `rtcClose`, `rtcStatus` | WebRTC peers, in named meshes |
 | `GamepadNode` | `gamepad`, `gamepadRumble` | Controller state and vibration (see [Controllers](#controllers)) |
 | `PermissionNode` | `permission` | Permission states, and their changes (see [Permissions](#permissions)) |
+| `DevicesNode` | `devices` | Microphones, speakers and cameras, and their changes (see [Devices](#devices)) |
 | from `@jexs/gl` | `glInit`, `glCamera`, `glTexture`, ... | WebGL rendering |
 | from `@jexs/physics` | `entityAdd`, `physicsInit`, `collisionOn`, `jointAdd`, `parseGLB`, ... | Entities, physics and collision |
 
@@ -210,6 +211,34 @@ Every name a step has read is reported when it changes, as a `permissionchange` 
 ```
 
 Firefox and Safari may read `"prompt"` for a grant that lasts only the session, so `"denied"` is the one sure answer: to know whether something is allowed, use it.
+
+## Devices
+
+`$devices` lists the microphones (`"audioinput"`), speakers (`"audiooutput"`) or cameras (`"videoinput"`), each as `{ kind, deviceId, groupId, label }`, to build a device picker. `deviceId` stays the same for the site across visits, so a choice can be stored.
+
+```json
+{ "$tag": "button", "content": "Choose a microphone", "events": { "click": { "do": [
+  { "$devices": "audioinput", "$as": "mics", "$bubble": true }
+] } } }
+```
+
+Browsers name no device to a page that may not use one yet: they list a placeholder per kind instead, with an empty `deviceId` and `label`. So when the devices asked for are hidden, `$devices` asks for the microphone or the camera first, closes it at once, and lists them named. Once allowed, it lists without asking. Run it from a click, since it may prompt, and pass a kind: `true` asks for the camera too. A refusal throws, saying where to allow it.
+
+Speakers are listed once the microphone is allowed, in Chromium. Firefox lists only the speakers the user has picked, and Safari lists none.
+
+When a device is plugged in or out, the elements handling `devicechange` receive the list as the page sees it, read without asking:
+
+| Event | `value` |
+|---|---|
+| `devicechange` | The devices, as `$devices` gives them, of every kind |
+
+```json
+{ "$tag": "body", "events": { "devicechange": { "do": [
+  { "$setVars": { "mics": { "$filter": { "$var": "value" }, "item": "d", "do": { "$eq": [{ "$var": "d.kind" }, "audioinput"] } } }, "$bubble": true }
+] } } }
+```
+
+The browser fires it only when the list it shows changes: rarely before a device is allowed, and while the page is hidden, only once it shows again.
 
 ## Usage from JS
 
