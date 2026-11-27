@@ -140,6 +140,36 @@ Booting builds the app's resolver and context, hydrates the page, and registers 
 
 On a page served by a Jexs server with sessions, a POST, PUT, PATCH or DELETE to the page's own origin, by `$fetch` like the one above or by a form, carries the session's CSRF token on its own, read from the `csrf` cookie. Nothing in the template needs to send it.
 
+## Files
+
+A file the user picks or drops is a `File`, read by path from the event: `target.files.0` on an `<input type="file">`, and `event.dataTransfer.files.0` on a `drop`, whose element also needs `preventDefault` on `dragover`. It stays on the user's machine; `$toBytes` reads its bytes, and `$fromBytes` its text.
+
+```json
+{ "$tag": "input", "type": "file", "accept": ".json", "events": { "change": { "do": [
+  { "$parseJSON": { "$fromBytes": { "$var": "target.files.0" } }, "$as": "project", "$bubble": true }
+] } } }
+```
+
+A file the page made goes back to the user through a link, with no server. `$setProp` makes a Blob (`$blob` makes one of text or bytes) into a URL naming it, for an `<a download>` to save:
+
+```json
+[{ "$tag": "a", "id": "export", "download": "project.json", "content": "Download the project" },
+ { "$setProp": ["#export", "href", { "$blob": { "$stringify": { "$var": "project" } }, "type": "application/json" }] }]
+```
+
+Setting `href` again after each edit keeps the link current, and lets the old file go. The same goes for `src`, to play a recording in an `<audio controls>` or show a picked image before uploading it.
+
+A link's click saves what its `href` names already, since its handlers run after the browser has acted on it. So a file made at the click is made by a button, which gives a hidden link its `href` and clicks it:
+
+```json
+{ "$tag": "button", "content": "Export", "events": { "click": { "do": [
+  { "$setProp": ["#export", "href", { "$blob": { "$stringify": { "$var": "project" } }, "type": "application/json" }] },
+  { "$click": "#export" }
+] } } }
+```
+
+A Blob is your page's own, so one opened as a page would run as yours. A link saves an HTML, SVG, XML or untyped Blob rather than open it. An `<iframe>` or `<embed>` shows only a PDF, text, image or media Blob: show HTML through a sandboxed `srcdoc` instead. A `$tag` attribute takes no Blob, since markup has no element yet to hold its URL; set it with `$setProp` once the element is on the page.
+
 ## Controllers
 
 A controller works like the keyboard. A press is an event on an element, as `keydown` is, and its `value` says which pad and which button:

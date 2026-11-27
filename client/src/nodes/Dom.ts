@@ -28,6 +28,100 @@ function clipboard(op: string): Clipboard {
 }
 
 /**
+ * A Blob's object URL is the page's own, so a document opened from one runs
+ * as the page. Each element and the property it takes a Blob for: what only
+ * shows a file (an image, media, a track) takes any, a link takes any but
+ * saves one that would run script rather than open it, and a frame takes only
+ * a file that can't run script. A script or stylesheet takes none.
+ */
+const BLOB_TARGETS: Record<string, { prop: string; kinds: "any" | "link" | "inert" }> = {
+  img: { prop: "src", kinds: "any" },
+  audio: { prop: "src", kinds: "any" },
+  video: { prop: "src", kinds: "any" },
+  source: { prop: "src", kinds: "any" },
+  track: { prop: "src", kinds: "any" },
+  image: { prop: "href", kinds: "any" },
+  a: { prop: "href", kinds: "link" },
+  area: { prop: "href", kinds: "link" },
+  iframe: { prop: "src", kinds: "inert" },
+  embed: { prop: "src", kinds: "inert" },
+  object: { prop: "data", kinds: "inert" },
+};
+
+/** A type a browser may render as a document that runs script, an untyped
+ *  Blob included, which it may sniff as one. */
+function runsScript(type: string): boolean {
+  const t = type.split(";")[0].trim().toLowerCase();
+  return t === "" || t === "text/html" || t === "text/xml" || t === "application/xml" || t.endsWith("+xml");
+}
+
+/** A type that shows as it is, never as a document that runs script. */
+function isInert(type: string): boolean {
+  const t = type.split(";")[0].trim().toLowerCase();
+  return t === "application/pdf" || t === "text/plain" || /^(audio|video)\//.test(t) || (t.startsWith("image/") && !t.endsWith("+xml"));
+}
+
+/** Which elements take a Blob, for an error naming them. */
+const BLOB_TARGET_LIST = "`src` on <img>, <audio>, <video>, <source> and <track>, `poster` on <video>, `href` on <a>, <area> and an SVG <image>, and `src` on <iframe> and <embed> or `data` on <object> for a PDF, text, image or media";
+
+/** The Blob to name for `name` of `el`, checked against what it may take. */
+function blobFor(op: string, el: Element, name: string, blob: Blob): Blob {
+  const tag = el.localName;
+  const target = BLOB_TARGETS[tag];
+  const takes = target?.prop === name || (tag === "video" && name === "poster");
+  if (!takes) throw new Error(`$${op}: \`${name}\` of <${tag}> doesn't take a Blob; a Blob becomes a URL for ${BLOB_TARGET_LIST}`);
+  // Its `href` property is read-only, so a write to it would do nothing.
+  if (tag === "image" && op === "setProp") throw new Error("$setProp: an SVG <image>'s `href` is set as an attribute, with $setAttr");
+  if (target.kinds === "link" && runsScript(blob.type)) {
+    // Opened, it would run as the page; retyped, opening it saves it, as `download` does.
+    return new Blob([blob], { type: "application/octet-stream" });
+  }
+  if (target.kinds === "inert" && !isInert(blob.type)) {
+    throw new Error(`$${op}: a <${tag}> shows only a PDF, text, image or media Blob, not ${JSON.stringify(blob.type || "an untyped one")}, since anything else could run as the page; show HTML through a sandboxed \`srcdoc\``);
+  }
+  return blob;
+}
+
+/** How long a replaced object URL is kept: a save from a link clicked just
+ *  before may still be reading it, and some browsers cancel one revoked under it. */
+const REPLACED_URL_LIFETIME = 40_000;
+
+/** Each element's object URLs, by the property holding one. */
+const objectUrls = new WeakMap<Element, Map<string, string>>();
+
+/** Revokes an element's object URLs once it is collected. The map it holds
+ *  doesn't hold the element, so it doesn't keep it alive. */
+const urlsOfCollected = new FinalizationRegistry<Map<string, string>>(urls => {
+  for (const url of urls.values()) URL.revokeObjectURL(url);
+});
+
+/**
+ * What `name` of `el` is set to: an object URL for a Blob the element takes
+ * there (see `BLOB_TARGETS`), and the value itself otherwise. A property and
+ * its attribute share one URL, so either op replaces the other's. The URL it
+ * held before is revoked a while after it is replaced, and one still held when
+ * the element is collected is revoked then, so a link or preview updated on
+ * every edit doesn't keep each old file alive.
+ */
+function urlFor(op: string, el: Element, name: string, value: unknown): unknown {
+  const blob = value instanceof Blob ? blobFor(op, el, name, value) : undefined;
+  let urls = objectUrls.get(el);
+  const old = urls?.get(name);
+  if (old !== undefined) {
+    urls!.delete(name);
+    setTimeout(() => URL.revokeObjectURL(old), REPLACED_URL_LIFETIME);
+  }
+  if (!blob) return value;
+  const url = URL.createObjectURL(blob);
+  if (!urls) {
+    objectUrls.set(el, urls = new Map());
+    urlsOfCollected.register(el, urls);
+  }
+  urls.set(name, url);
+  return url;
+}
+
+/**
  * Parse `html` as content renders it (`Html` as markup, a string as text), let
  * `put` place the nodes, then wire up events on the elements among them, which it
  * returns: markup written by any op works like rendered markup does, and data
@@ -236,7 +330,7 @@ export class DomNode extends Node {
       ],
       output: { $ref: "#/$defs/_element" },
       outputDescription: RETURNS_TARGET,
-      markdownDescription: "Sets an attribute on an element. Pass `[selectorOrElement, attrName, value]`. An object is written as JSON, so `[row, \"data-jexs-params\", { \"path\": ... }]` gives a moved row's handlers its new variables.\nAn attribute that takes a URL (`href`, `src`, `action`, `formaction`, `poster`, ...) refuses a `javascript:` or `vbscript:` URL: it is written as `about:blank#blocked`, with a warning, so a stored link cannot run script. `srcdoc` takes its value as element content does: HTML from `$tag` or `$html` as markup, a string as text.",
+      markdownDescription: "Sets an attribute on an element. Pass `[selectorOrElement, attrName, value]`. An object is written as JSON, so `[row, \"data-jexs-params\", { \"path\": ... }]` gives a moved row's handlers its new variables.\nAn attribute that takes a URL (`href`, `src`, `action`, `formaction`, `poster`, ...) refuses a `javascript:` or `vbscript:` URL: it is written as `about:blank#blocked`, with a warning, so a stored link cannot run script. `srcdoc` takes its value as element content does: HTML from `$tag` or `$html` as markup, a string as text.\nA Blob becomes a URL naming it, as it does for `$setProp`, which shares the URL with the property; an SVG `<image>`'s `href` takes one only this way.",
     },
     getAttr: {
       tuple: 2,
@@ -269,8 +363,9 @@ export class DomNode extends Node {
       ],
       output: { $ref: "#/$defs/_element" },
       outputDescription: "The element operated on (an HTMLElement), for chaining. For `outerHTML`, the element now in its place (the first one the markup made), or `null` when the markup made none.",
-      markdownDescription: "Writes a live DOM property on an element (the JS property, not the HTML attribute), e.g. `value`, `textContent`, `disabled`, `checked`, `scrollTop`. Supports dot-paths for nested props (e.g. `style.color`), traversed like `setVars`. Pass `[selectorOrElement, propName, value]`.\n`innerHTML` and `outerHTML` take a value as element content does: HTML that `$tag` or `$html` made is markup, and gets its `events` wired up as rendered markup does, while a string is text, escaped, so data cannot add elements or handlers. Wrap a string in `$html` to insert it as markup, only when you trust it: `{ \"$html\": { \"$fetch\": \"/fragment\" } }` for a fragment your own server rendered, or `{ \"$html\": { \"$getProp\": [row, \"outerHTML\"] } }` to copy a row. `outerHTML` replaces the element, so the step returns the replacement rather than the element that is gone.\nA property that takes a URL (`href`, `src`, `action`, `formAction`, ...) refuses a `javascript:` or `vbscript:` URL, written as `about:blank#blocked` with a warning, and `srcdoc` takes its value as `innerHTML` does.",
+      markdownDescription: "Writes a live DOM property on an element (the JS property, not the HTML attribute), e.g. `value`, `textContent`, `disabled`, `checked`, `scrollTop`. Supports dot-paths for nested props (e.g. `style.color`), traversed like `setVars`. Pass `[selectorOrElement, propName, value]`.\n`innerHTML` and `outerHTML` take a value as element content does: HTML that `$tag` or `$html` made is markup, and gets its `events` wired up as rendered markup does, while a string is text, escaped, so data cannot add elements or handlers. Wrap a string in `$html` to insert it as markup, only when you trust it: `{ \"$html\": { \"$fetch\": \"/fragment\" } }` for a fragment your own server rendered, or `{ \"$html\": { \"$getProp\": [row, \"outerHTML\"] } }` to copy a row. `outerHTML` replaces the element, so the step returns the replacement rather than the element that is gone.\nA property that takes a URL (`href`, `src`, `action`, `formAction`, ...) refuses a `javascript:` or `vbscript:` URL, written as `about:blank#blocked` with a warning, and `srcdoc` takes its value as `innerHTML` does.\nA Blob or File (a recording, an encoded clip, a picked file) becomes a URL naming it, for the user to play, view or save with no server: `src` on `<img>`, `<audio>`, `<video>`, `<source>` and `<track>`, `poster` on `<video>`, and `href` on `<a>` and `<area>`, which with `download` saves it. A link saves an HTML, SVG, XML or untyped Blob rather than open it, since a page opened from it would run as yours, and `src` on `<iframe>` or `<embed>` (`data` on `<object>`) takes only a PDF, text, image or media Blob, for the same reason. Any other element or property throws. Setting the property again lets the old file go, and so does the element once it is gone.",
       examples: [
+        "[{ \"$setProp\": [\"#export\", \"href\", { \"$var\": \"take\" }] }, { \"$setProp\": [\"#export\", \"download\", \"take.wav\"] }]",
         "{ \"$setProp\": [\"#status\", \"textContent\", \"Saved\"] }",
         "{ \"$setProp\": [\"#list\", \"innerHTML\", { \"$map\": { \"$var\": \"items\" }, \"do\": { \"$runVar\": \"row\" } }] }",
         "{ \"$setProp\": [{ \"$var\": \"row\" }, \"outerHTML\", { \"$runVar\": \"rowTemplate\" }] }",
@@ -568,8 +663,10 @@ export class DomNode extends Node {
     return resolve(def.$setAttr, context, args => {
       const [ref, name, given] = operands("setAttr", args, 3);
       const el = getElement(ref, "setAttr");
-      const value = safeAttr(String(name), given, message => loggerFor(context).warn(`$setAttr: ${message}`));
-      el.setAttribute(String(name), typeof value === "object" && value !== null ? JSON.stringify(value) : String(value));
+      const attr = String(name);
+      // Lowercased as HTML matches attributes, so it shares the property's URL.
+      const value = urlFor("setAttr", el, attr.toLowerCase(), safeAttr(attr, given, message => loggerFor(context).warn(`$setAttr: ${message}`)));
+      el.setAttribute(attr, typeof value === "object" && value !== null ? JSON.stringify(value) : String(value));
       return el;
     });
   }
@@ -601,7 +698,7 @@ export class DomNode extends Node {
       }
       // Reached through a path, it would take a string as markup and skip the events.
       if (/\.(innerHTML|outerHTML)$/.test(prop)) throw new Error(`$setProp: write "${prop.slice(prop.lastIndexOf(".") + 1)}" on the element it belongs to, not through "${prop}"`);
-      setPropPath(el, prop, safeAttr(prop, value, message => loggerFor(context).warn(`$setProp: ${message}`)));
+      setPropPath(el, prop, urlFor("setProp", el, prop, safeAttr(prop, value, message => loggerFor(context).warn(`$setProp: ${message}`))));
       return el;
     });
   }

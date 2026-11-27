@@ -1,4 +1,4 @@
-import { test, beforeEach } from "node:test";
+import { test, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { createResolver, coreNodes, BLOCKED_URL } from "@jexs/core";
 import { installDom } from "./dom.js";
@@ -278,6 +278,94 @@ test("scrollIntoView takes the listed block and behavior, and refuses any other"
 
 // Acting on nothing is an error that reaches $catch; reading from nothing answers
 // null, as the lookups do; removing nothing is reported.
+/** Object URLs made and revoked, in place of the browser's, which a test can't read back. */
+function mockObjectUrls(t: { mock: { method: typeof mock.method } }): { made: Blob[]; revoked: string[] } {
+  const made: Blob[] = [];
+  const revoked: string[] = [];
+  t.mock.method(URL, "createObjectURL", (blob: Blob) => { made.push(blob); return `blob:test/${made.length}`; });
+  t.mock.method(URL, "revokeObjectURL", (url: string) => { revoked.push(url); });
+  return { made, revoked };
+}
+
+test("a Blob given for a link's href becomes a URL, and a replaced one is let go a while later", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { made, revoked } = mockObjectUrls(t);
+  document.body.insertAdjacentHTML("beforeend", `<a id="export">Export</a>`);
+  const take = new Blob(["RIFF"], { type: "audio/wav" });
+
+  await run([{ $setProp: ["#export", "href", { $var: "take" }] }, { $setProp: ["#export", "download", "take.wav"] }], { take });
+  const link = $("#export") as HTMLAnchorElement;
+  assert.equal(link.getAttribute("href"), "blob:test/1");
+  assert.equal(link.download, "take.wav");
+  assert.equal(made[0], take, "a Blob the link may open is given as it is");
+
+  await run({ $setProp: ["#export", "href", { $var: "take" }] }, { take });
+  assert.equal(link.getAttribute("href"), "blob:test/2");
+  t.mock.timers.tick(1000);
+  assert.deepEqual(revoked, [], "not revoked at once: a save from a click just before may still be reading it");
+  t.mock.timers.tick(40_000);
+  assert.deepEqual(revoked, ["blob:test/1"]);
+
+  // A plain URL in its place lets the last one go too.
+  await run({ $setProp: ["#export", "href", "/files/take.wav"] });
+  t.mock.timers.tick(40_000);
+  assert.deepEqual(revoked, ["blob:test/1", "blob:test/2"]);
+});
+
+test("a link saves a Blob that would run script rather than open it", async (t) => {
+  const { made } = mockObjectUrls(t);
+  document.body.insertAdjacentHTML("beforeend", `<a id="open">Open</a>`);
+  const types = ["text/html", "image/svg+xml", "application/xhtml+xml", "text/xml", "", "image/png", "application/pdf"];
+  for (const type of types) await run({ $setProp: ["#open", "href", { $var: "file" }] }, { file: new Blob(["<x/>"], { type }) });
+  assert.deepEqual(made.map(b => b.type), [
+    "application/octet-stream", "application/octet-stream", "application/octet-stream", "application/octet-stream", "application/octet-stream",
+    "image/png", "application/pdf",
+  ]);
+  assert.equal(await made[0].text(), "<x/>", "retyped, with its bytes as they were");
+});
+
+test("media take any Blob, a frame only one that can't run script, and nothing else takes one", async (t) => {
+  const { made } = mockObjectUrls(t);
+  document.body.insertAdjacentHTML("beforeend", `<img id="pic"><video id="clip"></video><iframe id="frame"></iframe><script id="code"></script><div id="plain"></div>`);
+  const svg = new Blob(["<svg/>"], { type: "image/svg+xml" });
+  const pdf = new Blob(["%PDF"], { type: "application/pdf" });
+  const html = new Blob(["<p>"], { type: "text/html" });
+
+  await run({ $setProp: ["#pic", "src", { $var: "svg" }] }, { svg });
+  assert.equal(made.at(-1), svg, "an image never runs script, an SVG one included");
+  await run([{ $setProp: ["#clip", "src", { $var: "pdf" }] }, { $setProp: ["#clip", "poster", { $var: "svg" }] }], { pdf, svg });
+  assert.equal(Reflect.get($("#clip"), "poster"), `blob:test/${made.length}`);
+  await run({ $setProp: ["#frame", "src", { $var: "pdf" }] }, { pdf });
+  assert.equal(made.at(-1), pdf);
+
+  await assert.rejects(async () => run({ $setProp: ["#frame", "src", { $var: "html" }] }, { html }), /a <iframe> shows only a PDF, text, image or media Blob, not "text\/html", since anything else could run as the page; show HTML through a sandboxed `srcdoc`/);
+  await assert.rejects(async () => run({ $setProp: ["#frame", "src", { $var: "b" }] }, { b: new Blob(["x"]) }), /not "an untyped one"/);
+  await assert.rejects(async () => run({ $setProp: ["#code", "src", { $var: "pdf" }] }, { pdf }), /`src` of <script> doesn't take a Blob; a Blob becomes a URL for `src` on <img>/);
+  await assert.rejects(async () => run({ $setProp: ["#plain", "textContent", { $var: "pdf" }] }, { pdf }), /`textContent` of <div> doesn't take a Blob/);
+});
+
+test("setAttr takes a Blob as setProp does, sharing its URL, and an SVG image's href only this way", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { made, revoked } = mockObjectUrls(t);
+  document.body.insertAdjacentHTML("beforeend", `<a id="dl">Save</a><svg><image id="art"></image></svg>`);
+  const file = new Blob(["x"], { type: "image/png" });
+
+  await run({ $setAttr: ["#dl", "HREF", { $var: "file" }] }, { file });
+  assert.equal($("#dl").getAttribute("href"), "blob:test/1");
+  await run({ $setProp: ["#dl", "href", { $var: "file" }] }, { file });
+  t.mock.timers.tick(40_000);
+  assert.deepEqual(revoked, ["blob:test/1"], "the property replaced the attribute's URL");
+
+  await run({ $setAttr: ["#art", "href", { $var: "file" }] }, { file });
+  assert.equal($("#art").getAttribute("href"), `blob:test/${made.length}`);
+  await assert.rejects(async () => run({ $setProp: ["#art", "href", { $var: "file" }] }, { file }), /an SVG <image>'s `href` is set as an attribute, with \$setAttr/);
+  await assert.rejects(async () => run({ $setAttr: ["#dl", "title", { $var: "file" }] }, { file }), /\$setAttr: `title` of <a> doesn't take a Blob/);
+});
+
+test("a Blob in a $tag attribute throws, pointing to $setProp", async () => {
+  await assert.rejects(async () => run({ $tag: "a", href: { $var: "file" } }, { file: new Blob(["x"]) }), /\$tag: an attribute takes text, and `href` was given a Blob; to give an element a Blob's URL, set it with \$setProp once the element is on the page/);
+});
+
 test("acting on a missing element, a short tuple, a missing method or clipboard is an error", async () => {
   await assert.rejects(async () => run({ $hide: "#missing" }), /\$hide: no element matches "#missing"/);
   await assert.rejects(async () => run({ $addClass: ["#box"] }), /\$addClass takes 2 operands, got 1/);

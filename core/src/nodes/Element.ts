@@ -404,6 +404,10 @@ function attrsString(entries: [string, unknown][], resolved: unknown[], context:
 
     if (given === false || given === null || given === undefined) continue;
     if (given === true) { parts.push(key); continue; }
+    // Markup is text, with no element yet to hold the Blob's URL or let it go.
+    if (typeof Blob !== "undefined" && given instanceof Blob) {
+      throw new Error(`$tag: an attribute takes text, and \`${key}\` was given a Blob; to give an element a Blob's URL, set it with $setProp once the element is on the page`);
+    }
     const value = safeAttr(key, given, message => loggerFor(context).warn(`$tag: ${message}`));
 
     if (key === "params") {
