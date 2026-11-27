@@ -272,7 +272,9 @@ export function expandProperty(prop: JexsPropertySchema, needs: Needs): EmittedS
   }
 
   // Multi-type (e.g. ["string", "boolean"]): accept any of those literal types
-  // OR a nested expression. If `enum` is set, it constrains only the string type.
+  // OR a nested expression. If `enum` is set, it constrains the types it has a
+  // value of: string values limit the strings, and `true` alone limits the
+  // booleans to it, while a type with no value in it is left open.
   // A listed `object` or `array` has its contents checked: a data object's values
   // and an array's items as values, and an object with a `$` key as the step it is.
   if (Array.isArray(prop.type)) {
@@ -286,8 +288,10 @@ export function expandProperty(prop: JexsPropertySchema, needs: Needs): EmittedS
     // type-or-expr: literal type accepted; else a step returning one of the
     // types, through the variant the merge builds for this set of them.
     const scalars = types.filter(t => t !== "object" && t !== "array");
-    const literalBranch: EmittedSchema = prop.enum && scalars.includes("string")
-      ? { if: { type: "string" }, then: { enum: [...prop.enum] }, else: {} }
+    const values = prop.enum ?? [];
+    const limited = scalars.filter(t => values.some(v => t === "integer" ? Number.isInteger(v) : t === "null" ? v === null : typeof v === t));
+    const literalBranch: EmittedSchema = limited.length > 0
+      ? { if: { type: limited.length === 1 ? limited[0] : limited }, then: { enum: [...values] }, else: {} }
       : {};
     const set = typeSetName(types);
     if (set.includes("_")) needs.typeSets.set(set, types);
